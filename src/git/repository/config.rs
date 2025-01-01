@@ -1,5 +1,6 @@
 //! Git config, hints, marker, and default branch operations for Repository.
 
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -155,27 +156,97 @@ impl Repository {
         }
     }
 
-    /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
+    /// Read a stored marker from `worktrunk.state.<branch>.marker` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
+    /// This is the raw value, including a marker whose branch has since been
+    /// deleted. [`Self::user_marker`] is what `wt list` renders.
     pub fn branch_marker(&self, branch: &str) -> Option<String> {
-        #[derive(serde::Deserialize)]
-        struct MarkerValue {
-            marker: Option<String>,
-        }
+        self.stored_marker(branch).map(|(text, _)| text)
+    }
 
+    /// Marker text `wt list` should show for `branch`.
+    ///
+    /// The config key is only the branch name, so a branch deleted outside wt
+    /// (`git branch -D`, `git worktree remove`) leaves it behind and a later
+    /// branch of the same name would inherit it. The marker is skipped when
+    /// no local branch has this name, and when the branch's reflog says the
+    /// ref was created after `set_at` — that name was deleted and created
+    /// again, and the stored marker belongs to the previous branch.
+    ///
+    /// A `set_at` of 0 is the documented hand-written form and has no time to
+    /// compare. A missing or expired creation entry is not evidence the branch
+    /// is new. Both still show. The key is left in git config; this only
+    /// decides what list renders.
+    pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
+        let branch = branch?;
+        let (text, set_at) = self.stored_marker(branch)?;
+        self.marker_applies_to_current_branch(branch, set_at)
+            .then_some(text)
+    }
+
+    /// `(marker text, set_at)` from `worktrunk.state.<branch>.marker`.
+    ///
+    /// `set_at` is 0 when the field is missing or not a Unix timestamp. Invalid
+    /// JSON or a missing `marker` string yields `None`, matching the previous
+    /// reader.
+    fn stored_marker(&self, branch: &str) -> Option<(String, u64)> {
         let raw = self
             .config_last(&format!("worktrunk.state.{branch}.marker"))
             .ok()
             .flatten()
             .filter(|s| !s.is_empty())?;
-        let parsed: MarkerValue = serde_json::from_str(&raw).ok()?;
-        parsed.marker
+        let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let text = parsed.get("marker").and_then(|value| value.as_str())?;
+        let set_at = parsed
+            .get("set_at")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        Some((text.to_string(), set_at))
     }
 
-    /// Read user-defined branch-keyed marker.
-    pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
-        branch.and_then(|branch| self.branch_marker(branch))
+    /// Whether a marker recorded at `set_at` belongs to the branch that exists now.
+    ///
+    /// A failed branch scan is not evidence the name is gone, so the marker
+    /// stays visible. Hiding it would drop a status the user set because git
+    /// could not be asked.
+    fn marker_applies_to_current_branch(&self, branch: &str, set_at: u64) -> bool {
+        if self.local_branch(branch).is_ok_and(|found| found.is_none()) {
+            return false;
+        }
+        match self.branch_created_at(branch) {
+            Some(created_at) if set_at > 0 => created_at <= set_at,
+            _ => true,
+        }
+    }
+
+    /// Unix time of the current branch's creation, from its reflog.
+    ///
+    /// The creation entry is the first line of `logs/refs/heads/<branch>`
+    /// (previous OID all zeros). `git log --walk-reflogs` cannot walk
+    /// oldest-first — `--reverse` is rejected — so the file is read directly,
+    /// one line, rather than dumping the whole reflog. `None` when the line
+    /// is missing or is no longer a creation entry (reflogs disabled, or git
+    /// expired the original line).
+    fn branch_created_at(&self, branch: &str) -> Option<u64> {
+        if !super::is_valid_branch_name(branch) {
+            return None;
+        }
+        let path = self
+            .git_common_dir()
+            .join("logs")
+            .join("refs")
+            .join("heads")
+            .join(branch);
+        let file = std::fs::File::open(path).ok()?;
+        let mut buf = Vec::new();
+        std::io::BufReader::new(file)
+            .read_until(b'\n', &mut buf)
+            .ok()?;
+        if buf.is_empty() {
+            return None;
+        }
+        creation_timestamp_from_reflog_line(&String::from_utf8_lossy(&buf))
     }
 
     /// Get all vars entries for a branch, sorted by key name.
@@ -1080,6 +1151,37 @@ impl Repository {
     }
 }
 
+/// Unix time from a branch-creation reflog line, if `line` is one.
+///
+/// Creation is the entry whose previous OID is all zeros, which is how a new
+/// `logs/refs/heads/<branch>` file starts:
+/// `0000… <new> Name <email> <unix> <±HHMM>\tbranch: Created from …`
+/// The committer name may contain spaces, so the timestamp and timezone are
+/// the last two fields. Any other first line means the creation record has
+/// been expired or rewritten, which is not evidence this branch is new.
+fn creation_timestamp_from_reflog_line(line: &str) -> Option<u64> {
+    let meta = line.split_once('\t')?.0.trim();
+    let mut fields = meta.rsplit(' ');
+    let tz = fields.next()?;
+    let timestamp = fields.next()?;
+    let old_oid = meta.split(' ').next()?;
+    if !is_zero_oid(old_oid) || !is_reflog_tz(tz) {
+        return None;
+    }
+    timestamp.parse().ok()
+}
+
+fn is_zero_oid(oid: &str) -> bool {
+    matches!(oid.len(), 40 | 64) && oid.bytes().all(|byte| byte == b'0')
+}
+
+fn is_reflog_tz(tz: &str) -> bool {
+    let mut bytes = tz.bytes();
+    matches!(bytes.next(), Some(b'+') | Some(b'-'))
+        && bytes.len() == 4
+        && bytes.all(|byte| byte.is_ascii_digit())
+}
+
 /// Split a `worktrunk.state.<branch>.vars.<key>` config key into `(branch, key)`.
 ///
 /// Uses `rsplit_once`: var keys cannot contain dots (validated by
@@ -1106,7 +1208,7 @@ fn parse_branch_config_key(config_key: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::TestRepo;
+    use crate::testing::{TEST_EPOCH, TestRepo};
 
     #[test]
     fn test_config_regexp_entries_no_match_returns_empty() {
@@ -1311,5 +1413,129 @@ mod tests {
         assert_eq!(snapshot["feature/bar"]["jira"], "PROJ-3");
         // `branch.sort` is git's own key, not a per-branch entry.
         assert!(!snapshot.contains_key("sort"));
+    }
+
+    /// A marker is shown for the branch it was set on, and hidden once that
+    /// branch is gone or a new branch of the same name has been created.
+    /// The config key stays either way — list skips it, it does not prune.
+    #[test]
+    fn user_marker_skips_a_branch_that_is_gone_or_recreated() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "feature"]);
+        test.run_git(&["branch", "kept"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        let marker = format!(r#"{{"marker":"🤖","set_at":{TEST_EPOCH}}}"#);
+        repo.set_config("worktrunk.state.feature.marker", &marker)
+            .unwrap();
+        repo.set_config("worktrunk.state.kept.marker", &marker)
+            .unwrap();
+
+        // Created at the harness committer date (2025-01-01), before TEST_EPOCH.
+        assert_eq!(repo.user_marker(Some("feature")).as_deref(), Some("🤖"));
+        assert_eq!(repo.user_marker(Some("kept")).as_deref(), Some("🤖"));
+
+        test.run_git(&["branch", "-D", "feature"]);
+        let gone = Repository::at(test.root_path()).unwrap();
+        assert_eq!(gone.user_marker(Some("feature")), None);
+        assert_eq!(gone.branch_marker("feature").as_deref(), Some("🤖"));
+        assert_eq!(gone.user_marker(Some("kept")).as_deref(), Some("🤖"));
+
+        // A later committer date is the new branch's creation time.
+        let recreated = test
+            .git_command()
+            .env("GIT_AUTHOR_DATE", "2025-01-03T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2025-01-03T00:00:00Z")
+            .args(["branch", "feature"])
+            .run()
+            .unwrap();
+        assert!(recreated.status.success(), "{recreated:?}");
+
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.user_marker(Some("feature")), None);
+        assert_eq!(fresh.branch_marker("feature").as_deref(), Some("🤖"));
+        assert_eq!(fresh.user_marker(Some("kept")).as_deref(), Some("🤖"));
+    }
+
+    /// When the marker has no usable timestamp, or the branch's creation line
+    /// is gone, the marker still shows. Neither is proof the name was reused.
+    #[test]
+    fn user_marker_keeps_marker_when_branch_age_is_unknown() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["branch", "undated"]);
+        test.run_git(&["branch", "expired"]);
+        test.run_git(&["branch", "empty-log"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        // The creation line is there before we replace it, so a miss later is
+        // the reader seeing the new contents, not a wrong path.
+        assert!(repo.branch_created_at("expired").is_some());
+        assert!(repo.branch_created_at("empty-log").is_some());
+        repo.set_config(
+            "worktrunk.state.undated.marker",
+            r#"{"marker":"🤖","set_at":0}"#,
+        )
+        .unwrap();
+        repo.set_config(
+            "worktrunk.state.expired.marker",
+            &format!(r#"{{"marker":"🤖","set_at":{TEST_EPOCH}}}"#),
+        )
+        .unwrap();
+        repo.set_config(
+            "worktrunk.state.empty-log.marker",
+            &format!(r#"{{"marker":"🤖","set_at":{TEST_EPOCH}}}"#),
+        )
+        .unwrap();
+
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let expired = repo.git_common_dir().join("logs/refs/heads/expired");
+        std::fs::write(
+            &expired,
+            format!("{sha} {sha} t <t@t> 2000000000 +0000\tcommit: later\n"),
+        )
+        .unwrap();
+        let empty = repo.git_common_dir().join("logs/refs/heads/empty-log");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(repo.branch_created_at("expired"), None);
+        assert_eq!(repo.branch_created_at("empty-log"), None);
+
+        assert_eq!(repo.user_marker(Some("undated")).as_deref(), Some("🤖"));
+        assert_eq!(repo.user_marker(Some("expired")).as_deref(), Some("🤖"));
+        assert_eq!(repo.user_marker(Some("empty-log")).as_deref(), Some("🤖"));
+        assert_eq!(repo.branch_created_at("../outside"), None);
+    }
+
+    #[test]
+    fn creation_timestamp_reads_only_a_zero_old_oid_line() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let zeros = "0".repeat(40);
+        let created = format!(
+            "{zeros} {sha} Ada Lovelace <ada@example.com> 1735862400 -0700\tbranch: Created from HEAD\n"
+        );
+        assert_eq!(
+            creation_timestamp_from_reflog_line(&created),
+            Some(1735862400)
+        );
+
+        let sha256 = "0".repeat(64);
+        let created_sha256 = format!("{sha256} {sha} t <t@t> 10 +0000\tbranch: Created from HEAD");
+        assert_eq!(
+            creation_timestamp_from_reflog_line(&created_sha256),
+            Some(10)
+        );
+
+        let later = format!("{sha} {sha} t <t@t> 1735862400 +0000\tcommit: later\n");
+        assert_eq!(creation_timestamp_from_reflog_line(&later), None);
+        assert_eq!(creation_timestamp_from_reflog_line("no tab here"), None);
+        assert_eq!(
+            creation_timestamp_from_reflog_line(&format!(
+                "{zeros} {sha} t <t@t> 10 Z\tbranch: Created from HEAD"
+            )),
+            None
+        );
+        assert_eq!(
+            creation_timestamp_from_reflog_line(&format!(
+                "{zeros} {sha} t <t@t> nope +0000\tbranch: Created from HEAD"
+            )),
+            None
+        );
     }
 }

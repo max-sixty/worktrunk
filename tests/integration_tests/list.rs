@@ -1266,6 +1266,104 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command_readme(&repo, repo.root_path()));
 }
 
+/// A marker set on a branch, deleted with plain git, must not reappear when
+/// that name is created again. `wt remove` already clears the key; this is the
+/// path that never runs wt. The key stays in git config — list skips it.
+///
+/// The harness freezes git committer dates at 2025-01-01, which is before
+/// `WORKTRUNK_TEST_EPOCH` (the `set_at` `marker set` writes). Recreating the
+/// branch at a later committer date is what a real reuse looks like: the new
+/// reflog starts after the marker.
+#[rstest]
+fn test_list_hides_marker_recreated_outside_wt() {
+    let mut repo = TestRepo::with_initial_commit();
+    let feature = repo.add_worktree("feature");
+    repo.add_worktree("other");
+
+    for (branch, marker) in [("feature", "🤖"), ("other", "💬")] {
+        let set = repo
+            .wt_command()
+            .args([
+                "config",
+                "state",
+                "marker",
+                "set",
+                marker,
+                &format!("--branch={branch}"),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            set.status.success(),
+            "set {marker} on {branch}: {}",
+            String::from_utf8_lossy(&set.stderr)
+        );
+    }
+
+    let before = list_stdout(&repo);
+    assert!(
+        before.contains("🤖") && before.contains("💬"),
+        "both markers show before the branch is deleted; got: {before}"
+    );
+
+    repo.run_git(&["worktree", "remove", feature.to_str().unwrap()]);
+    repo.run_git(&["branch", "-D", "feature"]);
+
+    let stored = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.state.feature.marker"])
+        .run()
+        .unwrap();
+    assert!(
+        stored.status.success() && String::from_utf8_lossy(&stored.stdout).contains("🤖"),
+        "the key stays; list skips it instead of deleting it: {stored:?}"
+    );
+
+    let recreated = repo
+        .git_command()
+        .env("GIT_AUTHOR_DATE", "2025-01-03T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2025-01-03T00:00:00Z")
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            feature.to_str().unwrap(),
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        recreated.status.success(),
+        "recreate feature: {}",
+        String::from_utf8_lossy(&recreated.stderr)
+    );
+
+    let after = list_stdout(&repo);
+    assert!(
+        after.contains("feature"),
+        "the recreated worktree is listed; got: {after}"
+    );
+    assert!(
+        !after.contains("🤖"),
+        "the old marker must not follow the recreated branch; got: {after}"
+    );
+    assert!(
+        after.contains("💬"),
+        "a branch that was not deleted keeps its marker; got: {after}"
+    );
+}
+
+fn list_stdout(repo: &TestRepo) -> String {
+    let output = repo.wt_command().args(["list"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        output.status.success(),
+        "wt list failed: {}\n{stdout}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout
+}
+
 #[rstest]
 fn test_list_json_with_user_marker(mut repo: TestRepo) {
     repo.write_test_config("[list]\njson-schema = 1\n");
