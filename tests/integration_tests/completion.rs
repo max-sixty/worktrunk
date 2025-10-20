@@ -345,3 +345,231 @@ fn test_complete_switch_no_available_branches() {
     assert!(!stdout.contains("hotfix/bug"));
     // May include main if it doesn't have a worktree
 }
+
+#[test]
+fn test_complete_excludes_remote_branches() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create local branches
+    StdCommand::new("git")
+        .args(&["branch", "feature/local"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Set up a fake remote
+    StdCommand::new("git")
+        .args(&["remote", "add", "origin", "https://example.com/repo.git"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Create a remote-tracking branch by fetching from a local "remote"
+    // First, create a bare repo to act as remote
+    let remote_dir = temp.root_path().parent().unwrap().join("remote.git");
+    StdCommand::new("git")
+        .args(&["init", "--bare", remote_dir.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    // Update remote URL to point to our bare repo
+    StdCommand::new("git")
+        .args(&["remote", "set-url", "origin", remote_dir.to_str().unwrap()])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Push to create remote branches
+    StdCommand::new("git")
+        .args(&["push", "origin", "main"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    StdCommand::new("git")
+        .args(&["push", "origin", "feature/local:feature/remote"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Fetch to create remote-tracking branches
+    StdCommand::new("git")
+        .args(&["fetch", "origin"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test completion
+    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(&["complete", "wt", "switch", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should include local branch without worktree
+    assert!(
+        stdout.contains("feature/local"),
+        "Should include feature/local branch, but got: {}",
+        stdout
+    );
+
+    // main branch has a worktree (the root repo), so it may or may not be included
+    // depending on switch context - not critical for this test
+
+    // Should NOT include remote-tracking branches (origin/*)
+    assert!(
+        !stdout.contains("origin/"),
+        "Completion should not include remote-tracking branches, but found: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_complete_merge_shows_branches() {
+    let mut temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create worktree (creates "feature/new" branch)
+    temp.add_worktree("feature-worktree", "feature/new");
+
+    // Create another branch without worktree
+    StdCommand::new("git")
+        .args(&["branch", "hotfix/bug"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test completion for merge (should show ALL branches, including those with worktrees)
+    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(&["complete", "wt", "merge", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+
+    // Should include both branches (merge shows all)
+    assert!(branches.iter().any(|b| b.contains("feature/new")));
+    assert!(branches.iter().any(|b| b.contains("hotfix/bug")));
+}
+
+#[test]
+fn test_complete_unknown_command_returns_empty() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create some branches
+    StdCommand::new("git")
+        .args(&["branch", "feature/test"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test completion for unknown command
+    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(&["complete", "wt", "unknown-command", ""])
+        .output()
+        .unwrap();
+
+    // Should succeed but return no completions
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "");
+}
+
+#[test]
+fn test_complete_with_special_characters_in_branch_names() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create branches with various special characters
+    let branch_names = vec![
+        "feature/FOO-123",         // Uppercase + dash + numbers
+        "release/v1.2.3",          // Dots
+        "hotfix/bug_fix",          // Underscore
+        "feature/multi-part-name", // Multiple dashes
+    ];
+
+    for branch in &branch_names {
+        StdCommand::new("git")
+            .args(&["branch", branch])
+            .current_dir(temp.root_path())
+            .output()
+            .unwrap();
+    }
+
+    // Test completion
+    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(&["complete", "wt", "switch", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // All branches should be present
+    for branch in &branch_names {
+        assert!(
+            stdout.contains(branch),
+            "Branch {} should be in completion output",
+            branch
+        );
+    }
+}
+
+#[test]
+fn test_complete_list_command_returns_empty() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create branches
+    StdCommand::new("git")
+        .args(&["branch", "feature/test"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test completion for list command (doesn't take branch arguments)
+    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(&["complete", "wt", "list", ""])
+        .output()
+        .unwrap();
+
+    // Should succeed but return no completions
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "");
+}
+
+#[test]
+fn test_complete_finish_command_returns_empty() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion for finish command (doesn't take arguments)
+    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(&["complete", "wt", "finish", ""])
+        .output()
+        .unwrap();
+
+    // Should succeed but return no completions
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "");
+}

@@ -521,10 +521,11 @@ pub fn get_all_branches() -> Result<Vec<String>, GitError> {
     get_all_branches_in(std::path::Path::new("."))
 }
 
-/// Get all branch names in a specific directory
+/// Get all branch names in a specific directory (local branches only)
+/// Note: This excludes remote-tracking branches (e.g., origin/main)
 pub fn get_all_branches_in(path: &std::path::Path) -> Result<Vec<String>, GitError> {
     let stdout = run_git_command(
-        &["branch", "--all", "--format=%(refname:short)"],
+        &["branch", "--format=%(refname:short)"], // Removed --all to exclude remotes
         Some(path),
     )?;
     Ok(stdout

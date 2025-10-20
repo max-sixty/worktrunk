@@ -941,4 +941,64 @@ mod tests {
         let args = vec!["wt".to_string()];
         assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
     }
+
+    #[test]
+    fn test_parse_completion_context_base_flag_short() {
+        let args = vec![
+            "wt".to_string(),
+            "switch".to_string(),
+            "--create".to_string(),
+            "new".to_string(),
+            "-b".to_string(),
+            "dev".to_string(),
+        ];
+        assert_eq!(parse_completion_context(&args), CompletionContext::BaseFlag);
+    }
+
+    #[test]
+    fn test_parse_completion_context_base_at_end() {
+        // --base at the end with empty string (what shell sends when completing)
+        let args = vec![
+            "wt".to_string(),
+            "switch".to_string(),
+            "--create".to_string(),
+            "new".to_string(),
+            "--base".to_string(),
+            "".to_string(), // Shell sends empty string for cursor position
+        ];
+        // Should detect BaseFlag context
+        assert_eq!(parse_completion_context(&args), CompletionContext::BaseFlag);
+    }
+
+    #[test]
+    fn test_parse_completion_context_multiple_base_flags() {
+        // Multiple --base flags (last one wins)
+        let args = vec![
+            "wt".to_string(),
+            "switch".to_string(),
+            "--create".to_string(),
+            "new".to_string(),
+            "--base".to_string(),
+            "main".to_string(),
+            "--base".to_string(),
+            "develop".to_string(),
+        ];
+        assert_eq!(parse_completion_context(&args), CompletionContext::BaseFlag);
+    }
+
+    #[test]
+    fn test_parse_completion_context_empty_args() {
+        let args = vec![];
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
+    }
+
+    #[test]
+    fn test_parse_completion_context_switch_only() {
+        // Just "wt switch" with no other args
+        let args = vec!["wt".to_string(), "switch".to_string()];
+        assert_eq!(
+            parse_completion_context(&args),
+            CompletionContext::SwitchBranch
+        );
+    }
 }
