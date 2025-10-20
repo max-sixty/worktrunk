@@ -346,6 +346,80 @@ pub fn is_in_worktree_in(path: &std::path::Path) -> Result<bool, GitError> {
     Ok(git_dir != common_dir)
 }
 
+/// Check if base_branch is an ancestor of HEAD (i.e., would be a fast-forward)
+pub fn is_ancestor(base_branch: &str, head: &str) -> Result<bool, GitError> {
+    is_ancestor_in(std::path::Path::new("."), base_branch, head)
+}
+
+/// Check if base is an ancestor of head in the repository at the given path
+pub fn is_ancestor_in(path: &std::path::Path, base: &str, head: &str) -> Result<bool, GitError> {
+    let output = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", base, head])
+        .current_dir(path)
+        .output()
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+
+    Ok(output.status.success())
+}
+
+/// Count commits between base and head
+pub fn count_commits(base: &str, head: &str) -> Result<usize, GitError> {
+    count_commits_in(std::path::Path::new("."), base, head)
+}
+
+/// Count commits between base and head in the repository at the given path
+pub fn count_commits_in(path: &std::path::Path, base: &str, head: &str) -> Result<usize, GitError> {
+    let range = format!("{}..{}", base, head);
+    let stdout = run_git_command(&["rev-list", "--count", &range], Some(path))?;
+    stdout
+        .trim()
+        .parse()
+        .map_err(|e| GitError::ParseError(format!("Failed to parse commit count: {}", e)))
+}
+
+/// Check if there are merge commits in the range base..head
+pub fn has_merge_commits(base: &str, head: &str) -> Result<bool, GitError> {
+    has_merge_commits_in(std::path::Path::new("."), base, head)
+}
+
+/// Check if there are merge commits in the range base..head at the given path
+pub fn has_merge_commits_in(
+    path: &std::path::Path,
+    base: &str,
+    head: &str,
+) -> Result<bool, GitError> {
+    let range = format!("{}..{}", base, head);
+    let output = std::process::Command::new("git")
+        .args(["rev-list", "--merges", &range])
+        .current_dir(path)
+        .output()
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GitError::CommandFailed(stderr.to_string()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(!stdout.trim().is_empty())
+}
+
+/// Get files changed between base and head
+pub fn get_changed_files(base: &str, head: &str) -> Result<Vec<String>, GitError> {
+    get_changed_files_in(std::path::Path::new("."), base, head)
+}
+
+/// Get files changed between base and head at the given path
+pub fn get_changed_files_in(
+    path: &std::path::Path,
+    base: &str,
+    head: &str,
+) -> Result<Vec<String>, GitError> {
+    let range = format!("{}..{}", base, head);
+    let stdout = run_git_command(&["diff", "--name-only", &range], Some(path))?;
+    Ok(stdout.lines().map(|s| s.to_string()).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

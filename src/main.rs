@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 use std::process;
 use worktrunk::git::{
-    GitError, branch_exists, get_current_branch, get_default_branch, get_git_common_dir,
-    get_worktree_root, is_dirty, is_in_worktree, list_worktrees, worktree_for_branch,
+    GitError, branch_exists, count_commits, get_changed_files, get_current_branch,
+    get_default_branch, get_git_common_dir, get_worktree_root, has_merge_commits, is_ancestor,
+    is_dirty, is_dirty_in, is_in_worktree, list_worktrees, worktree_for_branch,
 };
 use worktrunk::shell;
 
@@ -61,8 +62,12 @@ enum Commands {
 
     /// Push changes between worktrees
     Push {
-        /// Target worktree
-        target: String,
+        /// Target branch (defaults to default branch)
+        target: Option<String>,
+
+        /// Allow pushing merge commits (non-linear history)
+        #[arg(long)]
+        allow_merge_commits: bool,
     },
 
     /// Merge and cleanup worktree
@@ -97,7 +102,10 @@ fn main() {
             internal,
         } => handle_switch(&branch, create, base.as_deref(), internal),
         Commands::Finish { internal } => handle_finish(internal),
-        Commands::Push { target } => handle_push(&target).map_err(GitError::CommandFailed),
+        Commands::Push {
+            target,
+            allow_merge_commits,
+        } => handle_push(target.as_deref(), allow_merge_commits),
         Commands::Merge { target, squash } => {
             handle_merge(&target, squash).map_err(GitError::CommandFailed)
         }
@@ -353,9 +361,120 @@ fn handle_finish(internal: bool) -> Result<(), GitError> {
     Ok(())
 }
 
-fn handle_push(target: &str) -> Result<(), String> {
-    // TODO: Implement actual push logic
-    println!("Pushing to worktree: {}", target);
+fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), GitError> {
+    // Get target branch (default to default branch if not provided)
+    let target_branch = match target {
+        Some(b) => b.to_string(),
+        None => get_default_branch()?,
+    };
+
+    // Check if it's a fast-forward
+    if !is_ancestor(&target_branch, "HEAD")? {
+        return Err(GitError::CommandFailed(format!(
+            "Not a fast-forward from '{}' to HEAD. The target branch has commits not in your current branch.",
+            target_branch
+        )));
+    }
+
+    // Check for merge commits unless allowed
+    if !allow_merge_commits && has_merge_commits(&target_branch, "HEAD")? {
+        return Err(GitError::CommandFailed(
+            "Found merge commits in push range. Use --allow-merge-commits to push non-linear history.".to_string(),
+        ));
+    }
+
+    // Configure receive.denyCurrentBranch if needed
+    let deny_config_output = process::Command::new("git")
+        .args(["config", "receive.denyCurrentBranch"])
+        .output()
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+
+    let current_config = String::from_utf8_lossy(&deny_config_output.stdout);
+    if current_config.trim() != "updateInstead" {
+        process::Command::new("git")
+            .args(["config", "receive.denyCurrentBranch", "updateInstead"])
+            .output()
+            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+    }
+
+    // Find worktree for target branch
+    let target_worktree = worktree_for_branch(&target_branch)?;
+
+    if let Some(ref wt_path) = target_worktree {
+        // Check if target worktree is dirty
+        if is_dirty_in(wt_path)? {
+            // Get files changed in the push
+            let push_files = get_changed_files(&target_branch, "HEAD")?;
+
+            // Get files changed in the worktree
+            let wt_status_output = process::Command::new("git")
+                .args(["status", "--porcelain"])
+                .current_dir(wt_path)
+                .output()
+                .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+
+            let wt_files: Vec<String> = String::from_utf8_lossy(&wt_status_output.stdout)
+                .lines()
+                .filter_map(|line| {
+                    // Parse porcelain format: "XY filename"
+                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                    parts.get(1).map(|s| s.trim().to_string())
+                })
+                .collect();
+
+            // Find overlapping files
+            let overlapping: Vec<String> = push_files
+                .iter()
+                .filter(|f| wt_files.contains(f))
+                .cloned()
+                .collect();
+
+            if !overlapping.is_empty() {
+                eprintln!("Cannot push: conflicting uncommitted changes in:");
+                for file in &overlapping {
+                    eprintln!("  - {}", file);
+                }
+                return Err(GitError::CommandFailed(format!(
+                    "Commit or stash changes in {} first",
+                    wt_path.display()
+                )));
+            }
+        }
+    }
+
+    // Count commits and show info
+    let commit_count = count_commits(&target_branch, "HEAD")?;
+    if commit_count > 0 {
+        let commit_text = if commit_count == 1 {
+            "commit"
+        } else {
+            "commits"
+        };
+        println!(
+            "Pushing {} {} to '{}'",
+            commit_count, commit_text, target_branch
+        );
+    }
+
+    // Get git common dir for the push
+    let git_common_dir = get_git_common_dir()?;
+
+    // Perform the push
+    let push_result = process::Command::new("git")
+        .args([
+            "push",
+            git_common_dir.to_str().unwrap(),
+            &format!("HEAD:{}", target_branch),
+        ])
+        .output()
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+
+    if !push_result.status.success() {
+        let stderr = String::from_utf8_lossy(&push_result.stderr);
+        return Err(GitError::CommandFailed(format!("Push failed: {}", stderr)));
+    }
+
+    println!("Successfully pushed to '{}'", target_branch);
     Ok(())
 }
 
