@@ -34,8 +34,11 @@ impl std::fmt::Display for GitError {
 
 impl std::error::Error for GitError {}
 
-/// Helper function to run a git command and return its stdout
-fn run_git_command(args: &[&str], path: Option<&std::path::Path>) -> Result<String, GitError> {
+/// Helper function to run a git command and return its stdout.
+///
+/// For commands that don't need the output (e.g., git switch, git worktree add),
+/// the returned String can be ignored.
+pub fn run_git_command(args: &[&str], path: Option<&std::path::Path>) -> Result<String, GitError> {
     let mut cmd = Command::new("git");
     cmd.args(args);
 
@@ -302,19 +305,7 @@ pub fn worktree_for_branch(branch: &str) -> Result<Option<PathBuf>, GitError> {
 
 /// Check if the working tree is dirty in the repository at the given path (has uncommitted changes)
 pub fn is_dirty_in(path: &std::path::Path) -> Result<bool, GitError> {
-    // Check for any changes in the working tree or index
-    let output = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitError::CommandFailed(stderr.to_string()));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git_command(&["status", "--porcelain"], Some(path))?;
     Ok(!stdout.trim().is_empty())
 }
 
@@ -359,18 +350,7 @@ pub fn has_merge_commits_in(
     head: &str,
 ) -> Result<bool, GitError> {
     let range = format!("{}..{}", base, head);
-    let output = std::process::Command::new("git")
-        .args(["rev-list", "--merges", &range])
-        .current_dir(path)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitError::CommandFailed(stderr.to_string()));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = run_git_command(&["rev-list", "--merges", &range], Some(path))?;
     Ok(!stdout.trim().is_empty())
 }
 

@@ -21,4 +21,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-fatal: invalid reference: my-feature
+Failed to create worktree: fatal: invalid reference: my-feature

@@ -16,7 +16,7 @@ use worktrunk::git::{
     get_default_branch_in, get_git_common_dir_in, get_merge_base_in, get_repo_root_in,
     get_upstream_branch_in, get_working_tree_diff_stats_in, get_worktree_root_in,
     get_worktree_state_in, has_merge_commits_in, has_staged_changes_in, is_ancestor_in,
-    is_dirty_in, is_in_worktree_in, list_worktrees, worktree_for_branch,
+    is_dirty_in, is_in_worktree_in, list_worktrees, run_git_command, worktree_for_branch,
 };
 use worktrunk::shell;
 
@@ -1202,15 +1202,9 @@ fn handle_switch(
         args.push(branch);
     }
 
-    let output = process::Command::new("git")
-        .args(&args)
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitError::CommandFailed(stderr.to_string()));
-    }
+    run_git_command(&args, Some(Path::new(".")))
+        .map_err(|e| GitError::CommandFailed(format!("Failed to create worktree: {}", e)))
+        .map(|_| ())?;
 
     // Output success message
     let success_msg = if create {
@@ -1281,15 +1275,11 @@ fn handle_remove(internal: bool) -> Result<(), GitError> {
         }
     } else {
         // In main repo but not on default branch: switch to default
-        let output = process::Command::new("git")
-            .args(["switch", &default_branch])
-            .output()
-            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(GitError::CommandFailed(stderr.to_string()));
-        }
+        run_git_command(&["switch", &default_branch], Some(Path::new(".")))
+            .map_err(|e| {
+                GitError::CommandFailed(format!("Failed to switch to '{}': {}", default_branch, e))
+            })
+            .map(|_| ())?;
 
         if !internal {
             println!("Switched to default branch '{}'", default_branch);
@@ -1327,6 +1317,8 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
     }
 
     // Configure receive.denyCurrentBranch if needed
+    // TODO: These git config commands don't use run_git_command() because they don't check
+    // status.success() and may rely on exit codes for missing keys. Should be refactored.
     let deny_config_output = process::Command::new("git")
         .args(["config", "receive.denyCurrentBranch"])
         .output()
@@ -1350,13 +1342,9 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
             let push_files = get_changed_files_in(Path::new("."), &target_branch, "HEAD")?;
 
             // Get files changed in the worktree
-            let wt_status_output = process::Command::new("git")
-                .args(["status", "--porcelain"])
-                .current_dir(wt_path)
-                .output()
-                .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+            let wt_status_output = run_git_command(&["status", "--porcelain"], Some(wt_path))?;
 
-            let wt_files: Vec<String> = String::from_utf8_lossy(&wt_status_output.stdout)
+            let wt_files: Vec<String> = wt_status_output
                 .lines()
                 .filter_map(|line| {
                     // Parse porcelain format: "XY filename"
@@ -1406,19 +1394,12 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
     let git_common_dir = get_git_common_dir_in(Path::new("."))?;
 
     // Perform the push
-    let push_result = process::Command::new("git")
-        .args([
-            "push",
-            git_common_dir.to_str().unwrap(),
-            &format!("HEAD:{}", target_branch),
-        ])
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !push_result.status.success() {
-        let stderr = String::from_utf8_lossy(&push_result.stderr);
-        return Err(GitError::CommandFailed(format!("Push failed: {}", stderr)));
-    }
+    let push_target = format!("HEAD:{}", target_branch);
+    run_git_command(
+        &["push", git_common_dir.to_str().unwrap(), &push_target],
+        Some(Path::new(".")),
+    )
+    .map_err(|e| GitError::CommandFailed(format!("Push failed: {}", e)))?;
 
     println!("Successfully pushed to '{}'", target_branch);
     Ok(())
@@ -1535,32 +1516,12 @@ fn handle_squash(target_branch: &str) -> Result<(), GitError> {
     let commit_message = generate_squash_message(target_branch, &subjects, &config.llm);
 
     // Reset to merge base (soft reset stages all changes)
-    let reset_result = process::Command::new("git")
-        .args(["reset", "--soft", &merge_base])
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !reset_result.status.success() {
-        let stderr = String::from_utf8_lossy(&reset_result.stderr);
-        return Err(GitError::CommandFailed(format!(
-            "Failed to reset to merge base: {}",
-            stderr
-        )));
-    }
+    run_git_command(&["reset", "--soft", &merge_base], Some(Path::new(".")))
+        .map_err(|e| GitError::CommandFailed(format!("Failed to reset to merge base: {}", e)))?;
 
     // Commit with the generated message
-    let commit_result = process::Command::new("git")
-        .args(["commit", "-m", &commit_message])
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !commit_result.status.success() {
-        let stderr = String::from_utf8_lossy(&commit_result.stderr);
-        return Err(GitError::CommandFailed(format!(
-            "Failed to create squash commit: {}",
-            stderr
-        )));
-    }
+    run_git_command(&["commit", "-m", &commit_message], Some(Path::new(".")))
+        .map_err(|e| GitError::CommandFailed(format!("Failed to create squash commit: {}", e)))?;
 
     println!("Successfully squashed {} commits into one", commit_count);
     Ok(())
@@ -1598,18 +1559,9 @@ fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<(), Gi
     // Rebase onto target
     println!("Rebasing onto '{}'...", target_branch);
 
-    let rebase_result = process::Command::new("git")
-        .args(["rebase", &target_branch])
-        .output()
-        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-    if !rebase_result.status.success() {
-        let stderr = String::from_utf8_lossy(&rebase_result.stderr);
-        return Err(GitError::CommandFailed(format!(
-            "Failed to rebase onto '{}': {}",
-            target_branch, stderr
-        )));
-    }
+    run_git_command(&["rebase", &target_branch], Some(Path::new("."))).map_err(|e| {
+        GitError::CommandFailed(format!("Failed to rebase onto '{}': {}", target_branch, e))
+    })?;
 
     // Fast-forward push to target branch (reuse handle_push logic)
     println!("Fast-forwarding '{}' to current HEAD...", target_branch);
@@ -1628,19 +1580,14 @@ fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<(), Gi
         let new_branch = get_current_branch_in(&primary_worktree_dir)?;
         if new_branch.as_deref() != Some(&target_branch) {
             println!("Switching to '{}'...", target_branch);
-            let switch_result = process::Command::new("git")
-                .args(["switch", &target_branch])
-                .current_dir(&primary_worktree_dir)
-                .output()
-                .map_err(|e| GitError::CommandFailed(e.to_string()))?;
-
-            if !switch_result.status.success() {
-                let stderr = String::from_utf8_lossy(&switch_result.stderr);
-                return Err(GitError::CommandFailed(format!(
-                    "Failed to switch to '{}': {}",
-                    target_branch, stderr
-                )));
-            }
+            run_git_command(&["switch", &target_branch], Some(&primary_worktree_dir)).map_err(
+                |e| {
+                    GitError::CommandFailed(format!(
+                        "Failed to switch to '{}': {}",
+                        target_branch, e
+                    ))
+                },
+            )?;
         }
     } else {
         println!(
