@@ -1,5 +1,6 @@
 pub mod default_branch;
 pub mod directives;
+pub mod e2e_shell;
 pub mod finish;
 pub mod init;
 pub mod list;
