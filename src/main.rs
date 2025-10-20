@@ -2,15 +2,16 @@ use anstyle::{AnsiColor, Color, Style};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{Shell as CompletionShell, generate};
 use rayon::prelude::*;
+use std::path::Path;
 use std::process;
 use worktrunk::config::{format_worktree_path, load_config};
 use worktrunk::error_format::{format_error, format_error_with_bold, format_hint, format_warning};
 use worktrunk::git::{
-    GitError, Worktree, branch_exists, count_commits, get_ahead_behind_in, get_all_branches,
-    get_available_branches, get_branch_diff_stats_in, get_changed_files, get_commit_subjects,
-    get_commit_timestamp_in, get_current_branch, get_current_branch_in, get_default_branch,
-    get_git_common_dir, get_merge_base, get_working_tree_diff_stats_in, get_worktree_root,
-    has_merge_commits, has_staged_changes, is_ancestor, is_dirty, is_dirty_in, is_in_worktree,
+    GitError, Worktree, branch_exists_in, count_commits_in, get_ahead_behind_in,
+    get_all_branches_in, get_available_branches, get_branch_diff_stats_in, get_changed_files_in,
+    get_commit_subjects_in, get_commit_timestamp_in, get_current_branch_in, get_default_branch_in,
+    get_git_common_dir_in, get_merge_base_in, get_working_tree_diff_stats_in, get_worktree_root_in,
+    has_merge_commits_in, has_staged_changes_in, is_ancestor_in, is_dirty_in, is_in_worktree_in,
     list_worktrees, worktree_for_branch,
 };
 use worktrunk::shell;
@@ -502,7 +503,7 @@ fn handle_switch(
     worktree_path_template: &str,
 ) -> Result<(), GitError> {
     // Check for conflicting conditions
-    if create && branch_exists(branch)? {
+    if create && branch_exists_in(Path::new("."), branch)? {
         return Err(GitError::CommandFailed(format_error_with_bold(
             "Branch '",
             branch,
@@ -535,7 +536,7 @@ fn handle_switch(
     }
 
     // No existing worktree, create one
-    let git_common_dir = get_git_common_dir()?
+    let git_common_dir = get_git_common_dir_in(Path::new("."))?
         .canonicalize()
         .map_err(|e| GitError::CommandFailed(format!("Failed to canonicalize path: {}", e)))?;
 
@@ -596,16 +597,16 @@ fn handle_switch(
 
 fn handle_remove(internal: bool) -> Result<(), GitError> {
     // Check for uncommitted changes
-    if is_dirty()? {
+    if is_dirty_in(Path::new("."))? {
         return Err(GitError::CommandFailed(format_error(
             "Working tree has uncommitted changes. Commit or stash them first.",
         )));
     }
 
     // Get current state
-    let current_branch = get_current_branch()?;
-    let default_branch = get_default_branch()?;
-    let in_worktree = is_in_worktree()?;
+    let current_branch = get_current_branch_in(Path::new("."))?;
+    let default_branch = get_default_branch_in(Path::new("."))?;
+    let in_worktree = is_in_worktree_in(Path::new("."))?;
 
     // If we're on default branch and not in a worktree, nothing to do
     if !in_worktree && current_branch.as_deref() == Some(&default_branch) {
@@ -617,8 +618,8 @@ fn handle_remove(internal: bool) -> Result<(), GitError> {
 
     if in_worktree {
         // In worktree: navigate to primary worktree and remove this one
-        let worktree_root = get_worktree_root()?;
-        let common_dir = get_git_common_dir()?
+        let worktree_root = get_worktree_root_in(Path::new("."))?;
+        let common_dir = get_git_common_dir_in(Path::new("."))?
             .canonicalize()
             .map_err(|e| GitError::CommandFailed(format!("Failed to canonicalize path: {}", e)))?;
 
@@ -674,11 +675,11 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
     // Get target branch (default to default branch if not provided)
     let target_branch = match target {
         Some(b) => b.to_string(),
-        None => get_default_branch()?,
+        None => get_default_branch_in(Path::new("."))?,
     };
 
     // Check if it's a fast-forward
-    if !is_ancestor(&target_branch, "HEAD")? {
+    if !is_ancestor_in(Path::new("."), &target_branch, "HEAD")? {
         let error_msg =
             format_error_with_bold("Not a fast-forward from '", &target_branch, "' to HEAD");
         let hint_msg = format_hint(
@@ -691,7 +692,7 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
     }
 
     // Check for merge commits unless allowed
-    if !allow_merge_commits && has_merge_commits(&target_branch, "HEAD")? {
+    if !allow_merge_commits && has_merge_commits_in(Path::new("."), &target_branch, "HEAD")? {
         return Err(GitError::CommandFailed(format_error(
             "Found merge commits in push range. Use --allow-merge-commits to push non-linear history.",
         )));
@@ -718,7 +719,7 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
         // Check if target worktree is dirty
         if is_dirty_in(wt_path)? {
             // Get files changed in the push
-            let push_files = get_changed_files(&target_branch, "HEAD")?;
+            let push_files = get_changed_files_in(Path::new("."), &target_branch, "HEAD")?;
 
             // Get files changed in the worktree
             let wt_status_output = process::Command::new("git")
@@ -760,7 +761,7 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
     }
 
     // Count commits and show info
-    let commit_count = count_commits(&target_branch, "HEAD")?;
+    let commit_count = count_commits_in(Path::new("."), &target_branch, "HEAD")?;
     if commit_count > 0 {
         let commit_text = if commit_count == 1 {
             "commit"
@@ -774,7 +775,7 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
     }
 
     // Get git common dir for the push
-    let git_common_dir = get_git_common_dir()?;
+    let git_common_dir = get_git_common_dir_in(Path::new("."))?;
 
     // Perform the push
     let push_result = process::Command::new("git")
@@ -797,13 +798,13 @@ fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), Gi
 
 fn handle_squash(target_branch: &str) -> Result<(), GitError> {
     // Get merge base with target branch
-    let merge_base = get_merge_base("HEAD", target_branch)?;
+    let merge_base = get_merge_base_in(Path::new("."), "HEAD", target_branch)?;
 
     // Count commits since merge base
-    let commit_count = count_commits(&merge_base, "HEAD")?;
+    let commit_count = count_commits_in(Path::new("."), &merge_base, "HEAD")?;
 
     // Check if there are staged changes
-    let has_staged = has_staged_changes()?;
+    let has_staged = has_staged_changes_in(Path::new("."))?;
 
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
@@ -833,7 +834,7 @@ fn handle_squash(target_branch: &str) -> Result<(), GitError> {
 
     // Get commit subjects for the squash message
     let range = format!("{}..HEAD", merge_base);
-    let subjects = get_commit_subjects(&range)?;
+    let subjects = get_commit_subjects_in(Path::new("."), &range)?;
 
     // Build deterministic commit message
     let mut commit_message = format!("Squash commits from {}\n\n", target_branch);
@@ -877,13 +878,13 @@ fn handle_squash(target_branch: &str) -> Result<(), GitError> {
 
 fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<(), GitError> {
     // Get current branch
-    let current_branch = get_current_branch()?
+    let current_branch = get_current_branch_in(Path::new("."))?
         .ok_or_else(|| GitError::CommandFailed(format_error("Not on a branch (detached HEAD)")))?;
 
     // Get target branch (default to default branch if not provided)
     let target_branch = match target {
         Some(b) => b.to_string(),
-        None => get_default_branch()?,
+        None => get_default_branch_in(Path::new("."))?,
     };
 
     // Check if already on target branch
@@ -893,7 +894,7 @@ fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<(), Gi
     }
 
     // Check for uncommitted changes
-    if is_dirty()? {
+    if is_dirty_in(Path::new("."))? {
         return Err(GitError::CommandFailed(format_error(
             "Working tree has uncommitted changes. Commit or stash them first.",
         )));
@@ -929,7 +930,7 @@ fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<(), Gi
         println!("Cleaning up worktree...");
 
         // Get primary worktree path before finishing (while we can still run git commands)
-        let common_dir = get_git_common_dir()?
+        let common_dir = get_git_common_dir_in(Path::new("."))?
             .canonicalize()
             .map_err(|e| GitError::CommandFailed(format!("Failed to canonicalize path: {}", e)))?;
         let primary_worktree_dir = common_dir
@@ -1035,7 +1036,7 @@ fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
         | CompletionContext::MergeTarget
         | CompletionContext::BaseFlag => {
             // Complete with all branches
-            let branches = get_all_branches().unwrap_or_else(|e| {
+            let branches = get_all_branches_in(Path::new(".")).unwrap_or_else(|e| {
                 if std::env::var("WT_DEBUG_COMPLETION").is_ok() {
                     eprintln!("completion error: {}", e);
                 }
