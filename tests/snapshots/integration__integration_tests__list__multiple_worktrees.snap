@@ -5,6 +5,7 @@ info:
   args:
     - list
   env:
+    CLICOLOR_FORCE: "1"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
@@ -17,8 +18,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mmain       [SHA]  [REPO][0m
-feature-a  [SHA]  [WORKTREE_FEATURE_A]
-feature-b  [SHA]  [WORKTREE_FEATURE_B]
+[2mBranch   [0m  [2mAge         [0m  [2mCommit  [0m  [2mMessage             [0m  [2mPath[0m
+[1m[35mmain     [0m  [2m9 months ago[0m  [1m[35mb834638e[0m  [2mInitial commit      [0m  [1m[35m./main[0m
+feature-a  [2m9 months ago[0m  [SHA]     [2mInitial commit      [0m  ./feature-a
+feature-b  [2m9 months ago[0m  [SHA]     [2mInitial commit      [0m  ./feature-b
 
 ----- stderr -----

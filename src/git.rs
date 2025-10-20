@@ -394,7 +394,84 @@ pub fn get_commit_timestamp_in(path: &std::path::Path, commit: &str) -> Result<i
         .map_err(|e| GitError::ParseError(format!("Failed to parse timestamp: {}", e)))
 }
 
-/// Calculate commits ahead and behind at the given path
+/// Get commit message (subject line) for a commit
+pub fn get_commit_message_in(path: &std::path::Path, commit: &str) -> Result<String, GitError> {
+    let stdout = run_git_command(&["show", "-s", "--format=%s", commit], Some(path))?;
+    Ok(stdout.trim().to_string())
+}
+
+/// Get the upstream tracking branch for the current branch
+pub fn get_upstream_branch_in(
+    path: &std::path::Path,
+    branch: &str,
+) -> Result<Option<String>, GitError> {
+    let result = run_git_command(
+        &["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", branch)],
+        Some(path),
+    );
+
+    match result {
+        Ok(upstream) => {
+            let trimmed = upstream.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        Err(_) => Ok(None), // No upstream configured
+    }
+}
+
+/// Get merge/rebase status for a worktree
+pub fn get_worktree_state_in(path: &std::path::Path) -> Result<Option<String>, GitError> {
+    let git_dir = get_git_dir_in(path)?;
+
+    // Check for merge
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Ok(Some("MERGING".to_string()));
+    }
+
+    // Check for rebase
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        // Try to get rebase progress
+        let rebase_dir = if git_dir.join("rebase-merge").exists() {
+            git_dir.join("rebase-merge")
+        } else {
+            git_dir.join("rebase-apply")
+        };
+
+        if let (Ok(msgnum), Ok(end)) = (
+            std::fs::read_to_string(rebase_dir.join("msgnum")),
+            std::fs::read_to_string(rebase_dir.join("end")),
+        ) {
+            let current = msgnum.trim();
+            let total = end.trim();
+            return Ok(Some(format!("REBASING {}/{}", current, total)));
+        }
+
+        return Ok(Some("REBASING".to_string()));
+    }
+
+    // Check for cherry-pick
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        return Ok(Some("CHERRY-PICKING".to_string()));
+    }
+
+    // Check for revert
+    if git_dir.join("REVERT_HEAD").exists() {
+        return Ok(Some("REVERTING".to_string()));
+    }
+
+    // Check for bisect
+    if git_dir.join("BISECT_LOG").exists() {
+        return Ok(Some("BISECTING".to_string()));
+    }
+
+    Ok(None)
+}
+
+/// Calculate commits ahead and behind between two refs
 /// Returns (ahead, behind) where ahead is commits in head not in base,
 /// and behind is commits in base not in head
 pub fn get_ahead_behind_in(

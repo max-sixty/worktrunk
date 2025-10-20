@@ -46,7 +46,7 @@ pub struct WorktrunkConfig {
 }
 
 /// Configuration for LLM integration
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct LlmConfig {
     /// Command to invoke LLM (e.g., "llm", "claude")
     #[serde(default)]
@@ -55,15 +55,6 @@ pub struct LlmConfig {
     /// Arguments to pass to the LLM command
     #[serde(default)]
     pub args: Vec<String>,
-}
-
-impl Default for LlmConfig {
-    fn default() -> Self {
-        Self {
-            command: None,
-            args: vec![],
-        }
-    }
 }
 
 impl Default for WorktrunkConfig {

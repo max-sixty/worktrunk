@@ -26,6 +26,8 @@ config = "0.15"
 directories = "6.0"
 rayon = "1.10"
 serde = { version = "1.0", features = ["derive"] }
+terminal_size = "0.4"
+unicode-width = "0.2"
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.0", features = ["build"] }

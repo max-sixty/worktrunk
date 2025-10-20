@@ -3,19 +3,105 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{Shell as CompletionShell, generate};
 use rayon::prelude::*;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
+use unicode_width::UnicodeWidthStr;
 use worktrunk::config::{format_worktree_path, load_config};
 use worktrunk::error_format::{format_error, format_error_with_bold, format_hint, format_warning};
 use worktrunk::git::{
     GitError, Worktree, branch_exists_in, count_commits_in, get_ahead_behind_in,
     get_all_branches_in, get_available_branches, get_branch_diff_stats_in, get_changed_files_in,
-    get_commit_subjects_in, get_commit_timestamp_in, get_current_branch_in, get_default_branch_in,
-    get_git_common_dir_in, get_merge_base_in, get_repo_root_in, get_working_tree_diff_stats_in,
-    get_worktree_root_in, has_merge_commits_in, has_staged_changes_in, is_ancestor_in, is_dirty_in,
-    is_in_worktree_in, list_worktrees, worktree_for_branch,
+    get_commit_message_in, get_commit_subjects_in, get_commit_timestamp_in, get_current_branch_in,
+    get_default_branch_in, get_git_common_dir_in, get_merge_base_in, get_repo_root_in,
+    get_upstream_branch_in, get_working_tree_diff_stats_in, get_worktree_root_in,
+    get_worktree_state_in, has_merge_commits_in, has_staged_changes_in, is_ancestor_in,
+    is_dirty_in, is_in_worktree_in, list_worktrees, worktree_for_branch,
 };
 use worktrunk::shell;
+
+/// A piece of text with an optional style
+#[derive(Clone, Debug)]
+struct StyledString {
+    text: String,
+    style: Option<Style>,
+}
+
+impl StyledString {
+    fn new(text: impl Into<String>, style: Option<Style>) -> Self {
+        Self {
+            text: text.into(),
+            style,
+        }
+    }
+
+    fn raw(text: impl Into<String>) -> Self {
+        Self::new(text, None)
+    }
+
+    fn styled(text: impl Into<String>, style: Style) -> Self {
+        Self::new(text, Some(style))
+    }
+
+    /// Returns the visual width (unicode-aware, no ANSI codes)
+    fn width(&self) -> usize {
+        self.text.width()
+    }
+
+    /// Renders to a string with ANSI escape codes
+    fn render(&self) -> String {
+        if let Some(style) = &self.style {
+            format!("{}{}{}", style.render(), self.text, style.render_reset())
+        } else {
+            self.text.clone()
+        }
+    }
+}
+
+/// A line composed of multiple styled strings
+#[derive(Clone, Debug, Default)]
+struct StyledLine {
+    segments: Vec<StyledString>,
+}
+
+impl StyledLine {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a raw (unstyled) segment
+    fn push_raw(&mut self, text: impl Into<String>) {
+        self.segments.push(StyledString::raw(text));
+    }
+
+    /// Add a styled segment
+    fn push_styled(&mut self, text: impl Into<String>, style: Style) {
+        self.segments.push(StyledString::styled(text, style));
+    }
+
+    /// Add a segment (StyledString)
+    fn push(&mut self, segment: StyledString) {
+        self.segments.push(segment);
+    }
+
+    /// Pad with spaces to reach a specific width
+    fn pad_to(&mut self, target_width: usize) {
+        let current_width = self.width();
+        if current_width < target_width {
+            self.push_raw(" ".repeat(target_width - current_width));
+        }
+    }
+
+    /// Returns the total visual width
+    fn width(&self) -> usize {
+        self.segments.iter().map(|s| s.width()).sum()
+    }
+
+    /// Renders the entire line with ANSI escape codes
+    fn render(&self) -> String {
+        self.segments.iter().map(|s| s.render()).collect()
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "wt")]
@@ -222,15 +308,21 @@ struct WorktreeInfo {
     head: String,
     branch: Option<String>,
     timestamp: i64,
+    commit_message: String,
     ahead: usize,
     behind: usize,
     working_tree_diff: (usize, usize),
     branch_diff: (usize, usize),
     is_primary: bool,
+    is_current: bool,
     detached: bool,
     bare: bool,
     locked: Option<String>,
     prunable: Option<String>,
+    upstream_remote: Option<String>,
+    upstream_ahead: usize,
+    upstream_behind: usize,
+    worktree_state: Option<String>,
 }
 
 fn handle_list() -> Result<(), GitError> {
@@ -244,10 +336,22 @@ fn handle_list() -> Result<(), GitError> {
     let primary = &worktrees[0];
     let primary_branch = primary.branch.as_ref();
 
+    // Get current worktree to identify active one
+    let current_worktree_path = get_worktree_root_in(Path::new(".")).ok();
+
     // Helper function to process a single worktree
     let process_worktree = |idx: usize, wt: &Worktree| -> WorktreeInfo {
         let is_primary = idx == 0;
+        let is_current = current_worktree_path
+            .as_ref()
+            .map(|p| p == &wt.path)
+            .unwrap_or(false);
+
+        // Get commit timestamp
         let timestamp = get_commit_timestamp_in(&wt.path, &wt.head).unwrap_or(0);
+
+        // Get commit message
+        let commit_message = get_commit_message_in(&wt.path, &wt.head).unwrap_or_default();
 
         // Calculate ahead/behind relative to primary branch (only if primary has a branch)
         let (ahead, behind) = if is_primary {
@@ -267,20 +371,50 @@ fn handle_list() -> Result<(), GitError> {
         } else {
             (0, 0)
         };
+
+        // Get upstream tracking info
+        let (upstream_remote, upstream_ahead, upstream_behind) = if let Some(ref branch) = wt.branch
+        {
+            if let Ok(Some(upstream_branch)) = get_upstream_branch_in(&wt.path, branch) {
+                // Extract remote name from "origin/main" -> "origin"
+                let remote = upstream_branch
+                    .split('/')
+                    .next()
+                    .unwrap_or("origin")
+                    .to_string();
+                let (ahead, behind) =
+                    get_ahead_behind_in(&wt.path, &upstream_branch, &wt.head).unwrap_or((0, 0));
+                (Some(remote), ahead, behind)
+            } else {
+                (None, 0, 0)
+            }
+        } else {
+            (None, 0, 0)
+        };
+
+        // Get worktree state (merge/rebase/etc)
+        let worktree_state = get_worktree_state_in(&wt.path).unwrap_or(None);
+
         WorktreeInfo {
             path: wt.path.clone(),
             head: wt.head.clone(),
             branch: wt.branch.clone(),
             timestamp,
+            commit_message,
             ahead,
             behind,
             working_tree_diff,
             branch_diff,
             is_primary,
+            is_current,
             detached: wt.detached,
             bare: wt.bare,
             locked: wt.locked.clone(),
             prunable: wt.prunable.clone(),
+            upstream_remote,
+            upstream_ahead,
+            upstream_behind,
+            worktree_state,
         }
     };
 
@@ -315,47 +449,183 @@ fn handle_list() -> Result<(), GitError> {
     // Sort by most recent commit (descending)
     infos.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-    // Calculate column widths for alignment
-    let widths = calculate_column_widths(&infos);
+    // Calculate responsive layout based on terminal width
+    let layout = calculate_responsive_layout(&infos);
+
+    // Display header
+    format_header_line(&layout);
 
     // Display formatted output
     for info in &infos {
-        format_worktree_line(info, &widths);
+        format_worktree_line(info, &layout);
     }
 
     Ok(())
 }
 
+fn format_relative_time(timestamp: i64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let seconds_ago = now - timestamp;
+
+    if seconds_ago < 0 {
+        return "in the future".to_string();
+    }
+
+    let minutes = seconds_ago / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+    let weeks = days / 7;
+    let months = days / 30;
+    let years = days / 365;
+
+    if years > 0 {
+        format!("{} year{} ago", years, if years == 1 { "" } else { "s" })
+    } else if months > 0 {
+        format!("{} month{} ago", months, if months == 1 { "" } else { "s" })
+    } else if weeks > 0 {
+        format!("{} week{} ago", weeks, if weeks == 1 { "" } else { "s" })
+    } else if days > 0 {
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    } else if hours > 0 {
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else if minutes > 0 {
+        format!(
+            "{} minute{} ago",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        )
+    } else {
+        "just now".to_string()
+    }
+}
+
+/// Find the common prefix among all paths
+fn find_common_prefix(paths: &[PathBuf]) -> PathBuf {
+    if paths.is_empty() {
+        return PathBuf::new();
+    }
+
+    let first = &paths[0];
+    let mut prefix = PathBuf::new();
+
+    for component in first.components() {
+        let candidate = prefix.join(component);
+        if paths.iter().all(|p| p.starts_with(&candidate)) {
+            prefix = candidate;
+        } else {
+            break;
+        }
+    }
+
+    prefix
+}
+
+/// Shorten a path relative to a common prefix
+fn shorten_path(path: &Path, prefix: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(prefix) {
+        if relative.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            format!("./{}", relative.display())
+        }
+    } else {
+        path.display().to_string()
+    }
+}
+
+/// Truncate text at word boundary with ellipsis, respecting terminal width
+fn truncate_at_word_boundary(text: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+
+    // Build up string until we hit the width limit (accounting for "..." = 3 width)
+    let target_width = max_width.saturating_sub(3);
+    let mut current_width = 0;
+    let mut last_space_idx = None;
+    let mut last_idx = 0;
+
+    for (idx, ch) in text.char_indices() {
+        let char_width = UnicodeWidthStr::width(ch.to_string().as_str());
+        if current_width + char_width > target_width {
+            break;
+        }
+        if ch.is_whitespace() {
+            last_space_idx = Some(idx);
+        }
+        current_width += char_width;
+        last_idx = idx + ch.len_utf8();
+    }
+
+    // Use last space if found, otherwise truncate at last character that fits
+    let truncate_at = last_space_idx.unwrap_or(last_idx);
+    format!("{}...", &text[..truncate_at].trim())
+}
+
+/// Get terminal width, defaulting to 80 if detection fails
+fn get_terminal_width() -> usize {
+    terminal_size::terminal_size()
+        .map(|(terminal_size::Width(w), _)| w as usize)
+        .unwrap_or(80)
+}
+
 struct ColumnWidths {
     branch: usize,
+    time: usize,
+    message: usize,
     ahead_behind: usize,
     working_diff: usize,
     branch_diff: usize,
+    upstream: usize,
     states: usize,
+}
+
+struct LayoutConfig {
+    widths: ColumnWidths,
+    ideal_widths: ColumnWidths, // Maximum widths for padding sparse columns
+    common_prefix: PathBuf,
+    max_message_len: usize,
 }
 
 fn calculate_column_widths(infos: &[WorktreeInfo]) -> ColumnWidths {
     let mut max_branch = 0;
+    let mut max_time = 0;
+    let mut max_message = 0;
     let mut max_ahead_behind = 0;
     let mut max_working_diff = 0;
     let mut max_branch_diff = 0;
+    let mut max_upstream = 0;
     let mut max_states = 0;
 
     for info in infos {
         // Branch name
-        let branch_len = info.branch.as_deref().unwrap_or("(detached)").len();
+        let branch_len = info.branch.as_deref().unwrap_or("(detached)").width();
         max_branch = max_branch.max(branch_len);
+
+        // Time
+        let time_str = format_relative_time(info.timestamp);
+        max_time = max_time.max(time_str.width());
+
+        // Message (truncate to 50 chars max)
+        let msg_len = info.commit_message.chars().take(50).count();
+        max_message = max_message.max(msg_len);
 
         // Ahead/behind
         if !info.is_primary && (info.ahead > 0 || info.behind > 0) {
-            let ahead_behind_len = format!("↑{} ↓{}", info.ahead, info.behind).len();
+            let ahead_behind_len = format!("↑{} ↓{}", info.ahead, info.behind).width();
             max_ahead_behind = max_ahead_behind.max(ahead_behind_len);
         }
 
         // Working tree diff
         let (wt_added, wt_deleted) = info.working_tree_diff;
         if wt_added > 0 || wt_deleted > 0 {
-            let working_diff_len = format!("+{} -{}", wt_added, wt_deleted).len();
+            let working_diff_len = format!("+{} -{}", wt_added, wt_deleted).width();
             max_working_diff = max_working_diff.max(working_diff_len);
         }
 
@@ -363,29 +633,219 @@ fn calculate_column_widths(infos: &[WorktreeInfo]) -> ColumnWidths {
         if !info.is_primary {
             let (br_added, br_deleted) = info.branch_diff;
             if br_added > 0 || br_deleted > 0 {
-                let branch_diff_len = format!("(+{} -{})", br_added, br_deleted).len();
+                let branch_diff_len = format!("+{} -{}", br_added, br_deleted).width();
                 max_branch_diff = max_branch_diff.max(branch_diff_len);
             }
         }
 
-        // States
-        let states = format_states(info);
+        // Upstream tracking
+        if info.upstream_ahead > 0 || info.upstream_behind > 0 {
+            let remote_name = info.upstream_remote.as_deref().unwrap_or("origin");
+            let upstream_len = format!(
+                "{} ↑{} ↓{}",
+                remote_name, info.upstream_ahead, info.upstream_behind
+            )
+            .width();
+            max_upstream = max_upstream.max(upstream_len);
+        }
+
+        // States (including worktree_state)
+        let states = format_all_states(info);
         if !states.is_empty() {
-            max_states = max_states.max(states.len());
+            max_states = max_states.max(states.width());
         }
     }
 
     ColumnWidths {
         branch: max_branch,
+        time: max_time,
+        message: max_message,
         ahead_behind: max_ahead_behind,
         working_diff: max_working_diff,
         branch_diff: max_branch_diff,
+        upstream: max_upstream,
         states: max_states,
     }
 }
 
-fn format_states(info: &WorktreeInfo) -> String {
+/// Calculate responsive layout based on terminal width
+fn calculate_responsive_layout(infos: &[WorktreeInfo]) -> LayoutConfig {
+    let terminal_width = get_terminal_width();
+    let paths: Vec<PathBuf> = infos.iter().map(|info| info.path.clone()).collect();
+    let common_prefix = find_common_prefix(&paths);
+
+    // Count how many rows have each sparse column
+    let non_primary_count = infos.iter().filter(|i| !i.is_primary).count();
+    let ahead_behind_count = infos
+        .iter()
+        .filter(|i| !i.is_primary && (i.ahead > 0 || i.behind > 0))
+        .count();
+    let working_diff_count = infos
+        .iter()
+        .filter(|i| {
+            let (added, deleted) = i.working_tree_diff;
+            added > 0 || deleted > 0
+        })
+        .count();
+    let branch_diff_count = infos
+        .iter()
+        .filter(|i| {
+            if i.is_primary {
+                return false;
+            }
+            let (added, deleted) = i.branch_diff;
+            added > 0 || deleted > 0
+        })
+        .count();
+    let upstream_count = infos
+        .iter()
+        .filter(|i| i.upstream_ahead > 0 || i.upstream_behind > 0)
+        .count();
+    let states_count = infos
+        .iter()
+        .filter(|i| {
+            i.worktree_state.is_some()
+                || (i.detached && i.branch.is_some())
+                || i.bare
+                || i.locked.is_some()
+                || i.prunable.is_some()
+        })
+        .count();
+
+    // A column is "dense" if it appears in >50% of applicable rows
+    // For ahead/behind and branch_diff, applicable = non-primary rows
+    // For others, applicable = all rows
+    let ahead_behind_is_dense = non_primary_count > 0 && ahead_behind_count * 2 > non_primary_count;
+    let working_diff_is_dense = working_diff_count * 2 > infos.len();
+    let branch_diff_is_dense = non_primary_count > 0 && branch_diff_count * 2 > non_primary_count;
+    let upstream_is_dense = upstream_count * 2 > infos.len();
+    let states_is_dense = states_count * 2 > infos.len();
+
+    // Calculate ideal column widths
+    let ideal_widths = calculate_column_widths(infos);
+
+    // Essential columns (always shown):
+    // - current indicator: 2 chars
+    // - branch: variable
+    // - short HEAD: 8 chars
+    // - path: at least 20 chars (we'll use shortened paths)
+    // - spacing: 2 chars between columns
+
+    let spacing = 2;
+    let current_indicator = 2;
+    let short_head = 8;
+    let min_path = 20;
+
+    // Calculate base width needed
+    let base_width =
+        current_indicator + ideal_widths.branch + spacing + short_head + spacing + min_path;
+
+    // Available width for optional columns
+    let available = terminal_width.saturating_sub(base_width);
+
+    // Priority order for columns (from high to low):
+    // 1. time (15-20 chars)
+    // 2. message (20-50 chars, flexible)
+    // 3. ahead_behind - commits difference (if any worktree has it)
+    // 4. branch_diff - line diff in commits (if any worktree has it)
+    // 5. working_diff - line diff in working tree (if any worktree has it)
+    // 6. upstream (if any worktree has it)
+    // 7. states (if any worktree has it)
+
+    let mut remaining = available;
+    let mut widths = ColumnWidths {
+        branch: ideal_widths.branch,
+        time: 0,
+        message: 0,
+        ahead_behind: 0,
+        working_diff: 0,
+        branch_diff: 0,
+        upstream: 0,
+        states: 0,
+    };
+
+    // Time column (high priority, ~15 chars)
+    if remaining >= ideal_widths.time + spacing {
+        widths.time = ideal_widths.time;
+        remaining = remaining.saturating_sub(ideal_widths.time + spacing);
+    }
+
+    // Message column (flexible, 20-50 chars)
+    let max_message_len = if remaining >= 50 + spacing {
+        remaining = remaining.saturating_sub(50 + spacing);
+        50
+    } else if remaining >= 30 + spacing {
+        let msg_len = remaining.saturating_sub(spacing).min(ideal_widths.message);
+        remaining = remaining.saturating_sub(msg_len + spacing);
+        msg_len
+    } else if remaining >= 20 + spacing {
+        let msg_len = 20;
+        remaining = remaining.saturating_sub(msg_len + spacing);
+        msg_len
+    } else {
+        0
+    };
+
+    if max_message_len > 0 {
+        widths.message = max_message_len;
+    }
+
+    // Ahead/behind column (only if dense and fits)
+    if ahead_behind_is_dense
+        && ideal_widths.ahead_behind > 0
+        && remaining >= ideal_widths.ahead_behind + spacing
+    {
+        widths.ahead_behind = ideal_widths.ahead_behind;
+        remaining = remaining.saturating_sub(ideal_widths.ahead_behind + spacing);
+    }
+
+    // Working diff column (only if dense and fits)
+    if working_diff_is_dense
+        && ideal_widths.working_diff > 0
+        && remaining >= ideal_widths.working_diff + spacing
+    {
+        widths.working_diff = ideal_widths.working_diff;
+        remaining = remaining.saturating_sub(ideal_widths.working_diff + spacing);
+    }
+
+    // Branch diff column (only if dense and fits)
+    if branch_diff_is_dense
+        && ideal_widths.branch_diff > 0
+        && remaining >= ideal_widths.branch_diff + spacing
+    {
+        widths.branch_diff = ideal_widths.branch_diff;
+        remaining = remaining.saturating_sub(ideal_widths.branch_diff + spacing);
+    }
+
+    // Upstream column (only if dense and fits)
+    if upstream_is_dense
+        && ideal_widths.upstream > 0
+        && remaining >= ideal_widths.upstream + spacing
+    {
+        widths.upstream = ideal_widths.upstream;
+        remaining = remaining.saturating_sub(ideal_widths.upstream + spacing);
+    }
+
+    // States column (only if dense and fits)
+    if states_is_dense && ideal_widths.states > 0 && remaining >= ideal_widths.states + spacing {
+        widths.states = ideal_widths.states;
+    }
+
+    LayoutConfig {
+        widths,
+        ideal_widths,
+        common_prefix,
+        max_message_len,
+    }
+}
+
+fn format_all_states(info: &WorktreeInfo) -> String {
     let mut states = Vec::new();
+
+    // Worktree state (merge/rebase/etc)
+    if let Some(ref state) = info.worktree_state {
+        states.push(format!("[{}]", state));
+    }
 
     // Don't show detached state if branch is None (already shown in branch column)
     if info.detached && info.branch.is_some() {
@@ -412,90 +872,261 @@ fn format_states(info: &WorktreeInfo) -> String {
     states.join(" ")
 }
 
-fn format_worktree_line(info: &WorktreeInfo, widths: &ColumnWidths) {
+fn format_header_line(layout: &LayoutConfig) {
+    let widths = &layout.widths;
+    let dim_style = Style::new().dimmed();
+
+    let mut line = StyledLine::new();
+
+    // Branch
+    let header = format!("{:width$}", "Branch", width = widths.branch);
+    line.push_styled(header, dim_style);
+    line.push_raw("  ");
+
+    // Age (Time)
+    if widths.time > 0 {
+        let header = format!("{:width$}", "Age", width = widths.time);
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Ahead/behind (commits)
+    if layout.ideal_widths.ahead_behind > 0 {
+        let header = format!(
+            "{:width$}",
+            "Cmts",
+            width = layout.ideal_widths.ahead_behind
+        );
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Branch diff (line diff in commits)
+    if layout.ideal_widths.branch_diff > 0 {
+        let header = format!(
+            "{:width$}",
+            "Cmt +/-",
+            width = layout.ideal_widths.branch_diff
+        );
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Working tree diff
+    if layout.ideal_widths.working_diff > 0 {
+        let header = format!(
+            "{:width$}",
+            "WT +/-",
+            width = layout.ideal_widths.working_diff
+        );
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Upstream
+    if layout.ideal_widths.upstream > 0 {
+        let header = format!("{:width$}", "Remote", width = layout.ideal_widths.upstream);
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Commit (fixed width: 8 chars)
+    line.push_styled("Commit  ", dim_style);
+    line.push_raw("  ");
+
+    // Message
+    if widths.message > 0 {
+        let header = format!("{:width$}", "Message", width = widths.message);
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // States
+    if layout.ideal_widths.states > 0 {
+        let header = format!("{:width$}", "State", width = layout.ideal_widths.states);
+        line.push_styled(header, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Path
+    line.push_styled("Path", dim_style);
+
+    println!("{}", line.render());
+}
+
+fn format_worktree_line(info: &WorktreeInfo, layout: &LayoutConfig) {
+    let widths = &layout.widths;
     let primary_style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
+    let current_style = Style::new()
+        .bold()
+        .fg_color(Some(Color::Ansi(AnsiColor::Magenta)));
+    let green_style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
+    let red_style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
+    let yellow_style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
+    let dim_style = Style::new().dimmed();
 
     let branch_display = info.branch.as_deref().unwrap_or("(detached)");
     let short_head = &info.head[..8.min(info.head.len())];
 
-    let mut parts = Vec::new();
+    // Determine styles: current worktree is bold magenta, primary is cyan
+    let text_style = if info.is_current {
+        Some(current_style)
+    } else if info.is_primary {
+        Some(primary_style)
+    } else {
+        None
+    };
 
-    // Branch name (left-aligned)
-    parts.push(format!("{:width$}", branch_display, width = widths.branch));
+    // Start building the line
+    let mut line = StyledLine::new();
 
-    // Short HEAD (fixed width)
-    parts.push(short_head.to_string());
+    // Branch name
+    let branch_text = format!("{:width$}", branch_display, width = widths.branch);
+    if let Some(style) = text_style {
+        line.push_styled(branch_text, style);
+    } else {
+        line.push_raw(branch_text);
+    }
+    line.push_raw("  ");
 
-    // Ahead/behind (left-aligned in its column)
-    if widths.ahead_behind > 0 {
+    // Age (Time)
+    if widths.time > 0 {
+        let time_str = format!(
+            "{:width$}",
+            format_relative_time(info.timestamp),
+            width = widths.time
+        );
+        line.push_styled(time_str, dim_style);
+        line.push_raw("  ");
+    }
+
+    // Ahead/behind (commits difference) - always reserve space if ANY row uses it
+    if layout.ideal_widths.ahead_behind > 0 {
         if !info.is_primary && (info.ahead > 0 || info.behind > 0) {
-            parts.push(format!(
+            let ahead_behind_text = format!(
                 "{:width$}",
                 format!("↑{} ↓{}", info.ahead, info.behind),
-                width = widths.ahead_behind
-            ));
+                width = layout.ideal_widths.ahead_behind
+            );
+            line.push_styled(ahead_behind_text, yellow_style);
         } else {
-            parts.push(" ".repeat(widths.ahead_behind));
+            // No data for this row: pad with spaces
+            line.push_raw(" ".repeat(layout.ideal_widths.ahead_behind));
         }
+        line.push_raw("  ");
     }
 
-    // Working tree diff (left-aligned in its column)
-    if widths.working_diff > 0 {
-        let (wt_added, wt_deleted) = info.working_tree_diff;
-        if wt_added > 0 || wt_deleted > 0 {
-            parts.push(format!(
-                "{:width$}",
-                format!("+{} -{}", wt_added, wt_deleted),
-                width = widths.working_diff
-            ));
-        } else {
-            parts.push(" ".repeat(widths.working_diff));
-        }
-    }
-
-    // Branch diff (left-aligned in its column)
-    if widths.branch_diff > 0 {
+    // Branch diff (line diff in commits) - always reserve space if ANY row uses it
+    if layout.ideal_widths.branch_diff > 0 {
         if !info.is_primary {
             let (br_added, br_deleted) = info.branch_diff;
             if br_added > 0 || br_deleted > 0 {
-                parts.push(format!(
-                    "{:width$}",
-                    format!("(+{} -{})", br_added, br_deleted),
-                    width = widths.branch_diff
-                ));
+                // Build the diff as a mini styled line
+                let mut diff_segment = StyledLine::new();
+                diff_segment.push_styled(format!("+{}", br_added), green_style);
+                diff_segment.push_raw(" ");
+                diff_segment.push_styled(format!("-{}", br_deleted), red_style);
+                diff_segment.pad_to(layout.ideal_widths.branch_diff);
+                // Append all segments from diff_segment to main line
+                for segment in diff_segment.segments {
+                    line.push(segment);
+                }
             } else {
-                parts.push(" ".repeat(widths.branch_diff));
+                // No data for this row: pad with spaces
+                line.push_raw(" ".repeat(layout.ideal_widths.branch_diff));
             }
         } else {
-            parts.push(" ".repeat(widths.branch_diff));
+            // Primary row: pad with spaces
+            line.push_raw(" ".repeat(layout.ideal_widths.branch_diff));
         }
+        line.push_raw("  ");
     }
 
-    // States (left-aligned in its column)
-    if widths.states > 0 {
-        let states = format_states(info);
-        if !states.is_empty() {
-            parts.push(format!("{:width$}", states, width = widths.states));
+    // Working tree diff (line diff in working tree) - always reserve space if ANY row uses it
+    if layout.ideal_widths.working_diff > 0 {
+        let (wt_added, wt_deleted) = info.working_tree_diff;
+        if wt_added > 0 || wt_deleted > 0 {
+            // Build the diff as a mini styled line
+            let mut diff_segment = StyledLine::new();
+            diff_segment.push_styled(format!("+{}", wt_added), green_style);
+            diff_segment.push_raw(" ");
+            diff_segment.push_styled(format!("-{}", wt_deleted), red_style);
+            diff_segment.pad_to(layout.ideal_widths.working_diff);
+            // Append all segments from diff_segment to main line
+            for segment in diff_segment.segments {
+                line.push(segment);
+            }
         } else {
-            parts.push(" ".repeat(widths.states));
+            // No data for this row: pad with spaces
+            line.push_raw(" ".repeat(layout.ideal_widths.working_diff));
         }
+        line.push_raw("  ");
     }
 
-    // Path (no padding needed, it's the last column)
-    parts.push(info.path.display().to_string());
+    // Upstream tracking - always reserve space if ANY row uses it
+    if layout.ideal_widths.upstream > 0 {
+        if info.upstream_ahead > 0 || info.upstream_behind > 0 {
+            let remote_name = info.upstream_remote.as_deref().unwrap_or("origin");
+            // Build the upstream as a mini styled line
+            let mut upstream_segment = StyledLine::new();
+            upstream_segment.push_styled(remote_name, dim_style);
+            upstream_segment.push_raw(" ");
+            upstream_segment.push_styled(format!("↑{}", info.upstream_ahead), green_style);
+            upstream_segment.push_raw(" ");
+            upstream_segment.push_styled(format!("↓{}", info.upstream_behind), red_style);
+            upstream_segment.pad_to(layout.ideal_widths.upstream);
+            // Append all segments from upstream_segment to main line
+            for segment in upstream_segment.segments {
+                line.push(segment);
+            }
+        } else {
+            // No data for this row: pad with spaces
+            line.push_raw(" ".repeat(layout.ideal_widths.upstream));
+        }
+        line.push_raw("  ");
+    }
 
-    let line = parts.join("  ");
-
-    if info.is_primary {
-        println!(
-            "{}{}{}",
-            primary_style.render(),
-            line,
-            primary_style.render_reset()
-        );
+    // Commit (short HEAD, fixed width: 8 chars)
+    if let Some(style) = text_style {
+        line.push_styled(short_head, style);
     } else {
-        println!("{}", line);
+        line.push_raw(short_head);
     }
+    line.push_raw("  ");
+
+    // Message (left-aligned, truncated at word boundary)
+    if widths.message > 0 {
+        let msg = format!(
+            "{:width$}",
+            truncate_at_word_boundary(&info.commit_message, layout.max_message_len),
+            width = widths.message
+        );
+        line.push_styled(msg, dim_style);
+        line.push_raw("  ");
+    }
+
+    // States - always reserve space if ANY row uses it
+    if layout.ideal_widths.states > 0 {
+        let states = format_all_states(info);
+        if !states.is_empty() {
+            let states_text = format!("{:width$}", states, width = layout.ideal_widths.states);
+            line.push_raw(states_text);
+        } else {
+            // No data for this row: pad with spaces
+            line.push_raw(" ".repeat(layout.ideal_widths.states));
+        }
+        line.push_raw("  ");
+    }
+
+    // Path (no padding needed, it's the last column, use shortened path)
+    let path_str = shorten_path(&info.path, &layout.common_prefix);
+    if let Some(style) = text_style {
+        line.push_styled(path_str, style);
+    } else {
+        line.push_raw(path_str);
+    }
+
+    println!("{}", line.render());
 }
 
 fn print_worktree_info(path: &std::path::Path, command: &str) {
@@ -1215,6 +1846,319 @@ mod tests {
         assert_eq!(
             parse_completion_context(&args),
             CompletionContext::SwitchBranch
+        );
+    }
+
+    #[test]
+    fn test_styled_string_width() {
+        use crate::StyledString;
+
+        // ASCII strings
+        let s = StyledString::raw("hello");
+        assert_eq!(s.width(), 5);
+
+        // Unicode arrows
+        let s = StyledString::raw("↑3 ↓2");
+        assert_eq!(
+            s.width(),
+            5,
+            "↑3 ↓2 should have width 5, not {}",
+            s.text.len()
+        );
+
+        // Mixed Unicode
+        let s = StyledString::raw("日本語");
+        assert_eq!(s.width(), 6); // CJK characters are typically width 2
+
+        // Emoji
+        let s = StyledString::raw("🎉");
+        assert_eq!(s.width(), 2); // Emoji are typically width 2
+    }
+
+    #[test]
+    fn test_styled_line_width() {
+        use crate::StyledLine;
+
+        let mut line = StyledLine::new();
+        line.push_raw("Branch");
+        line.push_raw("  ");
+        line.push_raw("↑3 ↓2");
+
+        // "Branch" (6) + "  " (2) + "↑3 ↓2" (5) = 13
+        assert_eq!(line.width(), 13, "Line width should be 13");
+    }
+
+    #[test]
+    fn test_styled_line_padding() {
+        use crate::StyledLine;
+
+        let mut line = StyledLine::new();
+        line.push_raw("test");
+        assert_eq!(line.width(), 4);
+
+        line.pad_to(10);
+        assert_eq!(line.width(), 10, "After padding to 10, width should be 10");
+
+        // Padding when already at target should not change width
+        line.pad_to(10);
+        assert_eq!(line.width(), 10, "Padding again should not change width");
+    }
+
+    #[test]
+    fn test_column_width_calculation_with_unicode() {
+        use crate::{WorktreeInfo, calculate_column_widths};
+        use std::path::PathBuf;
+
+        let info1 = WorktreeInfo {
+            path: PathBuf::from("/test"),
+            head: "abc123".to_string(),
+            branch: Some("main".to_string()),
+            timestamp: 0,
+            commit_message: "Test".to_string(),
+            ahead: 3,
+            behind: 2,
+            working_tree_diff: (100, 50),
+            branch_diff: (200, 30),
+            is_primary: false,
+            is_current: false,
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            upstream_remote: Some("origin".to_string()),
+            upstream_ahead: 4,
+            upstream_behind: 0,
+            worktree_state: None,
+        };
+
+        let widths = calculate_column_widths(&[info1]);
+
+        // "↑3 ↓2" has visual width 5 (not 9 bytes)
+        assert_eq!(widths.ahead_behind, 5, "↑3 ↓2 should have width 5");
+
+        // "+100 -50" has width 8
+        assert_eq!(widths.working_diff, 8, "+100 -50 should have width 8");
+
+        // "+200 -30" has width 8
+        assert_eq!(widths.branch_diff, 8, "+200 -30 should have width 8");
+
+        // "origin ↑4 ↓0" has visual width 12 (not more due to Unicode arrows)
+        assert_eq!(widths.upstream, 12, "origin ↑4 ↓0 should have width 12");
+    }
+
+    #[test]
+    fn test_column_alignment_with_all_columns() {
+        use crate::{
+            ColumnWidths, LayoutConfig, StyledLine, WorktreeInfo, format_all_states, shorten_path,
+        };
+        use std::path::PathBuf;
+
+        // Create test data with all columns populated
+        let info = WorktreeInfo {
+            path: PathBuf::from("/test/path"),
+            head: "abc12345".to_string(),
+            branch: Some("test-branch".to_string()),
+            timestamp: 0,
+            commit_message: "Test message".to_string(),
+            ahead: 3,
+            behind: 2,
+            working_tree_diff: (100, 50),
+            branch_diff: (200, 30),
+            is_primary: false,
+            is_current: false,
+            detached: false,
+            bare: false,
+            locked: Some("test lck".to_string()), // "(locked: test lck)" = 18 chars
+            prunable: None,
+            upstream_remote: Some("origin".to_string()),
+            upstream_ahead: 4,
+            upstream_behind: 0,
+            worktree_state: None,
+        };
+
+        let layout = LayoutConfig {
+            widths: ColumnWidths {
+                branch: 11,
+                time: 13,
+                message: 12,
+                ahead_behind: 5,
+                working_diff: 8,
+                branch_diff: 8,
+                upstream: 12,
+                states: 18,
+            },
+            ideal_widths: ColumnWidths {
+                branch: 11,
+                time: 13,
+                message: 12,
+                ahead_behind: 5,
+                working_diff: 8,
+                branch_diff: 8,
+                upstream: 12,
+                states: 18,
+            },
+            common_prefix: PathBuf::from("/test"),
+            max_message_len: 12,
+        };
+
+        // Build header line manually (mimicking format_header_line logic)
+        let mut header = StyledLine::new();
+        header.push_raw(format!("{:width$}", "Branch", width = layout.widths.branch));
+        header.push_raw("  ");
+        header.push_raw(format!("{:width$}", "Age", width = layout.widths.time));
+        header.push_raw("  ");
+        header.push_raw(format!(
+            "{:width$}",
+            "Cmts",
+            width = layout.ideal_widths.ahead_behind
+        ));
+        header.push_raw("  ");
+        header.push_raw(format!(
+            "{:width$}",
+            "Cmt +/-",
+            width = layout.ideal_widths.branch_diff
+        ));
+        header.push_raw("  ");
+        header.push_raw(format!(
+            "{:width$}",
+            "WT +/-",
+            width = layout.ideal_widths.working_diff
+        ));
+        header.push_raw("  ");
+        header.push_raw(format!(
+            "{:width$}",
+            "Remote",
+            width = layout.ideal_widths.upstream
+        ));
+        header.push_raw("  ");
+        header.push_raw("Commit  ");
+        header.push_raw("  ");
+        header.push_raw(format!(
+            "{:width$}",
+            "Message",
+            width = layout.widths.message
+        ));
+        header.push_raw("  ");
+        header.push_raw(format!(
+            "{:width$}",
+            "State",
+            width = layout.ideal_widths.states
+        ));
+        header.push_raw("  ");
+        header.push_raw("Path");
+
+        // Build data line manually (mimicking format_worktree_line logic)
+        let mut data = StyledLine::new();
+        data.push_raw(format!(
+            "{:width$}",
+            "test-branch",
+            width = layout.widths.branch
+        ));
+        data.push_raw("  ");
+        data.push_raw(format!(
+            "{:width$}",
+            "9 months ago",
+            width = layout.widths.time
+        ));
+        data.push_raw("  ");
+        // Ahead/behind
+        let ahead_behind_text = format!(
+            "{:width$}",
+            "↑3 ↓2",
+            width = layout.ideal_widths.ahead_behind
+        );
+        data.push_raw(ahead_behind_text);
+        data.push_raw("  ");
+        // Branch diff
+        let mut branch_diff_segment = StyledLine::new();
+        branch_diff_segment.push_raw("+200 -30");
+        branch_diff_segment.pad_to(layout.ideal_widths.branch_diff);
+        for seg in branch_diff_segment.segments {
+            data.push(seg);
+        }
+        data.push_raw("  ");
+        // Working diff
+        let mut working_diff_segment = StyledLine::new();
+        working_diff_segment.push_raw("+100 -50");
+        working_diff_segment.pad_to(layout.ideal_widths.working_diff);
+        for seg in working_diff_segment.segments {
+            data.push(seg);
+        }
+        data.push_raw("  ");
+        // Upstream
+        let mut upstream_segment = StyledLine::new();
+        upstream_segment.push_raw("origin ↑4 ↓0");
+        upstream_segment.pad_to(layout.ideal_widths.upstream);
+        for seg in upstream_segment.segments {
+            data.push(seg);
+        }
+        data.push_raw("  ");
+        // Commit (fixed 8 chars)
+        data.push_raw("abc12345");
+        data.push_raw("  ");
+        // Message
+        data.push_raw(format!(
+            "{:width$}",
+            "Test message",
+            width = layout.widths.message
+        ));
+        data.push_raw("  ");
+        // State
+        let states = format_all_states(&info);
+        data.push_raw(format!(
+            "{:width$}",
+            states,
+            width = layout.ideal_widths.states
+        ));
+        data.push_raw("  ");
+        // Path
+        data.push_raw(shorten_path(&info.path, &layout.common_prefix));
+
+        // Verify both lines have columns at the same positions
+        // We'll check this by verifying specific column start positions
+        let header_str = header.render();
+        let data_str = data.render();
+
+        // Remove ANSI codes for position checking (our test data doesn't have styles anyway)
+        assert!(header_str.contains("Branch"));
+        assert!(data_str.contains("test-branch"));
+
+        // The key test: both lines should have the same visual width up to "Path" column
+        // (Path is variable width, so we only check up to there)
+        let header_width_without_path = header.width() - "Path".len();
+        let data_width_without_path =
+            data.width() - shorten_path(&info.path, &layout.common_prefix).len();
+
+        assert_eq!(
+            header_width_without_path, data_width_without_path,
+            "Header and data rows should have same width before Path column"
+        );
+    }
+
+    #[test]
+    fn test_sparse_column_padding() {
+        use crate::StyledLine;
+
+        // Build simplified lines to test sparse column padding
+        let mut line1 = StyledLine::new();
+        line1.push_raw(format!("{:8}", "branch-a"));
+        line1.push_raw("  ");
+        // Has ahead/behind
+        line1.push_raw(format!("{:5}", "↑3 ↓2"));
+        line1.push_raw("  ");
+
+        let mut line2 = StyledLine::new();
+        line2.push_raw(format!("{:8}", "branch-b"));
+        line2.push_raw("  ");
+        // No ahead/behind, should pad with spaces
+        line2.push_raw(" ".repeat(5));
+        line2.push_raw("  ");
+
+        // Both lines should have same width up to this point
+        assert_eq!(
+            line1.width(),
+            line2.width(),
+            "Rows with and without sparse column data should have same width"
         );
     }
 }

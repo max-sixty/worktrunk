@@ -5,6 +5,7 @@ info:
   args:
     - list
   env:
+    CLICOLOR_FORCE: "1"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
@@ -17,7 +18,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[36mmain              [SHA]            [REPO][0m
-locked-no-reason  [SHA]  (locked)  [WORKTREE_LOCKED_NO_REASON]
+[2mBranch          [0m  [2mAge         [0m  [2mCommit  [0m  [2mState   [0m  [2mPath[0m
+[1m[35mmain            [0m  [2m9 months ago[0m  [1m[35mb834638e[0m            [1m[35m./main[0m
+locked-no-reason  [2m9 months ago[0m  [SHA]     (locked)  ./locked-no-reason
 
 ----- stderr -----
