@@ -26,4 +26,4 @@ To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----
 Executing: exit 1
-Warning: Command failed: Command 'exit 1' failed with exit code 1
+🟡 [33mCommand failed: Command 'exit 1' failed with exit code 1[0m

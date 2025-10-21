@@ -22,31 +22,36 @@ Three canonical message patterns with their emojis:
 
 ### Semantic Style Constants
 
-**Constants defined in `src/styling.rs`:**
+**Style constants defined in `src/styling.rs`:**
 
 - **`ERROR`**: Red (errors, conflicts)
 - **`WARNING`**: Yellow (warnings)
-- **`SUCCESS`**: Green (success)
 - **`HINT`**: Dimmed (hints, secondary information)
 - **`CURRENT`**: Magenta + bold (current worktree)
 - **`ADDITION`**: Green (diffs, additions)
 - **`DELETION`**: Red (diffs, deletions)
+
+**Emoji constants:**
+
+- **`ERROR_EMOJI`**: ❌ (use with ERROR style)
+- **`WARNING_EMOJI`**: 🟡 (use with WARNING style)
+- **`HINT_EMOJI`**: 💡 (use with HINT style)
 
 ### Inline Formatting Pattern
 
 Use anstyle's inline pattern `{style}text{style:#}` where `#` means reset:
 
 ```rust
-use worktrunk::styling::{eprintln, ERROR, WARNING, HINT};
+use worktrunk::styling::{eprintln, println, ERROR, ERROR_EMOJI, WARNING, WARNING_EMOJI, HINT, HINT_EMOJI};
 
 // Simple error
-eprintln!("❌ {ERROR}Working tree has uncommitted changes{ERROR:#}");
+eprintln!("{ERROR_EMOJI} {ERROR}Working tree has uncommitted changes{ERROR:#}");
 
 // Warning
-eprintln!("🟡 {WARNING}Uncommitted changes detected{WARNING:#}");
+eprintln!("{WARNING_EMOJI} {WARNING}Uncommitted changes detected{WARNING:#}");
 
 // Hint
-println!("💡 {HINT}Use 'wt list' to see all worktrees{HINT:#}");
+println!("{HINT_EMOJI} {HINT}Use 'wt list' to see all worktrees{HINT:#}");
 ```
 
 ### Composing Styles
@@ -110,25 +115,25 @@ All handled automatically by `anstream` macros.
 ### Complete Examples
 
 ```rust
-use worktrunk::styling::{println, eprintln, AnstyleStyle, ERROR, WARNING, HINT, SUCCESS};
+use worktrunk::styling::{
+    eprintln, println, AnstyleStyle,
+    ERROR, ERROR_EMOJI, WARNING, WARNING_EMOJI, HINT, HINT_EMOJI
+};
 use anstyle::Style;
 
 // Simple error
-eprintln!("❌ {ERROR}Working tree has uncommitted changes{ERROR:#}");
+eprintln!("{ERROR_EMOJI} {ERROR}Working tree has uncommitted changes{ERROR:#}");
 
 // Error with bold branch name
 let error_bold = ERROR.bold();
-eprintln!("❌ Branch '{error_bold}{branch}{error_bold:#}' already exists");
+eprintln!("{ERROR_EMOJI} Branch '{error_bold}{branch}{error_bold:#}' already exists");
 
 // Warning with bold
 let warning_bold = WARNING.bold();
-eprintln!("🟡 {warning_bold}Uncommitted changes detected{warning_bold:#}");
+eprintln!("{WARNING_EMOJI} {warning_bold}Uncommitted changes detected{warning_bold:#}");
 
 // Hint
-println!("💡 {HINT}Use 'wt list' to see all worktrees{HINT:#}");
-
-// Success message
-println!("✅ {SUCCESS}Worktree created successfully{SUCCESS:#}");
+println!("{HINT_EMOJI} {HINT}Use 'wt list' to see all worktrees{HINT:#}");
 
 // Bold branch name in regular message
 let bold = Style::new().bold();
@@ -136,7 +141,7 @@ println!("Switched to worktree: {bold}{branch}{bold:#}");
 
 // Complex multi-part error
 let error_bold = ERROR.bold();
-eprintln!("❌ Not a fast-forward from '{error_bold}{target_branch}{error_bold:#}' to HEAD");
+eprintln!("{ERROR_EMOJI} Not a fast-forward from '{error_bold}{target_branch}{error_bold:#}' to HEAD");
 
 // Dimmed secondary info
 let dim = Style::new().dimmed();

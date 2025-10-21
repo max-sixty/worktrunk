@@ -38,14 +38,24 @@ pub use anstyle::Style as AnstyleStyle;
 /// Error style (red) - use as `{ERROR}text{ERROR:#}`
 pub const ERROR: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
 
+// ============================================================================
+// Message Emojis
+// ============================================================================
+
+/// Error emoji - use with ERROR style: `eprintln!("{ERROR_EMOJI} {ERROR}message{ERROR:#}");`
+pub const ERROR_EMOJI: &str = "❌";
+
+/// Warning emoji - use with WARNING style: `eprintln!("{WARNING_EMOJI} {WARNING}message{WARNING:#}");`
+pub const WARNING_EMOJI: &str = "🟡";
+
+/// Hint emoji - use with HINT style: `println!("{HINT_EMOJI} {HINT}message{HINT:#}");`
+pub const HINT_EMOJI: &str = "💡";
+
 /// Warning style (yellow) - use as `{WARNING}text{WARNING:#}`
 pub const WARNING: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
 
 /// Hint style (dimmed) - use as `{HINT}text{HINT:#}`
 pub const HINT: Style = Style::new().dimmed();
-
-/// Success style (green) - use as `{SUCCESS}text{SUCCESS:#}`
-pub const SUCCESS: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
 
 /// Current worktree style (magenta + bold)
 pub const CURRENT: Style = Style::new()

@@ -25,7 +25,7 @@ Created new branch and worktree for [1mfeature[0m at [REPO].feature
 To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----
-Warning: Failed to load project config from [REPO]/.config/wt.toml
+🟡 [33mFailed to load project config from [REPO]/.config/wt.toml[0m
 Error: TOML parse error at line 1, column 39
   |
 1 | post-start-commands = [invalid syntax

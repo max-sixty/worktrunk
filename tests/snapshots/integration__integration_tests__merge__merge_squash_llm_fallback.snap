@@ -34,4 +34,4 @@ Path: [REPO]
 To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----
-Warning: LLM generation failed, using deterministic message
+🟡 [33mLLM generation failed, using deterministic message[0m

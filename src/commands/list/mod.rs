@@ -6,7 +6,7 @@ mod spacing_test;
 
 use rayon::prelude::*;
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{WARNING, eprintln};
+use worktrunk::styling::{WARNING, WARNING_EMOJI, eprintln};
 
 use layout::calculate_responsive_layout;
 use render::{format_header_line, format_list_item_line};
@@ -325,7 +325,7 @@ pub fn handle_list(format: crate::OutputFormat, show_branches: bool) -> Result<(
                 Err(e) => {
                     let warning_bold = WARNING.bold();
                     eprintln!(
-                        "🟡 Failed to enrich branch {warning_bold}{branch}{warning_bold:#}: {e}"
+                        "{WARNING_EMOJI} Failed to enrich branch {warning_bold}{branch}{warning_bold:#}: {e}"
                     );
                 }
             }

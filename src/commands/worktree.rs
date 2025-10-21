@@ -72,7 +72,9 @@ use std::path::PathBuf;
 use worktrunk::config::{ProjectConfig, WorktrunkConfig, expand_template};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::shell::Shell;
-use worktrunk::styling::{AnstyleStyle, ERROR, HINT, WARNING, eprintln, println};
+use worktrunk::styling::{
+    AnstyleStyle, ERROR, ERROR_EMOJI, HINT, HINT_EMOJI, WARNING, WARNING_EMOJI, eprintln, println,
+};
 
 /// Generate hint message for shell integration setup
 ///
@@ -206,13 +208,15 @@ pub fn handle_switch(
     if create && repo.branch_exists(branch)? {
         let error_bold = ERROR.bold();
         return Err(GitError::CommandFailed(format!(
-            "❌ Branch '{error_bold}{branch}{error_bold:#}' already exists. Remove --create flag to switch to it."
+            "{ERROR_EMOJI} Branch '{error_bold}{branch}{error_bold:#}' already exists. Remove --create flag to switch to it."
         )));
     }
 
     // Check if base flag was provided without create flag
     if base.is_some() && !create {
-        eprintln!("🟡 {WARNING}--base flag is only used with --create, ignoring{WARNING:#}");
+        eprintln!(
+            "{WARNING_EMOJI} {WARNING}--base flag is only used with --create, ignoring{WARNING:#}"
+        );
     }
 
     // Check if worktree already exists for this branch
@@ -228,7 +232,7 @@ pub fn handle_switch(
         Some(_) => {
             let error_bold = ERROR.bold();
             return Err(GitError::CommandFailed(format!(
-                "❌ Worktree directory missing for '{error_bold}{branch}{error_bold:#}'. Run 'git worktree prune' to clean up."
+                "{ERROR_EMOJI} Worktree directory missing for '{error_bold}{branch}{error_bold:#}'. Run 'git worktree prune' to clean up."
             )));
         }
         None => {}
@@ -330,7 +334,7 @@ pub fn handle_remove() -> Result<RemoveResult, GitError> {
 
         // Remove the worktree
         if let Err(e) = repo.remove_worktree(&worktree_root) {
-            eprintln!("🟡 {WARNING}Failed to remove worktree: {e}{WARNING:#}");
+            eprintln!("{WARNING_EMOJI} {WARNING}Failed to remove worktree: {e}{WARNING:#}");
             eprintln!(
                 "You may need to run 'git worktree remove {}' manually",
                 worktree_root.display()
@@ -394,7 +398,7 @@ fn check_worktree_conflicts(
         .collect();
 
     if !overlapping.is_empty() {
-        eprintln!("❌ {ERROR}Cannot push: conflicting uncommitted changes in:{ERROR:#}");
+        eprintln!("{ERROR_EMOJI} {ERROR}Cannot push: conflicting uncommitted changes in:{ERROR:#}");
         for file in &overlapping {
             eprintln!("  - {}", file);
         }
@@ -431,11 +435,13 @@ fn expand_command_template(
 /// Prompt the user to approve a command for execution
 fn prompt_for_approval(command: &str, project_id: &str) -> io::Result<bool> {
     eprintln!();
-    eprintln!("⚠️  Project '{}' wants to run a command:", project_id);
+    eprintln!("{WARNING_EMOJI} {WARNING}Project '{project_id}' wants to run a command:{WARNING:#}");
     eprintln!();
     eprintln!("    {}", command);
     eprintln!();
-    eprintln!("⚠️  WARNING: This will execute with FULL SHELL ACCESS in the new worktree.");
+    eprintln!(
+        "{WARNING_EMOJI} {WARNING}WARNING: This will execute with FULL SHELL ACCESS in the new worktree.{WARNING:#}"
+    );
     eprintln!("   The command can read/write files, access network, run arbitrary code.");
     eprintln!();
     eprint!("Approve and remember for this project? [y/N] ");
@@ -464,7 +470,7 @@ fn execute_post_start_commands(
         Ok(None) => return Ok(()), // No project config
         Err(e) => {
             eprintln!(
-                "Warning: Failed to load project config from {}",
+                "{WARNING_EMOJI} {WARNING}Failed to load project config from {}{WARNING:#}",
                 config_path.display()
             );
             eprintln!("Error: {}", e);
@@ -495,14 +501,15 @@ fn execute_post_start_commands(
                             if let Err(e) =
                                 fresh_config.approve_command(project_id.clone(), command.clone())
                             {
-                                eprintln!("Warning: Failed to save command approval: {}", e);
+                                eprintln!(
+                                    "{WARNING_EMOJI} {WARNING}Failed to save command approval: {e}{WARNING:#}"
+                                );
                                 eprintln!("You will be prompted again next time.");
                             }
                         }
                         Err(e) => {
                             eprintln!(
-                                "Warning: Failed to reload config for saving approval: {}",
-                                e
+                                "{WARNING_EMOJI} {WARNING}Failed to reload config for saving approval: {e}{WARNING:#}"
                             );
                             eprintln!("You will be prompted again next time.");
                         }
@@ -514,7 +521,7 @@ fn execute_post_start_commands(
                     false
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to read user input: {}", e);
+                    eprintln!("{WARNING_EMOJI} {WARNING}Failed to read user input: {e}{WARNING:#}");
                     false
                 }
             }
@@ -527,7 +534,7 @@ fn execute_post_start_commands(
 
             eprintln!("Executing: {}", expanded_command);
             if let Err(e) = execute_command_in_worktree(worktree_path, &expanded_command) {
-                eprintln!("Warning: Command failed: {}", e);
+                eprintln!("{WARNING_EMOJI} {WARNING}Command failed: {e}{WARNING:#}");
                 // Continue with other commands even if one fails
             }
         }
@@ -546,10 +553,10 @@ pub fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<()
     if !repo.is_ancestor(&target_branch, "HEAD")? {
         let error_bold = ERROR.bold();
         let error_msg = format!(
-            "❌ Not a fast-forward from '{error_bold}{target_branch}{error_bold:#}' to HEAD"
+            "{ERROR_EMOJI} Not a fast-forward from '{error_bold}{target_branch}{error_bold:#}' to HEAD"
         );
         let hint_msg = format!(
-            "💡 {HINT}The target branch has commits not in your current branch. Consider 'git pull' or 'git rebase'{HINT:#}"
+            "{HINT_EMOJI} {HINT}The target branch has commits not in your current branch. Consider 'git pull' or 'git rebase'{HINT:#}"
         );
         return Err(GitError::CommandFailed(format!(
             "{}\n{}",
@@ -560,7 +567,7 @@ pub fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<()
     // Check for merge commits unless allowed
     if !allow_merge_commits && repo.has_merge_commits(&target_branch, "HEAD")? {
         return Err(GitError::CommandFailed(format!(
-            "❌ {ERROR}Found merge commits in push range. Use --allow-merge-commits to push non-linear history.{ERROR:#}"
+            "{ERROR_EMOJI} {ERROR}Found merge commits in push range. Use --allow-merge-commits to push non-linear history.{ERROR:#}"
         )));
     }
 

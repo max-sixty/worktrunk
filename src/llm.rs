@@ -1,5 +1,6 @@
 use std::process;
 use worktrunk::config::LlmConfig;
+use worktrunk::styling::{WARNING, WARNING_EMOJI, eprintln};
 
 pub fn generate_squash_message(
     target_branch: &str,
@@ -14,7 +15,9 @@ pub fn generate_squash_message(
             return llm_message;
         }
         // If LLM fails, fall through to deterministic approach
-        eprintln!("Warning: LLM generation failed, using deterministic message");
+        eprintln!(
+            "{WARNING_EMOJI} {WARNING}LLM generation failed, using deterministic message{WARNING:#}"
+        );
     }
 
     // Fallback: deterministic commit message

@@ -25,8 +25,8 @@ impl std::fmt::Display for GitError {
             GitError::CommandFailed(msg) => write!(f, "{}", msg),
             // ParseError messages need formatting
             GitError::ParseError(msg) => {
-                use crate::styling::ERROR;
-                write!(f, "❌ {ERROR}{msg}{ERROR:#}")
+                use crate::styling::{ERROR, ERROR_EMOJI};
+                write!(f, "{ERROR_EMOJI} {ERROR}{msg}{ERROR:#}")
             }
         }
     }
@@ -183,9 +183,9 @@ impl Repository {
     /// Returns an error if there are uncommitted changes.
     pub fn ensure_clean_working_tree(&self) -> Result<(), GitError> {
         if self.is_dirty()? {
-            use crate::styling::ERROR;
+            use crate::styling::{ERROR, ERROR_EMOJI};
             return Err(GitError::CommandFailed(format!(
-                "❌ {ERROR}Working tree has uncommitted changes. Commit or stash them first.{ERROR:#}"
+                "{ERROR_EMOJI} {ERROR}Working tree has uncommitted changes. Commit or stash them first.{ERROR:#}"
             )));
         }
         Ok(())

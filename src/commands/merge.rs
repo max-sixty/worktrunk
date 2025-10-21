@@ -1,6 +1,6 @@
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{AnstyleStyle, ERROR, println};
+use worktrunk::styling::{AnstyleStyle, ERROR, ERROR_EMOJI, println};
 
 use super::worktree::handle_push;
 use super::worktree::handle_remove;
@@ -16,7 +16,7 @@ pub fn handle_merge(
     // Get current branch
     let current_branch = repo.current_branch()?.ok_or_else(|| {
         GitError::CommandFailed(format!(
-            "❌ {ERROR}Not on a branch (detached HEAD){ERROR:#}"
+            "{ERROR_EMOJI} {ERROR}Not on a branch (detached HEAD){ERROR:#}"
         ))
     })?;
 
@@ -113,7 +113,7 @@ fn handle_squash(target_branch: &str) -> Result<(), GitError> {
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - would need to commit but this shouldn't happen in merge flow
         return Err(GitError::CommandFailed(format!(
-            "❌ {ERROR}Staged changes without commits - please commit them first{ERROR:#}"
+            "{ERROR_EMOJI} {ERROR}Staged changes without commits - please commit them first{ERROR:#}"
         )));
     }
 
