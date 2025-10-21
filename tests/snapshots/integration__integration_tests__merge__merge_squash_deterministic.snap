@@ -29,7 +29,8 @@ Successfully pushed to 'main'
 Cleaning up worktree...
 Moved to primary worktree and removed worktree
 Path: [REPO]
-Note: Use 'wt remove' (with shell integration) for automatic cd
+
+To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----
 Warning: LLM generation failed, using deterministic message

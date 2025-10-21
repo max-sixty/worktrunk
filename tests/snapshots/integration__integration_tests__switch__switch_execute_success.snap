@@ -24,6 +24,7 @@ exit_code: 0
 ----- stdout -----
 test output
 Created new branch and worktree for 'exec-test' at [REPO].exec-test
-Note: Use 'wt switch' (with shell integration) for automatic cd
+
+To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----

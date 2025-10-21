@@ -32,7 +32,7 @@ fn _wt_exec {|@args|
     }
 }
 
-# Override {{ cmd_prefix }} command to add --internal flag for switch and finish
+# Override {{ cmd_prefix }} command to add --internal flag for switch, remove, and merge
 fn {{ cmd_prefix }} {|@args|
     if (== (count $args) 0) {
         e:wt
@@ -41,7 +41,7 @@ fn {{ cmd_prefix }} {|@args|
 
     var subcommand = $args[0]
 
-    if (or (eq $subcommand "switch") (eq $subcommand "finish")) {
+    if (or (eq $subcommand "switch") (eq $subcommand "remove") (eq $subcommand "merge")) {
         # Commands that need --internal for directory change support
         var rest-args = $args[1..]
         _wt_exec $subcommand --internal $@rest-args

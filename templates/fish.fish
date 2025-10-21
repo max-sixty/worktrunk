@@ -19,12 +19,12 @@ function _wt_exec
     return $exit_code
 end
 
-# Override {{ cmd_prefix }} command to add --internal flag for switch and remove
+# Override {{ cmd_prefix }} command to add --internal flag for switch, remove, and merge
 function {{ cmd_prefix }}
     set -l subcommand $argv[1]
 
     switch $subcommand
-        case switch remove
+        case switch remove merge
             # Commands that need --internal for directory change support
             _wt_exec $subcommand --internal $argv[2..-1]
         case '*'

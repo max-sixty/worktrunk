@@ -5,6 +5,7 @@ info:
   args:
     - merge
   env:
+    CLICOLOR_FORCE: "1"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
@@ -24,6 +25,7 @@ Successfully pushed to 'main'
 Cleaning up worktree...
 Moved to primary worktree and removed worktree
 Path: [REPO]
-Note: Use 'wt remove' (with shell integration) for automatic cd
+
+To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----

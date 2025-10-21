@@ -5,7 +5,12 @@ use worktrunk::styling::format_error;
 use super::worktree::handle_push;
 use super::worktree::handle_remove;
 
-pub fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<(), GitError> {
+pub fn handle_merge(
+    target: Option<&str>,
+    squash: bool,
+    keep: bool,
+    internal: bool,
+) -> Result<(), GitError> {
     let repo = Repository::current();
 
     // Get current branch
@@ -50,8 +55,12 @@ pub fn handle_merge(target: Option<&str>, squash: bool, keep: bool) -> Result<()
 
         let result = handle_remove()?;
 
-        // Display user-facing output
-        if let Some(output) = result.format_user_output() {
+        // Display output based on mode
+        if internal {
+            if let Some(output) = result.format_internal_output() {
+                println!("{}", output);
+            }
+        } else if let Some(output) = result.format_user_output() {
             println!("{}", output);
         }
 

@@ -34,7 +34,7 @@ impl SwitchResult {
                     )
                 };
                 Some(format!(
-                    "{}\nNote: Use 'wt switch' (with shell integration) for automatic cd",
+                    "{}\n\nTo enable automatic cd, run: wt configure-shell",
                     msg
                 ))
             }
@@ -85,7 +85,7 @@ impl RemoveResult {
                 Some(format!("Already on default branch '{}'", branch))
             }
             RemoveResult::RemovedWorktree { primary_path } => Some(format!(
-                "Moved to primary worktree and removed worktree\nPath: {}\nNote: Use 'wt remove' (with shell integration) for automatic cd",
+                "Moved to primary worktree and removed worktree\nPath: {}\n\nTo enable automatic cd, run: wt configure-shell",
                 primary_path.display()
             )),
             RemoveResult::SwitchedToDefault(branch) => {

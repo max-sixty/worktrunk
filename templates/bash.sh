@@ -20,12 +20,12 @@ _wt_exec() {
     return $exit_code
 }
 
-# Override {{ cmd_prefix }} command to add --internal flag for switch and remove
+# Override {{ cmd_prefix }} command to add --internal flag for switch, remove, and merge
 {{ cmd_prefix }}() {
     local subcommand="$1"
 
     case "$subcommand" in
-        switch|remove)
+        switch|remove|merge)
             # Commands that need --internal for directory change support
             shift
             _wt_exec "$subcommand" --internal "$@"

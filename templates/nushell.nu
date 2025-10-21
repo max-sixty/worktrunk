@@ -21,13 +21,13 @@ export def --env _wt_exec [...args] {
     return $result.exit_code
 }
 
-# Override {{ cmd_prefix }} command to add --internal flag for switch and finish
+# Override {{ cmd_prefix }} command to add --internal flag for switch, remove, and merge
 # Use --wrapped to pass through all flags without parsing them
 export def --env --wrapped {{ cmd_prefix }} [...rest] {
     let subcommand = ($rest | get 0? | default "")
 
     match $subcommand {
-        "switch" | "finish" => {
+        "switch" | "remove" | "merge" => {
             # Commands that need --internal for directory change support
             let rest_args = ($rest | skip 1)
             let internal_args = ([$subcommand, "--internal"] | append $rest_args)

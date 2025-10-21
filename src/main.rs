@@ -119,6 +119,10 @@ enum Commands {
         /// Keep worktree after merging (don't remove)
         #[arg(short, long)]
         keep: bool,
+
+        /// Use internal mode (outputs directives for shell wrapper)
+        #[arg(long, hide = true)]
+        internal: bool,
     },
 
     /// Generate shell completion script (deprecated - use init instead)
@@ -215,7 +219,8 @@ fn main() {
             target,
             squash,
             keep,
-        } => handle_merge(target.as_deref(), squash, keep),
+            internal,
+        } => handle_merge(target.as_deref(), squash, keep, internal),
         Commands::Completion { shell } => {
             let mut cli_cmd = Cli::command();
             handle_completion(shell, &mut cli_cmd);

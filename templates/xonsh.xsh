@@ -20,7 +20,7 @@ def _wt_exec(args):
     return result.returncode
 
 def _{{ cmd_prefix }}_wrapper(args):
-    """Override {{ cmd_prefix }} command to add --internal flag for switch and finish"""
+    """Override {{ cmd_prefix }} command to add --internal flag for switch, remove, and merge"""
     if not args:
         # No arguments, just run wt
         wt
@@ -28,7 +28,7 @@ def _{{ cmd_prefix }}_wrapper(args):
 
     subcommand = args[0]
 
-    if subcommand in ["switch", "finish"]:
+    if subcommand in ["switch", "remove", "merge"]:
         # Commands that need --internal for directory change support
         rest_args = args[1:]
         return _wt_exec([subcommand, "--internal"] + rest_args)

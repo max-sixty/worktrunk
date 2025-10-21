@@ -26,7 +26,7 @@ function _wt_exec {
     return $exitCode
 }
 
-# Override {{ cmd_prefix }} command to add --internal flag for switch and finish
+# Override {{ cmd_prefix }} command to add --internal flag for switch, remove, and merge
 function {{ cmd_prefix }} {
     param(
         [Parameter(ValueFromRemainingArguments=$true)]
@@ -41,7 +41,7 @@ function {{ cmd_prefix }} {
     $subcommand = $Arguments[0]
 
     switch ($subcommand) {
-        { $_ -in @("switch", "finish") } {
+        { $_ -in @("switch", "remove", "merge") } {
             # Commands that need --internal for directory change support
             $restArgs = $Arguments[1..($Arguments.Count-1)]
             $exitCode = _wt_exec $subcommand --internal @restArgs
