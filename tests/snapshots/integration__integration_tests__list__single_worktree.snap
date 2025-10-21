@@ -18,7 +18,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2mBranch[0m  [2mAge         [0m  [2mCmts[0m  [2mCmt +/-[0m  [2mWT +/-[0m  [2mRemote[0m  [2mCommit  [0m  [2mMessage       [0m  [2mState[0m  [2mPath[0m
-[1m[35mmain  [0m  [2m9 months ago[0m                                 [1m[35mb834638e[0m  [2mInitial commit[0m         [1m[35m.[0m
+[2mBranch[0m  [2mAge         [0m  [2mCommit  [0m  [2mMessage       [0m  [2mPath[0m
+[1m[35mmain  [0m  [2m9 months ago[0m  [1m[35mb834638e[0m  [2mInitial commit[0m  [1m[35m.[0m
 
 ----- stderr -----

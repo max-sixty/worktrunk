@@ -112,6 +112,14 @@ pub fn truncate_at_word_boundary(text: &str, max_width: usize) -> String {
 
 /// Get terminal width, defaulting to 80 if detection fails
 pub fn get_terminal_width() -> usize {
+    // Check COLUMNS environment variable first (for testing and scripts)
+    if let Ok(cols) = std::env::var("COLUMNS")
+        && let Ok(width) = cols.parse::<usize>()
+    {
+        return width;
+    }
+
+    // Fall back to actual terminal size
     terminal_size::terminal_size()
         .map(|(terminal_size::Width(w), _)| w as usize)
         .unwrap_or(80)

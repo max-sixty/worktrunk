@@ -90,3 +90,64 @@ fn test_mixed_length_branch_names() {
 
     snapshot_list("mixed_length_branch_names", &repo);
 }
+
+/// Helper for testing with specific terminal width
+fn snapshot_list_with_width(test_name: &str, repo: &TestRepo, width: usize) {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    // Normalize paths
+    settings.add_filter(repo.root_path().to_str().unwrap(), "[REPO]");
+    for (name, path) in &repo.worktrees {
+        settings.add_filter(
+            path.to_str().unwrap(),
+            format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
+        );
+    }
+
+    // Normalize git SHAs
+    settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]   ");
+    settings.add_filter(r"\\", "/");
+
+    settings.bind(|| {
+        let mut cmd = Command::new(get_cargo_bin("wt"));
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("list")
+            .current_dir(repo.root_path())
+            .env("COLUMNS", width.to_string());
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+#[test]
+fn test_terminal_width_80_drops_message() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit with a reasonably long message");
+
+    repo.add_worktree("feature-a", "feature-a");
+    repo.add_worktree("feature-b", "feature-b");
+
+    snapshot_list_with_width("terminal_width_80", &repo, 80);
+}
+
+#[test]
+fn test_terminal_width_120_shows_message() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit with a reasonably long message");
+
+    repo.add_worktree("feature-a", "feature-a");
+    repo.add_worktree("feature-b", "feature-b");
+
+    snapshot_list_with_width("terminal_width_120", &repo, 120);
+}
+
+#[test]
+fn test_terminal_width_150_shows_all_columns() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit with a reasonably long message");
+
+    repo.add_worktree("feature-a", "feature-a");
+    repo.add_worktree("feature-b", "feature-b");
+
+    snapshot_list_with_width("terminal_width_150", &repo, 150);
+}

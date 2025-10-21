@@ -1,0 +1,27 @@
+---
+source: tests/integration_tests/spacing_edge_cases.rs
+info:
+  program: wt
+  args:
+    - list
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "120"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1704067200"
+---
+success: true
+exit_code: 0
+----- stdout -----
+[2mBranch   [0m  [2mAge         [0m  [2mCommit  [0m  [2mMessage                                      [0m  [2mPath[0m
+[1m[35mmain     [0m  [2m9 months ago[0m  [1m[35ma7bc47ca[0m  [2mInitial commit with a reasonably long message[0m  [1m[35m./main[0m
+feature-a  [2m9 months ago[0m  [2ma7bc47ca[0m  [2mInitial commit with a reasonably long message[0m  ./feature-a
+feature-b  [2m9 months ago[0m  [2ma7bc47ca[0m  [2mInitial commit with a reasonably long message[0m  ./feature-b
+
+----- stderr -----

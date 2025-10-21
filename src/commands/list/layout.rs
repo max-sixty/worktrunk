@@ -37,7 +37,6 @@ pub struct ColumnWidths {
 
 pub struct LayoutConfig {
     pub widths: ColumnWidths,
-    pub ideal_widths: ColumnWidths, // Maximum widths for padding sparse columns
     pub common_prefix: PathBuf,
     pub max_message_len: usize,
 }
@@ -182,21 +181,29 @@ pub fn calculate_responsive_layout(items: &[ListItem]) -> LayoutConfig {
     // Calculate ideal column widths
     let ideal_widths = calculate_column_widths(items);
 
+    // Calculate actual maximum path width (after common prefix removal)
+    let max_path_width = items
+        .iter()
+        .filter_map(|item| item.worktree_info())
+        .map(|info| {
+            use crate::display::shorten_path;
+            use unicode_width::UnicodeWidthStr;
+            shorten_path(&info.worktree.path, &common_prefix).width()
+        })
+        .max()
+        .unwrap_or(20); // fallback to 20 if no paths
+
     // Essential columns (always shown):
-    // - current indicator: 2 chars
     // - branch: variable
     // - short HEAD: 8 chars
-    // - path: at least 20 chars (we'll use shortened paths)
+    // - path: variable (calculated above)
     // - spacing: 2 chars between columns
 
     let spacing = 2;
-    let current_indicator = 2;
     let short_head = 8;
-    let min_path = 20;
 
     // Calculate base width needed
-    let base_width =
-        current_indicator + ideal_widths.branch + spacing + short_head + spacing + min_path;
+    let base_width = ideal_widths.branch + spacing + short_head + spacing + max_path_width;
 
     // Available width for optional columns
     let available = terminal_width.saturating_sub(base_width);
@@ -272,7 +279,6 @@ pub fn calculate_responsive_layout(items: &[ListItem]) -> LayoutConfig {
 
     LayoutConfig {
         widths,
-        ideal_widths,
         common_prefix,
         max_message_len,
     }

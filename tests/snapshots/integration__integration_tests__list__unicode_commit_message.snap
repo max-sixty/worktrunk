@@ -18,8 +18,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2mBranch      [0m  [2mAge         [0m  [2mCmts [0m  [2mCmt +/-[0m  [2mWT +/-[0m  [2mRemote[0m  [2mCommit  [0m  [2mState[0m  [2mPath[0m
-[1m[35mmain        [0m  [2m9 months ago[0m                                  [1m[35me4614cb7[0m         [1m[35m./main[0m
-feature-test  [2m9 months ago[0m  [33m↑0 ↓1[0m                           [2m0c53695b[0m         ./feature-test
+[2mBranch      [0m  [2mAge         [0m  [2mCommit  [0m  [2mMessage             [0m  [2mPath[0m
+[1m[35mmain        [0m  [2m9 months ago[0m  [1m[35me4614cb7[0m  [2mFix bug with...     [0m  [1m[35m./main[0m
+feature-test  [2m9 months ago[0m  [2m0c53695b[0m  [2mAdd support for...  [0m  ./feature-test
 
 ----- stderr -----

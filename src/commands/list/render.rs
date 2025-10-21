@@ -58,41 +58,29 @@ pub fn format_header_line(layout: &LayoutConfig) {
     }
 
     // Ahead/behind (commits)
-    if layout.ideal_widths.ahead_behind > 0 {
-        let header = format!(
-            "{:width$}",
-            "Cmts",
-            width = layout.ideal_widths.ahead_behind
-        );
+    if widths.ahead_behind > 0 {
+        let header = format!("{:width$}", "Cmts", width = widths.ahead_behind);
         line.push_styled(header, dim);
         line.push_raw("  ");
     }
 
     // Branch diff (line diff in commits)
-    if layout.ideal_widths.branch_diff > 0 {
-        let header = format!(
-            "{:width$}",
-            "Cmt +/-",
-            width = layout.ideal_widths.branch_diff
-        );
+    if widths.branch_diff > 0 {
+        let header = format!("{:width$}", "Cmt +/-", width = widths.branch_diff);
         line.push_styled(header, dim);
         line.push_raw("  ");
     }
 
     // Working tree diff
-    if layout.ideal_widths.working_diff > 0 {
-        let header = format!(
-            "{:width$}",
-            "WT +/-",
-            width = layout.ideal_widths.working_diff
-        );
+    if widths.working_diff > 0 {
+        let header = format!("{:width$}", "WT +/-", width = widths.working_diff);
         line.push_styled(header, dim);
         line.push_raw("  ");
     }
 
     // Upstream
-    if layout.ideal_widths.upstream > 0 {
-        let header = format!("{:width$}", "Remote", width = layout.ideal_widths.upstream);
+    if widths.upstream > 0 {
+        let header = format!("{:width$}", "Remote", width = widths.upstream);
         line.push_styled(header, dim);
         line.push_raw("  ");
     }
@@ -109,8 +97,8 @@ pub fn format_header_line(layout: &LayoutConfig) {
     }
 
     // States
-    if layout.ideal_widths.states > 0 {
-        let header = format!("{:width$}", "State", width = layout.ideal_widths.states);
+    if widths.states > 0 {
+        let header = format!("{:width$}", "State", width = widths.states);
         line.push_styled(header, dim);
         line.push_raw("  ");
     }
@@ -181,22 +169,22 @@ fn format_item_line(
     }
 
     // Ahead/behind (commits difference)
-    if layout.ideal_widths.ahead_behind > 0 {
+    if widths.ahead_behind > 0 {
         if !item.is_primary() && (item.ahead() > 0 || item.behind() > 0) {
             let ahead_behind_text = format!(
                 "{:width$}",
                 format!("↑{} ↓{}", item.ahead(), item.behind()),
-                width = layout.ideal_widths.ahead_behind
+                width = widths.ahead_behind
             );
             line.push_styled(ahead_behind_text, yellow);
         } else {
-            line.push_raw(" ".repeat(layout.ideal_widths.ahead_behind));
+            line.push_raw(" ".repeat(widths.ahead_behind));
         }
         line.push_raw("  ");
     }
 
     // Branch diff (line diff in commits)
-    if layout.ideal_widths.branch_diff > 0 {
+    if widths.branch_diff > 0 {
         if !item.is_primary() {
             let (br_added, br_deleted) = item.branch_diff();
             if br_added > 0 || br_deleted > 0 {
@@ -204,42 +192,42 @@ fn format_item_line(
                 diff_segment.push_styled(format!("+{}", br_added), green);
                 diff_segment.push_raw(" ");
                 diff_segment.push_styled(format!("-{}", br_deleted), red);
-                diff_segment.pad_to(layout.ideal_widths.branch_diff);
+                diff_segment.pad_to(widths.branch_diff);
                 for segment in diff_segment.segments {
                     line.push(segment);
                 }
             } else {
-                line.push_raw(" ".repeat(layout.ideal_widths.branch_diff));
+                line.push_raw(" ".repeat(widths.branch_diff));
             }
         } else {
-            line.push_raw(" ".repeat(layout.ideal_widths.branch_diff));
+            line.push_raw(" ".repeat(widths.branch_diff));
         }
         line.push_raw("  ");
     }
 
     // Working tree diff (worktrees only)
-    if layout.ideal_widths.working_diff > 0 {
+    if widths.working_diff > 0 {
         if let Some((wt_added, wt_deleted)) = item.working_tree_diff() {
             if wt_added > 0 || wt_deleted > 0 {
                 let mut diff_segment = StyledLine::new();
                 diff_segment.push_styled(format!("+{}", wt_added), green);
                 diff_segment.push_raw(" ");
                 diff_segment.push_styled(format!("-{}", wt_deleted), red);
-                diff_segment.pad_to(layout.ideal_widths.working_diff);
+                diff_segment.pad_to(widths.working_diff);
                 for segment in diff_segment.segments {
                     line.push(segment);
                 }
             } else {
-                line.push_raw(" ".repeat(layout.ideal_widths.working_diff));
+                line.push_raw(" ".repeat(widths.working_diff));
             }
         } else {
-            line.push_raw(" ".repeat(layout.ideal_widths.working_diff));
+            line.push_raw(" ".repeat(widths.working_diff));
         }
         line.push_raw("  ");
     }
 
     // Upstream tracking
-    if layout.ideal_widths.upstream > 0 {
+    if widths.upstream > 0 {
         if let Some((remote_name, upstream_ahead, upstream_behind)) = item.upstream_info() {
             let mut upstream_segment = StyledLine::new();
             upstream_segment.push_styled(remote_name, dim);
@@ -247,12 +235,12 @@ fn format_item_line(
             upstream_segment.push_styled(format!("↑{}", upstream_ahead), green);
             upstream_segment.push_raw(" ");
             upstream_segment.push_styled(format!("↓{}", upstream_behind), red);
-            upstream_segment.pad_to(layout.ideal_widths.upstream);
+            upstream_segment.pad_to(widths.upstream);
             for segment in upstream_segment.segments {
                 line.push(segment);
             }
         } else {
-            line.push_raw(" ".repeat(layout.ideal_widths.upstream));
+            line.push_raw(" ".repeat(widths.upstream));
         }
         line.push_raw("  ");
     }
@@ -277,17 +265,17 @@ fn format_item_line(
     }
 
     // States (worktrees only)
-    if layout.ideal_widths.states > 0 {
+    if widths.states > 0 {
         if let Some(worktree_info) = item.worktree_info() {
             let states = format_all_states(worktree_info);
             if !states.is_empty() {
-                let states_text = format!("{:width$}", states, width = layout.ideal_widths.states);
+                let states_text = format!("{:width$}", states, width = widths.states);
                 line.push_raw(states_text);
             } else {
-                line.push_raw(" ".repeat(layout.ideal_widths.states));
+                line.push_raw(" ".repeat(widths.states));
             }
         } else {
-            line.push_raw(" ".repeat(layout.ideal_widths.states));
+            line.push_raw(" ".repeat(widths.states));
         }
         line.push_raw("  ");
     }
@@ -351,16 +339,6 @@ mod tests {
                 upstream: 12,
                 states: 18,
             },
-            ideal_widths: ColumnWidths {
-                branch: 11,
-                time: 13,
-                message: 12,
-                ahead_behind: 5,
-                working_diff: 8,
-                branch_diff: 8,
-                upstream: 12,
-                states: 18,
-            },
             common_prefix: PathBuf::from("/test"),
             max_message_len: 12,
         };
@@ -374,25 +352,25 @@ mod tests {
         header.push_raw(format!(
             "{:width$}",
             "Cmts",
-            width = layout.ideal_widths.ahead_behind
+            width = layout.widths.ahead_behind
         ));
         header.push_raw("  ");
         header.push_raw(format!(
             "{:width$}",
             "Cmt +/-",
-            width = layout.ideal_widths.branch_diff
+            width = layout.widths.branch_diff
         ));
         header.push_raw("  ");
         header.push_raw(format!(
             "{:width$}",
             "WT +/-",
-            width = layout.ideal_widths.working_diff
+            width = layout.widths.working_diff
         ));
         header.push_raw("  ");
         header.push_raw(format!(
             "{:width$}",
             "Remote",
-            width = layout.ideal_widths.upstream
+            width = layout.widths.upstream
         ));
         header.push_raw("  ");
         header.push_raw("Commit  ");
@@ -403,11 +381,7 @@ mod tests {
             width = layout.widths.message
         ));
         header.push_raw("  ");
-        header.push_raw(format!(
-            "{:width$}",
-            "State",
-            width = layout.ideal_widths.states
-        ));
+        header.push_raw(format!("{:width$}", "State", width = layout.widths.states));
         header.push_raw("  ");
         header.push_raw("Path");
 
@@ -426,17 +400,13 @@ mod tests {
         ));
         data.push_raw("  ");
         // Ahead/behind
-        let ahead_behind_text = format!(
-            "{:width$}",
-            "↑3 ↓2",
-            width = layout.ideal_widths.ahead_behind
-        );
+        let ahead_behind_text = format!("{:width$}", "↑3 ↓2", width = layout.widths.ahead_behind);
         data.push_raw(ahead_behind_text);
         data.push_raw("  ");
         // Branch diff
         let mut branch_diff_segment = StyledLine::new();
         branch_diff_segment.push_raw("+200 -30");
-        branch_diff_segment.pad_to(layout.ideal_widths.branch_diff);
+        branch_diff_segment.pad_to(layout.widths.branch_diff);
         for seg in branch_diff_segment.segments {
             data.push(seg);
         }
@@ -444,7 +414,7 @@ mod tests {
         // Working diff
         let mut working_diff_segment = StyledLine::new();
         working_diff_segment.push_raw("+100 -50");
-        working_diff_segment.pad_to(layout.ideal_widths.working_diff);
+        working_diff_segment.pad_to(layout.widths.working_diff);
         for seg in working_diff_segment.segments {
             data.push(seg);
         }
@@ -452,7 +422,7 @@ mod tests {
         // Upstream
         let mut upstream_segment = StyledLine::new();
         upstream_segment.push_raw("origin ↑4 ↓0");
-        upstream_segment.pad_to(layout.ideal_widths.upstream);
+        upstream_segment.pad_to(layout.widths.upstream);
         for seg in upstream_segment.segments {
             data.push(seg);
         }
@@ -469,11 +439,7 @@ mod tests {
         data.push_raw("  ");
         // State
         let states = format_all_states(&info);
-        data.push_raw(format!(
-            "{:width$}",
-            states,
-            width = layout.ideal_widths.states
-        ));
+        data.push_raw(format!("{:width$}", states, width = layout.widths.states));
         data.push_raw("  ");
         // Path
         data.push_raw(shorten_path(&info.worktree.path, &layout.common_prefix));
