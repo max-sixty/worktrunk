@@ -4,16 +4,6 @@ use unicode_width::UnicodeWidthStr;
 
 use super::ListItem;
 
-/// Helper: Check if a column is "dense" (appears in >50% of all rows)
-fn is_dense_for_all_rows(count: usize, total: usize) -> bool {
-    count * 2 > total
-}
-
-/// Helper: Check if a column is "dense" for non-primary rows (appears in >50% of non-primary rows)
-fn is_dense_for_non_primary(count: usize, non_primary_count: usize) -> bool {
-    non_primary_count > 0 && count * 2 > non_primary_count
-}
-
 /// Helper: Try to allocate space for a column. Returns the allocated width if successful.
 /// Updates `remaining` by subtracting the allocated width + spacing.
 fn try_allocate(remaining: &mut usize, ideal_width: usize, spacing: usize) -> usize {
@@ -144,25 +134,46 @@ pub fn calculate_column_widths(items: &[ListItem]) -> ColumnWidths {
     // Calculate diff widths: "+{added} -{deleted}"
     // Format: "+" + digits + " " + "-" + digits
     let working_diff_total = if max_wt_added_digits > 0 || max_wt_deleted_digits > 0 {
-        1 + max_wt_added_digits + 1 + 1 + max_wt_deleted_digits
+        let data_width = 1 + max_wt_added_digits + 1 + 1 + max_wt_deleted_digits;
+        data_width.max("WT +/-".width()) // Ensure header fits if we have data
     } else {
-        0
+        0 // No data, no column
     };
     let branch_diff_total = if max_br_added_digits > 0 || max_br_deleted_digits > 0 {
-        1 + max_br_added_digits + 1 + 1 + max_br_deleted_digits
+        let data_width = 1 + max_br_added_digits + 1 + 1 + max_br_deleted_digits;
+        data_width.max("Cmt +/-".width()) // Ensure header fits if we have data
     } else {
-        0
+        0 // No data, no column
     };
 
-    // Ensure headers fit
-    let working_diff_total = working_diff_total.max("WT +/-".width());
-    let branch_diff_total = branch_diff_total.max("Cmt +/-".width());
+    // Reset sparse column widths to 0 if they're still at header width (no data found)
+    let header_ahead_behind = "Cmts".width();
+    let header_upstream = "Remote".width();
+    let header_states = "State".width();
+
+    let final_ahead_behind = if max_ahead_behind == header_ahead_behind {
+        0 // No data found
+    } else {
+        max_ahead_behind
+    };
+
+    let final_upstream = if max_upstream == header_upstream {
+        0 // No data found
+    } else {
+        max_upstream
+    };
+
+    let final_states = if max_states == header_states {
+        0 // No data found
+    } else {
+        max_states
+    };
 
     ColumnWidths {
         branch: max_branch,
         time: max_time,
         message: max_message,
-        ahead_behind: max_ahead_behind,
+        ahead_behind: final_ahead_behind,
         working_diff: DiffWidths {
             total: working_diff_total,
             added_digits: max_wt_added_digits,
@@ -173,8 +184,8 @@ pub fn calculate_column_widths(items: &[ListItem]) -> ColumnWidths {
             added_digits: max_br_added_digits,
             deleted_digits: max_br_deleted_digits,
         },
-        upstream: max_upstream,
-        states: max_states,
+        upstream: final_upstream,
+        states: final_states,
     }
 }
 
@@ -189,75 +200,6 @@ pub fn calculate_responsive_layout(items: &[ListItem]) -> LayoutConfig {
         })
         .collect();
     let common_prefix = find_common_prefix(&paths);
-
-    // Count how many rows have each sparse column
-    let non_primary_count = items.iter().filter(|item| !item.is_primary()).count();
-    let ahead_behind_count = items
-        .iter()
-        .filter(|item| {
-            !item.is_primary() && {
-                let counts = match item {
-                    ListItem::Worktree(info) => &info.counts,
-                    ListItem::Branch(info) => &info.counts,
-                };
-                counts.ahead > 0 || counts.behind > 0
-            }
-        })
-        .count();
-    let working_diff_count = items
-        .iter()
-        .filter(|item| match item {
-            ListItem::Worktree(info) => {
-                info.working_tree_diff.0 > 0 || info.working_tree_diff.1 > 0
-            }
-            ListItem::Branch(_) => false,
-        })
-        .count();
-    let branch_diff_count = items
-        .iter()
-        .filter(|item| {
-            !item.is_primary() && {
-                let diff = match item {
-                    ListItem::Worktree(info) => info.branch_diff.diff,
-                    ListItem::Branch(info) => info.branch_diff.diff,
-                };
-                diff.0 > 0 || diff.1 > 0
-            }
-        })
-        .count();
-    let upstream_count = items
-        .iter()
-        .filter(|item| {
-            match item {
-                ListItem::Worktree(info) => info.upstream.active(),
-                ListItem::Branch(info) => info.upstream.active(),
-            }
-            .is_some()
-        })
-        .count();
-    let states_count = items
-        .iter()
-        .filter(|item| {
-            matches!(
-                item,
-                ListItem::Worktree(i)
-                    if i.worktree_state.is_some()
-                        || (i.worktree.detached && i.worktree.branch.is_some())
-                        || i.worktree.bare
-                        || i.worktree.locked.is_some()
-                        || i.worktree.prunable.is_some()
-            )
-        })
-        .count();
-
-    // A column is "dense" if it appears in >50% of applicable rows
-    // For ahead/behind and branch_diff, applicable = non-primary rows
-    // For others, applicable = all rows
-    let ahead_behind_is_dense = is_dense_for_non_primary(ahead_behind_count, non_primary_count);
-    let working_diff_is_dense = is_dense_for_all_rows(working_diff_count, items.len());
-    let branch_diff_is_dense = is_dense_for_non_primary(branch_diff_count, non_primary_count);
-    let upstream_is_dense = is_dense_for_all_rows(upstream_count, items.len());
-    let states_is_dense = is_dense_for_all_rows(states_count, items.len());
 
     // Calculate ideal column widths
     let ideal_widths = calculate_column_widths(items);
@@ -295,11 +237,13 @@ pub fn calculate_responsive_layout(items: &[ListItem]) -> LayoutConfig {
     // Priority order for columns (from high to low):
     // 1. time (15-20 chars)
     // 2. message (20-50 chars, flexible)
-    // 3. ahead_behind - commits difference (if any worktree has it)
-    // 4. branch_diff - line diff in commits (if any worktree has it)
-    // 5. working_diff - line diff in working tree (if any worktree has it)
-    // 6. upstream (if any worktree has it)
-    // 7. states (if any worktree has it)
+    // 3. ahead_behind - commits difference
+    // 4. working_diff - line diff in working tree
+    // 5. branch_diff - line diff in commits
+    // 6. upstream
+    // 7. states
+    //
+    // Each column is shown if it has any data (ideal_width > 0) and fits in remaining space.
 
     let mut remaining = available;
     let mut widths = ColumnWidths {
@@ -336,37 +280,26 @@ pub fn calculate_responsive_layout(items: &[ListItem]) -> LayoutConfig {
         widths.message = max_message_len.min(ideal_widths.message);
     }
 
-    // Ahead/behind column (only if dense and fits)
-    if ahead_behind_is_dense {
-        widths.ahead_behind = try_allocate(&mut remaining, ideal_widths.ahead_behind, spacing);
+    // Ahead/behind column (if it has data and fits)
+    widths.ahead_behind = try_allocate(&mut remaining, ideal_widths.ahead_behind, spacing);
+
+    // Working diff column (if it has data and fits)
+    let allocated_width = try_allocate(&mut remaining, ideal_widths.working_diff.total, spacing);
+    if allocated_width > 0 {
+        widths.working_diff = ideal_widths.working_diff;
     }
 
-    // Working diff column (only if dense and fits)
-    if working_diff_is_dense {
-        let allocated_width =
-            try_allocate(&mut remaining, ideal_widths.working_diff.total, spacing);
-        if allocated_width > 0 {
-            widths.working_diff = ideal_widths.working_diff;
-        }
+    // Branch diff column (if it has data and fits)
+    let allocated_width = try_allocate(&mut remaining, ideal_widths.branch_diff.total, spacing);
+    if allocated_width > 0 {
+        widths.branch_diff = ideal_widths.branch_diff;
     }
 
-    // Branch diff column (only if dense and fits)
-    if branch_diff_is_dense {
-        let allocated_width = try_allocate(&mut remaining, ideal_widths.branch_diff.total, spacing);
-        if allocated_width > 0 {
-            widths.branch_diff = ideal_widths.branch_diff;
-        }
-    }
+    // Upstream column (if it has data and fits)
+    widths.upstream = try_allocate(&mut remaining, ideal_widths.upstream, spacing);
 
-    // Upstream column (only if dense and fits)
-    if upstream_is_dense {
-        widths.upstream = try_allocate(&mut remaining, ideal_widths.upstream, spacing);
-    }
-
-    // States column (only if dense and fits)
-    if states_is_dense {
-        widths.states = try_allocate(&mut remaining, ideal_widths.states, spacing);
-    }
+    // States column (if it has data and fits)
+    widths.states = try_allocate(&mut remaining, ideal_widths.states, spacing);
 
     // Expand message column with any leftover space (up to 100 chars total)
     let final_max_message_len = if widths.message > 0 && remaining > 0 {
