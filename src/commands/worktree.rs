@@ -105,7 +105,8 @@ use std::path::PathBuf;
 use worktrunk::config::{ProjectConfig, WorktrunkConfig, expand_template};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{
-    AnstyleStyle, ERROR, ERROR_EMOJI, HINT, HINT_EMOJI, WARNING, WARNING_EMOJI, eprintln, println,
+    AnstyleStyle, ERROR, ERROR_EMOJI, HINT, HINT_EMOJI, WARNING, WARNING_EMOJI, eprint, eprintln,
+    format_with_gutter, println,
 };
 
 use crate::commands::command_approval::{check_and_approve_command, command_config_to_vec};
@@ -420,7 +421,8 @@ fn execute_post_create_commands(
         use anstyle::{AnsiColor, Color};
         use std::io::Write;
         let cyan = AnstyleStyle::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
-        eprintln!("🔄 {cyan}Executing (post-create): {expanded_command}{cyan:#}");
+        eprintln!("🔄 {cyan}Executing (post-create):{cyan:#}");
+        eprint!("{}", format_with_gutter(&expanded_command, " "));
         let _ = std::io::stderr().flush();
 
         if let Err(e) = execute_command_in_worktree(worktree_path, &expanded_command) {

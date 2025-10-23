@@ -160,6 +160,34 @@ impl StyledLine {
 }
 
 // ============================================================================
+// Gutter Formatting
+// ============================================================================
+
+/// Formats text with a gutter (single-space with background color) on each line
+///
+/// This creates a subtle visual separator for quoted content like commands or configuration.
+///
+/// # Arguments
+/// * `content` - The text to format (can be multi-line)
+/// * `indent` - Additional indentation after the gutter (e.g., " " or "  ")
+///
+/// # Example
+/// ```ignore
+/// let command = "npm install\nnpm test";
+/// print!("{}", format_with_gutter(&command, " "));
+/// ```
+pub fn format_with_gutter(content: &str, indent: &str) -> String {
+    let gutter = Style::new().bg_color(Some(Color::Ansi(AnsiColor::Black)));
+    let mut output = String::new();
+
+    for line in content.lines() {
+        output.push_str(&format!("{gutter} {gutter:#}{indent}{line}\n"));
+    }
+
+    output
+}
+
+// ============================================================================
 // TOML Syntax Highlighting
 // ============================================================================
 

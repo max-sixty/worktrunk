@@ -13,7 +13,7 @@ info:
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
-    HOME: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpdoot33
+    HOME: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpGPHO4z
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1704067200"
@@ -29,5 +29,7 @@ Running setup
 To enable automatic cd, run: wt configure-shell
 
 ----- stderr -----
-🔄 [36mExecuting (post-create): echo 'Installing deps'[0m
-🔄 [36mExecuting (post-create): echo 'Running setup'[0m
+🔄 [36mExecuting (post-create):[0m
+[40m [0m echo 'Installing deps'
+🔄 [36mExecuting (post-create):[0m
+[40m [0m echo 'Running setup'

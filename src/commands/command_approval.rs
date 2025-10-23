@@ -5,7 +5,7 @@
 
 use worktrunk::config::{CommandConfig, WorktrunkConfig};
 use worktrunk::git::GitError;
-use worktrunk::styling::{AnstyleStyle, HINT_EMOJI, WARNING, WARNING_EMOJI};
+use worktrunk::styling::{AnstyleStyle, HINT_EMOJI, WARNING, WARNING_EMOJI, format_with_gutter};
 
 /// Convert CommandConfig to a vector of (name, command) pairs
 ///
@@ -107,7 +107,7 @@ fn prompt_for_approval(command: &str, project_id: &str) -> std::io::Result<bool>
     eprintln!("{WARNING_EMOJI} {WARNING}Permission required to execute in worktree{WARNING:#}");
     eprintln!();
     eprintln!("  {bold}{project_name}{bold:#} ({dim}{project_id}{dim:#}) wants to execute:");
-    eprintln!("    {dim}{command}{dim:#}");
+    eprint!("{}", format_with_gutter(command, "   "));
     eprintln!();
     eprint!("  {HINT_EMOJI} Allow and remember? {bold}[y/N]{bold:#} ");
     io::stderr().flush()?;
