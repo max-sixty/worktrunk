@@ -360,7 +360,7 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
         );
 
         // Show the config line that will be added with gutter
-        eprint!("{}", format_with_gutter(&result.config_line));
+        eprint!("{}", format_with_gutter(&result.config_line, ""));
     }
 
     eprintln!();

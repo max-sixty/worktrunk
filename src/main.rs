@@ -281,7 +281,7 @@ fn main() {
                             result.action.description(),
                         );
                         // Show config line with gutter
-                        print!("{}", format_with_gutter(&result.config_line));
+                        print!("{}", format_with_gutter(&result.config_line, ""));
                     }
 
                     // Success summary

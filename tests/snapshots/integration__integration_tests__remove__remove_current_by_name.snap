@@ -20,6 +20,6 @@ success: true
 exit_code: 0
 ----- stdout -----
 ✅ [32mRemoved worktree, returned to primary
-  [2mPath: [REPO][0m[0m
+[2mPath: [REPO][0m[0m
 
 ----- stderr -----
