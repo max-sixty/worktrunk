@@ -212,7 +212,10 @@ fn handle_commit_changes(
 ) -> Result<(), GitError> {
     let repo = Repository::current();
 
-    println!("🔄 {CYAN}Committing uncommitted changes...{CYAN:#}");
+    crate::output::progress(format!(
+        "🔄 {CYAN}Committing uncommitted changes...{CYAN:#}"
+    ))
+    .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
     // Stage all tracked changes (excludes untracked files)
     repo.run_command(&["add", "-u"])
