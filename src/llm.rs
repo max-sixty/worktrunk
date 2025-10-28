@@ -33,6 +33,9 @@ fn try_generate_commit_message(
     command: &str,
     args: &[String],
 ) -> Result<String, Box<dyn std::error::Error>> {
+    use std::io::Write;
+    use std::process::Stdio;
+
     let repo = Repository::current();
 
     // Get staged diff
@@ -112,19 +115,30 @@ fn try_generate_commit_message(
 
     prompt.push_str("</git-info>\n\n");
 
-    // Execute LLM command
+    // Execute LLM command with prompt via stdin
     log::debug!("$ {} {}", command, args.join(" "));
     log::debug!("  System: {}", user_instruction);
+    log::debug!("  Prompt (stdin):");
     for line in prompt.lines() {
-        log::debug!("  {}", line);
+        log::debug!("    {}", line);
     }
 
-    let output = process::Command::new(command)
+    let mut child = process::Command::new(command)
         .args(args)
         .arg("--system")
         .arg(user_instruction)
-        .arg(&prompt)
-        .output()?;
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Write prompt to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes())?;
+        // stdin is dropped here, closing the pipe
+    }
+
+    let output = child.wait_with_output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
