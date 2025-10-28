@@ -78,11 +78,10 @@ pub fn handle_switch_output(
     // Execute command if provided
     if let Some(cmd) = execute {
         super::execute(cmd).map_err(|e| GitError::CommandFailed(e.to_string()))?;
-    } else if super::is_interactive() {
-        // No execute command in interactive mode: show shell integration hint
-        use worktrunk::styling::println;
-        println!();
-        println!("{}", shell_integration_hint());
+    } else {
+        // No execute command: show shell integration hint (only in interactive mode)
+        super::progress(format!("\n{}", shell_integration_hint()))
+            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
     }
 
     // Flush output (important for directive mode)

@@ -1,12 +1,23 @@
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd_with_global_flags, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use std::process::Command;
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
+    snapshot_remove_with_global_flags(test_name, repo, args, cwd, &[]);
+}
+
+/// Helper to create snapshot with global flags (e.g., --internal)
+fn snapshot_remove_with_global_flags(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+    global_flags: &[&str],
+) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "remove", args, cwd);
+        let mut cmd = make_snapshot_cmd_with_global_flags(repo, "remove", args, cwd, global_flags);
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -58,11 +69,12 @@ fn test_remove_internal_mode() {
 
     let worktree_path = repo.add_worktree("feature-internal", "feature-internal");
 
-    snapshot_remove(
+    snapshot_remove_with_global_flags(
         "remove_internal_mode",
         &repo,
-        &["--internal"],
+        &[],
         Some(&worktree_path),
+        &["--internal"],
     );
 }
 

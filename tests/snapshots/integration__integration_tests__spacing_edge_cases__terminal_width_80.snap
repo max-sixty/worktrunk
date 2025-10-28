@@ -19,10 +19,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2mBranch   [0m  [2mAge         [0m  [2mCommit  [0m  [2mMessage                         [0m  [2mPath[0m
-[1m[35mmain     [0m  [2m9 months ago[0m  [1m[35ma7bc47ca[0m  [2mInitial commit with a...[0m          [1m[35m./test-repo[0m
-feature-a  [2m9 months ago[0m  [2ma7bc47ca[0m  [2mInitial commit with a...[0m          ./feature-a
-feature-b  [2m9 months ago[0m  [2ma7bc47ca[0m  [2mInitial commit with a...[0m          ./feature-b
+[2mBranch   [0m  [2mAge          [0m  [2mCommit  [0m  [2mMessage                        [0m  [2mPath[0m
+[1m[35mmain     [0m  [2m10 months ago[0m  [1m[35ma7bc47ca[0m  [2mInitial commit with a...[0m         [1m[35m./test-repo[0m
+feature-a  [2m10 months ago[0m  [2ma7bc47ca[0m  [2mInitial commit with a...[0m         ./feature-a
+feature-b  [2m10 months ago[0m  [2ma7bc47ca[0m  [2mInitial commit with a...[0m         ./feature-b
 
 [2mShowing 3 worktrees[0m
 

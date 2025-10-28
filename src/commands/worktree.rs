@@ -536,11 +536,7 @@ fn spawn_post_start_commands(
     Ok(())
 }
 
-pub fn handle_push(
-    target: Option<&str>,
-    allow_merge_commits: bool,
-    internal: bool,
-) -> Result<(), GitError> {
+pub fn handle_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), GitError> {
     let repo = Repository::current();
 
     // Get target branch (default to default branch if not provided)
@@ -590,7 +586,7 @@ pub fn handle_push(
         String::new()
     };
 
-    if commit_count > 0 && !internal {
+    if commit_count > 0 {
         let commit_text = if commit_count == 1 {
             "commit"
         } else {
@@ -599,10 +595,10 @@ pub fn handle_push(
         let head_sha = repo.run_command(&["rev-parse", "--short", "HEAD"])?;
         let head_sha = head_sha.trim();
 
-        println!(
-            "🔄 {CYAN}Pushing {commit_count} {commit_text} to {CYAN_BOLD}{target_branch}{CYAN_BOLD:#} @ {head_sha}{CYAN:#}"
-        );
-        println!();
+        crate::output::progress(format!(
+            "🔄 {CYAN}Pushing {commit_count} {commit_text} to {CYAN_BOLD}{target_branch}{CYAN_BOLD:#} @ {head_sha}{CYAN:#}\n"
+        ))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
         // Show the commit graph with color
         let log_output = repo.run_command(&[
@@ -613,8 +609,8 @@ pub fn handle_push(
             "--decorate",
             &format!("{}..HEAD", target_branch),
         ])?;
-        println!("{}", log_output.trim());
-        println!();
+        crate::output::progress(format!("{}\n", log_output.trim()))
+            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
         // Show diff statistics with color
         let diff_stat = repo.run_command(&[
@@ -626,8 +622,8 @@ pub fn handle_push(
 
         let diff_stat = diff_stat.trim_end();
         if !diff_stat.is_empty() {
-            println!("{}", diff_stat);
-            println!();
+            crate::output::progress(format!("{}\n", diff_stat))
+                .map_err(|e| GitError::CommandFailed(e.to_string()))?;
         }
     }
 
@@ -642,39 +638,41 @@ pub fn handle_push(
         })?;
 
     // Build success message with statistics
-    if !internal {
-        if commit_count > 0 {
-            // Parse shortstat to extract files/insertions/deletions
-            // Example: " 3 files changed, 45 insertions(+), 12 deletions(-)"
-            let stats = parse_diff_shortstat(&diff_shortstat);
+    if commit_count > 0 {
+        // Parse shortstat to extract files/insertions/deletions
+        // Example: " 3 files changed, 45 insertions(+), 12 deletions(-)"
+        let stats = parse_diff_shortstat(&diff_shortstat);
 
-            let mut summary_parts = vec![format!(
-                "{} commit{}",
-                commit_count,
-                if commit_count == 1 { "" } else { "s" }
-            )];
+        let mut summary_parts = vec![format!(
+            "{} commit{}",
+            commit_count,
+            if commit_count == 1 { "" } else { "s" }
+        )];
 
-            if let Some(files) = stats.files {
-                summary_parts.push(format!(
-                    "{} file{}",
-                    files,
-                    if files == 1 { "" } else { "s" }
-                ));
-            }
-            if let Some(insertions) = stats.insertions {
-                summary_parts.push(format!("{ADDITION}+{insertions}{ADDITION:#}"));
-            }
-            if let Some(deletions) = stats.deletions {
-                summary_parts.push(format!("{DELETION}-{deletions}{DELETION:#}"));
-            }
-
-            println!(
-                "✅ {GREEN}Pushed to {GREEN_BOLD}{target_branch}{GREEN_BOLD:#} ({})  {GREEN:#}",
-                summary_parts.join(", ")
-            );
-        } else {
-            println!("✅ {GREEN}Pushed to {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN:#}");
+        if let Some(files) = stats.files {
+            summary_parts.push(format!(
+                "{} file{}",
+                files,
+                if files == 1 { "" } else { "s" }
+            ));
         }
+        if let Some(insertions) = stats.insertions {
+            summary_parts.push(format!("{ADDITION}+{insertions}{ADDITION:#}"));
+        }
+        if let Some(deletions) = stats.deletions {
+            summary_parts.push(format!("{DELETION}-{deletions}{DELETION:#}"));
+        }
+
+        crate::output::progress(format!(
+            "✅ {GREEN}Pushed to {GREEN_BOLD}{target_branch}{GREEN_BOLD:#} ({})  {GREEN:#}",
+            summary_parts.join(", ")
+        ))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+    } else {
+        crate::output::progress(format!(
+            "✅ {GREEN}Pushed to {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN:#}"
+        ))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
     }
 
     Ok(())

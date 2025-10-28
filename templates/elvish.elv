@@ -65,7 +65,7 @@ if (has-external wt) {
         if (or (eq $subcommand "switch") (eq $subcommand "remove") (eq $subcommand "merge")) {
             # Commands that need --internal for directory change support
             var rest-args = $args[1..]
-            _wt_exec $subcommand --internal $@rest-args
+            _wt_exec --internal $subcommand $@rest-args
         } else {
             # All other commands pass through directly
             e:$_WORKTRUNK_CMD $@args

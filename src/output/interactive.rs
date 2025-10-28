@@ -23,6 +23,11 @@ impl InteractiveOutput {
         Ok(())
     }
 
+    pub fn progress(&mut self, message: String) -> io::Result<()> {
+        println!("{message}");
+        Ok(())
+    }
+
     pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         // In interactive mode, we can't actually change directory
         // Just store the target for execute commands

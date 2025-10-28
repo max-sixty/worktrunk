@@ -35,6 +35,10 @@ struct Cli {
     #[arg(long, short = 'v', global = true)]
     verbose: bool,
 
+    /// Use internal mode (outputs directives for shell wrapper)
+    #[arg(long, global = true, hide = true)]
+    internal: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -115,20 +119,12 @@ enum Commands {
         /// Skip executing post-start commands from project config
         #[arg(long)]
         no_config_commands: bool,
-
-        /// Use internal mode (outputs directives for shell wrapper)
-        #[arg(long, hide = true)]
-        internal: bool,
     },
 
     /// Finish current worktree, returning to primary if current
     Remove {
         /// Worktree name or branch to remove (defaults to current worktree)
         worktree: Option<String>,
-
-        /// Use internal mode (outputs directives for shell wrapper)
-        #[arg(long, hide = true)]
-        internal: bool,
     },
 
     /// Push changes between worktrees
@@ -165,10 +161,6 @@ enum Commands {
         /// Skip approval prompts for commands
         #[arg(short, long)]
         force: bool,
-
-        /// Use internal mode (outputs directives for shell wrapper)
-        #[arg(long, hide = true)]
-        internal: bool,
     },
 
     /// Generate shell completion script (deprecated - use init instead)
@@ -190,6 +182,14 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
+
+    // Initialize output context based on --internal flag
+    let output_mode = if cli.internal {
+        output::OutputMode::Directive
+    } else {
+        output::OutputMode::Interactive
+    };
+    output::initialize(output_mode);
 
     // Configure logging based on --verbose flag or RUST_LOG env var
     env_logger::Builder::from_env(
@@ -311,45 +311,26 @@ fn main() {
             execute,
             force,
             no_config_commands,
-            internal,
-        } => {
-            // Initialize output context based on mode
-            let output_mode = if internal {
-                output::OutputMode::Directive
-            } else {
-                output::OutputMode::Interactive
-            };
-            output::initialize(output_mode);
-
-            WorktrunkConfig::load()
-                .map_err(|e| GitError::CommandFailed(format!("Failed to load config: {}", e)))
-                .and_then(|config| {
-                    handle_switch(
-                        &branch,
-                        create,
-                        base.as_deref(),
-                        force,
-                        no_config_commands,
-                        &config,
-                    )
-                    .and_then(|result| handle_switch_output(&result, &branch, execute.as_deref()))
-                })
-        }
-        Commands::Remove { worktree, internal } => {
-            // Initialize output context based on mode
-            let output_mode = if internal {
-                output::OutputMode::Directive
-            } else {
-                output::OutputMode::Interactive
-            };
-            output::initialize(output_mode);
-
+        } => WorktrunkConfig::load()
+            .map_err(|e| GitError::CommandFailed(format!("Failed to load config: {}", e)))
+            .and_then(|config| {
+                handle_switch(
+                    &branch,
+                    create,
+                    base.as_deref(),
+                    force,
+                    no_config_commands,
+                    &config,
+                )
+                .and_then(|result| handle_switch_output(&result, &branch, execute.as_deref()))
+            }),
+        Commands::Remove { worktree } => {
             handle_remove(worktree.as_deref()).and_then(|result| handle_remove_output(&result))
         }
         Commands::Push {
             target,
             allow_merge_commits,
-        } => handle_push(target.as_deref(), allow_merge_commits, false),
+        } => handle_push(target.as_deref(), allow_merge_commits),
         Commands::Merge {
             target,
             squash,
@@ -357,26 +338,14 @@ fn main() {
             message,
             no_verify,
             force,
-            internal,
-        } => {
-            // Initialize output context based on mode
-            let output_mode = if internal {
-                output::OutputMode::Directive
-            } else {
-                output::OutputMode::Interactive
-            };
-            output::initialize(output_mode);
-
-            handle_merge(
-                target.as_deref(),
-                squash,
-                keep,
-                message.as_deref(),
-                no_verify,
-                force,
-                internal,
-            )
-        }
+        } => handle_merge(
+            target.as_deref(),
+            squash,
+            keep,
+            message.as_deref(),
+            no_verify,
+            force,
+        ),
         Commands::Completion { shell } => {
             let mut cli_cmd = Cli::command();
             handle_completion(shell, &mut cli_cmd);

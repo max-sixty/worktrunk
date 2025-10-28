@@ -394,18 +394,40 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 ///
 /// This extracts the common command setup while allowing the test file
 /// to call the macro with the correct module path for snapshot naming.
+///
+/// # Arguments
+/// * `repo` - The test repository
+/// * `subcommand` - The subcommand to run (e.g., "switch", "remove")
+/// * `args` - Arguments to pass after the subcommand
+/// * `cwd` - Optional working directory (defaults to repo root)
+/// * `global_flags` - Optional global flags to pass before the subcommand (e.g., &["--internal"])
+pub fn make_snapshot_cmd_with_global_flags(
+    repo: &TestRepo,
+    subcommand: &str,
+    args: &[&str],
+    cwd: Option<&Path>,
+    global_flags: &[&str],
+) -> Command {
+    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
+    repo.clean_cli_env(&mut cmd);
+    cmd.args(global_flags)
+        .arg(subcommand)
+        .args(args)
+        .current_dir(cwd.unwrap_or(repo.root_path()));
+    cmd
+}
+
+/// Create a configured Command for snapshot testing
+///
+/// This extracts the common command setup while allowing the test file
+/// to call the macro with the correct module path for snapshot naming.
 pub fn make_snapshot_cmd(
     repo: &TestRepo,
     subcommand: &str,
     args: &[&str],
     cwd: Option<&Path>,
 ) -> Command {
-    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
-    repo.clean_cli_env(&mut cmd);
-    cmd.arg(subcommand)
-        .args(args)
-        .current_dir(cwd.unwrap_or(repo.root_path()));
-    cmd
+    make_snapshot_cmd_with_global_flags(repo, subcommand, args, cwd, &[])
 }
 
 /// Resolve the actual git directory path from a worktree path

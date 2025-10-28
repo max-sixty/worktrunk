@@ -63,7 +63,7 @@ if (Get-Command wt -ErrorAction SilentlyContinue) {
             { $_ -in @("switch", "remove", "merge") } {
                 # Commands that need --internal for directory change support
                 $restArgs = $Arguments[1..($Arguments.Count-1)]
-                $exitCode = _wt_exec $subcommand --internal @restArgs
+                $exitCode = _wt_exec --internal $subcommand @restArgs
                 return $exitCode
             }
             default {

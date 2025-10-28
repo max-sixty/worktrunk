@@ -18,12 +18,12 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2mBranch                    [0m  [2mAge         [0m  [2mCommit  [0m  [2mPath[0m
-[1m[35mmain                      [0m  [2m9 months ago[0m  [1m[35mb834638e[0m  [1m[35m./test-repo[0m
-medium-name                 [2m9 months ago[0m  [2mb834638e[0m  ./medium-name
-short                       [2m9 months ago[0m  [2mb834638e[0m  ./short
-very-long-branch-name-here  [2m9 months ago[0m  [2mb834638e[0m  ./very-long-branch-name-here
-with-changes                [2m9 months ago[0m  [2mb834638e[0m  ./with-changes
+[2mBranch                    [0m  [2mCommit  [0m  [2mPath[0m
+[1m[35mmain                      [0m  [1m[35mb834638e[0m  [1m[35m./test-repo[0m
+medium-name                 [2mb834638e[0m  ./medium-name
+short                       [2mb834638e[0m  ./short
+very-long-branch-name-here  [2mb834638e[0m  ./very-long-branch-name-here
+with-changes                [2mb834638e[0m  ./with-changes
 
 [2mShowing 5 worktrees[0m
 

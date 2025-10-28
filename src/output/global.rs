@@ -68,6 +68,20 @@ pub fn success(message: impl Into<String>) -> io::Result<()> {
     })
 }
 
+/// Emit a progress message (only shown in interactive mode)
+///
+/// Progress messages are intermediate status updates like "🔄 Cleaning up worktree..."
+/// They are shown to human users but suppressed in directive mode (shell integration).
+pub fn progress(message: impl Into<String>) -> io::Result<()> {
+    OUTPUT_CONTEXT.with(|ctx| {
+        let msg = message.into();
+        match &mut *ctx.borrow_mut() {
+            OutputHandler::Interactive(i) => i.progress(msg),
+            OutputHandler::Directive(d) => d.progress(msg),
+        }
+    })
+}
+
 /// Request directory change (for shell integration)
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     OUTPUT_CONTEXT.with(|ctx| {

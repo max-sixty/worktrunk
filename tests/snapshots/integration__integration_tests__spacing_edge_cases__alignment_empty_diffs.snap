@@ -19,11 +19,11 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2mBranch         [0m  [2mAge         [0m  [2mWT +/-[0m  [2mCommit  [0m  [2mMessage       [0m  [2mPath[0m
-[1m[35mmain           [0m  [2m9 months ago[0m          [1m[35mb834638e[0m  [2mInitial commit[0m  [1m[35m./test-repo[0m
-also-no-changes  [2m9 months ago[0m          [2mb834638e[0m  [2mInitial commit[0m  ./also-no-changes
-no-changes       [2m9 months ago[0m          [2mb834638e[0m  [2mInitial commit[0m  ./no-changes
-with-changes     [2m9 months ago[0m   [32m+1[0m [31m-1[0m  [2mb834638e[0m  [2mInitial commit[0m  ./with-changes
+[2mBranch         [0m  [2mAge          [0m  [2mWT +/-[0m  [2mCommit  [0m  [2mMessage       [0m  [2mPath[0m
+[1m[35mmain           [0m  [2m10 months ago[0m          [1m[35mb834638e[0m  [2mInitial commit[0m  [1m[35m./test-repo[0m
+also-no-changes  [2m10 months ago[0m          [2mb834638e[0m  [2mInitial commit[0m  ./also-no-changes
+no-changes       [2m10 months ago[0m          [2mb834638e[0m  [2mInitial commit[0m  ./no-changes
+with-changes     [2m10 months ago[0m   [32m+1[0m [31m-1[0m  [2mb834638e[0m  [2mInitial commit[0m  ./with-changes
 
 [2mShowing 4 worktrees, 1 with changes[0m
 

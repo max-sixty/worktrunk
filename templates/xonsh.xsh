@@ -51,7 +51,7 @@ if shutil.which("wt") is not None:
         if subcommand in ["switch", "remove", "merge"]:
             # Commands that need --internal for directory change support
             rest_args = args[1:]
-            return _wt_exec([subcommand, "--internal"] + rest_args)
+            return _wt_exec(["--internal", subcommand] + rest_args)
         else:
             # All other commands pass through directly
             result = ![@(_WORKTRUNK_CMD) @(args)]

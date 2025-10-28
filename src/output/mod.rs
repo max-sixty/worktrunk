@@ -63,7 +63,7 @@ pub mod interactive;
 
 // Re-export the public API
 pub use global::{
-    OutputMode, change_directory, execute, flush, initialize, is_interactive, success,
+    OutputMode, change_directory, execute, flush, initialize, is_interactive, progress, success,
 };
 
 // Re-export output handlers

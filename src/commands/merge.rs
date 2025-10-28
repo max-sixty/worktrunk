@@ -17,7 +17,6 @@ pub fn handle_merge(
     message: Option<&str>,
     no_verify: bool,
     force: bool,
-    internal: bool,
 ) -> Result<(), GitError> {
     let repo = Repository::current();
 
@@ -62,7 +61,6 @@ pub fn handle_merge(
             &repo,
             &config,
             force,
-            internal,
         )?;
     }
 
@@ -71,26 +69,26 @@ pub fn handle_merge(
 
     // Squash commits if requested
     if squash {
-        squashed_count = handle_squash(&target_branch, internal)?;
+        squashed_count = handle_squash(&target_branch)?;
     }
 
     // Rebase onto target
-    if !internal {
-        println!("🔄 {CYAN}Rebasing onto {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}...{CYAN:#}");
-    }
+    crate::output::progress(format!(
+        "🔄 {CYAN}Rebasing onto {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}...{CYAN:#}"
+    ))
+    .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
     repo.run_command(&["rebase", &target_branch]).map_err(|e| {
         GitError::CommandFailed(format!("Failed to rebase onto '{}': {}", target_branch, e))
     })?;
 
     // Fast-forward push to target branch (reuse handle_push logic)
-    handle_push(Some(&target_branch), false, internal)?;
+    handle_push(Some(&target_branch), false)?;
 
     // Finish worktree unless --keep was specified
     if !keep {
-        if !internal {
-            println!("🔄 {CYAN}Cleaning up worktree...{CYAN:#}");
-        }
+        crate::output::progress(format!("🔄 {CYAN}Cleaning up worktree...{CYAN:#}"))
+            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
         // Get primary worktree path before finishing (while we can still run git commands)
         let primary_worktree_dir = repo.main_worktree_root()?;
@@ -104,11 +102,10 @@ pub fn handle_merge(
         let primary_repo = Repository::at(&primary_worktree_dir);
         let new_branch = primary_repo.current_branch()?;
         if new_branch.as_deref() != Some(&target_branch) {
-            if !internal {
-                println!(
-                    "🔄 {CYAN}Switching to {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}...{CYAN:#}"
-                );
-            }
+            crate::output::progress(format!(
+                "🔄 {CYAN}Switching to {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}...{CYAN:#}"
+            ))
+            .map_err(|e| GitError::CommandFailed(e.to_string()))?;
             primary_repo
                 .run_command(&["switch", &target_branch])
                 .map_err(|e| {
@@ -218,7 +215,7 @@ fn handle_commit_changes(
     Ok(())
 }
 
-fn handle_squash(target_branch: &str, internal: bool) -> Result<Option<usize>, GitError> {
+fn handle_squash(target_branch: &str) -> Result<Option<usize>, GitError> {
     let repo = Repository::current();
 
     // Get merge base with target branch
@@ -233,10 +230,11 @@ fn handle_squash(target_branch: &str, internal: bool) -> Result<Option<usize>, G
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
         // No commits and no staged changes - nothing to squash
-        if !internal {
-            let dim = AnstyleStyle::new().dimmed();
-            println!("{dim}No commits to squash - already at merge base{dim:#}");
-        }
+        let dim = AnstyleStyle::new().dimmed();
+        crate::output::progress(format!(
+            "{dim}No commits to squash - already at merge base{dim:#}"
+        ))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
         return Ok(None);
     }
 
@@ -250,19 +248,19 @@ fn handle_squash(target_branch: &str, internal: bool) -> Result<Option<usize>, G
 
     if commit_count == 1 && !has_staged {
         // Single commit, no staged changes - nothing to do
-        if !internal {
-            let dim = AnstyleStyle::new().dimmed();
-            println!(
-                "{dim}Only 1 commit since {CYAN_BOLD}{target_branch}{CYAN_BOLD:#} - no squashing needed{dim:#}"
-            );
-        }
+        let dim = AnstyleStyle::new().dimmed();
+        crate::output::progress(format!(
+            "{dim}Only 1 commit since {CYAN_BOLD}{target_branch}{CYAN_BOLD:#} - no squashing needed{dim:#}"
+        ))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
         return Ok(None);
     }
 
     // One or more commits (possibly with staged changes) - squash them
-    if !internal {
-        println!("🔄 {CYAN}Squashing {commit_count} commits into one...{CYAN:#}");
-    }
+    crate::output::progress(format!(
+        "🔄 {CYAN}Squashing {commit_count} commits into one...{CYAN:#}"
+    ))
+    .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
     // Get commit subjects for the squash message
     let range = format!("{}..HEAD", merge_base);
@@ -285,9 +283,10 @@ fn handle_squash(target_branch: &str, internal: bool) -> Result<Option<usize>, G
     repo.run_command(&["commit", "-m", &commit_message])
         .map_err(|e| GitError::CommandFailed(format!("Failed to create squash commit: {}", e)))?;
 
-    if !internal {
-        println!("✅ {GREEN}Squashed {commit_count} commits into one{GREEN:#}");
-    }
+    crate::output::progress(format!(
+        "✅ {GREEN}Squashed {commit_count} commits into one{GREEN:#}"
+    ))
+    .map_err(|e| GitError::CommandFailed(e.to_string()))?;
     Ok(Some(commit_count))
 }
 
@@ -300,7 +299,6 @@ fn run_pre_merge_checks(
     repo: &Repository,
     config: &WorktrunkConfig,
     force: bool,
-    internal: bool,
 ) -> Result<(), GitError> {
     let Some(pre_merge_config) = &project_config.pre_merge_check else {
         return Ok(());
@@ -320,14 +318,11 @@ fn run_pre_merge_checks(
         },
     )?;
     for prepared in commands {
-        if !internal {
-            use std::io::Write;
-            println!(
-                "🔄 {CYAN}Running pre-merge check '{name}'...{CYAN:#}",
-                name = prepared.name
-            );
-            let _ = std::io::stdout().flush();
-        }
+        crate::output::progress(format!(
+            "🔄 {CYAN}Running pre-merge check '{name}'...{CYAN:#}",
+            name = prepared.name
+        ))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?;
 
         if let Err(e) = execute_command_in_worktree(worktree_path, &prepared.expanded) {
             eprintln!();

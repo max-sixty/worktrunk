@@ -47,7 +47,7 @@ if (which wt | is-not-empty) {
             "switch" | "remove" | "merge" => {
                 # Commands that need --internal for directory change support
                 let rest_args = ($rest | skip 1)
-                let internal_args = ([$subcommand, "--internal"] | append $rest_args)
+                let internal_args = (["--internal", $subcommand] | append $rest_args)
                 let exit_code = (_wt_exec ...$internal_args)
                 return $exit_code
             }

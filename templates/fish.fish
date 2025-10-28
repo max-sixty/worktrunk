@@ -95,7 +95,7 @@ if type -q {{ cmd_prefix }}
         switch $subcommand
             case switch remove merge
                 # Commands that need --internal for directory change support
-                _wt_exec $subcommand --internal $argv[2..-1]
+                _wt_exec --internal $subcommand $argv[2..-1]
             case '*'
                 # All other commands pass through directly
                 command $_WORKTRUNK_CMD $argv

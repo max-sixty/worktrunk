@@ -18,9 +18,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-[2mBranch          [0m  [2mAge         [0m  [2mCommit  [0m  [2mState   [0m  [2mPath[0m
-[1m[35mmain            [0m  [2m9 months ago[0m  [1m[35mb834638e[0m            [1m[35m./test-repo[0m
-locked-no-reason  [2m9 months ago[0m  [2mb834638e[0m  (locked)  ./locked-no-reason
+[2mBranch          [0m  [2mAge          [0m  [2mCommit  [0m  [2mState   [0m  [2mPath[0m
+[1m[35mmain            [0m  [2m10 months ago[0m  [1m[35mb834638e[0m            [1m[35m./test-repo[0m
+locked-no-reason  [2m10 months ago[0m  [2mb834638e[0m  (locked)  ./locked-no-reason
 
 [2mShowing 2 worktrees[0m
 

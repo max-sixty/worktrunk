@@ -1,22 +1,33 @@
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd_with_global_flags, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use std::path::Path;
 
 /// Helper to create snapshot with normalized paths and SHAs
 fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
-    snapshot_switch_with_home(test_name, repo, args, None);
+    snapshot_switch_with_home(test_name, repo, args, None, &[]);
 }
 
-/// Helper that also allows setting a custom HOME directory
+/// Helper to create snapshot with global flags (e.g., --internal)
+fn snapshot_switch_with_global_flags(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    global_flags: &[&str],
+) {
+    snapshot_switch_with_home(test_name, repo, args, None, global_flags);
+}
+
+/// Helper that also allows setting a custom HOME directory and global flags
 fn snapshot_switch_with_home(
     test_name: &str,
     repo: &TestRepo,
     args: &[&str],
     temp_home: Option<&Path>,
+    global_flags: &[&str],
 ) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
+        let mut cmd = make_snapshot_cmd_with_global_flags(repo, "switch", args, None, global_flags);
         if let Some(home) = temp_home {
             cmd.env("HOME", home);
         }
@@ -89,10 +100,11 @@ fn test_switch_internal_mode() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    snapshot_switch(
+    snapshot_switch_with_global_flags(
         "switch_internal_mode",
         &repo,
-        &["--create", "--internal", "internal-test"],
+        &["--create", "internal-test"],
+        &["--internal"],
     );
 }
 
@@ -103,10 +115,11 @@ fn test_switch_existing_worktree_internal() {
 
     repo.add_worktree("existing-wt", "existing-wt");
 
-    snapshot_switch(
+    snapshot_switch_with_global_flags(
         "switch_existing_internal",
         &repo,
-        &["--internal", "existing-wt"],
+        &["existing-wt"],
+        &["--internal"],
     );
 }
 
@@ -120,16 +133,11 @@ fn test_switch_internal_with_execute() {
     #[cfg(target_os = "windows")]
     let execute_cmd = "echo line1 && echo line2";
 
-    snapshot_switch(
+    snapshot_switch_with_global_flags(
         "switch_internal_with_execute",
         &repo,
-        &[
-            "--create",
-            "--internal",
-            "exec-internal",
-            "--execute",
-            execute_cmd,
-        ],
+        &["--create", "exec-internal", "--execute", execute_cmd],
+        &["--internal"],
     );
 }
 
@@ -296,6 +304,7 @@ command = "{}"
         &repo,
         &["--create", "no-post-start", "--no-config-commands"],
         Some(temp_home.path()),
+        &[],
     );
 }
 
@@ -351,5 +360,6 @@ fn test_switch_no_config_commands_with_force() {
             "--no-config-commands",
         ],
         Some(temp_home.path()),
+        &[],
     );
 }

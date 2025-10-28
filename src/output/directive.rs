@@ -24,6 +24,11 @@ impl DirectiveOutput {
         io::stdout().flush()
     }
 
+    pub fn progress(&mut self, _message: String) -> io::Result<()> {
+        // Progress messages are only for humans - suppress in directive mode
+        Ok(())
+    }
+
     pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         // Ensure any prior stderr output is NUL-terminated before writing directive
         // The shell wrapper merges stderr+stdout via 2>&1 and splits on NUL bytes,

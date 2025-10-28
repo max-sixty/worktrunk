@@ -18,9 +18,9 @@ fn test_switch_internal_directive() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("switch")
+        cmd.arg("--internal")
+            .arg("switch")
             .arg("my-feature")
-            .arg("--internal")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!("switch_internal_directive", cmd);
@@ -62,8 +62,8 @@ fn test_remove_internal_directive() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("remove")
-            .arg("--internal")
+        cmd.arg("--internal")
+            .arg("remove")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!("remove_internal_directive", cmd);
@@ -131,10 +131,10 @@ fn test_merge_internal_keep() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("merge")
+        cmd.arg("--internal")
+            .arg("merge")
             .arg("main")
             .arg("--keep")
-            .arg("--internal")
             .current_dir(&feature_wt);
 
         assert_cmd_snapshot!("merge_internal_keep", cmd);

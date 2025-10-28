@@ -60,7 +60,7 @@ if command -v wt >/dev/null 2>&1; then
             switch|remove|merge)
                 # Commands that need --internal for directory change support
                 shift
-                _wt_exec "$subcommand" --internal "$@"
+                _wt_exec --internal "$subcommand" "$@"
                 ;;
             *)
                 # All other commands pass through directly
