@@ -113,30 +113,26 @@ pub fn execute_command_in_worktree(
     worktree_path: &std::path::Path,
     command: &str,
 ) -> Result<(), GitError> {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
-    let output = Command::new("sh")
+    // Use Stdio::inherit() to connect subprocess stdout/stderr directly to parent's
+    // This enables:
+    // - Real-time streaming output (no buffering)
+    // - Color detection (subprocess sees the parent's TTY)
+    let status = Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(worktree_path)
-        .output()
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
         .map_err(|e| GitError::CommandFailed(format!("Failed to execute command: {}", e)))?;
 
-    if !output.status.success() {
+    if !status.success() {
         return Err(GitError::CommandFailed(format!(
             "Command failed with exit code: {}",
-            output.status
+            status
         )));
-    }
-
-    // Print command output
-    if !output.stdout.is_empty() {
-        use worktrunk::styling::println;
-        println!("{}", String::from_utf8_lossy(&output.stdout).trim_end());
-    }
-    if !output.stderr.is_empty() {
-        use worktrunk::styling::eprintln;
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim_end());
     }
 
     Ok(())
