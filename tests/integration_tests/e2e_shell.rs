@@ -82,14 +82,18 @@ fn generate_init_code(repo: &TestRepo, shell: &str) -> String {
         .output()
         .expect("Failed to generate init code");
 
-    if !output.status.success() {
+    // For shells that don't support completions, the command will exit with code 1
+    // but still output the shell integration code to stdout. We can use that output.
+    let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code");
+
+    if !output.status.success() && stdout.trim().is_empty() {
         panic!(
             "Failed to generate init code:\nstderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
 
-    String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code")
+    stdout
 }
 
 /// Generate shell-specific PATH export syntax

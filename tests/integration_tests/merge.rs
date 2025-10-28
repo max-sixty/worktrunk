@@ -1138,3 +1138,191 @@ second = "echo 'STDOUT-FROM-SECOND' && echo 'STDERR-FROM-SECOND' >&2"
         insta::assert_snapshot!("merge_pre_merge_check_combined_output", output);
     });
 }
+
+#[test]
+fn test_merge_post_merge_command_success() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create project config with post-merge command that writes a marker file
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-merge-command = "echo 'merged {branch} to {target}' > post-merge-ran.txt""#,
+    )
+    .expect("Failed to write config");
+
+    repo.commit("Add config");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add worktree");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature", "feature");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Merge with --force
+    snapshot_merge(
+        "merge_post_merge_command_success",
+        &repo,
+        &["main", "--force"],
+        Some(&feature_wt),
+    );
+
+    // Verify the command ran in the main worktree (not the feature worktree)
+    let marker_file = repo.root_path().join("post-merge-ran.txt");
+    assert!(
+        marker_file.exists(),
+        "Post-merge command should have created marker file in main worktree"
+    );
+    let content = fs::read_to_string(&marker_file).expect("Failed to read marker file");
+    assert!(
+        content.contains("merged feature to main"),
+        "Marker file should contain correct branch and target: {}",
+        content
+    );
+}
+
+#[test]
+fn test_merge_post_merge_command_failure() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create project config with failing post-merge command
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-merge-command = "exit 1""#,
+    )
+    .expect("Failed to write config");
+
+    repo.commit("Add config");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add worktree");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature", "feature");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Merge with --force - post-merge command should fail but merge should complete
+    snapshot_merge(
+        "merge_post_merge_command_failure",
+        &repo,
+        &["main", "--force"],
+        Some(&feature_wt),
+    );
+}
+
+#[test]
+fn test_merge_post_merge_command_named() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create project config with named post-merge commands
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"
+[post-merge-command]
+notify = "echo 'Merge to {target} complete' > notify.txt"
+deploy = "echo 'Deploying branch {branch}' > deploy.txt"
+"#,
+    )
+    .expect("Failed to write config");
+
+    repo.commit("Add config");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add worktree");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature", "feature");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Merge with --force
+    snapshot_merge(
+        "merge_post_merge_command_named",
+        &repo,
+        &["main", "--force"],
+        Some(&feature_wt),
+    );
+
+    // Verify both commands ran
+    let notify_file = repo.root_path().join("notify.txt");
+    let deploy_file = repo.root_path().join("deploy.txt");
+    assert!(
+        notify_file.exists(),
+        "Notify command should have created marker file"
+    );
+    assert!(
+        deploy_file.exists(),
+        "Deploy command should have created marker file"
+    );
+}

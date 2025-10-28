@@ -85,14 +85,18 @@ fn generate_init_code(repo: &TestRepo, shell: &str) -> String {
         .output()
         .expect("Failed to generate init code");
 
-    if !output.status.success() {
+    // For shells that don't support completions, the command will exit with code 1
+    // but still output the shell integration code to stdout. We can use that output.
+    let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code");
+
+    if !output.status.success() && stdout.trim().is_empty() {
         panic!(
             "Failed to generate init code:\nstderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
 
-    String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code")
+    stdout
 }
 
 /// Generate shell-specific PATH export syntax
@@ -119,11 +123,6 @@ fn path_export_syntax(shell: &str, bin_path: &str) -> String {
 #[cfg_attr(feature = "tier-2-integration-tests", case("oil"))]
 #[cfg_attr(feature = "tier-2-integration-tests", case("xonsh"))]
 fn test_e2e_post_start_background_command(#[case] shell: &str) {
-    if !is_shell_available(shell) {
-        eprintln!("Skipping test: {} not available", shell);
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 

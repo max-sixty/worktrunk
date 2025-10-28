@@ -97,6 +97,14 @@ pub struct ProjectConfig {
     /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
     #[serde(default, rename = "pre-merge-check")]
     pub pre_merge_check: Option<CommandConfig>,
+
+    /// Commands to execute after successful merge in the main worktree (blocking)
+    /// Supports string (single command), array (sequential), or table (named, sequential)
+    /// Runs after push succeeds but before cleanup
+    ///
+    /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
+    #[serde(default, rename = "post-merge-command")]
+    pub post_merge_command: Option<CommandConfig>,
 }
 
 /// Configuration for commands - supports multiple formats
@@ -522,6 +530,7 @@ mod tests {
         assert!(config.post_create_command.is_none());
         assert!(config.post_start_command.is_none());
         assert!(config.pre_merge_check.is_none());
+        assert!(config.post_merge_command.is_none());
     }
 
     #[test]

@@ -107,6 +107,17 @@ pub fn handle_merge(
     // Fast-forward push to target branch (reuse handle_push logic)
     handle_push(Some(&target_branch), false)?;
 
+    // Execute post-merge commands in the main worktree
+    let main_worktree_path = repo.main_worktree_root()?;
+    execute_post_merge_commands(
+        &main_worktree_path,
+        &repo,
+        &config,
+        &current_branch,
+        &target_branch,
+        force,
+    )?;
+
     // Finish worktree unless --keep was specified
     if !keep {
         crate::output::progress(format!("🔄 {CYAN}Cleaning up worktree...{CYAN:#}"))
@@ -364,6 +375,76 @@ fn run_pre_merge_checks(
 
         // No need to flush here - the redirect in execute_command_in_worktree ensures ordering
     }
+
+    Ok(())
+}
+
+/// Load project configuration with proper error conversion
+fn load_project_config(repo: &Repository) -> Result<Option<ProjectConfig>, GitError> {
+    let repo_root = repo.worktree_root()?;
+    ProjectConfig::load(&repo_root)
+        .map_err(|e| GitError::CommandFailed(format!("Failed to load project config: {}", e)))
+}
+
+/// Execute post-merge commands sequentially in the main worktree (blocking)
+fn execute_post_merge_commands(
+    main_worktree_path: &std::path::Path,
+    repo: &Repository,
+    config: &WorktrunkConfig,
+    branch: &str,
+    target_branch: &str,
+    force: bool,
+) -> Result<(), GitError> {
+    use worktrunk::styling::WARNING;
+
+    let project_config = match load_project_config(repo)? {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
+
+    let Some(post_merge_config) = &project_config.post_merge_command else {
+        return Ok(());
+    };
+
+    let ctx = CommandContext::new(repo, config, branch, main_worktree_path, force);
+    let commands = prepare_project_commands(
+        post_merge_config,
+        "cmd",
+        &ctx,
+        false,
+        &[("target", target_branch)],
+        "Post-merge commands",
+        |_, command| {
+            let dim = AnstyleStyle::new().dimmed();
+            eprintln!("{dim}Skipping command: {command}{dim:#}");
+        },
+    )?;
+
+    if commands.is_empty() {
+        return Ok(());
+    }
+
+    // Execute each command sequentially in the main worktree
+    for prepared in commands {
+        use std::io::Write;
+        eprintln!("🔄 {CYAN}Executing (post-merge):{CYAN:#}");
+        eprint!("{}", format_with_gutter(&prepared.expanded, "", None));
+        let _ = std::io::stderr().flush();
+
+        if let Err(e) = execute_command_in_worktree(main_worktree_path, &prepared.expanded) {
+            use worktrunk::styling::WARNING_EMOJI;
+            let warning_bold = WARNING.bold();
+            eprintln!(
+                "{WARNING_EMOJI} {WARNING}Command {warning_bold}{name}{warning_bold:#} failed: {e}{WARNING:#}",
+                name = prepared.name,
+            );
+            // Continue with other commands even if one fails
+        }
+    }
+
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
 
     Ok(())
 }

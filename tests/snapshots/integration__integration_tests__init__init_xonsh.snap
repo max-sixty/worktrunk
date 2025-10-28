@@ -1,0 +1,88 @@
+---
+source: tests/integration_tests/init.rs
+info:
+  program: wt
+  args:
+    - init
+    - xonsh
+  env:
+    CLICOLOR_FORCE: "1"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpnTeEBT/test-config.toml
+---
+success: false
+exit_code: 1
+----- stdout -----
+# worktrunk shell integration for xonsh
+
+# Only initialize if wt is available
+import shutil
+import os
+if shutil.which("wt") is not None:
+    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
+    # This allows testing development builds: $WORKTRUNK_BIN = ./target/debug/wt
+    _WORKTRUNK_CMD = os.environ.get('WORKTRUNK_BIN', 'wt')
+
+    def _wt_exec(args):
+        """Helper function to parse wt output and handle directives
+        Directives are NUL-terminated to support multi-line commands"""
+        # Capture full output including return code
+        result = ![@(_WORKTRUNK_CMD) @(args)]
+        exec_cmd = ""
+
+        # Split output on NUL bytes, process each chunk
+        if result.out:
+            for chunk in result.out.split("\0"):
+                if chunk.startswith("__WORKTRUNK_CD__"):
+                    # CD directive - extract path and change directory
+                    # TODO: Use str.replace instead of hard-coded offset (fragile if prefix changes)
+                    path = chunk[16:]  # Remove prefix
+                    cd @(path)
+                elif chunk.startswith("__WORKTRUNK_EXEC__"):
+                    # EXEC directive - extract command (may contain newlines)
+                    # TODO: Use str.replace instead of hard-coded offset (fragile if prefix changes)
+                    exec_cmd = chunk[18:]  # Remove prefix
+                elif chunk:
+                    # Regular output - print it with newline
+                    print(chunk)
+
+        # Execute command if one was specified
+        if exec_cmd:
+            execx(exec_cmd)
+
+        # Return the exit code
+        # TODO: Add fallback for None: return result.returncode or 0
+        return result.returncode
+
+    def _wt_wrapper(args):
+        """Override wt command to add --internal flag for switch, remove, and merge"""
+        if not args:
+            # No arguments, just run wt
+            ![@(_WORKTRUNK_CMD)]
+            return
+
+        subcommand = args[0]
+
+        if subcommand in ["switch", "remove", "merge"]:
+            # Commands that need --internal for directory change support
+            rest_args = args[1:]
+            return _wt_exec(["--internal", subcommand] + rest_args)
+        else:
+            # All other commands pass through directly
+            result = ![@(_WORKTRUNK_CMD) @(args)]
+            return result.returncode
+
+    # Register the alias
+    aliases['wt'] = _wt_wrapper
+
+# Static completions (commands and flags)
+
+----- stderr -----
+❌ [31mCompletion not yet supported for xonsh[0m

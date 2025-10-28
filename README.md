@@ -128,14 +128,26 @@ Projects can define commands that run automatically when creating or switching t
 [pre-merge-check]
 "tests" = "npm test"
 "lint" = "npm run lint"
+
+# Run after successful merge in main worktree (blocking)
+[post-merge-command]
+"install" = "cargo install --path ."
+"deploy" = "scripts/deploy.sh"
 ```
+
+**Hook Types:**
+
+- **`post-create-command`**: Runs sequentially after creating a worktree. Use for setup tasks like installing dependencies.
+- **`post-start-command`**: Runs in parallel as background processes after switching to a worktree. Use for dev servers and watchers.
+- **`pre-merge-check`**: Runs sequentially before merging. All commands must succeed for the merge to proceed. Use for validation (tests, lints).
+- **`post-merge-command`**: Runs sequentially in the main worktree after a successful merge and push. Use for deployment, notifications, or updating global state.
 
 Template variables expand at runtime:
 - `{repo}` - Repository name
 - `{branch}` - Current branch
 - `{worktree}` - Absolute path to worktree
 - `{repo_root}` - Absolute path to repository root
-- `{target}` - Target branch (pre-merge-check only)
+- `{target}` - Target branch (pre-merge-check and post-merge-command only)
 
 ### Available Hooks
 

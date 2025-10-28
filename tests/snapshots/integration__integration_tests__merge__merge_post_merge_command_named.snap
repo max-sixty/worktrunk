@@ -1,0 +1,42 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - merge
+    - main
+    - "--force"
+  env:
+    CLICOLOR_FORCE: "1"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpAoqM3d/test-config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+🔄 [36mValidating merge...[0m
+🔄 [36mRebasing onto [1m[36mmain[0m...[0m
+🔄 [36mPushing 1 commit to [1m[36mmain[0m @ [SHA][0m
+
+* [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature file
+
+ feature.txt | 1 [32m+[m
+ 1 file changed, 1 insertion(+)
+
+✅ [32mPushed to [1m[32mmain[0m (1 commit, 1 file, [32m+1[0m)  [0m
+🔄 [36mCleaning up worktree...[0m
+
+✅ [32mReturned to primary at [REPO][0m
+
+----- stderr -----
+🔄 [36mExecuting (post-merge):[0m
+[40m [0m echo 'Deploying branch feature' > deploy.txt
+🔄 [36mExecuting (post-merge):[0m
+[40m [0m echo 'Merge to main complete' > notify.txt

@@ -1,0 +1,399 @@
+---
+source: tests/integration_tests/init.rs
+info:
+  program: wt
+  args:
+    - init
+    - oil
+  env:
+    CLICOLOR_FORCE: "1"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxLMelz/test-config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+# worktrunk shell integration for oil
+
+# Only initialize if wt is available
+if command -v wt >/dev/null 2>&1; then
+    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
+    # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/wt
+    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-wt}"
+
+    # Helper function to parse wt output and handle directives
+    # Directives are NUL-terminated to support multi-line commands
+    _wt_exec() {
+        local exec_cmd="" chunk exit_code
+        local exit_code_file
+        exit_code_file=$(mktemp) || { echo "Failed to create temp file" >&2; return 1; }
+
+        # Parse stdout for directives (NUL-delimited)
+        # Let stderr pass through to terminal (preserves TTY for color detection)
+        # Write exit code to temp file since it can't be captured from process substitution
+        # The || [[ -n "$chunk" ]] handles non-NUL-terminated output (e.g., error messages)
+        while IFS= read -r -d '' chunk || [[ -n "$chunk" ]]; do
+            if [[ "$chunk" == __WORKTRUNK_CD__* ]]; then
+                # CD directive - extract path and change directory
+                local path="${chunk#__WORKTRUNK_CD__}"
+                \cd "$path"
+            elif [[ "$chunk" == __WORKTRUNK_EXEC__* ]]; then
+                # EXEC directive - extract command (may contain newlines)
+                exec_cmd="${chunk#__WORKTRUNK_EXEC__}"
+            else
+                # Regular output - print it with newline
+                printf '%s\n' "$chunk"
+            fi
+        done < <(command "$_WORKTRUNK_CMD" "$@"; echo "$?" > "$exit_code_file")
+
+        # Read exit code from temp file
+        exit_code=$(cat "$exit_code_file" 2>/dev/null || echo 0)
+
+        # Cleanup temp file
+        \rm -f "$exit_code_file"
+
+        # Execute command if one was specified
+        # Security: Command is user-provided from -x flag; eval is intentional.
+        # NUL-termination allows multi-line commands.
+        # Exit code semantics: Returns wt's exit code, not the executed command's.
+        # This allows detecting wt failures (e.g., branch creation errors).
+        # The executed command runs for side effects; its failure is logged but doesn't affect exit code.
+        if [[ -n "$exec_cmd" ]]; then
+            if ! eval "$exec_cmd"; then
+                echo "Warning: Command execution failed (exit code $?)" >&2
+            fi
+        fi
+
+        return $exit_code
+    }
+
+    # Override wt command to add --internal flag for switch, remove, and merge
+    wt() {
+        local subcommand="$1"
+
+        case "$subcommand" in
+            switch|remove|merge)
+                # Commands that need --internal for directory change support
+                shift
+                _wt_exec --internal "$subcommand" "$@"
+                ;;
+            *)
+                # All other commands pass through directly
+                command "$_WORKTRUNK_CMD" "$@"
+                ;;
+        esac
+    }
+
+    # Dynamic completion function
+    _wt_complete() {
+        local cur="${COMP_WORDS[COMP_CWORD]}"
+
+        # Call wt complete with current command line
+        local completions=$(command "$_WORKTRUNK_CMD" complete "${COMP_WORDS[@]}" 2>/dev/null)
+        COMPREPLY=($(compgen -W "$completions" -- "$cur"))
+    }
+
+    # Register dynamic completion
+    complete -F _wt_complete wt
+fi
+
+# Static completions (commands and flags)
+_wt() {
+    local i cur prev opts cmd
+    COMPREPLY=()
+    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+        cur="$2"
+    else
+        cur="${COMP_WORDS[COMP_CWORD]}"
+    fi
+    prev="$3"
+    cmd=""
+    opts=""
+
+    for i in "${COMP_WORDS[@]:0:COMP_CWORD}"
+    do
+        case "${cmd},${i}" in
+            ",$1")
+                cmd="wt"
+                ;;
+            wt,complete)
+                cmd="wt__complete"
+                ;;
+            wt,completion)
+                cmd="wt__completion"
+                ;;
+            wt,config)
+                cmd="wt__config"
+                ;;
+            wt,configure-shell)
+                cmd="wt__configure__shell"
+                ;;
+            wt,init)
+                cmd="wt__init"
+                ;;
+            wt,list)
+                cmd="wt__list"
+                ;;
+            wt,merge)
+                cmd="wt__merge"
+                ;;
+            wt,push)
+                cmd="wt__push"
+                ;;
+            wt,remove)
+                cmd="wt__remove"
+                ;;
+            wt,switch)
+                cmd="wt__switch"
+                ;;
+            wt__config,init)
+                cmd="wt__config__init"
+                ;;
+            wt__config,list)
+                cmd="wt__config__list"
+                ;;
+            *)
+                ;;
+        esac
+    done
+
+    case "${cmd}" in
+        wt)
+            opts="-v -h -V --verbose --help --version init configure-shell config list switch remove push merge completion complete"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__complete)
+            opts="-v -h --verbose --help [ARGS]..."
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__completion)
+            opts="-v -h --verbose --help bash elvish fish nushell oil powershell xonsh zsh"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__config)
+            opts="-v -h --verbose --help init list"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__config__init)
+            opts="-v -h --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__config__list)
+            opts="-v -h --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__configure__shell)
+            opts="-y -v -h --shell --cmd --yes --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --shell)
+                    COMPREPLY=($(compgen -W "bash elvish fish nushell oil powershell xonsh zsh" -- "${cur}"))
+                    return 0
+                    ;;
+                --cmd)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__init)
+            opts="-v -h --cmd --verbose --help <SHELL>"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --cmd)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__list)
+            opts="-v -h --format --branches --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "table json" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__merge)
+            opts="-s -k -m -f -v -h --squash --keep --message --no-verify --force --verbose --help [TARGET]"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --message)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__push)
+            opts="-v -h --allow-merge-commits --verbose --help [TARGET]"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__remove)
+            opts="-v -h --verbose --help [WORKTREE]"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__switch)
+            opts="-c -b -x -f -v -h --create --base --execute --force --no-config-commands --verbose --help <BRANCH>"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --base)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -b)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --execute)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -x)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+    esac
+}
+
+if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
+    complete -F _wt -o nosort -o bashdefault -o default wt
+else
+    complete -F _wt -o bashdefault -o default wt
+fi
+
+----- stderr -----

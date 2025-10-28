@@ -24,3 +24,8 @@ echo '✓ CoW seeded target/'
 [pre-merge-check]
 pre-commit = "pre-commit run --all-files"
 insta = "cargo insta test"
+
+# Post-merge commands
+# These run in the main worktree after successful merge and push
+# Available template variables: {repo}, {branch}, {worktree}, {repo_root}, {target}
+post-merge-command = "cargo install --path ."
