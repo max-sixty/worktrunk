@@ -60,11 +60,14 @@ fn test_init_invalid_shell() {
 
         assert_cmd_snapshot!(cmd, @r"
         success: false
-        exit_code: 1
+        exit_code: 2
         ----- stdout -----
 
         ----- stderr -----
-        Unsupported shell: invalid-shell
+        [1m[31merror:[0m invalid value '[33minvalid-shell[0m' for '[1m<SHELL>[0m'
+          [possible values: [32mbash[0m, [32melvish[0m, [32mfish[0m, [32mnushell[0m, [32moil[0m, [32mpowershell[0m, [32mxonsh[0m, [32mzsh[0m]
+
+        For more information, try '[1m--help[0m'.
         ");
     });
 }

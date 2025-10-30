@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpNVNuYN/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp84YMkU/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -167,7 +167,7 @@ if type -q wt
     end
 
     # Register dynamic completions
-    complete -c wt -n '__fish_seen_subcommand_from init' -f -a '(__wt_complete)' -d 'Shell to generate code for (bash, fish, zsh)'
+    complete -c wt -n '__fish_seen_subcommand_from init' -f -a '(__wt_complete)' -d 'Shell to generate code for'
     complete -c wt -n '__fish_seen_subcommand_from switch' -f -a '(__wt_complete)' -d 'Branch name or worktree path'
     complete -c wt -n '__fish_seen_subcommand_from remove' -f -a '(__wt_complete)' -d 'Worktree names or branches to remove (defaults to current worktree if none specified)'
     complete -c wt -n '__fish_seen_subcommand_from push' -f -a '(__wt_complete)' -d 'Target branch (defaults to default branch)'

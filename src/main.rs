@@ -88,8 +88,8 @@ enum DevCommand {
 enum Commands {
     /// Generate shell integration code
     Init {
-        /// Shell to generate code for (bash, fish, zsh)
-        shell: String,
+        /// Shell to generate code for
+        shell: Shell,
 
         /// Command prefix (default: wt)
         #[arg(long, default_value = "wt")]
@@ -333,7 +333,7 @@ fn main() {
     let result = match cli.command {
         Commands::Init { shell, cmd } => {
             let mut cli_cmd = Cli::command();
-            handle_init(&shell, &cmd, &mut cli_cmd).git_err()
+            handle_init(shell, &cmd, &mut cli_cmd).git_err()
         }
         Commands::ConfigureShell { shell, cmd, yes } => {
             handle_configure_shell(shell, &cmd, yes)

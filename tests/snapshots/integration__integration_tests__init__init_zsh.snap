@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpNfo5re/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpohHD45/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -159,7 +159,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':shell -- Shell to generate code for (bash, fish, zsh):_default' \
+':shell -- Shell to generate code for:(bash elvish fish nushell oil powershell xonsh zsh)' \
 && ret=0
 ;;
 (configure-shell)
