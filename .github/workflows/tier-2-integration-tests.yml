@@ -6,34 +6,33 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+
 jobs:
   tier-2-tests:
     name: Tier 2 Shell Integration Tests
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: 📂 Checkout code
+      uses: actions/checkout@v5
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache cargo registry
-      uses: actions/cache@v4
+    - name: Install cargo-nextest
+      uses: baptiste0928/cargo-install@v3
       with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        crate: cargo-nextest
 
-    - name: Cache cargo index
-      uses: actions/cache@v4
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
       with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Cache cargo build
-      uses: actions/cache@v4
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+        prefix-key: ${{ hashFiles('Cargo.lock') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install Tier 1 shells (bash, zsh, fish)
       run: |
@@ -95,8 +94,14 @@ jobs:
         which xonsh && xonsh --version
         which oil || which osh
 
-    - name: Run tier-2 integration tests
-      run: cargo test --test integration --features tier-2-integration-tests --verbose
+    - name: 📋 Run tier-2 integration tests
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: nextest
+        args: run --test integration --features tier-2-integration-tests
 
-    - name: Run all tests with tier-2 features
-      run: cargo test --all --features tier-2-integration-tests
+    - name: 📋 Run all tests with tier-2 features
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: nextest
+        args: run --all --features tier-2-integration-tests

@@ -6,53 +6,73 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
+
 jobs:
   test:
     name: Test (Tier 1 shells only)
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: 📂 Checkout code
+      uses: actions/checkout@v5
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
 
-    - name: Cache cargo registry
-      uses: actions/cache@v4
+    - name: Install cargo-insta
+      uses: baptiste0928/cargo-install@v3
       with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        crate: cargo-insta
 
-    - name: Cache cargo index
-      uses: actions/cache@v4
+    - name: Install cargo-nextest
+      uses: baptiste0928/cargo-install@v3
       with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+        crate: cargo-nextest
 
-    - name: Cache cargo build
-      uses: actions/cache@v4
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
       with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+        prefix-key: ${{ hashFiles('Cargo.lock') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install Tier 1 shells (bash, zsh, fish)
       run: |
         sudo apt-get update
         sudo apt-get install -y zsh fish
 
-    - name: Check formatting
-      run: cargo fmt --check
+    - name: 🏭 Compile
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: test
+        args: --no-run --locked
 
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: 📋 Test
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: insta
+        args: test --test-runner=nextest
 
-    - name: Build
-      run: cargo build --verbose
+    - name: 📎 Clippy
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: clippy
+        args: --all-targets --all-features -- -D warnings
 
-    - name: Run tests (Tier 1 shells only)
-      run: cargo test --verbose
+    - name: ⌨️ Fmt
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: fmt
+        args: --all --check
 
-    - name: Build release
-      run: cargo build --release --verbose
+    - name: 🗒️ Doc
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: doc
+        args: --no-deps
