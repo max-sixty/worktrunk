@@ -20,7 +20,7 @@
 //! $ wt switch my-feature
 //! Created new branch and worktree for 'my-feature' at /path/to/worktree
 //!
-//! To enable automatic cd, run: wt configure-shell
+//! To enable automatic cd, run: wt config shell
 //!
 //! $ pwd
 //! /original/directory  # ← User is still here!

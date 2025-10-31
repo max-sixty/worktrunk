@@ -3,12 +3,8 @@ use clap_complete::{Shell as CompletionShell, generate};
 use worktrunk::shell;
 use worktrunk::styling::{ERROR, ERROR_EMOJI, println};
 
-pub fn handle_init(
-    shell: shell::Shell,
-    cmd_name: &str,
-    cli_cmd: &mut Command,
-) -> Result<(), String> {
-    let init = shell::ShellInit::new(shell, cmd_name.to_string());
+pub fn handle_init(shell: shell::Shell, cli_cmd: &mut Command) -> Result<(), String> {
+    let init = shell::ShellInit::new(shell, "wt".to_string());
 
     // Generate shell integration code
     let integration_output = init

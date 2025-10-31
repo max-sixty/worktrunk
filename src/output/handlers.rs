@@ -66,7 +66,7 @@ fn format_remove_message(result: &RemoveResult) -> String {
 
 /// Shell integration hint message
 fn shell_integration_hint() -> &'static str {
-    "To enable automatic cd, run: wt configure-shell"
+    "To enable automatic cd, run: wt config shell"
 }
 
 /// Handle output for a switch operation

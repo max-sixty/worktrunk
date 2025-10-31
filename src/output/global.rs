@@ -84,7 +84,7 @@ pub fn progress(message: impl Into<String>) -> io::Result<()> {
 
 /// Emit a hint message (only shown in interactive mode)
 ///
-/// Hints are suggestions for interactive users, like "To enable automatic cd, run: wt configure-shell"
+/// Hints are suggestions for interactive users, like "To enable automatic cd, run: wt config shell"
 /// They are shown in interactive mode but suppressed in directive mode (where they don't apply).
 pub fn hint(message: impl Into<String>) -> io::Result<()> {
     OUTPUT_CONTEXT.with(|ctx| {

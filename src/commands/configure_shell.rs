@@ -34,14 +34,10 @@ impl ConfigAction {
 
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
-    cmd_prefix: &str,
     skip_confirmation: bool,
 ) -> Result<Vec<ConfigureResult>, String> {
-    // Validate cmd_prefix to prevent command injection
-    validate_cmd_prefix(cmd_prefix)?;
-
     // First, do a dry-run to see what would be changed
-    let preview_results = scan_shell_configs(shell_filter, cmd_prefix, true)?;
+    let preview_results = scan_shell_configs(shell_filter, true)?;
 
     // If nothing to do, return early
     if preview_results.is_empty() {
@@ -58,18 +54,17 @@ pub fn handle_configure_shell(
         return Ok(preview_results);
     }
 
-    // Show what will be done and ask for confirmation (unless --yes flag is used)
+    // Show what will be done and ask for confirmation (unless --force flag is used)
     if !skip_confirmation && !prompt_for_confirmation(&preview_results)? {
         return Err("Cancelled by user".to_string());
     }
 
-    // User confirmed (or --yes flag was used), now actually apply the changes
-    scan_shell_configs(shell_filter, cmd_prefix, false)
+    // User confirmed (or --force flag was used), now actually apply the changes
+    scan_shell_configs(shell_filter, false)
 }
 
 fn scan_shell_configs(
     shell_filter: Option<Shell>,
-    cmd_prefix: &str,
     dry_run: bool,
 ) -> Result<Vec<ConfigureResult>, String> {
     let shells = if let Some(shell) = shell_filter {
@@ -92,7 +87,7 @@ fn scan_shell_configs(
     let mut checked_paths = Vec::new();
 
     for shell in shells {
-        let paths = shell.config_paths(cmd_prefix);
+        let paths = shell.config_paths("wt");
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
@@ -119,8 +114,7 @@ fn scan_shell_configs(
         if should_configure {
             let path = target_path.or_else(|| paths.first());
             if let Some(path) = path {
-                match configure_shell_file(shell, path, cmd_prefix, dry_run, shell_filter.is_some())
-                {
+                match configure_shell_file(shell, path, dry_run, shell_filter.is_some()) {
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
@@ -153,26 +147,18 @@ fn scan_shell_configs(
 fn configure_shell_file(
     shell: Shell,
     path: &Path,
-    cmd_prefix: &str,
     dry_run: bool,
     explicit_shell: bool,
 ) -> Result<Option<ConfigureResult>, String> {
     // Get a summary of the shell integration for display
-    let integration_summary = shell.integration_summary(cmd_prefix);
+    let integration_summary = shell.integration_summary("wt");
 
     // The actual line we write to the config file
-    let config_content = shell.config_line(cmd_prefix);
+    let config_content = shell.config_line("wt");
 
     // For Fish, we write to a separate conf.d/ file
     if matches!(shell, Shell::Fish) {
-        return configure_fish_file(
-            shell,
-            path,
-            &config_content,
-            cmd_prefix,
-            dry_run,
-            explicit_shell,
-        );
+        return configure_fish_file(shell, path, &config_content, dry_run, explicit_shell);
     }
 
     // For other shells, check if file exists
@@ -265,12 +251,11 @@ fn configure_fish_file(
     shell: Shell,
     path: &Path,
     content: &str,
-    cmd_prefix: &str,
     dry_run: bool,
     explicit_shell: bool,
 ) -> Result<Option<ConfigureResult>, String> {
     // Get a summary of the shell integration for display
-    let integration_summary = shell.integration_summary(cmd_prefix);
+    let integration_summary = shell.integration_summary("wt");
 
     // For Fish, we write to conf.d/{cmd_prefix}.fish (separate file)
 
@@ -376,40 +361,4 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
 
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
-}
-
-fn validate_cmd_prefix(cmd_prefix: &str) -> Result<(), String> {
-    // Ensure it's not empty
-    if cmd_prefix.is_empty() {
-        return Err("Command prefix cannot be empty".to_string());
-    }
-
-    // Can't start with dash (would be interpreted as a flag)
-    if cmd_prefix.starts_with('-') {
-        return Err(format!(
-            "Invalid command prefix '{}': cannot start with '-'",
-            cmd_prefix
-        ));
-    }
-
-    // Only allow alphanumeric, dash, and underscore
-    if !cmd_prefix
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(format!(
-            "Invalid command prefix '{}': only alphanumeric characters, dash, and underscore allowed",
-            cmd_prefix
-        ));
-    }
-
-    // Ensure it's not too long (reasonable limit)
-    if cmd_prefix.len() > 64 {
-        return Err(format!(
-            "Command prefix '{}' is too long (max 64 characters)",
-            cmd_prefix
-        ));
-    }
-
-    Ok(())
 }

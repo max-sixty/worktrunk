@@ -5,7 +5,7 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Test configure-shell with --yes flag (skips confirmation)
+/// Test configure-shell with --force flag (skips confirmation)
 #[test]
 fn test_configure_shell_with_yes() {
     let repo = TestRepo::new();
@@ -22,8 +22,9 @@ fn test_configure_shell_with_yes() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
-            .arg("--yes")
+        cmd.arg("config")
+            .arg("shell")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
@@ -64,10 +65,11 @@ fn test_configure_shell_specific_shell() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
+        cmd.arg("config")
+            .arg("shell")
             .arg("--shell")
             .arg("zsh")
-            .arg("--yes")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
@@ -112,10 +114,11 @@ fn test_configure_shell_already_exists() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
+        cmd.arg("config")
+            .arg("shell")
             .arg("--shell")
             .arg("zsh")
-            .arg("--yes")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
@@ -135,56 +138,6 @@ fn test_configure_shell_already_exists() {
     assert_eq!(count, 1, "Should only have one wt init line");
 }
 
-/// Test configure-shell with custom command prefix
-#[test]
-fn test_configure_shell_custom_prefix() {
-    let repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
-    // Create the appropriate bash config file based on platform
-    let bash_config_path = if cfg!(target_os = "macos") {
-        temp_home.path().join(".bash_profile")
-    } else {
-        temp_home.path().join(".bashrc")
-    };
-    fs::write(&bash_config_path, "# Existing config\n").unwrap();
-
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
-
-    settings.bind(|| {
-        let mut cmd = Command::new(get_cargo_bin("wt"));
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
-            .arg("--shell")
-            .arg("bash")
-            .arg("--cmd")
-            .arg("worktree")
-            .arg("--yes")
-            .env("HOME", temp_home.path())
-            .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd, @r#"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-        Added [1mbash[0m [TEMP_HOME]/.bash_profile
-        [40m [0m [1m[35mif [1m[34mcommand [36m-v worktree [36m>/dev/null [33m2>&1; [1m[35mthen [1m[34meval [32m"$([1m[34mworktree init bash)"; [1m[35mfi
-
-        ✅ [32mConfigured 1 shell[0m
-
-        💡 [2mRestart your shell or run: source <config-file>[0m
-
-        ----- stderr -----
-        "#);
-    });
-
-    // Verify the file has the custom prefix
-    let content = fs::read_to_string(&bash_config_path).unwrap();
-    assert!(content.contains("eval \"$(worktree init bash)\""));
-}
-
 /// Test configure-shell for Fish (creates new file in conf.d/)
 #[test]
 fn test_configure_shell_fish() {
@@ -198,10 +151,11 @@ fn test_configure_shell_fish() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
+        cmd.arg("config")
+            .arg("shell")
             .arg("--shell")
             .arg("fish")
-            .arg("--yes")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
@@ -245,8 +199,9 @@ fn test_configure_shell_no_files() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
-            .arg("--yes")
+        cmd.arg("config")
+            .arg("shell")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
@@ -262,57 +217,6 @@ fn test_configure_shell_no_files() {
 }
 
 /// Test configure-shell for Fish with custom prefix
-#[test]
-fn test_configure_shell_fish_custom_prefix() {
-    let repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
-
-    settings.bind(|| {
-        let mut cmd = Command::new(get_cargo_bin("wt"));
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
-            .arg("--shell")
-            .arg("fish")
-            .arg("--cmd")
-            .arg("worktree")
-            .arg("--yes")
-            .env("HOME", temp_home.path())
-            .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-        Created [1mfish[0m [TEMP_HOME]/.config/fish/conf.d/worktree.fish
-        [40m [0m [1m[35mif [1m[34mtype [36m-q worktree; [1m[34mworktree init fish [36m| [1m[34msource; end
-
-        ✅ [32mConfigured 1 shell[0m
-
-        💡 [2mRestart your shell or run: source <config-file>[0m
-
-        ----- stderr -----
-        ");
-    });
-
-    // Verify the fish conf.d file was created with correct prefix in filename
-    let fish_config = temp_home.path().join(".config/fish/conf.d/worktree.fish");
-    assert!(
-        fish_config.exists(),
-        "Fish config file should be created with custom prefix in filename"
-    );
-
-    let content = fs::read_to_string(&fish_config).unwrap();
-    assert!(
-        content.trim() == "if type -q worktree; worktree init fish | source; end",
-        "Should contain conditional wrapper with custom prefix: {}",
-        content
-    );
-}
-
 /// Test configure-shell with multiple existing config files
 #[test]
 fn test_configure_shell_multiple_configs() {
@@ -336,8 +240,9 @@ fn test_configure_shell_multiple_configs() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
-            .arg("--yes")
+        cmd.arg("config")
+            .arg("shell")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
@@ -401,8 +306,9 @@ fn test_configure_shell_mixed_states() {
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("configure-shell")
-            .arg("--yes")
+        cmd.arg("config")
+            .arg("shell")
+            .arg("--force")
             .env("HOME", temp_home.path())
             .current_dir(repo.root_path());
 
