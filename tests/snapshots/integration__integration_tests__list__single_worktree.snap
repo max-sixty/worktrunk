@@ -6,20 +6,22 @@ info:
     - list
   env:
     CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpLgY0kv/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpXvtpOP/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 [2mBranch[0m  [2mAge          [0m  [2mCommit  [0m  [2mMessage       [0m  [2mPath[0m
-[1m[35mmain  [0m  [2m10 months ago[0m  [1m[35mb834638e[0m  [2mInitial commit[0m  [1m[35m.[0m
+[1m[35mmain  [0m  [2m10 months ago[0m  [2mb834638e[0m  [2mInitial commit[0m  [1m[35m.[0m
 
 [2mShowing 1 worktree[0m
 

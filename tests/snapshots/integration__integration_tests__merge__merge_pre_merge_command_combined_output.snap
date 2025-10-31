@@ -14,7 +14,7 @@ STDERR-FROM-FIRST
 STDOUT-FROM-SECOND
 STDERR-FROM-SECOND
 🔄 [36mRebasing onto [1m[36mmain[0m...[0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [SHA][0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[0m @ [SHA]
 
 * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature file
 

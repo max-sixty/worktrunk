@@ -19,12 +19,12 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpRegQEi/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpaInF4G/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-✅ [32mSwitched to worktree for [1m[32mexisting-no-hooks[0m at [WORKTREE_EXISTING_NO_HOOKS][0m
+✅ [32mSwitched to worktree for [1m[32mexisting-no-hooks[0m at [1m[32m[WORKTREE_EXISTING_NO_HOOKS][0m[0m
 🔄 [36mExecuting (--execute):[0m
 [40m [0m [1m[34mecho [32m'execute still runs'
 

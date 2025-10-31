@@ -92,6 +92,30 @@ worktree-path = "../{main-worktree}.{branch}"
 # Supports ~ expansion: ~/.config/worktrunk/squash-template.txt
 # squash-template-file = "~/.config/worktrunk/squash-template.txt"
 
+# Project Commands (Optional)
+# Define commands that run automatically when creating/switching worktrees
+# Place in `.config/wt.toml` in your repository root
+#
+# post-create-command: Runs SEQUENTIALLY and BLOCKS until complete
+#   - Use for: npm install, bundle install, build, essential setup
+#   - The worktree switch won't complete until these finish
+#   - Commands run one after another in the worktree directory
+#   - Example:
+#     [project.post-create-command]
+#     "install" = "npm install --frozen-lockfile"
+#     "build" = "npm run build"
+#
+# post-start-command: Runs in BACKGROUND as detached processes
+#   - Use for: dev servers, file watchers, long-running tasks
+#   - The worktree switch completes immediately, these run in parallel
+#   - Output is logged to ~/.cache/worktrunk/logs/{repo}/{branch}/{command}.log
+#   - Example:
+#     [project.post-start-command]
+#     "server" = "npm run dev"
+#     "watch" = "npm run watch"
+#
+# See README.md for complete documentation on all hook types
+
 # Approved Commands
 # Commands approved for automatic execution after switching worktrees
 # Auto-populated when you use: wt switch --execute "command" --force

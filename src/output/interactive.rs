@@ -67,6 +67,26 @@ impl InteractiveOutput {
         // No-op in interactive mode - no NUL terminators needed
         Ok(())
     }
+
+    /// Format a switch success message for interactive mode
+    ///
+    /// In interactive mode, we can't actually change directories, so we say "at {path}"
+    pub fn format_switch_success(&self, branch: &str, path: &Path, created_branch: bool) -> String {
+        use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
+        let green_bold = GREEN.bold();
+
+        if created_branch {
+            format!(
+                "{SUCCESS_EMOJI} {GREEN}Created new worktree for {green_bold}{branch}{green_bold:#} at {green_bold}{}{green_bold:#}{GREEN:#}",
+                path.display()
+            )
+        } else {
+            format!(
+                "{SUCCESS_EMOJI} {GREEN}Switched to worktree for {green_bold}{branch}{green_bold:#} at {green_bold}{}{green_bold:#}{GREEN:#}",
+                path.display()
+            )
+        }
+    }
 }
 
 impl Default for InteractiveOutput {

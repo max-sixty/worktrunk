@@ -176,25 +176,27 @@ println!("{HINT_EMOJI} {HINT}Use 'wt list' to see all worktrees{HINT:#}");
 
 ### Composing Styles
 
-Compose styles using anstyle methods (`.bold()`, `.fg_color()`, etc.). **Always bold branch names:**
+Compose styles using anstyle methods (`.bold()`, `.fg_color()`, etc.). **In messages (not tables), always bold branch names:**
 
 ```rust
 use worktrunk::styling::{println, AnstyleStyle, ERROR};
 
-// Error with bold branch name
+// Error message with bold branch name
 let error_bold = ERROR.bold();
 println!("❌ Branch '{error_bold}{branch}{error_bold:#}' already exists");
 
-// Just bold (no color)
+// Success message with bold branch name
 let bold = AnstyleStyle::new().bold();
 println!("Switched to worktree: {bold}{branch}{bold:#}");
 ```
+
+Tables (`wt list`) use conditional styling for branch names to indicate worktree state (current/primary/other), not bold.
 
 ### Information Hierarchy & Path Styling
 
 **Principle: Bold what answers the user's question, dim what provides context.**
 
-Style based on **user intent**, not data type. Branch names are always bold. Paths are bold when they're the answer (`wt config list`), dimmed when they're context (`wt switch` output).
+Style based on **user intent**, not data type. In messages, branch names are always bold. Paths are bold when they're the answer (`wt config list`), dimmed when they're context (`wt switch` output). Commit hashes are always dimmed (reference info).
 
 ```rust
 // Path as primary answer

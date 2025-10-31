@@ -18,7 +18,7 @@ info:
     SOURCE_DATE_EPOCH: "1761609600"
     WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: improve auth validation logic"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpKEHACQ/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxZUCEr/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -28,9 +28,9 @@ exit_code: 0
 💡 [2mUsing fallback commit message. Run 'wt config help' to configure LLM-generated messages[0m
 [40m [0m [1mWIP: Auto-commit before merge[0m
 
-✅ [32mCommitted changes @ [SHA][0m
+✅ [32mCommitted changes[0m @ [SHA]
 🔄 [36mRebasing onto [1m[36mmain[0m...[0m
-🔄 [36mMerging 2 commits to [1m[36mmain[0m @ [SHA][0m
+🔄 [36mMerging 2 commits to [1m[36mmain[0m[0m @ [SHA]
 
 * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m WIP: Auto-commit before merge
 * [SHA] feat: add authentication

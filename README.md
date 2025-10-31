@@ -33,6 +33,17 @@ Worktrees enable multiple branches checked out simultaneously. Each worktree is 
 
 Worktrunk provides shell integration that makes `wt switch` actually change directories. No manual `cd` commands or path tracking required.
 
+## Philosophy
+
+Worktrunk is an opinionated tool that automates the feature branch workflow:
+
+1. **Short-lived worktrees**: Create → work → merge → auto-cleanup
+2. **Linear history**: Fast-forward only, squash when needed
+3. **Automation over control**: Hooks run by default, changes are staged automatically
+4. **LLM integration**: Optional AI-generated commit messages
+
+If you prefer manual control over every git operation, standard `git worktree` commands may be a better fit. Worktrunk optimizes for the 90% case where you want to work on a feature, merge it, and move on.
+
 ## Installation
 
 ```bash
@@ -145,11 +156,16 @@ Projects can define commands that run automatically when creating or switching t
 
 **Hook Types:**
 
-- **`post-create-command`**: Runs sequentially after creating a worktree. Use for setup tasks like installing dependencies.
-- **`post-start-command`**: Runs in parallel as background processes after switching to a worktree. Use for dev servers and watchers.
+- **`post-create-command`**: Runs **sequentially** and **blocks** until complete after creating a worktree. The `wt switch` command won't return until these finish. Use for essential setup tasks like installing dependencies or building assets. Commands execute one after another in the new worktree directory.
+
+- **`post-start-command`**: Runs in **parallel** as **background processes** (non-blocking) after switching to a worktree. The `wt switch` command returns immediately while these run in the background. Use for dev servers, file watchers, and other long-running tasks. Output is logged to `~/.cache/worktrunk/logs/{repo}/{branch}/{command}.log`.
+
 - **`pre-merge-command`**: Runs first, before any other hooks or git operations during `wt merge`. All commands must succeed for the merge to proceed. Use for validation (tests, lints) that must pass regardless of merge strategy.
+
 - **`pre-commit-command`**: Runs after pre-merge but before committing uncommitted changes (when not using `--squash`). All commands must succeed for the commit to proceed. Use for format checks and quick validations.
+
 - **`pre-squash-command`**: Runs after pre-merge but before squashing commits (when using `--squash`). All commands must succeed for the squash to proceed. Use for tests that should pass before creating the final squashed commit.
+
 - **`post-merge-command`**: Runs sequentially in the main worktree after a successful merge and push. Use for deployment, notifications, or updating global state.
 
 Template variables expand at runtime:

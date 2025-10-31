@@ -6,19 +6,21 @@ info:
     - push
   env:
     CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpcNkUmR/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpIMg60w/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mPushing 1 commit to [1m[36mmain[0m @ [SHA][0m
+🔄 [36mPushing 1 commit to [1m[36mmain[0m[0m @ [SHA]
 
 * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature file
 

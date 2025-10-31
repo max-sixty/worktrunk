@@ -1,35 +1,22 @@
 //! Output handlers for worktree operations using the global output context
 
 use crate::commands::worktree::{RemoveResult, SwitchResult};
+use crate::output::global::format_switch_success;
 use worktrunk::git::GitError;
 
-/// Format message for switch operation (includes emoji and color for consistency)
+/// Format message for switch operation (mode-specific via output system)
 fn format_switch_message(result: &SwitchResult, branch: &str) -> String {
-    use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
-    let green_bold = GREEN.bold();
-
     match result {
         SwitchResult::ExistingWorktree(path) => {
-            format!(
-                "{SUCCESS_EMOJI} {GREEN}Switched to worktree for {green_bold}{branch}{green_bold:#} at {}{GREEN:#}",
-                path.display()
-            )
+            // created_branch=false means we switched to existing worktree
+            format_switch_success(branch, path, false)
         }
         SwitchResult::CreatedWorktree {
             path,
             created_branch,
         } => {
-            if *created_branch {
-                format!(
-                    "{SUCCESS_EMOJI} {GREEN}Created new worktree for {green_bold}{branch}{green_bold:#} at {}{GREEN:#}",
-                    path.display()
-                )
-            } else {
-                format!(
-                    "{SUCCESS_EMOJI} {GREEN}Added worktree for {green_bold}{branch}{green_bold:#} at {}{GREEN:#}",
-                    path.display()
-                )
-            }
+            // Pass through whether we created a new branch
+            format_switch_success(branch, path, *created_branch)
         }
     }
 }

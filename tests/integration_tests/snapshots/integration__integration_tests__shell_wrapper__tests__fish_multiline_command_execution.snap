@@ -2,7 +2,7 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized().as_ref()
 ---
-✅ [32mCreated new worktree for [1m[32mfish-multiline[0m at [TMPDIR]/test-repo.fish-multiline[0m
+✅ [32mCreated new worktree for [1m[32mfish-multiline[0m, changed directory to [1m[32m[TMPDIR]/test-repo.fish-multiline[0m[0m
 🔄 [36mExecuting (--execute):[0m
 [40m [0m [1m[34mecho [32m'line 1'; [1m[34mecho [32m'line 2'; [1m[34mecho [32m'line 3'
 

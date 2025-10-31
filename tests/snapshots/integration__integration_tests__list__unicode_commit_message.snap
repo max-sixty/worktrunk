@@ -15,13 +15,13 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpVBlTvV/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpTb7dXk/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 [2mBranch      [0m  [2mAge          [0m  [2mCmts [0m  [2mCommit  [0m  [2mMessage                        [0m  [2mPath[0m
-[1m[35mmain        [0m  [2m10 months ago[0m         [1m[35me4614cb7[0m  [2mFix bug with café ☕ handling[0m    [1m[35m./test-repo[0m
+[1m[35mmain        [0m  [2m10 months ago[0m         [2me4614cb7[0m  [2mFix bug with café ☕ handling[0m    [1m[35m./test-repo[0m
 feature-test  [2m10 months ago[0m  [33m↑0 ↓1[0m  [2m0c53695b[0m  [2mAdd support for 日本語 and...[0m    ./feature-test
 
 [2mShowing 2 worktrees, 1 behind[0m

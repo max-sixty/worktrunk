@@ -117,15 +117,9 @@ impl UpstreamStatus {
     }
 
     pub fn active(&self) -> Option<(&str, usize, usize)> {
-        if self.ahead == 0 && self.behind == 0 {
-            None
-        } else {
-            Some((
-                self.remote.as_deref().unwrap_or("origin"),
-                self.ahead,
-                self.behind,
-            ))
-        }
+        self.remote
+            .as_deref()
+            .map(|remote| (remote, self.ahead, self.behind))
     }
 
     #[cfg(test)]

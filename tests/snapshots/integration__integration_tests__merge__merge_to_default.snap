@@ -15,13 +15,13 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp8rFQyH/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp6kCcxR/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mRebasing onto [1m[36mmain[0m...[0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [SHA][0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[0m @ [SHA]
 
 * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature file
 

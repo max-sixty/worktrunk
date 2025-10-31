@@ -241,12 +241,8 @@ pub fn format_list_item_line(
         push_gap(&mut line);
     }
 
-    // Commit (short HEAD)
-    if let Some(style) = text_style {
-        line.push_styled(short_head, style);
-    } else {
-        line.push_styled(short_head, Style::new().dimmed());
-    }
+    // Commit (short HEAD) - always dimmed (reference info)
+    line.push_styled(short_head, Style::new().dimmed());
     push_gap(&mut line);
 
     // Message

@@ -268,9 +268,9 @@ fn commit_with_generated_message(
         .trim()
         .to_string();
 
-    use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
+    use worktrunk::styling::{GREEN, HINT, SUCCESS_EMOJI};
     crate::output::success(format!(
-        "{SUCCESS_EMOJI} {GREEN}Committed changes @ {commit_hash}{GREEN:#}"
+        "{SUCCESS_EMOJI} {GREEN}Committed changes{GREEN:#} @ {HINT}{commit_hash}{HINT:#}"
     ))?;
 
     Ok(())
@@ -429,9 +429,9 @@ fn handle_squash(
         .to_string();
 
     // Show success immediately after completing the squash
-    use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
+    use worktrunk::styling::{GREEN, HINT, SUCCESS_EMOJI};
     crate::output::success(format!(
-        "{SUCCESS_EMOJI} {GREEN}Squashed {commit_count} commits into 1 @ {commit_hash}{GREEN:#}"
+        "{SUCCESS_EMOJI} {GREEN}Squashed {commit_count} commits into 1{GREEN:#} @ {HINT}{commit_hash}{HINT:#}"
     ))?;
 
     Ok(Some(commit_count))

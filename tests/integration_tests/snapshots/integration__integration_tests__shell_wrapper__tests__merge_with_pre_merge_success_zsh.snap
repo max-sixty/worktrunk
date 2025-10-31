@@ -18,7 +18,7 @@ expression: output.normalized().as_ref()
 
 
 🔄 [36mRebasing onto [1m[36mmain[0m...[0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m @ d067f01[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[0m @ [2md067f01[0m
 
 * [33md067f01[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature
 

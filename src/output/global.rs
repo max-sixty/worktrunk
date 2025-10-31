@@ -137,6 +137,17 @@ pub fn terminate_output() -> io::Result<()> {
     })
 }
 
+/// Format a switch success message (mode-specific)
+///
+/// In interactive mode: "at {path}" (can't actually change directory)
+/// In directive mode: "changed directory to {path}" (shell will change it)
+pub fn format_switch_success(branch: &str, path: &Path, created_branch: bool) -> String {
+    OUTPUT_CONTEXT.with(|ctx| match &*ctx.borrow() {
+        OutputHandler::Interactive(i) => i.format_switch_success(branch, path, created_branch),
+        OutputHandler::Directive(d) => d.format_switch_success(branch, path, created_branch),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
