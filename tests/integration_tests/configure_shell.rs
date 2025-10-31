@@ -195,6 +195,9 @@ fn test_configure_shell_no_files() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    // Normalize bash config file names across platforms
+    settings.add_filter(r"\.bashrc, \.bash_profile", ".bash_profile");
+    settings.add_filter(r"\.bash_profile, \.profile", ".bash_profile, .profile");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
@@ -236,6 +239,8 @@ fn test_configure_shell_multiple_configs() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    // Normalize bash config file names across platforms
+    settings.add_filter(r"\.bashrc", ".bash_profile");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
@@ -302,6 +307,8 @@ fn test_configure_shell_mixed_states() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    // Normalize bash config file names across platforms
+    settings.add_filter(r"\.bashrc", ".bash_profile");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));

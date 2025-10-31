@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 
 /// Regex for normalizing temporary directory paths in test snapshots
 static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"/private/var/folders/[^/]+/[^/]+/T/\.tmp[^/]+")
+    regex::Regex::new(r"(/private/var/folders/[^/]+/[^/]+/T/\.tmp[^/]+|/tmp/\.tmp[^/]+)")
         .expect("Invalid tmpdir regex pattern")
 });
 

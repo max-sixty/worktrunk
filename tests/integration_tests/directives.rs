@@ -220,8 +220,10 @@ fn test_merge_internal_remove() {
     // Normalize SHA and path in output
     settings.add_filter(r"@ [a-f0-9]{7}", "@ [SHA]");
     settings.add_filter(r"__WORKTRUNK_CD__[^\x00]+", "__WORKTRUNK_CD__[PATH]");
-    // Normalize temp directory paths in success message
+    // Normalize temp directory paths in success message (macOS)
     settings.add_filter(r"/private/var/folders/[^\s]+/test-repo", "[REPO]");
+    // Normalize temp directory paths in success message (Linux)
+    settings.add_filter(r"/tmp/\.tmp[^\s]+/test-repo", "[REPO]");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
