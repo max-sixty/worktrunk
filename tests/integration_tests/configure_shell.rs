@@ -196,8 +196,7 @@ fn test_configure_shell_no_files() {
     settings.set_snapshot_path("../snapshots");
     settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
     // Normalize bash config file names across platforms
-    settings.add_filter(r"\.bashrc, \.bash_profile", ".bash_profile");
-    settings.add_filter(r"\.bash_profile, \.profile", ".bash_profile, .profile");
+    settings.add_filter(r"\.bashrc, ", "");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
