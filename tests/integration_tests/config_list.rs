@@ -53,6 +53,7 @@ server = "npm run dev"
         cmd.arg("config")
             .arg("list")
             .env("HOME", temp_home.path())
+            .env("XDG_CONFIG_HOME", temp_home.path().join(".config"))
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @r#"
@@ -107,6 +108,7 @@ fn test_config_list_no_project_config() {
         cmd.arg("config")
             .arg("list")
             .env("HOME", temp_home.path())
+            .env("XDG_CONFIG_HOME", temp_home.path().join(".config"))
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @r#"
@@ -152,6 +154,7 @@ fn test_config_list_outside_git_repo() {
         cmd.arg("config")
             .arg("list")
             .env("HOME", temp_home.path())
+            .env("XDG_CONFIG_HOME", temp_home.path().join(".config"))
             .current_dir(temp_dir.path());
 
         assert_cmd_snapshot!(cmd, @r#"
