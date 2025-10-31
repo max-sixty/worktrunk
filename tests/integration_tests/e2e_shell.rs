@@ -237,49 +237,6 @@ fn test_bash_e2e_switch_preserves_output() {
 }
 
 #[test]
-fn test_bash_e2e_custom_prefix() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
-    let repo = TestRepo::new();
-    repo.commit("Initial commit");
-
-    // Generate init code with custom prefix
-    let mut cmd = Command::new(get_cargo_bin("wt"));
-    repo.clean_cli_env(&mut cmd);
-    let output = cmd
-        .args(["init", "bash", "--cmd", "custom"])
-        .current_dir(repo.root_path())
-        .output()
-        .expect("Failed to generate init code");
-
-    let init_code = String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code");
-
-    // Test that custom switch works
-    let script = format!(
-        r#"
-        export PATH="{}:$PATH"
-        {}
-        custom switch --create my-feature
-        pwd
-        "#,
-        get_cargo_bin("wt").parent().unwrap().to_string_lossy(),
-        init_code
-    );
-
-    let output = execute_shell_script(&repo, "bash", &script);
-
-    // Verify that pwd shows we're in a worktree directory
-    assert!(
-        output.contains("my-feature"),
-        "Expected pwd to show my-feature worktree with custom prefix, got: {}",
-        output
-    );
-}
-
-#[test]
 fn test_bash_e2e_error_handling() {
     if !is_shell_available("bash") {
         eprintln!("Skipping test: bash not available");

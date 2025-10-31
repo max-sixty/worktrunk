@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpbevAR4/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpAXfysi/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -166,9 +166,6 @@ _wt() {
             wt,config)
                 cmd="wt__config"
                 ;;
-            wt,configure-shell)
-                cmd="wt__configure__shell"
-                ;;
             wt,dev)
                 cmd="wt__dev"
                 ;;
@@ -199,6 +196,9 @@ _wt() {
             wt__config,list)
                 cmd="wt__config__list"
                 ;;
+            wt__config,shell)
+                cmd="wt__config__shell"
+                ;;
             wt__dev,run-hook)
                 cmd="wt__dev__run__hook"
                 ;;
@@ -209,7 +209,7 @@ _wt() {
 
     case "${cmd}" in
         wt)
-            opts="-v -h -V --verbose --help --version init configure-shell config dev list switch remove push merge completion complete"
+            opts="-v -h -V --verbose --help --version init config dev list switch remove push merge completion complete"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -251,7 +251,7 @@ _wt() {
             return 0
             ;;
         wt__config)
-            opts="-v -h --verbose --help init list help"
+            opts="-v -h --verbose --help init list help shell"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -306,19 +306,15 @@ _wt() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        wt__configure__shell)
-            opts="-y -v -h --shell --cmd --yes --verbose --help"
-            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+        wt__config__shell)
+            opts="-f -v -h --shell --force --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --shell)
                     COMPREPLY=($(compgen -W "bash elvish fish nushell oil powershell xonsh zsh" -- "${cur}"))
-                    return 0
-                    ;;
-                --cmd)
-                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)
@@ -357,16 +353,12 @@ _wt() {
             return 0
             ;;
         wt__init)
-            opts="-v -h --cmd --verbose --help bash elvish fish nushell oil powershell xonsh zsh"
+            opts="-v -h --verbose --help bash elvish fish nushell oil powershell xonsh zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
-                --cmd)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
                 *)
                     COMPREPLY=()
                     ;;

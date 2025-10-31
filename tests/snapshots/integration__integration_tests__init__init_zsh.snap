@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpLp28xJ/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpK3Q9VM/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -154,24 +154,11 @@ _wt() {
         case $line[1] in
             (init)
 _arguments "${_arguments_options[@]}" : \
-'--cmd=[Command prefix (default\: wt)]:CMD:_default' \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':shell -- Shell to generate code for:(bash elvish fish nushell oil powershell xonsh zsh)' \
-&& ret=0
-;;
-(configure-shell)
-_arguments "${_arguments_options[@]}" : \
-'--shell=[Specific shell to configure (default\: all shells with existing config files)]:SHELL:(bash elvish fish nushell oil powershell xonsh zsh)' \
-'--cmd=[Command prefix (default\: wt)]:CMD:_default' \
-'-y[Skip confirmation prompt]' \
-'--yes[Skip confirmation prompt]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
-'-h[Print help]' \
-'--help[Print help]' \
 && ret=0
 ;;
 (config)
@@ -208,6 +195,17 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (help)
 _arguments "${_arguments_options[@]}" : \
+'-v[Enable verbose output (show git commands and debug info)]' \
+'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(shell)
+_arguments "${_arguments_options[@]}" : \
+'--shell=[Specific shell to configure (default\: all shells with existing config files)]:SHELL:(bash elvish fish nushell oil powershell xonsh zsh)' \
+'-f[Skip confirmation prompt]' \
+'--force[Skip confirmation prompt]' \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \
@@ -340,7 +338,6 @@ esac
 _wt_commands() {
     local commands; commands=(
 'init:Generate shell integration code' \
-'configure-shell:Configure shell by writing to config files' \
 'config:Manage configuration' \
 'dev:Development and testing utilities' \
 'list:List all worktrees' \
@@ -369,6 +366,7 @@ _wt__config_commands() {
 'init:Initialize global configuration file with examples' \
 'list:List all configuration files and their locations' \
 'help:Show setup guide for AI-generated commit messages' \
+'shell:Configure shell by writing to config files' \
     )
     _describe -t commands 'wt config commands' commands "$@"
 }
@@ -387,10 +385,10 @@ _wt__config__list_commands() {
     local commands; commands=()
     _describe -t commands 'wt config list commands' commands "$@"
 }
-(( $+functions[_wt__configure-shell_commands] )) ||
-_wt__configure-shell_commands() {
+(( $+functions[_wt__config__shell_commands] )) ||
+_wt__config__shell_commands() {
     local commands; commands=()
-    _describe -t commands 'wt configure-shell commands' commands "$@"
+    _describe -t commands 'wt config shell commands' commands "$@"
 }
 (( $+functions[_wt__dev_commands] )) ||
 _wt__dev_commands() {

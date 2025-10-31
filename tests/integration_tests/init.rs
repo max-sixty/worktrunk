@@ -41,11 +41,6 @@ fn test_init(#[case] shell: &str) {
 }
 
 #[test]
-fn test_init_bash_custom_prefix() {
-    snapshot_init("init_bash_custom_prefix", "bash", &["--cmd", "wt"]);
-}
-
-#[test]
 fn test_init_invalid_shell() {
     let repo = TestRepo::new();
     let mut settings = Settings::clone_current();
