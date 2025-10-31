@@ -116,16 +116,10 @@ pub fn handle_merge(
 
     // Finish worktree unless --keep was specified
     if !keep {
-        crate::output::progress(format!("🔄 {CYAN}Cleaning up worktree...{CYAN:#}"))?;
+        // STEP 1: Emit CD directive (just sets intent, doesn't actually change CWD)
+        crate::output::change_directory(&primary_worktree_dir)?;
 
-        let result = handle_remove(None)?;
-
-        // Set directory for shell integration (but don't print separate success message)
-        if let super::worktree::RemoveResult::RemovedWorktree { primary_path } = &result {
-            crate::output::change_directory(primary_path)?;
-        }
-
-        // Check if we need to switch to target branch
+        // STEP 2: Switch to target branch in primary worktree (fails safely if there's an issue)
         let primary_repo = Repository::at(&primary_worktree_dir);
         let new_branch = primary_repo.current_branch()?;
         if new_branch.as_deref() != Some(&target_branch) {
@@ -136,6 +130,10 @@ pub fn handle_merge(
                 .run_command(&["switch", &target_branch])
                 .git_context(&format!("Failed to switch to '{}'", target_branch))?;
         }
+
+        // STEP 3: Only NOW remove the worktree (after everything else succeeded)
+        crate::output::progress(format!("🔄 {CYAN}Cleaning up worktree...{CYAN:#}"))?;
+        handle_remove(None)?;
 
         // Print comprehensive summary
         crate::output::progress("")?;
