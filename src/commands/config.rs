@@ -135,6 +135,12 @@ fn display_project_config() -> Result<(), GitError> {
 }
 
 fn get_global_config_path() -> Option<PathBuf> {
+    // Respect HOME environment variable for testing
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = PathBuf::from(home);
+        return Some(home_path.join(".config").join("worktrunk").join("config.toml"));
+    }
+
     let strategy = choose_base_strategy().ok()?;
     Some(strategy.config_dir().join("worktrunk").join("config.toml"))
 }
