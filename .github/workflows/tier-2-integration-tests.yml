@@ -45,7 +45,7 @@ jobs:
     - name: Install Nushell
       uses: hustcer/setup-nu@v3
       with:
-        version: 'latest'
+        version: '0.108.0'
 
     - name: Install PowerShell
       run: |
