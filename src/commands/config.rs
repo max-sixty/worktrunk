@@ -135,10 +135,21 @@ fn display_project_config() -> Result<(), GitError> {
 }
 
 fn get_global_config_path() -> Option<PathBuf> {
-    // Respect HOME environment variable for testing
+    // Respect XDG_CONFIG_HOME environment variable for testing (Linux)
+    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+        let config_path = PathBuf::from(xdg_config);
+        return Some(config_path.join("worktrunk").join("config.toml"));
+    }
+
+    // Respect HOME environment variable for testing (fallback)
     if let Ok(home) = std::env::var("HOME") {
         let home_path = PathBuf::from(home);
-        return Some(home_path.join(".config").join("worktrunk").join("config.toml"));
+        return Some(
+            home_path
+                .join(".config")
+                .join("worktrunk")
+                .join("config.toml"),
+        );
     }
 
     let strategy = choose_base_strategy().ok()?;
