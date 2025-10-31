@@ -688,7 +688,7 @@ fn test_complete_dev_run_hook_shows_hook_types() {
     temp.commit("initial");
 
     // Test completion for dev run-hook
-    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("wt"));
     let output = cmd
         .current_dir(temp.root_path())
         .args(["complete", "wt", "dev", "run-hook", ""])
@@ -715,7 +715,7 @@ fn test_complete_dev_run_hook_with_partial_input() {
     temp.commit("initial");
 
     // Test completion with partial input
-    let mut cmd = Command::cargo_bin("wt").unwrap();
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("wt"));
     let output = cmd
         .current_dir(temp.root_path())
         .args(["complete", "wt", "dev", "run-hook", "po"])
