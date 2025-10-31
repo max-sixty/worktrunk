@@ -152,16 +152,17 @@ fn test_config_list_outside_git_repo() {
         cmd.arg("config")
             .arg("list")
             .env("HOME", temp_home.path())
+            .env("CLICOLOR_FORCE", "1")
             .current_dir(temp_dir.path());
 
         assert_cmd_snapshot!(cmd, @r#"
         success: true
         exit_code: 0
         ----- stdout -----
-        Global Config: [TEMP_HOME]/.config/worktrunk/config.toml
-          worktree-path = "../{main-worktree}.{branch}"
+        Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
+        [40m [0m worktree-path = [32m"../{main-worktree}.{branch}"[0m
 
-        Project Config: Not in a git repository
+        Project Config: [2mNot in a git repository[0m
 
         ----- stderr -----
         "#);
