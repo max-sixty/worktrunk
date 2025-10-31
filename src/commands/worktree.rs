@@ -44,7 +44,7 @@
 //!
 //! 1. Shell wrapper calls: `wt switch --internal my-feature`
 //! 2. Binary outputs special directive protocol:
-//!    ```
+//!    ```text
 //!    __WORKTRUNK_CD__/path/to/worktree
 //!    Created new branch and worktree for 'my-feature' at /path/to/worktree
 //!    ```
