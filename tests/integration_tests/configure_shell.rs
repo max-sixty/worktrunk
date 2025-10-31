@@ -195,8 +195,11 @@ fn test_configure_shell_no_files() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
-    // Normalize bash config file names across platforms - filter out .bashrc before path substitution
+    // Normalize bash config file names across platforms
+    // Linux: ".bashrc, .bash_profile" → remove ".bashrc, "
+    // macOS: ".bash_profile, .profile" → remove ", .profile"
     settings.add_filter(r"\[TEMP_HOME\]/\.bashrc, ", "");
+    settings.add_filter(r", \[TEMP_HOME\]/\.profile", "");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
@@ -213,7 +216,7 @@ fn test_configure_shell_no_files() {
         ----- stdout -----
 
         ----- stderr -----
-        No shell config files found in $HOME. Checked: [TEMP_HOME]/.bash_profile, [TEMP_HOME]/.profile, [TEMP_HOME]/.zshrc, and more. Create a config file or use --shell to specify a shell.
+        No shell config files found in $HOME. Checked: [TEMP_HOME]/.bash_profile, [TEMP_HOME]/.zshrc, and more. Create a config file or use --shell to specify a shell.
         ");
     });
 }
