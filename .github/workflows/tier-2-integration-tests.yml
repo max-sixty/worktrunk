@@ -2,7 +2,7 @@ name: Tier 2 Integration Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, add-ci ]
   pull_request:
     branches: [ main ]
 
