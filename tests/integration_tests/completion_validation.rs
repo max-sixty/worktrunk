@@ -1,5 +1,5 @@
-use assert_cmd::Command;
 use std::collections::HashSet;
+use std::process::Command;
 use worktrunk::styling::SUCCESS_EMOJI;
 
 /// Issue found during validation
@@ -239,22 +239,19 @@ fn validate_cross_shell(fish_content: &str, bash_content: &str, zsh_content: &st
 #[test]
 fn test_completion_validation() {
     // Generate completions
-    let fish_output = Command::cargo_bin("wt")
-        .unwrap()
+    let fish_output = Command::new(assert_cmd::cargo::cargo_bin!("wt"))
         .arg("init")
         .arg("fish")
         .output()
         .expect("Failed to generate fish completion");
 
-    let bash_output = Command::cargo_bin("wt")
-        .unwrap()
+    let bash_output = Command::new(assert_cmd::cargo::cargo_bin!("wt"))
         .arg("init")
         .arg("bash")
         .output()
         .expect("Failed to generate bash completion");
 
-    let zsh_output = Command::cargo_bin("wt")
-        .unwrap()
+    let zsh_output = Command::new(assert_cmd::cargo::cargo_bin!("wt"))
         .arg("init")
         .arg("zsh")
         .output()

@@ -36,6 +36,7 @@ enum CompletionContext {
     MergeTarget,
     RemoveBranch,
     BaseFlag,
+    DevRunHook,
     Unknown,
 }
 
@@ -71,6 +72,7 @@ fn should_complete_positional_arg(args: &[String], start_index: usize) -> bool {
 fn parse_completion_context(args: &[String]) -> CompletionContext {
     // args format: ["wt", "switch", "partial"]
     // or: ["wt", "switch", "--create", "new", "--base", "partial"]
+    // or: ["wt", "dev", "run-hook", "partial"]
 
     if args.len() < 2 {
         return CompletionContext::Unknown;
@@ -84,6 +86,15 @@ fn parse_completion_context(args: &[String]) -> CompletionContext {
         let prev_arg = &args[args.len() - 2];
         if prev_arg == "--base" || prev_arg == "-b" {
             return CompletionContext::BaseFlag;
+        }
+    }
+
+    // Handle dev subcommand
+    if subcommand == "dev" && args.len() >= 3 {
+        let dev_subcommand = &args[2];
+        if dev_subcommand == "run-hook" {
+            // Complete hook types for the positional argument
+            return CompletionContext::DevRunHook;
         }
     }
 
@@ -143,6 +154,15 @@ pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
             for branch in branches {
                 println!("{}", branch);
             }
+        }
+        CompletionContext::DevRunHook => {
+            // Complete with hook types
+            println!("post-create");
+            println!("post-start");
+            println!("pre-commit");
+            println!("pre-squash");
+            println!("pre-merge");
+            println!("post-merge");
         }
         CompletionContext::Unknown => {
             // No completions
@@ -269,5 +289,37 @@ mod tests {
             parse_completion_context(&args),
             CompletionContext::SwitchBranch
         );
+    }
+
+    #[test]
+    fn test_parse_completion_context_dev_run_hook() {
+        // "wt dev run-hook <cursor>"
+        let args = vec!["wt".to_string(), "dev".to_string(), "run-hook".to_string()];
+        assert_eq!(
+            parse_completion_context(&args),
+            CompletionContext::DevRunHook
+        );
+    }
+
+    #[test]
+    fn test_parse_completion_context_dev_run_hook_partial() {
+        // "wt dev run-hook po<cursor>"
+        let args = vec![
+            "wt".to_string(),
+            "dev".to_string(),
+            "run-hook".to_string(),
+            "po".to_string(),
+        ];
+        assert_eq!(
+            parse_completion_context(&args),
+            CompletionContext::DevRunHook
+        );
+    }
+
+    #[test]
+    fn test_parse_completion_context_dev_only() {
+        // "wt dev <cursor>" - should not complete
+        let args = vec!["wt".to_string(), "dev".to_string()];
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
     }
 }

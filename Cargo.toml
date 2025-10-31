@@ -37,9 +37,9 @@ shellexpand = "3.1"
 synoptic = "2"
 terminal_size = "0.4"
 toml = "0.9"
-tree-sitter = "0.24"
-tree-sitter-bash = "0.23"
-tree-sitter-highlight = "0.24"
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25"
+tree-sitter-highlight = "0.25"
 unicode-width = "0.2"
 
 [build-dependencies]
