@@ -195,8 +195,8 @@ fn test_configure_shell_no_files() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
-    // Normalize bash config file names across platforms
-    settings.add_filter(r"\.bashrc, ", "");
+    // Normalize bash config file names across platforms - filter out .bashrc before path substitution
+    settings.add_filter(r"\[TEMP_HOME\]/\.bashrc, ", "");
 
     settings.bind(|| {
         let mut cmd = Command::new(get_cargo_bin("wt"));
