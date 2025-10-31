@@ -1,7 +1,7 @@
 # worktrunk shell integration for PowerShell
 
-# Only initialize if wt is available
-if (Get-Command wt -ErrorAction SilentlyContinue) {
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: $env:WORKTRUNK_BIN = "./target/debug/wt"
     $script:_WORKTRUNK_CMD = if ($env:WORKTRUNK_BIN) { $env:WORKTRUNK_BIN } else { "wt" }

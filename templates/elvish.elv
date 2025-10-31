@@ -1,7 +1,7 @@
 # worktrunk shell integration for elvish
 
-# Only initialize if wt is available
-if (has-external wt) {
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: set E:WORKTRUNK_BIN = ./target/debug/wt
     var _WORKTRUNK_CMD = wt

@@ -1,7 +1,7 @@
 # worktrunk shell integration for nushell
 
-# Only initialize if wt is available
-if (which wt | is-not-empty) {
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if (which wt | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empty) {
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: $env.WORKTRUNK_BIN = ./target/debug/wt
     let _WORKTRUNK_CMD = (if ($env.WORKTRUNK_BIN? | is-not-empty) { $env.WORKTRUNK_BIN } else { "wt" })

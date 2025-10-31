@@ -16,15 +16,15 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpYhu7T5/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpzrEGoe/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 # worktrunk shell integration for fish
 
-# Only initialize if wt is available
-if type -q wt
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if type -q wt; or set -q WORKTRUNK_BIN
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: set -x WORKTRUNK_BIN ./target/debug/wt
     if set -q WORKTRUNK_BIN

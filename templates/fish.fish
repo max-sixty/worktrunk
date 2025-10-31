@@ -1,7 +1,7 @@
 # worktrunk shell integration for fish
 
-# Only initialize if {{ cmd_prefix }} is available
-if type -q {{ cmd_prefix }}
+# Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
+if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
     # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
     # This allows testing development builds: set -x WORKTRUNK_BIN ./target/debug/wt
     if set -q WORKTRUNK_BIN

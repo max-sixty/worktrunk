@@ -1,7 +1,7 @@
 # worktrunk shell integration for zsh
 
-# Only initialize if wt is available
-if command -v wt >/dev/null 2>&1; then
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/wt
     _WORKTRUNK_CMD="${WORKTRUNK_BIN:-wt}"

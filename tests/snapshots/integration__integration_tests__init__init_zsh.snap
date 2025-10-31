@@ -16,15 +16,15 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpK3Q9VM/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpbhsdNa/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 # worktrunk shell integration for zsh
 
-# Only initialize if wt is available
-if command -v wt >/dev/null 2>&1; then
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/wt
     _WORKTRUNK_CMD="${WORKTRUNK_BIN:-wt}"

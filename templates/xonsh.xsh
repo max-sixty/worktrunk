@@ -1,10 +1,10 @@
 # worktrunk shell integration for xonsh
 
-# Only initialize if wt is available
+# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 import shutil
 import os
 import sys
-if shutil.which("wt") is not None:
+if shutil.which("wt") is not None or os.environ.get('WORKTRUNK_BIN'):
     # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
     # This allows testing development builds: $WORKTRUNK_BIN = ./target/debug/wt
     _WORKTRUNK_CMD = os.environ.get('WORKTRUNK_BIN', 'wt')
