@@ -259,16 +259,9 @@ fn remove_current_worktree(repo: &Repository) -> Result<RemoveResult, GitError> 
         let worktree_root = repo.worktree_root()?;
         let primary_worktree_dir = repo.main_worktree_root()?;
 
-        // Remove the worktree
-        if let Err(e) = repo.remove_worktree(&worktree_root) {
-            crate::output::progress(format!(
-                "{WARNING_EMOJI} {WARNING}Failed to remove worktree: {e}{WARNING:#}"
-            ))?;
-            crate::output::progress(format!(
-                "You may need to run 'git worktree remove {}' manually",
-                worktree_root.display()
-            ))?;
-        }
+        // Remove the worktree (fail fast if this fails)
+        repo.remove_worktree(&worktree_root)
+            .git_context("Failed to remove worktree")?;
 
         Ok(RemoveResult::RemovedWorktree {
             primary_path: primary_worktree_dir,
@@ -318,16 +311,9 @@ fn remove_worktree_by_name(repo: &Repository, branch_name: &str) -> Result<Remov
         None
     };
 
-    // Remove the worktree
-    if let Err(e) = repo.remove_worktree(&worktree_path) {
-        crate::output::progress(format!(
-            "{WARNING_EMOJI} {WARNING}Failed to remove worktree: {e}{WARNING:#}"
-        ))?;
-        crate::output::progress(format!(
-            "You may need to run 'git worktree remove {}' manually",
-            worktree_path.display()
-        ))?;
-    }
+    // Remove the worktree (fail fast if this fails)
+    repo.remove_worktree(&worktree_path)
+        .git_context("Failed to remove worktree")?;
 
     // If we removed the current worktree, return to primary
     if let Some(primary_path) = primary_worktree_dir {
