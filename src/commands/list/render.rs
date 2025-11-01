@@ -53,8 +53,8 @@ pub fn format_diff_plain(added: usize, deleted: usize) -> Option<String> {
     }
 }
 
-/// Format CI status as plain text with ANSI colors (for json-pretty)
-pub fn format_ci_status_plain(pr_status: &PrStatus) -> String {
+/// Determine the style for a CI status (color + optional dimming)
+fn ci_status_style(pr_status: &PrStatus) -> Style {
     let color = match pr_status.ci_status {
         CiStatus::Passed => AnsiColor::Green,
         CiStatus::Running => AnsiColor::Blue,
@@ -63,11 +63,16 @@ pub fn format_ci_status_plain(pr_status: &PrStatus) -> String {
         CiStatus::NoCI => AnsiColor::BrightBlack,
     };
 
-    let style = if pr_status.is_stale {
+    if pr_status.is_stale {
         Style::new().fg_color(Some(Color::Ansi(color))).dimmed()
     } else {
         Style::new().fg_color(Some(Color::Ansi(color)))
-    };
+    }
+}
+
+/// Format CI status as plain text with ANSI colors (for json-pretty)
+pub fn format_ci_status_plain(pr_status: &PrStatus) -> String {
+    let style = ci_status_style(pr_status);
 
     let status_str = match pr_status.ci_status {
         CiStatus::Passed => "passed",
@@ -212,23 +217,7 @@ fn push_diff(line: &mut StyledLine, added: usize, deleted: usize, widths: &DiffW
 /// Format CI status indicator using the statusline.sh color scheme
 fn format_ci_status(pr_status: &PrStatus) -> StyledLine {
     let mut segment = StyledLine::new();
-
-    // Choose color based on CI status
-    let color = match pr_status.ci_status {
-        CiStatus::Passed => AnsiColor::Green,
-        CiStatus::Running => AnsiColor::Blue,
-        CiStatus::Failed => AnsiColor::Red,
-        CiStatus::Conflicts => AnsiColor::Yellow,
-        CiStatus::NoCI => AnsiColor::BrightBlack,
-    };
-
-    // Apply dimming if stale (local HEAD differs from PR HEAD)
-    let style = if pr_status.is_stale {
-        Style::new().fg_color(Some(Color::Ansi(color))).dimmed()
-    } else {
-        Style::new().fg_color(Some(Color::Ansi(color)))
-    };
-
+    let style = ci_status_style(pr_status);
     segment.push_styled("●".to_string(), style);
     segment
 }
