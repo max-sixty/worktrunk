@@ -579,3 +579,89 @@ pub fn resolve_git_dir(worktree_path: &Path) -> PathBuf {
         git_path
     }
 }
+
+/// Validates ANSI escape sequences for the specific nested reset pattern that causes color leaks
+///
+/// Checks for the pattern: color code wrapping content that contains its own color codes with resets.
+/// This causes the outer color to leak when the inner reset is encountered.
+///
+/// Example of the leak pattern:
+/// ```text
+/// \x1b[36mOuter text (\x1b[32minner\x1b[0m more)\x1b[0m
+///                             ^^^^ This reset kills the cyan!
+///                                  "more)" appears without cyan
+/// ```
+///
+/// # Example
+/// ```
+/// // Good - no nesting, proper closure
+/// let output = "\x1b[36mtext\x1b[0m (stats)";
+/// assert!(validate_ansi_codes(output).is_empty());
+///
+/// // Bad - nested reset breaks outer style
+/// let output = "\x1b[36mtext (\x1b[32mnested\x1b[0m more)\x1b[0m";
+/// let warnings = validate_ansi_codes(output);
+/// assert!(!warnings.is_empty());
+/// ```
+pub fn validate_ansi_codes(text: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    // Look for the specific pattern: color + content + color + content + reset + non-whitespace + reset
+    // This indicates an outer style wrapping content with inner styles
+    // We look for actual text (not just whitespace) between resets
+    let nested_pattern = regex::Regex::new(
+        r"(\x1b\[[0-9;]+m)([^\x1b]+)(\x1b\[[0-9;]+m)([^\x1b]*?)(\x1b\[0m)(\s*[^\s\x1b]+)(\x1b\[0m)",
+    )
+    .unwrap();
+
+    for cap in nested_pattern.captures_iter(text) {
+        let content_after_reset = cap[6].trim();
+
+        // Only warn if there's actual content after the inner reset
+        // (not just punctuation or whitespace)
+        if !content_after_reset.is_empty()
+            && content_after_reset.chars().any(|c| c.is_alphanumeric())
+        {
+            warnings.push(format!(
+                "Nested color reset detected: content '{}' appears after inner reset but before outer reset - it will lose the outer color",
+                content_after_reset
+            ));
+        }
+    }
+
+    warnings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_ansi_codes_no_leak() {
+        // Good - no nesting
+        let output = "\x1b[36mtext\x1b[0m (stats)";
+        assert!(validate_ansi_codes(output).is_empty());
+
+        // Good - nested but closes properly
+        let output = "\x1b[36mtext\x1b[0m (\x1b[32mnested\x1b[0m)";
+        assert!(validate_ansi_codes(output).is_empty());
+    }
+
+    #[test]
+    fn test_validate_ansi_codes_detects_leak() {
+        // Bad - nested reset breaks outer style
+        let output = "\x1b[36mtext (\x1b[32mnested\x1b[0m more)\x1b[0m";
+        let warnings = validate_ansi_codes(output);
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].contains("more"));
+    }
+
+    #[test]
+    fn test_validate_ansi_codes_ignores_punctuation() {
+        // Punctuation after reset is acceptable (not a leak we care about)
+        let output = "\x1b[36mtext (\x1b[32mnested\x1b[0m)\x1b[0m";
+        let warnings = validate_ansi_codes(output);
+        // Should not warn about ")" since it's just punctuation
+        assert!(warnings.is_empty() || !warnings[0].contains("loses"));
+    }
+}

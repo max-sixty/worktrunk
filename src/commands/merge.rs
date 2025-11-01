@@ -386,7 +386,7 @@ fn handle_squash(
     let squash_progress = match stats_parts.is_empty() {
         true => format!("🔄 {CYAN}Squashing {commit_count} commits into 1...{CYAN:#}"),
         false => format!(
-            "🔄 {CYAN}Squashing {commit_count} commits into 1 ({})...{CYAN:#}",
+            "🔄 {CYAN}Squashing {commit_count} commits into 1{CYAN:#} ({})...",
             stats_parts.join(", ")
         ),
     };
