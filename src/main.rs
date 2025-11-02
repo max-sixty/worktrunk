@@ -225,22 +225,23 @@ The merge operation follows a strict order designed for fail-fast execution:
    Verifies current branch exists (not detached HEAD) and determines target branch
    (defaults to repository's default branch).
 
-2. Run pre-merge commands
-   Runs commands from project config's [pre-merge-command] before any git operations.
-   These receive {target} placeholder for the target branch. Commands run sequentially
-   and any failure aborts the merge immediately. Skip with --no-verify.
-
-3. Auto-commit uncommitted changes
+2. Auto-commit uncommitted changes
    If working tree has uncommitted changes, stages all changes (git add -A) and commits
    with LLM-generated message.
 
-4. Squash commits (default)
+3. Squash commits (default)
    By default, counts commits since merge base with target branch. When multiple
    commits exist, squashes them into one with LLM-generated message. Skip squashing
    with --no-squash.
 
-5. Rebase onto target
+4. Rebase onto target
    Rebases current branch onto target branch. Detects conflicts and aborts if found.
+   This fails fast before running expensive checks.
+
+5. Run pre-merge commands
+   Runs commands from project config's [pre-merge-command] after rebase completes.
+   These receive {target} placeholder for the target branch. Commands run sequentially
+   and any failure aborts the merge immediately. Skip with --no-hooks.
 
 6. Push to target
    Fast-forward pushes to target branch. Rejects non-fast-forward pushes (ensures
@@ -262,7 +263,7 @@ Keep worktree after merging:
   wt merge --keep
 
 Skip pre-merge commands:
-  wt merge --no-verify")]
+  wt merge --no-hooks")]
     Merge {
         /// Target branch to merge into (defaults to default branch)
         target: Option<String>,

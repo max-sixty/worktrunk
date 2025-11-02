@@ -266,7 +266,7 @@ Automate common tasks by creating `.config/wt.toml` in your repository root. Run
 | **post-start-command** | After post-create completes | Parallel, non-blocking (background processes) | Logs warning, doesn't affect switch result |
 | **pre-commit-command** | Before committing changes during `wt merge` (when not squashing) | Sequential, blocking, fail-fast | Terminates merge immediately |
 | **pre-squash-command** | Before squashing commits during `wt merge --squash` | Sequential, blocking, fail-fast | Terminates merge immediately |
-| **pre-merge-command** | Before any commits/rebasing during `wt merge` | Sequential, blocking, fail-fast | Terminates merge immediately |
+| **pre-merge-command** | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast | Terminates merge immediately |
 | **post-merge-command** | After successful merge and push to target branch, before cleanup | Sequential, blocking | Logs warning, continues with remaining commands |
 
 **Template variables:** `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
