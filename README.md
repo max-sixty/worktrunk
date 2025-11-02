@@ -21,7 +21,7 @@ $ wt switch --create fix-auth
 # Shell now in ../repo.fix-auth/
 
 # Agent works, makes changes, then:
-$ wt merge main --squash
+$ wt merge
 🔄 Switching to main...
 🔄 Staging changes (3 modified)...
 🔄 Merging fix-auth → main...
@@ -36,7 +36,7 @@ Shell integration means directories change automatically. Merge handles staging,
 
 ```bash
 cargo install worktrunk
-wt configure-shell  # Sets up shell integration
+wt config shell  # Sets up shell integration
 ```
 
 ## Three Commands
@@ -48,7 +48,7 @@ wt switch --create feature-name
 
 **Finish and merge:**
 ```bash
-wt merge main --squash
+wt merge
 ```
 
 **See active worktrees:**
@@ -60,7 +60,7 @@ wt list
 
 **LLM commits** - AI generates merge commits from diff and history:
 ```bash
-wt merge main --squash
+wt merge
 wt config help  # Setup guide
 ```
 
@@ -130,11 +130,17 @@ Worktree path defaults: `../repo.branch/` (siblings to main repo). Variables: `{
 During merge operations, worktrunk can generate commit messages using an LLM. The LLM analyzes the staged diff and recent commit history to write messages matching the project's style.
 
 ```bash
-# Merge with LLM-generated commit message
-$ wt merge main --squash
+# Merge with LLM-generated commit message (squashes by default)
+$ wt merge
+
+# Merge without squashing commits
+$ wt merge --no-squash
+
+# Merge to a specific target branch
+$ wt merge staging
 
 # Provide custom guidance
-$ wt merge main --squash -m "Focus on the authentication changes"
+$ wt merge -m "Focus on the authentication changes"
 ```
 
 Set up LLM integration: `wt config help` shows the setup guide, `wt config init` creates example config.
@@ -264,8 +270,8 @@ Automate common tasks by creating `.config/wt.toml` in your repository root. Run
 |------|--------------|-----------|------------------|
 | **post-create-command** | After `git worktree add` completes | Sequential, blocking | Logs warning, continues with remaining commands |
 | **post-start-command** | After post-create completes | Parallel, non-blocking (background processes) | Logs warning, doesn't affect switch result |
-| **pre-commit-command** | Before committing changes during `wt merge` (when not squashing) | Sequential, blocking, fail-fast | Terminates merge immediately |
-| **pre-squash-command** | Before squashing commits during `wt merge --squash` | Sequential, blocking, fail-fast | Terminates merge immediately |
+| **pre-commit-command** | Before committing changes during `wt merge --no-squash` | Sequential, blocking, fail-fast | Terminates merge immediately |
+| **pre-squash-command** | Before squashing commits during `wt merge` (default behavior) | Sequential, blocking, fail-fast | Terminates merge immediately |
 | **pre-merge-command** | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast | Terminates merge immediately |
 | **post-merge-command** | After successful merge and push to target branch, before cleanup | Sequential, blocking | Logs warning, continues with remaining commands |
 
@@ -313,7 +319,7 @@ Worktrunk stages the changes, creates a commit, and pushes it to the target bran
 Worktrunk automatically configures your shell:
 
 ```bash
-wt configure-shell
+wt config shell
 ```
 
 This adds shell integration to your config files (supports Bash, Zsh, Fish, Nushell, PowerShell, Elvish, Xonsh, Oil). The integration enables `wt switch` to change directories and `wt remove` to return to the previous location.
