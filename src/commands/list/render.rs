@@ -246,46 +246,64 @@ pub fn format_all_states(info: &WorktreeInfo) -> String {
 pub fn format_header_line(layout: &LayoutConfig) {
     let widths = &layout.widths;
     let positions = &layout.positions;
-    let dim = Style::new().dimmed();
+    let style = Style::new();
     let mut line = StyledLine::new();
 
     // Use absolute positions for guaranteed alignment
-    push_header_at(&mut line, "Branch", widths.branch, positions.branch, dim);
+    push_header_at(&mut line, "Branch", widths.branch, positions.branch, style);
     push_header_at(
         &mut line,
         "Working ±",
         widths.working_diff.total,
         positions.working_diff,
-        dim,
+        style,
     );
     push_header_at(
         &mut line,
         "Main ↕",
         widths.ahead_behind.total,
         positions.ahead_behind,
-        dim,
+        style,
     );
     push_header_at(
         &mut line,
         "Main ±",
         widths.branch_diff.total,
         positions.branch_diff,
-        dim,
+        style,
     );
-    push_header_at(&mut line, "⚠️", widths.conflicts, positions.conflicts, dim);
-    push_header_at(&mut line, "State", widths.states, positions.states, dim);
-    push_header_at(&mut line, "Path", widths.path, positions.path, dim);
+    push_header_at(
+        &mut line,
+        "⚠️",
+        widths.conflicts,
+        positions.conflicts,
+        style,
+    );
+    push_header_at(&mut line, "State", widths.states, positions.states, style);
+    push_header_at(&mut line, "Path", widths.path, positions.path, style);
     push_header_at(
         &mut line,
         "Remote ↕",
         widths.upstream.total,
         positions.upstream,
-        dim,
+        style,
     );
-    push_header_at(&mut line, "Age", widths.time, positions.time, dim);
-    push_header_at(&mut line, "CI", widths.ci_status, positions.ci_status, dim);
-    push_header_at(&mut line, "Commit", widths.commit, positions.commit, dim);
-    push_header_at(&mut line, "Message", widths.message, positions.message, dim);
+    push_header_at(&mut line, "Age", widths.time, positions.time, style);
+    push_header_at(
+        &mut line,
+        "CI",
+        widths.ci_status,
+        positions.ci_status,
+        style,
+    );
+    push_header_at(&mut line, "Commit", widths.commit, positions.commit, style);
+    push_header_at(
+        &mut line,
+        "Message",
+        widths.message,
+        positions.message,
+        style,
+    );
 
     println!("{}", line.render());
 }
@@ -301,13 +319,13 @@ fn optional_reason_state(label: &str, reason: Option<&str>) -> Option<String> {
 }
 
 /// Push a header at an absolute column position
-fn push_header_at(line: &mut StyledLine, label: &str, width: usize, position: usize, dim: Style) {
+fn push_header_at(line: &mut StyledLine, label: &str, width: usize, position: usize, style: Style) {
     if width > 0 {
         // Pad to absolute position
         line.pad_to(position);
         // Add header content padded to width
         let header = format!("{:width$}", label, width = width);
-        line.push_styled(header, dim);
+        line.push_styled(header, style);
     }
 }
 
