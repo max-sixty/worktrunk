@@ -56,11 +56,7 @@ impl ShellOutput {
             .lines()
             .map(|line| {
                 // Strip leading \x1b[0m reset codes (may appear as ESC[0m in the output)
-                if line.starts_with("\x1b[0m") {
-                    &line[4..]  // Skip the 4 bytes of \x1b[0m
-                } else {
-                    line
-                }
+                line.strip_prefix("\x1b[0m").unwrap_or(line)
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -558,10 +554,7 @@ approved-commands = [
         output.assert_no_directive_leaks();
 
         // Shell-specific snapshot - output ordering varies due to PTY buffering
-        assert_snapshot!(
-            format!("switch_with_hooks_{}", shell),
-            output.normalized()
-        );
+        assert_snapshot!(format!("switch_with_hooks_{}", shell), output.normalized());
     }
 
     /// Test merge with successful pre-merge-command validation
