@@ -40,25 +40,28 @@ pub fn approve_command_batch(
         return Ok(false);
     }
 
-    let mut fresh_config = WorktrunkConfig::load().git_context("Failed to reload config")?;
+    // Only save approvals when interactively approved, not when using --force
+    if !force {
+        let mut fresh_config = WorktrunkConfig::load().git_context("Failed to reload config")?;
 
-    // Get or create the project entry once, outside the loop
-    let project_entry = fresh_config
-        .projects
-        .entry(project_id.to_string())
-        .or_default();
+        // Get or create the project entry once, outside the loop
+        let project_entry = fresh_config
+            .projects
+            .entry(project_id.to_string())
+            .or_default();
 
-    let mut updated = false;
-    for (_, command) in needs_approval {
-        if !project_entry.approved_commands.iter().any(|c| c == command) {
-            project_entry.approved_commands.push(command.to_string());
-            updated = true;
+        let mut updated = false;
+        for (_, command) in needs_approval {
+            if !project_entry.approved_commands.iter().any(|c| c == command) {
+                project_entry.approved_commands.push(command.to_string());
+                updated = true;
+            }
         }
-    }
 
-    if updated && let Err(e) = fresh_config.save() {
-        log_approval_warning("Failed to save command approval", e);
-        eprintln!("You will be prompted again next time.");
+        if updated && let Err(e) = fresh_config.save() {
+            log_approval_warning("Failed to save command approval", e);
+            eprintln!("You will be prompted again next time.");
+        }
     }
 
     Ok(true)
