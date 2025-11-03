@@ -487,9 +487,10 @@ mod tests {
     }
 
     /// Test switch --create with post-create-command (blocking) and post-start-command (background)
-    // TODO: Fix non-deterministic test - PTY buffering causes inconsistent output ordering
-    // All shells (bash/zsh/fish) have varying output order due to background post-start commands
-    // Fish fails ~50% in CI, bash/zsh also use shell-specific snapshots due to ordering issues
+    // TODO: Fix environment-specific test - PTY ANSI code handling differs between local and CI
+    // Tests pass consistently within each environment but produce different ANSI escape sequences
+    // (CI adds/removes ␛[0m resets in different places). This is NOT flakiness - it's deterministic
+    // per-environment PTY behavior. Need environment-agnostic snapshots or normalization.
     // #[rstest]
     // #[case("bash")]
     // #[case("zsh")]
@@ -549,8 +550,10 @@ approved-commands = [
     }
 
     /// Test merge with successful pre-merge-command validation
-    // TODO: Fix non-deterministic test - PTY buffering causes inconsistent output ordering
-    // Shell-specific snapshots exist but still produce inconsistent results across runs
+    // TODO: Fix environment-specific test - PTY ANSI code handling differs between local and CI
+    // Tests pass consistently within each environment but produce different ANSI escape sequences
+    // (CI adds/removes ␛[0m resets in different places). This is NOT flakiness - it's deterministic
+    // per-environment PTY behavior. Need environment-agnostic snapshots or normalization.
     // #[rstest]
     // #[case("bash")]
     // #[case("zsh")]
@@ -633,8 +636,10 @@ approved-commands = [
     }
 
     /// Test merge with failing pre-merge-command that aborts the merge
-    // TODO: Fix non-deterministic test - PTY buffering causes inconsistent output ordering
-    // Shell-specific snapshots exist but still produce inconsistent results across runs
+    // TODO: Fix environment-specific test - PTY ANSI code handling differs between local and CI
+    // Tests pass consistently within each environment but produce different ANSI escape sequences
+    // (CI adds/removes ␛[0m resets in different places). This is NOT flakiness - it's deterministic
+    // per-environment PTY behavior. Need environment-agnostic snapshots or normalization.
     // #[rstest]
     // #[case("bash")]
     // #[case("zsh")]
