@@ -561,7 +561,7 @@ pub fn handle_push(
     target: Option<&str>,
     allow_merge_commits: bool,
     verb: &str,
-    squash_info: Option<&super::dev::SquashInfo>,
+    squashed: bool,
     rebased: bool,
 ) -> Result<(), GitError> {
     let repo = Repository::current();
@@ -648,29 +648,13 @@ pub fn handle_push(
         // Build operation context based on what happened
         let mut operations = Vec::new();
 
-        // Add squash info if applicable
-        if let Some(info) = squash_info {
-            let squash_text = if info.had_staged_changes {
-                if info.original_commit_count == 1 {
-                    "combined 1 commit with working tree changes".to_string()
-                } else {
-                    format!(
-                        "squashed {} commits with working tree changes",
-                        info.original_commit_count
-                    )
-                }
-            } else {
-                format!("squashed from {} commits", info.original_commit_count)
-            };
-            operations.push(squash_text);
-        } else {
+        // Only mention operations that DIDN'T happen - if they did happen,
+        // the user already saw progress/success messages for them
+        if !squashed {
             operations.push("no squashing needed".to_string());
         }
 
-        // Add rebase info
-        if rebased {
-            operations.push("rebased".to_string());
-        } else {
+        if !rebased {
             operations.push("no rebasing needed".to_string());
         }
 

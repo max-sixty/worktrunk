@@ -100,36 +100,53 @@ Removed worktree for bugfix
 
 ### Information Display: Show Once, Not Twice
 
-**Core Principle: Display detailed information in progress messages, not in success messages.**
+**Core Principle: Show detailed context in progress messages, minimal confirmation in success messages.**
 
 When operations have both progress and success messages:
-- **Progress message**: Include detailed stats/context (what's about to happen)
-- **Success message**: Minimal confirmation with reference info (hash, path)
+- **Progress message**: Include ALL relevant details - what's being done, counts, stats, context
+- **Success message**: MINIMAL - just confirm completion with reference info (hash, path)
 
-This prevents redundant noise while giving users information when they need it most (before the operation runs).
+This prevents redundant noise while giving users information when they need it most (before the operation runs). Think: "tell me everything before you start, just confirm when you're done."
 
-**Good pattern:**
+**Good patterns:**
+
 ```rust
-// Progress: detailed stats upfront
+// Example 1: Squashing commits
+output::progress("🔄 Squashing 3 commits with working tree changes into 1 (5 files, +120, -45)...")?;
+perform_squash()?;
+output::success("✅ Squashed @ a1b2c3d")?;  // Minimal - no repeated detail
+
+// Example 2: Committing changes
 output::progress("🔄 Committing changes... (3 files, +45, -12)")?;
 perform_commit()?;
-// Success: minimal confirmation with reference
-output::success("✅ Committed changes @ a1b2c3d")?;
+output::success("✅ Committed changes @ a1b2c3d")?;  // Just hash for reference
+
+// Example 3: Creating worktree
+output::progress("🔄 Creating worktree for feature-x...")?;
+create_worktree()?;
+output::success("✅ Created worktree, changed directory to /path/to/worktree")?;  // Just location
 ```
 
-**Bad pattern:**
+**Bad patterns:**
+
 ```rust
-// Redundant - same stats shown twice
+// ❌ Repeating detail in success message
+output::progress("🔄 Squashing 3 commits into 1...")?;
+perform_squash()?;
+output::success("✅ Squashed 3 commits into 1 @ a1b2c3d")?;  // Redundant "3 commits"
+
+// ❌ Repeating stats in success message
 output::progress("🔄 Committing changes... (3 files, +45, -12)")?;
 perform_commit()?;
-output::success("✅ Committed changes (3 files, +45, -12) @ a1b2c3d")?;  // ❌ Too noisy
+output::success("✅ Committed changes (3 files, +45, -12) @ a1b2c3d")?;  // Stats already shown
 ```
 
 **Rationale:**
-- Users read progress messages to understand what's happening
-- Success messages just confirm completion - stats already seen
-- Commit hashes/paths in success messages enable easy reference
+- Users read progress messages to understand what's about to happen
+- Success messages just confirm completion - details were already shown
+- Reference info (hashes, paths) in success messages enable quick lookup
 - Reduces visual noise and line count in output
+- Makes output scannable: detailed context before, quick confirmation after
 
 ### Semantic Style Constants
 

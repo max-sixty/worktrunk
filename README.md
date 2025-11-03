@@ -300,7 +300,7 @@ $ wt merge
   - Add JWT encoding/decoding with signature verification
   - Create test suite covering all authentication flows
 
-✅ Squashed 3 commits into 1 @ a1b2c3d
+✅ Squashed @ a1b2c3d
 🔄 Running pre-merge: lint
   cargo clippy
 
@@ -321,7 +321,7 @@ test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
 
-🔄 Merging 1 commit to main @ a1b2c3d (squashed from 3 commits, no rebasing needed)
+🔄 Merging 1 commit to main @ a1b2c3d (no rebasing needed)
 
 * a1b2c3d (HEAD -> feature-auth) feat(auth): Implement JWT authentication system
 

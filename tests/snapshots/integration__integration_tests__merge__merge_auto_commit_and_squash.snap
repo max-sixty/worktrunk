@@ -18,12 +18,12 @@ info:
     SOURCE_DATE_EPOCH: "1761609600"
     WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: update file 1 content"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp8yhROk/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpUbhsG6/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mSquashing 2 commits into 1[0m (2 files, [32m+2[0m)...
+🔄 [36mSquashing 2 commits with working tree changes into 1[0m (2 files, [32m+2[0m)...
 🔄 [36mGenerating squash commit message...[0m
 💡 [2mUsing fallback commit message. Run 'wt config help' to configure LLM-generated messages[0m
 [40m [0m [1mSquash commits from main[0m
@@ -32,8 +32,8 @@ exit_code: 0
 [40m [0m - feat: add file 1
 [40m [0m - feat: add file 2
 
-✅ [32mSquashed 2 commits into 1 @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [2m[SHA][0m (squashed 2 commits with working tree changes, no rebasing needed)
+✅ [32mSquashed @ [2m[SHA][0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [2m[SHA][0m (no rebasing needed)
 
 * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Squash commits from main
 

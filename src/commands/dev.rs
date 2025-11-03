@@ -149,20 +149,13 @@ pub fn handle_dev_commit(force: bool, no_verify: bool) -> Result<(), GitError> {
     commit_with_generated_message("Committing changes...", &config.commit_generation)
 }
 
-/// Information about what was squashed
-#[derive(Debug)]
-pub struct SquashInfo {
-    pub original_commit_count: usize,
-    pub had_staged_changes: bool,
-}
-
 /// Handle `wt dev squash` command
-/// Returns Some(info) if squashing occurred, None if no squashing was needed
+/// Returns true if squashing occurred, false if no squashing was needed
 pub fn handle_dev_squash(
     target: Option<&str>,
     force: bool,
     no_verify: bool,
-) -> Result<Option<SquashInfo>, GitError> {
+) -> Result<bool, GitError> {
     let repo = Repository::current();
     let config = WorktrunkConfig::load().git_context("Failed to load config")?;
     let current_branch = repo
@@ -203,19 +196,19 @@ pub fn handle_dev_squash(
         crate::output::progress(format!(
             "{dim}No commits to squash - already at merge base{dim:#}"
         ))?;
-        return Ok(None);
+        return Ok(false);
     }
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
         commit_with_generated_message("Committing changes...", &config.commit_generation)?;
-        return Ok(None);
+        return Ok(false);
     }
 
     if commit_count == 1 && !has_staged {
         // Single commit, no staged changes - nothing to do
         // Don't show hint here - the merge message will indicate "no squashing needed"
-        return Ok(None);
+        return Ok(false);
     }
 
     // Either multiple commits OR single commit with staged changes - squash them
@@ -227,10 +220,22 @@ pub fn handle_dev_squash(
     let stats = parse_diff_shortstat(&diff_shortstat);
     let stats_parts = stats.format_summary();
 
+    let commit_text = if commit_count == 1 {
+        "commit"
+    } else {
+        "commits"
+    };
+    let with_changes = if has_staged {
+        " with working tree changes"
+    } else {
+        ""
+    };
     let squash_progress = match stats_parts.is_empty() {
-        true => format!("🔄 {CYAN}Squashing {commit_count} commits into 1...{CYAN:#}"),
+        true => format!(
+            "🔄 {CYAN}Squashing {commit_count} {commit_text}{with_changes} into 1...{CYAN:#}"
+        ),
         false => format!(
-            "🔄 {CYAN}Squashing {commit_count} commits into 1{CYAN:#} ({})...",
+            "🔄 {CYAN}Squashing {commit_count} {commit_text}{with_changes} into 1{CYAN:#} ({})...",
             stats_parts.join(", ")
         ),
     };
@@ -292,18 +297,15 @@ pub fn handle_dev_squash(
     use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
     let green_dim = GREEN.dimmed();
     crate::output::success(format!(
-        "{SUCCESS_EMOJI} {GREEN}Squashed {commit_count} commits into 1 @ {green_dim}{commit_hash}{green_dim:#}{GREEN:#}"
+        "{SUCCESS_EMOJI} {GREEN}Squashed @ {green_dim}{commit_hash}{green_dim:#}{GREEN:#}"
     ))?;
 
-    Ok(Some(SquashInfo {
-        original_commit_count: commit_count,
-        had_staged_changes: has_staged,
-    }))
+    Ok(true)
 }
 
 /// Handle `wt dev push` command
 pub fn handle_dev_push(target: Option<&str>, allow_merge_commits: bool) -> Result<(), GitError> {
-    super::worktree::handle_push(target, allow_merge_commits, "Pushed to", None, false)
+    super::worktree::handle_push(target, allow_merge_commits, "Pushed to", false, false)
 }
 
 /// Handle `wt dev rebase` command

@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpQT9qyX/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpwQ8NSy/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -31,8 +31,8 @@ exit_code: 0
 [40m [0m - fix: update logic
 [40m [0m - docs: update readme
 
-✅ [32mSquashed 3 commits into 1 @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [2m[SHA][0m (squashed from 3 commits, no rebasing needed)
+✅ [32mSquashed @ [2m[SHA][0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [2m[SHA][0m (no rebasing needed)
 
 * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Squash commits from main
 

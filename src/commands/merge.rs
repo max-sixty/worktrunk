@@ -120,10 +120,10 @@ pub fn handle_merge(
     }
 
     // Squash commits if enabled - track whether squashing occurred
-    let squash_info = if squash_enabled {
+    let squashed = if squash_enabled {
         handle_squash(&target_branch, no_verify, force)?
     } else {
-        None
+        false
     };
 
     // Rebase onto target (skip if --no-commit) - track whether rebasing occurred
@@ -150,13 +150,7 @@ pub fn handle_merge(
     }
 
     // Fast-forward push to target branch with squash/rebase info for consolidated message
-    handle_push(
-        Some(&target_branch),
-        false,
-        "Merged to",
-        squash_info.as_ref(),
-        rebased,
-    )?;
+    handle_push(Some(&target_branch), false, "Merged to", squashed, rebased)?;
 
     // Get primary worktree path before cleanup (while we can still run git commands)
     let primary_worktree_dir = repo.main_worktree_root()?;
@@ -378,11 +372,7 @@ fn handle_commit_changes(
     commit_with_generated_message("Committing changes...", commit_generation_config)
 }
 
-fn handle_squash(
-    target_branch: &str,
-    no_verify: bool,
-    force: bool,
-) -> Result<Option<super::dev::SquashInfo>, GitError> {
+fn handle_squash(target_branch: &str, no_verify: bool, force: bool) -> Result<bool, GitError> {
     // Delegate to the atomic dev command
     super::dev::handle_dev_squash(Some(target_branch), force, no_verify)
 }
