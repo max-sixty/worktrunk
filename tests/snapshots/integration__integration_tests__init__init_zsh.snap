@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpZD3Pf7/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxgY3i2/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -300,9 +300,9 @@ esac
 (list)
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format]:FORMAT:((table\:"Human-readable table format"
-json\:"JSON format with colored unicode display fields"))' \
-'--branches[Also display branches that don'\''t have worktrees]' \
-'--full[Show all information (CI status, conflict detection, branch diff)]' \
+json\:"Machine-readable JSON with display fields (includes styled unicode for rendering)"))' \
+'--branches[Include branches without worktrees]' \
+'--full[Show CI status, conflict detection, and complete diff statistics]' \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help (see more with '\''--help'\'')]' \
@@ -381,7 +381,7 @@ _wt_commands() {
 'init:Generate shell integration code' \
 'config:Manage configuration' \
 'dev:Development and testing utilities' \
-'list:List all worktrees' \
+'list:List worktrees and optionally branches' \
 'switch:Switch to a worktree' \
 'remove:Finish current worktree, returning to primary if current' \
 'merge:Merge worktree into target branch' \

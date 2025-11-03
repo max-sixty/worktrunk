@@ -24,7 +24,7 @@ use output::{execute_user_command, handle_remove_output, handle_switch_output};
 pub enum OutputFormat {
     /// Human-readable table format
     Table,
-    /// JSON format with colored unicode display fields
+    /// Machine-readable JSON with display fields (includes styled unicode for rendering)
     Json,
 }
 
@@ -143,26 +143,31 @@ enum Commands {
         action: DevCommand,
     },
 
-    /// List all worktrees
+    /// List worktrees and optionally branches
+    #[command(after_help = "\
+STATE COLUMN:
+  (matches main): Working tree identical to main
+  (no commits): No commits ahead, clean working tree
+  (conflicts): Merge conflicts with main
+  [MERGING]/[REBASING]: Git operations in progress
+  (bare)/(locked)/(prunable): Worktree properties
+
+Rows are dimmed when no unique work (either no commits and clean working tree, or matches main).")]
     List {
         /// Output format
         #[arg(long, value_enum, default_value = "table")]
         format: OutputFormat,
 
-        /// Also display branches that don't have worktrees
+        /// Include branches without worktrees
         #[arg(long)]
         branches: bool,
 
-        /// Show all information (CI status, conflict detection, branch diff)
+        /// Show CI status, conflict detection, and complete diff statistics
         ///
-        /// Shows additional columns:
-        /// - CI status: colored indicator (green=passed, blue=running, red=failed, yellow=conflicts, gray=no-ci)
-        /// - Conflicts: ⚠️ indicator for branches with merge conflicts against main
-        /// - Main ±: line diff totals (+added -deleted) in commits vs main
-        ///
-        /// Requires gh (GitHub) or glab (GitLab) CLI for CI status.
-        /// WARNING: Slow! Makes network requests and runs git merge-tree for conflict detection.
-        #[arg(long)]
+        /// Adds columns: CI (pipeline status), Main ± (line diffs).
+        /// Enables conflict detection (shows "(conflicts)" in State column).
+        /// Requires network requests and git merge-tree operations.
+        #[arg(long, verbatim_doc_comment)]
         full: bool,
     },
 

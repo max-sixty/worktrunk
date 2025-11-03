@@ -80,7 +80,7 @@ fn test_remove_internal_directive() {
             .arg("remove")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @"success: true\nexit_code: 0\n----- stdout -----\n✅ \u{1b}[32mAlready on default branch \u{1b}[1m\u{1b}[32mmain\u{1b}[0m\u{1b}[0m\0\n----- stderr -----");
+        assert_cmd_snapshot!(cmd, @"success: true\nexit_code: 0\n----- stdout -----\n🔄 \u{1b}[36mRemoving worktree...\u{1b}[0m\0✅ \u{1b}[32mAlready on default branch \u{1b}[1m\u{1b}[32mmain\u{1b}[0m\u{1b}[0m\0\n----- stderr -----");
     });
 }
 
@@ -102,6 +102,7 @@ fn test_remove_without_internal() {
         success: true
         exit_code: 0
         ----- stdout -----
+        🔄 [36mRemoving worktree...[0m
         ✅ [32mAlready on default branch [1m[32mmain[0m[0m
 
         ----- stderr -----

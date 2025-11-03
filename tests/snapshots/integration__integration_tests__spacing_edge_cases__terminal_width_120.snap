@@ -15,15 +15,15 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpYDU9Lq/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpEuCxwf/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Branch     Working ±  Main ↕  State  Path         Commit    Age            Message                                      
-[1m[35mmain     [0m                            [1m[35m./test-repo[0m  [2ma7bc47ca[0m  [2m10 months ago[0m  [2mInitial commit with a reasonably long message[0m
-[2mfeature-a[0m                            [2m./feature-a[0m  [2ma7bc47ca[0m  [2m10 months ago[0m  [2mInitial commit with a reasonably long message[0m
-[2mfeature-b[0m                            [2m./feature-b[0m  [2ma7bc47ca[0m  [2m10 months ago[0m  [2mInitial commit with a reasonably long message[0m
+Branch     Main ↕  State           Path         Commit    Age            Message                                        
+[1m[35mmain     [0m                          [1m[35m./test-repo[0m  [2ma7bc47ca[0m  [2m10 months ago[0m  [2mInitial commit with a reasonably long message[0m  
+[2mfeature-a[0m          [2m(matches main)[0m  [2m./feature-a[0m  [2ma7bc47ca[0m  [2m10 months ago[0m  [2mInitial commit with a reasonably long message[0m  
+[2mfeature-b[0m          [2m(matches main)[0m  [2m./feature-b[0m  [2ma7bc47ca[0m  [2m10 months ago[0m  [2mInitial commit with a reasonably long message[0m  
 
 [2mShowing 3 worktrees[0m
 

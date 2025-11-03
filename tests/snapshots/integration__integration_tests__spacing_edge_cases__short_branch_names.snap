@@ -15,16 +15,16 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpSEYNgZ/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpVFT2Yw/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Branch  Working ±  Main ↕  State  Path         Remote ↕  Commit    Age            Message                                                             
-[1m[35mmain  [0m                            [1m[35m./test-repo[0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                                      
-[2ma     [0m                            [2m./a        [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                                      
-[2mbb    [0m                            [2m./bb       [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                                      
-[2mccc   [0m                            [2m./ccc      [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                                      
+Branch  Working ±  Main ↕  State           Path         Remote ↕  Commit    Age            Message                                                    
+[1m[35mmain  [0m                                     [1m[35m./test-repo[0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                             
+[2ma     [0m                     [2m(matches main)[0m  [2m./a        [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                             
+[2mbb    [0m                     [2m(matches main)[0m  [2m./bb       [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                             
+[2mccc   [0m                     [2m(matches main)[0m  [2m./ccc      [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m                                             
 
 [2mShowing 4 worktrees[0m
 

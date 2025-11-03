@@ -108,24 +108,14 @@ pub fn handle_remove_output(result: &RemoveResult, branch: Option<&str>) -> Resu
         changed_directory,
     } = result
     {
-        use worktrunk::styling::CYAN;
-
         // 1. Emit cd directive if needed - shell will execute this immediately
         if *changed_directory {
             super::change_directory(primary_path)?;
             super::flush()?; // Force flush to ensure shell processes the cd
         }
 
-        // 2. Show progress message with branch name
-        let cyan_bold = CYAN.bold();
-        let progress_msg = if let Some(b) = branch {
-            format!("🔄 {CYAN}Removing worktree for {cyan_bold}{b}{cyan_bold:#}...{CYAN:#}")
-        } else {
-            format!("🔄 {CYAN}Removing worktree...{CYAN:#}")
-        };
-        super::progress(progress_msg)?;
-
-        // 3. Do the deletion (shell already changed directory if needed)
+        // 2. Do the deletion (shell already changed directory if needed)
+        // Progress message already shown at start of handle_remove()
         let repo = worktrunk::git::Repository::current();
         repo.remove_worktree(worktree_path)
             .git_context("Failed to remove worktree")?;

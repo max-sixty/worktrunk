@@ -237,6 +237,15 @@ pub fn handle_switch(
 }
 
 pub fn handle_remove(worktree_name: Option<&str>) -> Result<RemoveResult, GitError> {
+    // Show progress immediately, before slow validation
+    let cyan_bold = CYAN.bold();
+    let progress_msg = if let Some(b) = worktree_name {
+        format!("🔄 {CYAN}Removing worktree for {cyan_bold}{b}{cyan_bold:#}...{CYAN:#}")
+    } else {
+        format!("🔄 {CYAN}Removing worktree...{CYAN:#}")
+    };
+    crate::output::progress(progress_msg)?;
+
     let repo = Repository::current();
 
     // Two modes: remove current worktree vs. remove by name

@@ -205,6 +205,15 @@ pub fn format_all_states(item: &ListItem) -> String {
 
     // Worktree-specific states
     if let Some(info) = item.worktree_info() {
+        // State priority: "matches main" takes precedence over "no commits"
+        // since it's more specific (working tree identical to main)
+        if !info.is_primary && info.working_tree_diff_with_main == (0, 0) {
+            states.push("(matches main)".to_string());
+        } else if !info.is_primary && item.counts().ahead == 0 && info.working_tree_diff == (0, 0) {
+            // Only show "no commits" if working tree doesn't match main
+            states.push("(no commits)".to_string());
+        }
+
         if let Some(state) = info.worktree_state.as_ref() {
             states.push(format!("[{}]", state));
         }
@@ -247,16 +256,38 @@ fn optional_reason_state(label: &str, reason: Option<&str>) -> Option<String> {
     })
 }
 
-/// Push a header at an absolute column position
-/// Check if a branch is potentially removable (nothing ahead, no uncommitted changes)
+/// Check if a branch/worktree is potentially removable
+///
+/// Dims rows for worktrees/branches that likely don't contain unique work
+/// beyond what's already in the main branch. This helps focus attention on
+/// worktrees that contain work.
+///
+/// Dims when (using OR logic):
+/// - No commits AND clean working tree (ahead == 0 AND working_tree_diff == (0, 0)):
+///   The worktree has no commits ahead and no uncommitted changes
+/// - Working tree matches main (working_tree_diff_with_main == (0, 0)):
+///   The working tree contents are identical to main, regardless of commit history
+///
+/// Either condition alone is sufficient to dim, as both indicate "no unique work here".
 fn is_potentially_removable(item: &ListItem) -> bool {
-    let counts = item.counts();
-    let wt_diff = item
-        .worktree_info()
-        .map(|info| info.working_tree_diff)
-        .unwrap_or((0, 0));
+    if item.is_primary() {
+        return false;
+    }
 
-    !item.is_primary() && counts.ahead == 0 && wt_diff == (0, 0)
+    let counts = item.counts();
+
+    if let Some(info) = item.worktree_info() {
+        // Condition 1: No commits ahead AND no uncommitted changes
+        let no_commits_and_clean = counts.ahead == 0 && info.working_tree_diff == (0, 0);
+
+        // Condition 2: Working tree matches main (regardless of commit history)
+        let matches_main = info.working_tree_diff_with_main == (0, 0);
+
+        no_commits_and_clean || matches_main
+    } else {
+        // For branches without worktrees, just check if no commits ahead
+        counts.ahead == 0
+    }
 }
 
 /// Render a list item (worktree or branch) as a formatted line
@@ -362,7 +393,11 @@ pub fn format_list_item_line(
                 let states = format_all_states(item);
                 if !states.is_empty() {
                     let states_text = format!("{:width$}", states, width = column.width);
-                    line.push_raw(states_text);
+                    if let Some(style) = text_style {
+                        line.push_styled(states_text, style);
+                    } else {
+                        line.push_raw(states_text);
+                    }
                 } else {
                     push_blank(&mut line, column.width);
                 }

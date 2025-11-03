@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpsB1EpK/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpitEqRx/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -212,7 +212,7 @@ complete -c wt -n "__fish_wt_needs_command" -s V -l version -d 'Print version'
 complete -c wt -n "__fish_wt_needs_command" -f -a "init" -d 'Generate shell integration code'
 complete -c wt -n "__fish_wt_needs_command" -f -a "config" -d 'Manage configuration'
 complete -c wt -n "__fish_wt_needs_command" -f -a "dev" -d 'Development and testing utilities'
-complete -c wt -n "__fish_wt_needs_command" -f -a "list" -d 'List all worktrees'
+complete -c wt -n "__fish_wt_needs_command" -f -a "list" -d 'List worktrees and optionally branches'
 complete -c wt -n "__fish_wt_needs_command" -f -a "switch" -d 'Switch to a worktree'
 complete -c wt -n "__fish_wt_needs_command" -f -a "remove" -d 'Finish current worktree, returning to primary if current'
 complete -c wt -n "__fish_wt_needs_command" -f -a "merge" -d 'Merge worktree into target branch'
@@ -268,9 +268,9 @@ complete -c wt -n "__fish_wt_using_subcommand dev; and __fish_seen_subcommand_fr
 complete -c wt -n "__fish_wt_using_subcommand dev; and __fish_seen_subcommand_from rebase" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand dev; and __fish_seen_subcommand_from rebase" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_using_subcommand list" -l format -d 'Output format' -r -f -a "table\t'Human-readable table format'
-json\t'JSON format with colored unicode display fields'"
-complete -c wt -n "__fish_wt_using_subcommand list" -l branches -d 'Also display branches that don\'t have worktrees'
-complete -c wt -n "__fish_wt_using_subcommand list" -l full -d 'Show all information (CI status, conflict detection, branch diff)'
+json\t'Machine-readable JSON with display fields (includes styled unicode for rendering)'"
+complete -c wt -n "__fish_wt_using_subcommand list" -l branches -d 'Include branches without worktrees'
+complete -c wt -n "__fish_wt_using_subcommand list" -l full -d 'Show CI status, conflict detection, and complete diff statistics'
 complete -c wt -n "__fish_wt_using_subcommand list" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand list" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand switch" -s b -l base -d 'Base branch to create from (only with --create)' -r
