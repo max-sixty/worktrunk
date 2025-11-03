@@ -1,0 +1,32 @@
+---
+source: tests/integration_tests/post_start_commands.rs
+info:
+  program: wt
+  args:
+    - switch
+    - "--create"
+    - feature
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp5JT9gN/test-config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+✅ [32mCreated new worktree for [1m[32mfeature[0m[32m at [1m[32m[REPO].feature[0m[0m
+
+To enable automatic cd, run: wt config shell
+🔄 [36mRunning post-start:[0m
+[40m [0m  [1m[34mecho[0m [32m'POST-START-RAN'[0m [36m>[0m post_start_marker.txt[0m
+
+
+----- stderr -----

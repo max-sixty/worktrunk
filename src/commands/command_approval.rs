@@ -103,5 +103,11 @@ fn prompt_for_batch_approval(
 
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
+
+    // Add newline after user input to prevent output interleaving.
+    // Without this, success messages (stdout) can appear on the same line as the prompt (stderr)
+    // when the user types 'y' + Enter, since the Enter only adds a newline to stderr.
+    eprintln!();
+
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }

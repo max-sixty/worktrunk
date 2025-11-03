@@ -873,3 +873,73 @@ approved-commands = ["""
     let contents = fs::read_to_string(&result_file).expect("Failed to read result.txt");
     assert_snapshot!(contents, @"File does not exist");
 }
+
+// ============================================================================
+// Regression Tests
+// ============================================================================
+
+/// Test that post-start commands DO NOT run when switching to an existing worktree.
+///
+/// This is a regression test for a bug where post-start commands were running on ALL
+/// `wt switch` operations instead of only on `wt switch --create`.
+#[test]
+fn test_post_start_skipped_on_existing_worktree() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create project config with post-start command
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-start-command = "echo 'POST-START-RAN' > post_start_marker.txt""#,
+    )
+    .expect("Failed to write config");
+
+    repo.commit("Add post-start config");
+
+    // Pre-approve the command
+    fs::write(
+        repo.test_config_path(),
+        r#"worktree-path = "../{main-worktree}.{branch}"
+
+[projects."test-repo"]
+approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
+"#,
+    )
+    .expect("Failed to write test config");
+
+    // First: Create worktree - post-start SHOULD run
+    snapshot_switch(
+        "post_start_create_with_command",
+        &repo,
+        &["--create", "feature"],
+    );
+
+    // Wait for background post-start command to complete
+    thread::sleep(SLEEP_BACKGROUND_COMMAND);
+
+    let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
+    let marker_file = worktree_path.join("post_start_marker.txt");
+
+    // Verify post-start ran on creation
+    assert!(
+        marker_file.exists(),
+        "Post-start command should run when creating new worktree"
+    );
+
+    // Remove the marker file to detect if post-start runs again
+    fs::remove_file(&marker_file).expect("Failed to remove marker file");
+
+    // Second: Switch to EXISTING worktree - post-start should NOT run
+    snapshot_switch("post_start_skip_existing", &repo, &["feature"]);
+
+    // Wait briefly to ensure no background command starts
+    thread::sleep(SLEEP_FAST_COMMAND);
+
+    // Verify post-start did NOT run when switching to existing worktree
+    assert!(
+        !marker_file.exists(),
+        "Post-start should NOT run when switching to existing worktree"
+    );
+}

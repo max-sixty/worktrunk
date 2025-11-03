@@ -11,6 +11,7 @@ mod display;
 mod llm;
 mod output;
 
+use commands::worktree::SwitchResult;
 use commands::{
     ConfigAction, Shell, handle_complete, handle_completion, handle_config_help,
     handle_config_init, handle_config_list, handle_config_refresh_cache, handle_configure_shell,
@@ -457,14 +458,11 @@ fn main() {
                 handle_switch_output(&result, &branch, execute.is_some())?;
 
                 // Now spawn post-start hooks (background processes, after success message)
-                if !no_verify {
+                // Only run post-start commands when creating a NEW worktree, not when switching to existing
+                if !no_verify && let SwitchResult::CreatedWorktree { path, .. } = &result {
                     let repo = Repository::current();
                     commands::worktree::spawn_post_start_commands(
-                        result.path(),
-                        &repo,
-                        &config,
-                        &branch,
-                        force,
+                        path, &repo, &config, &branch, force,
                     )?;
                 }
 
