@@ -283,6 +283,10 @@ fn exec_through_wrapper_from(
             "WORKTRUNK_CONFIG_PATH".to_string(),
             repo.test_config_path().to_string_lossy().to_string(),
         ),
+        // Set TERM for consistent terminal behavior across local and CI environments
+        // Without this, macOS and Linux PTYs have different defaults which causes
+        // different ANSI escape sequence generation (different reset placements)
+        ("TERM".to_string(), "xterm".to_string()),
         // Git config from configure_git_cmd
         ("GIT_AUTHOR_NAME".to_string(), "Test User".to_string()),
         (
@@ -487,16 +491,11 @@ mod tests {
     }
 
     /// Test switch --create with post-create-command (blocking) and post-start-command (background)
-    // TODO: Fix environment-specific test - PTY ANSI code handling differs between local and CI
-    // Tests pass consistently within each environment but produce different ANSI escape sequences
-    // (CI adds/removes ␛[0m resets in different places). This is NOT flakiness - it's deterministic
-    // per-environment PTY behavior. Need environment-agnostic snapshots or normalization.
-    // #[rstest]
-    // #[case("bash")]
-    // #[case("zsh")]
-    // #[case("fish")]
-    #[allow(dead_code)]
-    fn test_wrapper_switch_with_hooks(shell: &str) {
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_wrapper_switch_with_hooks(#[case] shell: &str) {
         let repo = TestRepo::new();
         repo.commit("Initial commit");
 
@@ -550,16 +549,11 @@ approved-commands = [
     }
 
     /// Test merge with successful pre-merge-command validation
-    // TODO: Fix environment-specific test - PTY ANSI code handling differs between local and CI
-    // Tests pass consistently within each environment but produce different ANSI escape sequences
-    // (CI adds/removes ␛[0m resets in different places). This is NOT flakiness - it's deterministic
-    // per-environment PTY behavior. Need environment-agnostic snapshots or normalization.
-    // #[rstest]
-    // #[case("bash")]
-    // #[case("zsh")]
-    // #[case("fish")]
-    #[allow(dead_code)]
-    fn test_wrapper_merge_with_pre_merge_success(shell: &str) {
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_wrapper_merge_with_pre_merge_success(#[case] shell: &str) {
         let mut repo = TestRepo::new();
         repo.commit("Initial commit");
         repo.setup_remote("main");
@@ -636,16 +630,11 @@ approved-commands = [
     }
 
     /// Test merge with failing pre-merge-command that aborts the merge
-    // TODO: Fix environment-specific test - PTY ANSI code handling differs between local and CI
-    // Tests pass consistently within each environment but produce different ANSI escape sequences
-    // (CI adds/removes ␛[0m resets in different places). This is NOT flakiness - it's deterministic
-    // per-environment PTY behavior. Need environment-agnostic snapshots or normalization.
-    // #[rstest]
-    // #[case("bash")]
-    // #[case("zsh")]
-    // #[case("fish")]
-    #[allow(dead_code)]
-    fn test_wrapper_merge_with_pre_merge_failure(shell: &str) {
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_wrapper_merge_with_pre_merge_failure(#[case] shell: &str) {
         let mut repo = TestRepo::new();
         repo.commit("Initial commit");
         repo.setup_remote("main");
