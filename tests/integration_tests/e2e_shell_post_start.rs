@@ -143,9 +143,8 @@ fn test_e2e_post_start_background_command(#[case] shell: &str) {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "sleep 0.5 && echo 'Background task done' > bg_marker.txt"
+[projects."test-repo"]
+approved-commands = ["sleep 0.5 && echo 'Background task done' > bg_marker.txt"]
 "#,
     )
     .expect("Failed to write user config");
@@ -270,13 +269,11 @@ task2 = "sleep 0.5 && echo 'Task 2' > task2.txt"
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "sleep 0.5 && echo 'Task 1' > task1.txt"
-
-[[approved-commands]]
-project = "test-repo"
-command = "sleep 0.5 && echo 'Task 2' > task2.txt"
+[projects."test-repo"]
+approved-commands = [
+    "sleep 0.5 && echo 'Task 1' > task1.txt",
+    "sleep 0.5 && echo 'Task 2' > task2.txt",
+]
 "#,
     )
     .expect("Failed to write test config");
@@ -353,9 +350,8 @@ fn test_bash_post_create_blocks() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Setup done' > setup.txt"
+[projects."test-repo"]
+approved-commands = ["echo 'Setup done' > setup.txt"]
 "#,
     )
     .expect("Failed to write test config");
@@ -436,9 +432,8 @@ fish_bg = "sleep 0.5 && echo 'Fish background done' > fish_bg.txt"
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "sleep 0.5 && echo 'Fish background done' > fish_bg.txt"
+[projects."test-repo"]
+approved-commands = ["sleep 0.5 && echo 'Fish background done' > fish_bg.txt"]
 "#,
     )
     .expect("Failed to write test config");

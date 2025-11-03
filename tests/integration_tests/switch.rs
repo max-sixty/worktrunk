@@ -331,9 +331,8 @@ fn test_switch_no_config_commands_skips_post_start_commands() {
         format!(
             r#"worktree-path = "../{{main-worktree}}.{{branch}}"
 
-[[approved-commands]]
-project = "main"
-command = "{}"
+[projects."main"]
+approved-commands = ["{}"]
 "#,
             create_file_cmd
         ),

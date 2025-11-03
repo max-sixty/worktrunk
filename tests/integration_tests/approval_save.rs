@@ -38,9 +38,8 @@ fn test_approval_saves_to_disk() {
     [commit-generation]
     args = []
 
-    [[approved-commands]]
-    project = "github.com/test/repo"
-    command = "test command"
+    [projects."github.com/test/repo"]
+    approved-commands = ["test command"]
     "#);
 
     // Verify approval is in memory
@@ -72,13 +71,18 @@ fn test_duplicate_approvals_not_saved_twice() {
         .ok();
 
     // Verify only one entry exists
-    let matching_approvals: Vec<_> = config
-        .approved_commands
-        .iter()
-        .filter(|ac| ac.project == "github.com/test/repo" && ac.command == "test")
-        .collect();
+    let matching_commands = config
+        .projects
+        .get("github.com/test/repo")
+        .map(|p| {
+            p.approved_commands
+                .iter()
+                .filter(|cmd| *cmd == "test")
+                .count()
+        })
+        .unwrap_or(0);
 
-    assert_eq!(matching_approvals.len(), 1, "Duplicate approval was saved");
+    assert_eq!(matching_commands, 1, "Duplicate approval was saved");
 
     // Verify file contains only one entry
     let toml_content = fs::read_to_string(&config_path).unwrap();
@@ -88,9 +92,8 @@ fn test_duplicate_approvals_not_saved_twice() {
     [commit-generation]
     args = []
 
-    [[approved-commands]]
-    project = "github.com/test/repo"
-    command = "test"
+    [projects."github.com/test/repo"]
+    approved-commands = ["test"]
     "#);
 }
 
@@ -139,17 +142,14 @@ fn test_multiple_project_approvals() {
     [commit-generation]
     args = []
 
-    [[approved-commands]]
-    project = "github.com/user1/repo1"
-    command = "npm install"
+    [projects."github.com/user1/repo1"]
+    approved-commands = [
+        "npm install",
+        "npm test",
+    ]
 
-    [[approved-commands]]
-    project = "github.com/user2/repo2"
-    command = "cargo build"
-
-    [[approved-commands]]
-    project = "github.com/user1/repo1"
-    command = "npm test"
+    [projects."github.com/user2/repo2"]
+    approved-commands = ["cargo build"]
     "#);
 }
 
@@ -234,9 +234,8 @@ fn test_force_flag_saves_approval() {
     [commit-generation]
     args = []
 
-    [[approved-commands]]
-    project = "github.com/test/force-repo"
-    command = "test --force command"
+    [projects."github.com/test/force-repo"]
+    approved-commands = ["test --force command"]
     "#);
 }
 
@@ -272,8 +271,7 @@ fn test_force_flag_saves_to_new_config_file() {
     [commit-generation]
     args = []
 
-    [[approved-commands]]
-    project = "github.com/test/nested"
-    command = "test command"
+    [projects."github.com/test/nested"]
+    approved-commands = ["test command"]
     "#);
 }

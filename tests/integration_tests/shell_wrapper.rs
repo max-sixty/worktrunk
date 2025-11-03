@@ -523,21 +523,13 @@ watch = "echo 'Watching for file changes'"
             repo.test_config_path(),
             r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Installing dependencies...'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Building project...'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Starting dev server on port 3000'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Watching for file changes'"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'Installing dependencies...'",
+    "echo 'Building project...'",
+    "echo 'Starting dev server on port 3000'",
+    "echo 'Watching for file changes'",
+]
 "#,
         )
         .expect("Failed to write user config");
@@ -611,17 +603,12 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
             repo.test_config_path(),
             r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo '✓ Code formatting check passed'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo '✓ Linting passed - no warnings'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo '✓ All 47 tests passed in 2.3s'"
+[projects."test-repo"]
+approved-commands = [
+    "echo '✓ Code formatting check passed'",
+    "echo '✓ Linting passed - no warnings'",
+    "echo '✓ All 47 tests passed in 2.3s'",
+]
 "#,
         )
         .expect("Failed to write user config");
@@ -696,13 +683,11 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
             repo.test_config_path(),
             r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo '✓ Code formatting check passed'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
+[projects."test-repo"]
+approved-commands = [
+    "echo '✓ Code formatting check passed'",
+    "echo '✗ Test suite failed: 3 tests failing' && exit 1",
+]
 "#,
         )
         .expect("Failed to write user config");
@@ -746,9 +731,8 @@ command = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
             repo.test_config_path(),
             r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'test command executed'"
+[projects."test-repo"]
+approved-commands = ["echo 'test command executed'"]
 "#,
         )
         .expect("Failed to write user config");
@@ -849,9 +833,8 @@ command = "echo 'test command executed'"
             repo.test_config_path(),
             r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'background task'"
+[projects."test-repo"]
+approved-commands = ["echo 'background task'"]
 "#,
         )
         .expect("Failed to write user config");
@@ -918,9 +901,8 @@ command = "echo 'background task'"
             repo.test_config_path(),
             r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'fish background task'"
+[projects."test-repo"]
+approved-commands = ["echo 'fish background task'"]
 "#,
         )
         .expect("Failed to write user config");

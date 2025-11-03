@@ -70,6 +70,10 @@ use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 /// [commit-generation]
 /// command = "llm"  # Command to invoke for generating commit messages (e.g., "llm", "claude")
 /// args = ["-s"]    # Arguments to pass to the command
+///
+/// # Per-project configuration
+/// [projects."github.com/user/repo"]
+/// approved-commands = ["npm install", "npm test"]
 /// ```
 ///
 /// Config file location:
@@ -86,9 +90,10 @@ pub struct WorktrunkConfig {
     #[serde(default, rename = "commit-generation")]
     pub commit_generation: CommitGenerationConfig,
 
-    /// Commands that have been approved for automatic execution
-    #[serde(default, rename = "approved-commands")]
-    pub approved_commands: Vec<ApprovedCommand>,
+    /// Per-project configuration (approved commands, etc.)
+    /// Uses BTreeMap for deterministic serialization order and better diff readability
+    #[serde(default)]
+    pub projects: std::collections::BTreeMap<String, UserProjectConfig>,
 }
 
 /// Configuration for commit message generation
@@ -282,13 +287,31 @@ impl Serialize for CommandConfig {
     }
 }
 
-/// Approved command for automatic execution
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct ApprovedCommand {
-    /// Project identifier (git remote URL or repo name)
-    pub project: String,
-    /// Command that was approved
-    pub command: String,
+/// Per-project user configuration
+///
+/// Stored in the user's config file under `[projects."project-id"]`.
+/// Contains project-specific settings that are user preferences, not checked into git.
+///
+/// # TOML Format
+/// ```toml
+/// [projects."github.com/user/repo"]
+/// approved-commands = ["npm install", "npm test"]
+/// ```
+///
+/// # Future Extensibility
+/// This structure is designed to accommodate additional per-project settings:
+/// - default-target-branch
+/// - auto-squash preferences
+/// - project-specific hooks
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct UserProjectConfig {
+    /// Commands that have been approved for automatic execution in this project
+    #[serde(
+        default,
+        rename = "approved-commands",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub approved_commands: Vec<String>,
 }
 
 impl Default for WorktrunkConfig {
@@ -296,7 +319,7 @@ impl Default for WorktrunkConfig {
         Self {
             worktree_path: "../{main-worktree}.{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -526,9 +549,10 @@ impl ProjectConfig {
 impl WorktrunkConfig {
     /// Check if a command is approved for the given project
     pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
-        self.approved_commands
-            .iter()
-            .any(|ac| ac.project == project && ac.command == command)
+        self.projects
+            .get(project)
+            .map(|p| p.approved_commands.iter().any(|c| c == command))
+            .unwrap_or(false)
     }
 
     /// Add an approved command and save to config file
@@ -538,8 +562,11 @@ impl WorktrunkConfig {
             return Ok(());
         }
 
-        self.approved_commands
-            .push(ApprovedCommand { project, command });
+        self.projects
+            .entry(project)
+            .or_default()
+            .approved_commands
+            .push(command);
         self.save()
     }
 
@@ -559,9 +586,90 @@ impl WorktrunkConfig {
             return Ok(());
         }
 
-        self.approved_commands
-            .push(ApprovedCommand { project, command });
+        self.projects
+            .entry(project)
+            .or_default()
+            .approved_commands
+            .push(command);
         self.save_to(config_path)
+    }
+
+    /// Revoke an approved command and save to config file
+    ///
+    /// Removes the specified command from the project's approved commands list.
+    /// If this results in an empty project entry, the project is removed entirely.
+    pub fn revoke_command(&mut self, project: &str, command: &str) -> Result<(), ConfigError> {
+        if let Some(project_config) = self.projects.get_mut(project) {
+            let len_before = project_config.approved_commands.len();
+            project_config.approved_commands.retain(|c| c != command);
+            let changed = len_before != project_config.approved_commands.len();
+
+            // Clean up empty project entries
+            if project_config.approved_commands.is_empty() {
+                self.projects.remove(project);
+            }
+
+            if changed {
+                self.save()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all approvals for a project and save to config file
+    ///
+    /// Removes the entire project entry from the configuration.
+    pub fn revoke_project(&mut self, project: &str) -> Result<(), ConfigError> {
+        if self.projects.remove(project).is_some() {
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    /// Revoke an approved command and save to a specific config file (for testing)
+    ///
+    /// This is the same as `revoke_command()` but saves to an explicit path
+    /// instead of the default user config location. Use this in tests to avoid
+    /// polluting the user's actual config.
+    #[doc(hidden)]
+    pub fn revoke_command_to(
+        &mut self,
+        project: &str,
+        command: &str,
+        config_path: &std::path::Path,
+    ) -> Result<(), ConfigError> {
+        if let Some(project_config) = self.projects.get_mut(project) {
+            let len_before = project_config.approved_commands.len();
+            project_config.approved_commands.retain(|c| c != command);
+            let changed = len_before != project_config.approved_commands.len();
+
+            // Clean up empty project entries
+            if project_config.approved_commands.is_empty() {
+                self.projects.remove(project);
+            }
+
+            if changed {
+                self.save_to(config_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove all approvals for a project and save to a specific config file (for testing)
+    ///
+    /// This is the same as `revoke_project()` but saves to an explicit path
+    /// instead of the default user config location. Use this in tests to avoid
+    /// polluting the user's actual config.
+    #[doc(hidden)]
+    pub fn revoke_project_to(
+        &mut self,
+        project: &str,
+        config_path: &std::path::Path,
+    ) -> Result<(), ConfigError> {
+        if self.projects.remove(project).is_some() {
+            self.save_to(config_path)?;
+        }
+        Ok(())
     }
 
     /// Save the current configuration to the default config file location
@@ -637,7 +745,7 @@ mod tests {
         let config = WorktrunkConfig::default();
         assert_eq!(config.worktree_path, "../{main-worktree}.{branch}");
         assert_eq!(config.commit_generation.command, None);
-        assert!(config.approved_commands.is_empty());
+        assert!(config.projects.is_empty());
     }
 
     #[test]
@@ -645,7 +753,7 @@ mod tests {
         let config = WorktrunkConfig {
             worktree_path: "{main-worktree}.{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             config.format_path("myproject", "feature-x"),
@@ -658,7 +766,7 @@ mod tests {
         let config = WorktrunkConfig {
             worktree_path: "{main-worktree}-{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             config.format_path("myproject", "feature-x"),
@@ -671,7 +779,7 @@ mod tests {
         let config = WorktrunkConfig {
             worktree_path: ".worktrees/{main-worktree}/{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             config.format_path("myproject", "feature-x"),
@@ -685,7 +793,7 @@ mod tests {
         let config = WorktrunkConfig {
             worktree_path: "{main-worktree}.{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             config.format_path("myproject", "feature/foo"),
@@ -698,7 +806,7 @@ mod tests {
         let config = WorktrunkConfig {
             worktree_path: ".worktrees/{main-worktree}/{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             config.format_path("myproject", "feature/sub/task"),
@@ -712,7 +820,7 @@ mod tests {
         let config = WorktrunkConfig {
             worktree_path: ".worktrees/{main-worktree}/{branch}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
-            approved_commands: Vec::new(),
+            projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             config.format_path("myproject", "feature\\foo"),
@@ -885,30 +993,29 @@ mod tests {
     }
 
     #[test]
-    fn test_approved_command_equality() {
-        let cmd1 = ApprovedCommand {
-            project: "github.com/user/repo".to_string(),
-            command: "npm install".to_string(),
+    fn test_user_project_config_equality() {
+        let config1 = UserProjectConfig {
+            approved_commands: vec!["npm install".to_string()],
         };
-        let cmd2 = ApprovedCommand {
-            project: "github.com/user/repo".to_string(),
-            command: "npm install".to_string(),
+        let config2 = UserProjectConfig {
+            approved_commands: vec!["npm install".to_string()],
         };
-        let cmd3 = ApprovedCommand {
-            project: "github.com/user/repo".to_string(),
-            command: "npm test".to_string(),
+        let config3 = UserProjectConfig {
+            approved_commands: vec!["npm test".to_string()],
         };
-        assert_eq!(cmd1, cmd2);
-        assert_ne!(cmd1, cmd3);
+        assert_eq!(config1, config2);
+        assert_ne!(config1, config3);
     }
 
     #[test]
     fn test_is_command_approved() {
         let mut config = WorktrunkConfig::default();
-        config.approved_commands.push(ApprovedCommand {
-            project: "github.com/user/repo".to_string(),
-            command: "npm install".to_string(),
-        });
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                approved_commands: vec!["npm install".to_string()],
+            },
+        );
 
         assert!(config.is_command_approved("github.com/user/repo", "npm install"));
         assert!(!config.is_command_approved("github.com/user/repo", "npm test"));
@@ -935,7 +1042,12 @@ mod tests {
         assert!(config.is_command_approved("github.com/user/repo", "npm install"));
 
         // Duplicate approval shouldn't add twice
-        let count_before = config.approved_commands.len();
+        let count_before = config
+            .projects
+            .get("github.com/user/repo")
+            .unwrap()
+            .approved_commands
+            .len();
         config
             .approve_command_to(
                 "github.com/user/repo".to_string(),
@@ -943,7 +1055,142 @@ mod tests {
                 &config_path,
             )
             .unwrap();
-        assert_eq!(config.approved_commands.len(), count_before);
+        assert_eq!(
+            config
+                .projects
+                .get("github.com/user/repo")
+                .unwrap()
+                .approved_commands
+                .len(),
+            count_before
+        );
+    }
+
+    #[test]
+    fn test_revoke_command() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test-config.toml");
+
+        let mut config = WorktrunkConfig::default();
+
+        // Set up two approved commands
+        config
+            .approve_command_to(
+                "github.com/user/repo".to_string(),
+                "npm install".to_string(),
+                &config_path,
+            )
+            .unwrap();
+        config
+            .approve_command_to(
+                "github.com/user/repo".to_string(),
+                "npm test".to_string(),
+                &config_path,
+            )
+            .unwrap();
+
+        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
+        assert!(config.is_command_approved("github.com/user/repo", "npm test"));
+
+        // Revoke one command
+        config
+            .revoke_command_to("github.com/user/repo", "npm install", &config_path)
+            .unwrap();
+        assert!(!config.is_command_approved("github.com/user/repo", "npm install"));
+        assert!(config.is_command_approved("github.com/user/repo", "npm test"));
+
+        // Project entry should still exist
+        assert!(config.projects.contains_key("github.com/user/repo"));
+
+        // Revoke the last command - should remove the project entry
+        config
+            .revoke_command_to("github.com/user/repo", "npm test", &config_path)
+            .unwrap();
+        assert!(!config.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(!config.projects.contains_key("github.com/user/repo"));
+    }
+
+    #[test]
+    fn test_revoke_command_nonexistent() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test-config.toml");
+
+        let mut config = WorktrunkConfig::default();
+
+        // Revoking from non-existent project is a no-op
+        config
+            .revoke_command_to("github.com/user/repo", "npm install", &config_path)
+            .unwrap();
+
+        // Set up one command
+        config
+            .approve_command_to(
+                "github.com/user/repo".to_string(),
+                "npm install".to_string(),
+                &config_path,
+            )
+            .unwrap();
+
+        // Revoking non-existent command is a no-op
+        config
+            .revoke_command_to("github.com/user/repo", "npm test", &config_path)
+            .unwrap();
+        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
+    }
+
+    #[test]
+    fn test_revoke_project() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test-config.toml");
+
+        let mut config = WorktrunkConfig::default();
+
+        // Set up multiple projects
+        config
+            .approve_command_to(
+                "github.com/user/repo1".to_string(),
+                "npm install".to_string(),
+                &config_path,
+            )
+            .unwrap();
+        config
+            .approve_command_to(
+                "github.com/user/repo1".to_string(),
+                "npm test".to_string(),
+                &config_path,
+            )
+            .unwrap();
+        config
+            .approve_command_to(
+                "github.com/user/repo2".to_string(),
+                "cargo build".to_string(),
+                &config_path,
+            )
+            .unwrap();
+
+        assert!(config.projects.contains_key("github.com/user/repo1"));
+        assert!(config.projects.contains_key("github.com/user/repo2"));
+
+        // Revoke entire project
+        config
+            .revoke_project_to("github.com/user/repo1", &config_path)
+            .unwrap();
+        assert!(!config.projects.contains_key("github.com/user/repo1"));
+        assert!(config.projects.contains_key("github.com/user/repo2"));
+
+        // Revoking non-existent project is a no-op
+        config
+            .revoke_project_to("github.com/user/repo1", &config_path)
+            .unwrap();
+        config
+            .revoke_project_to("github.com/nonexistent/repo", &config_path)
+            .unwrap();
     }
 
     #[test]

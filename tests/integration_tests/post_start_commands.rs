@@ -62,9 +62,8 @@ fn test_post_create_single_command() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Setup complete'"
+[projects."test-repo"]
+approved-commands = ["echo 'Setup complete'"]
 "#,
     )
     .expect("Failed to write test config");
@@ -98,13 +97,11 @@ fn test_post_create_multiple_commands_array() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'First'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Second'"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'First'",
+    "echo 'Second'",
+]
 "#,
     )
     .expect("Failed to write user config");
@@ -141,13 +138,11 @@ setup = "echo 'Running setup'"
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Installing deps'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Running setup'"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'Installing deps'",
+    "echo 'Running setup'",
+]
 "#,
     )
     .expect("Failed to write user config");
@@ -181,9 +176,8 @@ fn test_post_create_failing_command() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "exit 1"
+[projects."test-repo"]
+approved-commands = ["exit 1"]
 "#,
     )
     .expect("Failed to write user config");
@@ -223,21 +217,13 @@ fn test_post_create_template_expansion() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Repo: {main-worktree}' > info.txt"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Branch: {branch}' >> info.txt"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Worktree: {worktree}' >> info.txt"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Root: {repo_root}' >> info.txt"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'Repo: {main-worktree}' > info.txt",
+    "echo 'Branch: {branch}' >> info.txt",
+    "echo 'Worktree: {worktree}' >> info.txt",
+    "echo 'Root: {repo_root}' >> info.txt",
+]
 "#,
     )
     .expect("Failed to write test config");
@@ -302,9 +288,8 @@ fn test_post_start_single_background_command() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "sleep 1 && echo 'Background task done' > background.txt"
+[projects."test-repo"]
+approved-commands = ["sleep 1 && echo 'Background task done' > background.txt"]
 "#,
     )
     .expect("Failed to write user config");
@@ -357,13 +342,11 @@ task2 = "echo 'Task 2 running' > task2.txt"
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Task 1 running' > task1.txt"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Task 2 running' > task2.txt"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'Task 1 running' > task1.txt",
+    "echo 'Task 2 running' > task2.txt",
+]
 "#,
     )
     .expect("Failed to write user config");
@@ -409,13 +392,11 @@ server = "sleep 0.5 && echo 'Server running' > server.txt"
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Setup done' > setup.txt"
-
-[[approved-commands]]
-project = "test-repo"
-command = "sleep 0.5 && echo 'Server running' > server.txt"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'Setup done' > setup.txt",
+    "sleep 0.5 && echo 'Server running' > server.txt",
+]
 "#,
     )
     .expect("Failed to write user config");
@@ -485,9 +466,8 @@ fn test_post_start_log_file_captures_output() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'stdout output' && echo 'stderr output' >&2"
+[projects."test-repo"]
+approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
 "#,
     )
     .expect("Failed to write user config");
@@ -552,9 +532,8 @@ fn test_post_start_invalid_command_handling() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'unclosed quote"
+[projects."test-repo"]
+approved-commands = ["echo 'unclosed quote"]
 "#,
     )
     .expect("Failed to write user config");
@@ -599,17 +578,12 @@ task3 = "echo 'TASK3_OUTPUT'"
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'TASK1_OUTPUT'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'TASK2_OUTPUT'"
-
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'TASK3_OUTPUT'"
+[projects."test-repo"]
+approved-commands = [
+    "echo 'TASK1_OUTPUT'",
+    "echo 'TASK2_OUTPUT'",
+    "echo 'TASK3_OUTPUT'",
+]
 "#,
     )
     .expect("Failed to write user config");
@@ -693,9 +667,8 @@ fn test_execute_flag_with_post_start_commands() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'Background task' > background.txt"
+[projects."test-repo"]
+approved-commands = ["echo 'Background task' > background.txt"]
 "#,
     )
     .expect("Failed to write user config");
@@ -751,9 +724,8 @@ fn test_post_start_complex_shell_commands() {
         repo.test_config_path(),
         r#"worktree-path = "../{main-worktree}.{branch}"
 
-[[approved-commands]]
-project = "test-repo"
-command = "echo 'line1\nline2\nline3' | grep line2 > filtered.txt"
+[projects."test-repo"]
+approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 "#,
     )
     .expect("Failed to write user config");
@@ -806,10 +778,9 @@ echo 'third line' >> multiline.txt
         format!(
             r#"worktree-path = "../{{main-worktree}}.{{branch}}"
 
-[[approved-commands]]
-project = "test-repo"
-command = """
-{}"""
+[projects."test-repo"]
+approved-commands = ["""
+{}"""]
 "#,
             multiline_cmd
         ),
@@ -876,10 +847,9 @@ fi
         format!(
             r#"worktree-path = "../{{main-worktree}}.{{branch}}"
 
-[[approved-commands]]
-project = "test-repo"
-command = """
-{}"""
+[projects."test-repo"]
+approved-commands = ["""
+{}"""]
 "#,
             multiline_cmd
         ),

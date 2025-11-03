@@ -2,7 +2,7 @@
 //!
 //! Shared helpers for approving commands declared in project configuration.
 
-use worktrunk::config::{ApprovedCommand, WorktrunkConfig};
+use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt};
 use worktrunk::styling::{
     AnstyleStyle, HINT_EMOJI, WARNING, WARNING_EMOJI, eprint, eprintln, format_bash_with_gutter,
@@ -42,13 +42,16 @@ pub fn approve_command_batch(
 
     let mut fresh_config = WorktrunkConfig::load().git_context("Failed to reload config")?;
 
+    // Get or create the project entry once, outside the loop
+    let project_entry = fresh_config
+        .projects
+        .entry(project_id.to_string())
+        .or_default();
+
     let mut updated = false;
     for (_, command) in needs_approval {
-        if !fresh_config.is_command_approved(project_id, command) {
-            fresh_config.approved_commands.push(ApprovedCommand {
-                project: project_id.to_string(),
-                command: command.to_string(),
-            });
+        if !project_entry.approved_commands.iter().any(|c| c == command) {
+            project_entry.approved_commands.push(command.to_string());
             updated = true;
         }
     }
