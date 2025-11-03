@@ -15,6 +15,7 @@ jobs:
   test:
     name: Test (Tier 1 shells only)
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
