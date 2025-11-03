@@ -698,33 +698,6 @@ impl WorktrunkConfig {
 
         Ok(())
     }
-
-    /// Test helper: Simulate the approval save flow used by check_and_approve_command
-    ///
-    /// This is used in integration tests to verify the --force flag behavior without
-    /// requiring access to the internal commands module.
-    #[doc(hidden)]
-    pub fn test_save_approval_flow(
-        project_id: &str,
-        command: &str,
-        config_path: &std::path::Path,
-    ) -> Result<(), ConfigError> {
-        // This mirrors what the CLI does when batching approvals:
-        // 1. Load config (in our case, from the test path)
-        // 2. Add approval entry
-        // 3. Save back
-        let mut config = Self::default();
-
-        // Try to load existing config if it exists
-        if config_path.exists() {
-            let content = std::fs::read_to_string(config_path)
-                .map_err(|e| ConfigError::Message(format!("Failed to read config: {}", e)))?;
-            config = toml::from_str(&content)
-                .map_err(|e| ConfigError::Message(format!("Failed to parse config: {}", e)))?;
-        }
-
-        config.approve_command_to(project_id.to_string(), command.to_string(), config_path)
-    }
 }
 
 #[cfg(test)]
