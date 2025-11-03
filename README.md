@@ -23,7 +23,7 @@ $ wt switch --create fix-auth
 
 # Agent works, makes changes, then:
 $ wt merge
-🔄 Merging 1 commit to main @ a1b2c3d (no squashing needed, no rebasing needed)
+🔄 Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
 
 * a1b2c3d (HEAD -> fix-auth) Implement JWT validation
 
@@ -31,8 +31,8 @@ $ wt merge
  1 file changed, 1 insertion(+)
 
 ✅ Merged to main (1 commit, 1 file, +1)
-🔄 Cleaning up worktree...
 ✅ Returned to primary at ../repo/
+🔄 Removing worktree & branch...
 # Shell back in main
 ```
 
@@ -351,8 +351,8 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
  3 files changed, 3 insertions(+)
 
 ✅ Merged to main (1 commit, 3 files, +3)
-🔄 Cleaning up worktree...
 ✅ Returned to primary at ../repo/
+🔄 Removing worktree & branch...
 🔄 Running post-merge: install
   cargo install --path .
 

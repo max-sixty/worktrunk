@@ -244,8 +244,17 @@ pub fn handle_merge(
         // This prevents showing "Cleaning up worktree..." before failing
         repo.ensure_clean_working_tree()?;
 
-        // STEP 2: Emit CD directive (just sets intent, doesn't actually change CWD)
+        // STEP 2: Emit CD directive and flush - shell executes cd immediately
         crate::output::change_directory(&primary_worktree_dir)?;
+        crate::output::flush()?;
+
+        // Show success message now that user has been cd'd to primary
+        use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
+        let green_bold = GREEN.bold();
+        crate::output::success(format!(
+            "{SUCCESS_EMOJI} {GREEN}Returned to primary at {green_bold}{}{green_bold:#}{GREEN:#}",
+            primary_worktree_dir.display()
+        ))?;
 
         // STEP 3: Switch to target branch in primary worktree (fails safely if there's an issue)
         let primary_repo = Repository::at(&primary_worktree_dir);
@@ -259,14 +268,14 @@ pub fn handle_merge(
                 .git_context(&format!("Failed to switch to '{}'", target_branch))?;
         }
 
-        // STEP 4: Only NOW remove the worktree (after all checks passed)
-        crate::output::progress(format!("🔄 {CYAN}Cleaning up worktree...{CYAN:#}"))?;
+        // STEP 4: Remove worktree and delete branch
+        crate::output::progress(format!("🔄 {CYAN}Removing worktree & branch...{CYAN:#}"))?;
         let worktree_root = repo.worktree_root()?;
         repo.remove_worktree(&worktree_root)
             .git_context("Failed to remove worktree")?;
-
-        // Print comprehensive summary
-        handle_merge_summary_output(Some(&primary_worktree_dir))?;
+        primary_repo
+            .run_command(&["branch", "-d", &current_branch])
+            .git_context(&format!("Failed to delete branch '{}'", current_branch))?;
     } else {
         // Print comprehensive summary (worktree preserved)
         handle_merge_summary_output(None)?;

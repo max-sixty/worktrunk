@@ -236,9 +236,9 @@ The merge operation follows a strict order designed for fail-fast execution:
    Fast-forward pushes to target branch. Rejects non-fast-forward pushes (ensures
    linear history).
 
-7. Clean up worktree
-   Removes current worktree and switches primary worktree to target branch if needed.
-   Skip removal with --no-remove.
+7. Clean up worktree and branch
+   Removes current worktree, deletes the branch, and switches primary worktree to target
+   branch if needed. Skip removal with --no-remove.
 
 EXAMPLES
 
