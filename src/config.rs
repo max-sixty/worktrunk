@@ -13,7 +13,7 @@
 //!
 //! **Managed by**: Each developer maintains their own user config
 //!
-//! # Project Config (<repo>/.config/wt.toml)
+//! # Project Config (`<repo>`/.config/wt.toml)
 //!
 //! **Purpose**: Project-specific hooks and commands, checked into git
 //!
@@ -198,7 +198,7 @@ pub struct ProjectConfig {
 
 /// Configuration for commands - canonical representation
 ///
-/// Internally stores commands as Vec<(Option<name>, command)> for uniform processing.
+/// Internally stores commands as `Vec<(Option<name>, command)>` for uniform processing.
 /// Deserializes from three TOML formats:
 /// - Single string: `post-create-command = "npm install"`
 /// - Array: `post-create-command = ["npm install", "npm test"]`
