@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
+[package.metadata.release]
+# Allow releases from any branch (GitHub Actions uses detached HEAD)
+allow-branch = ["*"]
+consolidate-commits = true
+
 [features]
 # Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
 tier-2-integration-tests = []

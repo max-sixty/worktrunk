@@ -1,0 +1,173 @@
+# This workflow runs on GitHub releases. It also runs on workflow_call and
+# workflow_dispatch without publishing, to test that builds work correctly.
+#
+# Publishing only occurs when github.event_name == 'release'.
+
+name: Release
+
+on:
+  release:
+    types: [released]  # Only final releases, not drafts
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM (Apple Silicon)
+          - os: macos-14
+            target: aarch64-apple-darwin
+
+          # macOS Intel
+          - os: macos-13
+            target: x86_64-apple-darwin
+
+          # Linux x86_64 (musl for static binary)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+
+          # Linux ARM64 (musl for static binary)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v5
+
+      - name: 🦀 Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux musl only)
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+
+      - name: 💰 Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: release-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: 🏭 Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          # For cross-compiling to aarch64-unknown-linux-musl
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+
+      - name: 📦 Package binary (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf wt-${{ matrix.target }}.tar.gz wt
+          mv wt-${{ matrix.target }}.tar.gz ${{ github.workspace }}/
+
+      - name: 📦 Package binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a wt-${{ matrix.target }}.zip wt.exe
+          Move-Item wt-${{ matrix.target }}.zip ${{ github.workspace }}/
+
+      - name: 🧪 Test the binary works (Unix)
+        # Test native builds only - cross-compiled aarch64-unknown-linux-musl cannot be tested without QEMU
+        # Windows test is separate below due to different archive format
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'x86_64-apple-darwin' || matrix.target == 'aarch64-apple-darwin'
+        run: |
+          mkdir -p temp_test
+          tar xzf wt-${{ matrix.target }}.tar.gz -C temp_test
+          ./temp_test/wt --help
+
+      - name: 🧪 Test the binary works (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          7z x wt-${{ matrix.target }}.zip -otemp_test
+          ./temp_test/wt.exe --help
+
+      - name: 🔐 Generate checksums (Unix)
+        if: github.event_name == 'release' && matrix.os != 'windows-latest'
+        run: shasum -a 256 wt-${{ matrix.target }}.tar.gz > wt-${{ matrix.target }}.tar.gz.sha256
+        shell: bash
+
+      - name: 🔐 Generate checksums (Windows)
+        if: github.event_name == 'release' && matrix.os == 'windows-latest'
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 wt-${{ matrix.target }}.zip).Hash.ToLower()
+          "$hash  wt-${{ matrix.target }}.zip" | Out-File -FilePath wt-${{ matrix.target }}.zip.sha256 -Encoding ASCII
+
+      - name: 📤 Upload release artifact
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          append_body: true
+          files: wt-${{ matrix.target }}.*
+
+      - name: 📤 Upload build artifact (non-release)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wt-${{ matrix.target }}
+          path: wt-${{ matrix.target }}.*
+          retention-days: 7
+
+  publish-cargo:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    # Run on stable releases, or on manual triggers for dry-run testing
+    if: (github.event_name == 'release' && github.event.release.prerelease == false) || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v5
+
+      - name: 🦀 Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 📦 Install cargo-release
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-release
+
+      - name: ✅ Verify version matches tag
+        if: github.event_name == 'release'
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG_VERSION=${{ github.event.release.tag_name }}
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Version mismatch: Cargo.toml has $CARGO_VERSION but tag is $TAG_VERSION"
+            exit 1
+          fi
+          echo "Version verified: $CARGO_VERSION matches tag $TAG_VERSION"
+
+      - name: 🚀 Publish to crates.io
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            cargo release publish --no-confirm --execute
+          else
+            echo "Dry-run mode - testing publish configuration without uploading"
+            cargo release publish --no-confirm --dry-run --execute
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
