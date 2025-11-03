@@ -459,11 +459,18 @@ fn main() {
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing
+                // Note: If user declines post-start commands, continue anyway - they're optional
                 if !no_verify && let SwitchResult::CreatedWorktree { path, .. } = &result {
                     let repo = Repository::current();
-                    commands::worktree::spawn_post_start_commands(
+                    if let Err(e) = commands::worktree::spawn_post_start_commands(
                         path, &repo, &config, &branch, force,
-                    )?;
+                    ) {
+                        // Only treat CommandNotApproved as non-fatal (user declined)
+                        // Other errors should still fail
+                        if !matches!(e, GitError::CommandNotApproved) {
+                            return Err(e);
+                        }
+                    }
                 }
 
                 // Execute user command after post-start hooks have been spawned

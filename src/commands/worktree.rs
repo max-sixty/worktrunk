@@ -216,8 +216,15 @@ pub fn handle_switch(
         .git_context("Failed to canonicalize worktree path")?;
 
     // Execute post-create commands (sequential, blocking)
-    if !no_verify {
-        execute_post_create_commands(&worktree_path, &repo, config, branch, force)?;
+    // Note: If user declines, continue anyway - worktree already created
+    if !no_verify
+        && let Err(e) = execute_post_create_commands(&worktree_path, &repo, config, branch, force)
+    {
+        // Only treat CommandNotApproved as non-fatal (user declined)
+        // Other errors should still fail
+        if !matches!(e, GitError::CommandNotApproved) {
+            return Err(e);
+        }
     }
 
     // Note: post-start commands are spawned AFTER success message is shown

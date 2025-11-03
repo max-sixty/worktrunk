@@ -7,13 +7,13 @@ expression: output.normalized().as_ref()
 
 ✓ Code formatting check passed
 🔄 [36mRunning pre-merge: [1mlint[0m[0m
-[0m[40m [0m  [1m[34mecho[0m [32m'✓ Linting passed - no warnings'[0m[0m
+[0m✓ Linting passed - no warnings
+[40m [0m  [1m[34mecho[0m [32m'✓ Linting passed - no warnings'[0m[0m
 
-✓ Linting passed - no warnings
 🔄 [36mRunning pre-merge: [1mtest[0m[0m
-[0m[40m [0m  [1m[34mecho[0m [32m'✓ All 47 tests passed in 2.3s'[0m[0m
+[40m [0m  [1m[34mecho[0m [32m'✓ All 47 tests passed in 2.3s'[0m[0m
 
-✓ All 47 tests passed in 2.3s
+[0m✓ All 47 tests passed in 2.3s
 🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [2m[36md067f01[0m[0m (no commit/squash/rebase needed)
 
 * [33md067f01[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature
