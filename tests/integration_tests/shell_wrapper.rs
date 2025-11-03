@@ -52,14 +52,21 @@ impl ShellOutput {
 
         // Then normalize ANSI codes: remove redundant leading reset codes
         // This handles differences between macOS and Linux PTY ANSI generation
-        path_normalized
+        let has_trailing_newline = path_normalized.ends_with('\n');
+        let mut result = path_normalized
             .lines()
             .map(|line| {
                 // Strip leading \x1b[0m reset codes (may appear as ESC[0m in the output)
                 line.strip_prefix("\x1b[0m").unwrap_or(line)
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+
+        // Preserve trailing newline if it existed
+        if has_trailing_newline {
+            result.push('\n');
+        }
+        result
     }
 }
 
