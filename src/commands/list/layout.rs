@@ -63,38 +63,48 @@
 //!
 //! ## Implementation
 //!
-//! The code implements this using a data-driven priority system:
+//! The code implements this using a centralized registry and priority-based allocation:
 //!
 //! ```rust
-//! // Build column descriptors with base priorities and data flags
-//! let columns = [
-//!     ColumnDescriptor { column_type: Branch, base_priority: 1, has_data: true },
-//!     ColumnDescriptor { column_type: WorkingDiff, base_priority: 2, has_data: data_flags.working_diff },
-//!     // ... all 11 columns
-//! ];
+//! // Build candidates from centralized COLUMN_SPECS registry
+//! let mut candidates: Vec<ColumnCandidate> = COLUMN_SPECS
+//!     .iter()
+//!     .filter(|spec| /* visibility gates: show_full, fetch_ci */)
+//!     .map(|spec| ColumnCandidate {
+//!         spec,
+//!         priority: if column_has_data(spec.kind, &data_flags) {
+//!             spec.base_priority
+//!         } else {
+//!             spec.base_priority + EMPTY_PENALTY
+//!         }
+//!     })
+//!     .collect();
 //!
-//! // Sort by final priority (base_priority + empty_penalty)
-//! columns.sort_by_key(|col| col.priority());
+//! // Sort by final priority
+//! candidates.sort_by_key(|candidate| candidate.priority);
 //!
-//! // Allocate columns in priority order
-//! for col in columns {
-//!     match col.column_type {
-//!         Branch => allocate_branch(),
-//!         WorkingDiff => allocate_diff(),
-//!         BranchDiff if show_full => allocate_diff(),  // Visibility gate
-//!         CiStatus if fetch_ci => allocate(),           // Visibility gate
-//!         // ... all columns
+//! // Allocate columns in priority order, building pending list
+//! for candidate in candidates {
+//!     if candidate.spec.kind == ColumnKind::Message {
+//!         // Special handling: flexible width (min 20, preferred 50)
+//!     } else if let Some(ideal) = ideal_for_column(candidate.spec, ...) {
+//!         if let allocated = try_allocate(&mut remaining, ideal.width, ...) {
+//!             pending.push(PendingColumn { spec: candidate.spec, width: allocated, format: ideal.format });
+//!         }
 //!     }
 //! }
 //!
 //! // Message post-allocation expansion (uses truly leftover space)
-//! expand_message_to_max();
+//! if let Some(message_col) = pending.iter_mut().find(|col| col.spec.kind == ColumnKind::Message) {
+//!     message_col.width += remaining.min(MAX_MESSAGE - message_col.width);
+//! }
 //! ```
 //!
 //! **Benefits**:
-//! - Priority calculation is explicit and centralized (`ColumnDescriptor::priority()`)
-//! - Single unified allocation loop (no Phase 1/Phase 2 duplication)
-//! - Easy to understand: build descriptors → sort by priority → allocate
+//! - Column metadata centralized in `COLUMN_SPECS` registry (single source of truth)
+//! - Priority calculation explicit (base_priority + conditional EMPTY_PENALTY)
+//! - Single unified allocation loop (no phase duplication)
+//! - Easy to understand: build candidates → sort by priority → allocate → expand message
 //! - Extensible: can add new modifiers (terminal width bonus, user config) without restructuring
 //!
 //! ## Helper Functions
@@ -844,7 +854,7 @@ mod tests {
 
         assert!(
             empty_columns_visible,
-            "At least some empty columns should be visible in Phase 2"
+            "At least some empty columns should be visible with sufficient terminal width"
         );
 
         let path_visible = layout
@@ -903,7 +913,7 @@ mod tests {
             .any(|col| col.kind == ColumnKind::Path);
         assert!(
             path_visible,
-            "Path should be visible (allocated in Phase 1)"
+            "Path should be visible (has data, priority 6)"
         );
 
         let message_visible = layout
@@ -915,7 +925,7 @@ mod tests {
             "Message should be allocated before empty columns"
         );
 
-        // Empty columns may or may not be visible depending on space remaining after message.
-        // This is acceptable - message has priority over empty columns.
+        // Empty columns (priority 12+) may or may not be visible depending on terminal width.
+        // They rank lower than message (priority 11), so message allocates first.
     }
 }
