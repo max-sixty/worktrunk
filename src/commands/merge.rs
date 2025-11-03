@@ -6,9 +6,63 @@ use worktrunk::styling::{
     format_bash_with_gutter, format_with_gutter,
 };
 
+use super::command_approval::approve_command_batch;
 use super::command_executor::{CommandContext, prepare_project_commands};
 use super::worktree::{handle_push, parse_diff_shortstat};
 use crate::output::execute_command_in_worktree;
+
+/// Context for collecting merge commands
+struct MergeCommandCollector<'a> {
+    repo: &'a Repository,
+    no_commit: bool,
+    no_verify: bool,
+    squash_enabled: bool,
+}
+
+/// Collected commands with project identifier
+type CollectedCommands = (Vec<(Option<String>, String)>, String);
+
+impl<'a> MergeCommandCollector<'a> {
+    /// Collect all commands that will be executed during merge
+    ///
+    /// Returns original (unexpanded) commands for approval matching
+    fn collect(self) -> Result<CollectedCommands, GitError> {
+        let mut all_commands = Vec::new();
+        let project_config = match ProjectConfig::load(&self.repo.worktree_root()?)
+            .git_context("Failed to load project config")?
+        {
+            Some(cfg) => cfg,
+            None => return Ok((all_commands, self.repo.project_identifier()?)),
+        };
+
+        // Collect original commands (not expanded) for approval
+        // Expansion happens later in prepare_project_commands during execution
+
+        // Collect pre-commit commands (if we'll commit without squashing)
+        if !self.no_commit
+            && self.repo.is_dirty()?
+            && !self.squash_enabled
+            && let Some(pre_commit_config) = &project_config.pre_commit_command
+        {
+            all_commands.extend(pre_commit_config.commands().to_vec());
+        }
+
+        // Collect pre-merge commands (if not --no-verify)
+        if !self.no_verify
+            && let Some(pre_merge_config) = &project_config.pre_merge_command
+        {
+            all_commands.extend(pre_merge_config.commands().to_vec());
+        }
+
+        // Collect post-merge commands
+        if let Some(post_merge_config) = &project_config.post_merge_command {
+            all_commands.extend(post_merge_config.commands().to_vec());
+        }
+
+        let project_id = self.repo.project_identifier()?;
+        Ok((all_commands, project_id))
+    }
+}
 
 /// Extract untracked files from git status --porcelain output
 fn get_untracked_files(status_output: &str) -> Vec<String> {
@@ -90,6 +144,24 @@ pub fn handle_merge(
 
     // Load config for LLM integration
     let config = WorktrunkConfig::load().git_context("Failed to load config")?;
+
+    // Collect and approve all commands upfront for batch permission request
+    let (all_commands, project_id) = MergeCommandCollector {
+        repo: &repo,
+        no_commit,
+        no_verify,
+        squash_enabled,
+    }
+    .collect()?;
+
+    // Approve all commands in a single batch
+    approve_command_batch(
+        &all_commands,
+        &project_id,
+        &config,
+        force,
+        "Merge operation",
+    )?;
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if !no_commit && repo.is_dirty()? {
