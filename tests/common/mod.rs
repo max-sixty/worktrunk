@@ -461,12 +461,11 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         "[PROJECT_ID]",
     );
 
-    // Normalize WORKTRUNK_CONFIG_PATH temp directory in snapshots
-    // Matches any temp directory path ending with test-config.toml
-    // Examples:
-    //   macOS: /var/folders/.../T/.tmpXXX/test-config.toml
-    //   Linux: /tmp/.tmpXXX/test-config.toml
-    //   Windows: C:\Users\...\Temp\.tmpXXX\test-config.toml (after backslash normalization)
+    // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
+    // NOTE: This filter only applies to output content, not the info/env section.
+    // The env section paths cannot be normalized due to insta-cmd architecture
+    // (it calls set_info() which bypasses filters). This means env paths will vary
+    // between test runs, but this doesn't affect test functionality.
     settings.add_filter(r".*/\.tmp[^/]+/test-config\.toml", "[TEST_CONFIG]");
 
     // Normalize HOME temp directory in snapshots
