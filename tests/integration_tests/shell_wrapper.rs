@@ -45,9 +45,25 @@ impl ShellOutput {
         );
     }
 
-    /// Normalize paths in output for snapshot testing
-    fn normalized(&self) -> std::borrow::Cow<'_, str> {
-        TMPDIR_REGEX.replace_all(&self.combined, "[TMPDIR]")
+    /// Normalize paths and ANSI codes in output for snapshot testing
+    fn normalized(&self) -> String {
+        // First normalize paths
+        let path_normalized = TMPDIR_REGEX.replace_all(&self.combined, "[TMPDIR]");
+
+        // Then normalize ANSI codes: remove redundant leading reset codes
+        // This handles differences between macOS and Linux PTY ANSI generation
+        path_normalized
+            .lines()
+            .map(|line| {
+                // Strip leading \x1b[0m reset codes (may appear as ESC[0m in the output)
+                if line.starts_with("\x1b[0m") {
+                    &line[4..]  // Skip the 4 bytes of \x1b[0m
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -376,7 +392,7 @@ mod tests {
 
         // Consolidated snapshot - output should be identical across all shells
         insta::allow_duplicates! {
-            assert_snapshot!("command_failure", output.normalized().as_ref());
+            assert_snapshot!("command_failure", output.normalized());
         }
     }
 
@@ -402,7 +418,7 @@ mod tests {
 
         // Consolidated snapshot - output should be identical across all shells
         insta::allow_duplicates! {
-            assert_snapshot!("switch_create", output.normalized().as_ref());
+            assert_snapshot!("switch_create", output.normalized());
         }
     }
 
@@ -425,7 +441,7 @@ mod tests {
 
         // Consolidated snapshot - output should be identical across all shells
         insta::allow_duplicates! {
-            assert_snapshot!("remove", output.normalized().as_ref());
+            assert_snapshot!("remove", output.normalized());
         }
     }
 
@@ -448,7 +464,7 @@ mod tests {
 
         // Consolidated snapshot - output should be identical across all shells
         insta::allow_duplicates! {
-            assert_snapshot!("merge", output.normalized().as_ref());
+            assert_snapshot!("merge", output.normalized());
         }
     }
 
@@ -486,7 +502,7 @@ mod tests {
 
         // Consolidated snapshot - output should be identical across all shells
         insta::allow_duplicates! {
-            assert_snapshot!("switch_with_execute", output.normalized().as_ref());
+            assert_snapshot!("switch_with_execute", output.normalized());
         }
     }
 
@@ -544,7 +560,7 @@ approved-commands = [
         // Shell-specific snapshot - output ordering varies due to PTY buffering
         assert_snapshot!(
             format!("switch_with_hooks_{}", shell),
-            output.normalized().as_ref()
+            output.normalized()
         );
     }
 
@@ -625,7 +641,7 @@ approved-commands = [
         // Shell-specific snapshot - output ordering varies due to PTY buffering
         assert_snapshot!(
             format!("merge_with_pre_merge_success_{}", shell),
-            output.normalized().as_ref()
+            output.normalized()
         );
     }
 
@@ -703,7 +719,7 @@ approved-commands = [
         // Shell-specific snapshot - output ordering varies due to PTY buffering
         assert_snapshot!(
             format!("merge_with_pre_merge_failure_{}", shell),
-            output.normalized().as_ref()
+            output.normalized()
         );
     }
 
@@ -751,7 +767,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 
     #[test]
@@ -786,7 +802,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 
     #[test]
@@ -811,7 +827,7 @@ approved-commands = ["echo 'test command executed'"]
             "Success message missing"
         );
 
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 
     #[test]
@@ -865,7 +881,7 @@ approved-commands = ["echo 'background task'"]
 
         // Normalize paths in output for snapshot testing
         // Snapshot the full output
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 
     // ============================================================================
@@ -930,7 +946,7 @@ approved-commands = ["echo 'fish background task'"]
             "Background command content missing from output"
         );
 
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 
     #[test]
@@ -968,7 +984,7 @@ approved-commands = ["echo 'fish background task'"]
         assert!(output.combined.contains("line 3"), "Third line missing");
 
         // Normalize paths in output for snapshot testing
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 
     #[test]
@@ -992,6 +1008,6 @@ approved-commands = ["echo 'fish background task'"]
         );
 
         // Normalize paths in output for snapshot testing
-        assert_snapshot!(output.normalized().as_ref());
+        assert_snapshot!(output.normalized());
     }
 }

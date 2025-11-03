@@ -1,10 +1,10 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized().as_ref()
+expression: output.normalized()
 ---
-[0m✓ Code formatting check passed
-[0m✓ Linting passed - no warnings
-[0m✓ All 47 tests passed in 2.3s
+✓ Code formatting check passed
+✓ Linting passed - no warnings
+✓ All 47 tests passed in 2.3s
 🔄 [36mRunning pre-merge: [1mformat[0m[0m
 [40m [0m  [1m[34mecho[0m [32m'✓ Code formatting check passed'[0m[0m
 

@@ -1,14 +1,14 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized().as_ref()
+expression: output.normalized()
 ---
 🔄 [36mRunning pre-merge: [1mformat[0m[0m
-[0m[40m [0m  [1m[34mecho[0m [32m'✓ Code formatting check passed'[0m[0m
+[40m [0m  [1m[34mecho[0m [32m'✓ Code formatting check passed'[0m[0m
 
 ✓ Code formatting check passed
 
 🔄 [36mRunning pre-merge: [1mtest[0m[0m
-[0m[40m [0m  [1m[34mecho[0m [32m'✗ Test suite failed: 3 tests failing'[0m [36m&&[0m [1m[34mexit[0m 1[0m
+[40m [0m  [1m[34mecho[0m [32m'✗ Test suite failed: 3 tests failing'[0m [36m&&[0m [1m[34mexit[0m 1[0m
 
 ✗ Test suite failed: 3 tests failing
 ❌ [31mpre-merge command failed: [1m[31mtest[0m[0m

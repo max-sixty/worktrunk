@@ -1,9 +1,9 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized().as_ref()
+expression: output.normalized()
 ---
-[0m✓ Code formatting check passed
-[0m✗ Test suite failed: 3 tests failing
+✓ Code formatting check passed
+✗ Test suite failed: 3 tests failing
 ❌ [31mpre-merge command failed: [1m[31mtest[0m[0m
 
 Command failed with exit code: exit status: 1
