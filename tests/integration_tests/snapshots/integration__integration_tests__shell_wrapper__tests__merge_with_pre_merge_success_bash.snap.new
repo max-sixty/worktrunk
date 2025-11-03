@@ -1,0 +1,30 @@
+---
+source: tests/integration_tests/shell_wrapper.rs
+assertion_line: 624
+expression: output.normalized().as_ref()
+---
+🔄 [36mRunning pre-merge: [1mformat[0m[0m
+[0m[40m [0m  [1m[34mecho[0m [32m'✓ Code formatting check passed'[0m[0m
+
+✓ Code formatting check passed
+
+🔄 [36mRunning pre-merge: [1mlint[0m[0m
+[0m[40m [0m  [1m[34mecho[0m [32m'✓ Linting passed - no warnings'[0m[0m
+
+✓ Linting passed - no warnings
+
+🔄 [36mRunning pre-merge: [1mtest[0m[0m
+[0m[40m [0m  [1m[34mecho[0m [32m'✓ All 47 tests passed in 2.3s'[0m[0m
+
+✓ All 47 tests passed in 2.3s
+
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36md067f01[0m[0m (no squashing needed, no rebasing needed)
+
+* [33md067f01[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature
+
+ feature.txt | 1 [32m+[m
+ 1 file changed, 1 insertion(+)
+
+✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
+🔄 [36mCleaning up worktree...[0m
+✅ [32mReturned to primary at [1m[32m[TMPDIR]/test-repo[0m[0m
