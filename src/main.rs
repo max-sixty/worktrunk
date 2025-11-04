@@ -145,7 +145,27 @@ enum Commands {
 
     /// List worktrees and optionally branches
     #[command(after_help = "\
-STATE COLUMN:
+COLUMNS:
+  Branch: Branch name
+  Working ±: Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
+  Main ↕: Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
+  Main ± (--full): Line diffs in commits ahead of main (+added -deleted)
+  State: Status indicators (see STATE VALUES below)
+  Path: Worktree directory location
+  Remote ↕: Commits ahead↑/behind↓ relative to tracking branch (e.g. origin/branch)
+  CI (--full): CI pipeline status (tries PR/MR checks first, falls back to branch workflows)
+    ● passed (green) - All checks passed
+    ● running (blue) - Checks in progress
+    ● failed (red) - Checks failed
+    ● conflicts (yellow) - Merge conflicts with base
+    ● no-ci (gray) - PR/MR or workflow found but no checks configured
+    (blank) - No PR/MR or workflow found, or gh/glab CLI unavailable
+    (dimmed) - Stale: unpushed local changes differ from PR/MR head
+  Commit: Short commit hash (8 chars)
+  Age: Time since last commit (relative)
+  Message: Last commit message (truncated)
+
+STATE VALUES:
   (matches main): Working tree identical to main
   (no commits): No commits ahead, clean working tree
   (conflicts): Merge conflicts with main
