@@ -561,3 +561,28 @@ echo yes | wt switch --create feature --execute "echo test"
 - Non-interactive testing requires automated approval
 - Piping input to stdin interferes with Claude's I/O handling
 - `--force` provides explicit, testable behavior
+
+## Benchmarks
+
+### Running Benchmarks Selectively
+
+Some benchmarks are expensive (clone large repos, run for extended periods). Use Criterion's selective execution to control which benchmarks run:
+
+```bash
+# Run all benchmarks (includes expensive ones)
+cargo bench
+
+# Run only fast benchmarks by name (exclude expensive ones)
+cargo bench --bench list bench_list_by_worktree_count
+cargo bench --bench list bench_list_by_repo_profile
+cargo bench --bench list bench_sequential_vs_parallel
+cargo bench --bench completion
+
+# Run a specific benchmark suite
+cargo bench --bench completion
+```
+
+**Expensive benchmarks:**
+- `bench_list_real_repo` - Clones rust-lang/rust repo (~2-5 min first run, cached in `target/bench-repos/`)
+
+**Default workflow:** Skip expensive benchmarks during normal development. Run them explicitly when benchmarking performance on realistic repos.
