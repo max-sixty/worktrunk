@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxgY3i2/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpacy9En/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -311,8 +311,8 @@ json\:"Machine-readable JSON with display fields (includes styled unicode for re
 ;;
 (switch)
 _arguments "${_arguments_options[@]}" : \
-'-b+[Base branch to create from (only with --create)]:BASE:_default' \
-'--base=[Base branch to create from (only with --create)]:BASE:_default' \
+'-b+[Base branch to create from (only with --create). Use '\''@'\'' for current HEAD]:BASE:_default' \
+'--base=[Base branch to create from (only with --create). Use '\''@'\'' for current HEAD]:BASE:_default' \
 '-x+[Execute command after switching]:EXECUTE:_default' \
 '--execute=[Execute command after switching]:EXECUTE:_default' \
 '-c[Create a new branch]' \
@@ -324,7 +324,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch -- Branch name or worktree path:_default' \
+':branch -- Branch name, worktree path, or '\''@'\'' for current HEAD:_default' \
 && ret=0
 ;;
 (remove)
@@ -333,7 +333,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::worktrees -- Worktree names or branches to remove (defaults to current worktree if none specified):_default' \
+'*::worktrees -- Worktree names or branches to remove (use '\''@'\'' for current, defaults to current if none specified):_default' \
 && ret=0
 ;;
 (merge)

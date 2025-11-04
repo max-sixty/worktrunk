@@ -239,14 +239,14 @@ Create and run command:
 Skip hooks during creation:
   wt switch --create temp --no-verify")]
     Switch {
-        /// Branch name or worktree path
+        /// Branch name, worktree path, or '@' for current HEAD
         branch: String,
 
         /// Create a new branch
         #[arg(short = 'c', long)]
         create: bool,
 
-        /// Base branch to create from (only with --create)
+        /// Base branch to create from (only with --create). Use '@' for current HEAD
         #[arg(short = 'b', long)]
         base: Option<String>,
 
@@ -307,7 +307,7 @@ Remove multiple worktrees:
 Switch to default in primary:
   wt remove  # (when already in primary worktree)")]
     Remove {
-        /// Worktree names or branches to remove (defaults to current worktree if none specified)
+        /// Worktree names or branches to remove (use '@' for current, defaults to current if none specified)
         worktrees: Vec<String>,
     },
 
@@ -564,11 +564,11 @@ fn main() {
             .git_context("Failed to load config")
             .and_then(|config| {
                 // Execute switch operation (creates worktree, runs post-create hooks)
-                let result =
+                let (result, resolved_branch) =
                     handle_switch(&branch, create, base.as_deref(), force, no_verify, &config)?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
-                handle_switch_output(&result, &branch, execute.is_some())?;
+                handle_switch_output(&result, &resolved_branch, execute.is_some())?;
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing
@@ -576,7 +576,11 @@ fn main() {
                 if !no_verify && let SwitchResult::CreatedWorktree { path, .. } = &result {
                     let repo = Repository::current();
                     if let Err(e) = commands::worktree::spawn_post_start_commands(
-                        path, &repo, &config, &branch, force,
+                        path,
+                        &repo,
+                        &config,
+                        &resolved_branch,
+                        force,
                     ) {
                         // Only treat CommandNotApproved as non-fatal (user declined)
                         // Other errors should still fail
@@ -609,8 +613,11 @@ fn main() {
                     let mut current = None;
 
                     for worktree_name in worktrees.iter() {
+                        // Resolve "@" to current branch (fail fast on errors like detached HEAD)
+                        let resolved = repo.resolve_worktree_name(worktree_name)?;
+
                         // Check if this is the current worktree by comparing branch names
-                        if let Ok(Some(worktree_path)) = repo.worktree_for_branch(worktree_name) {
+                        if let Ok(Some(worktree_path)) = repo.worktree_for_branch(&resolved) {
                             if Some(&worktree_path) == current_worktree.as_ref() {
                                 current = Some(worktree_name);
                             } else {

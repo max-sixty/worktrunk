@@ -93,11 +93,18 @@ These trade manual control for automation. For fine-grained control, use `git wo
 ## All Commands
 
 - `wt switch [branch]` - Switch to existing worktree
-- `wt switch --create [branch]` - Create and switch
-- `wt remove` - Remove current, return to main
+- `wt switch --create [branch]` - Create and switch (supports `--base=@` to branch from current HEAD)
+- `wt remove [branch]` - Remove worktree (use `@` for current)
 - `wt merge [target]` - Merge, push, cleanup
 - `wt list` - Show all worktrees
 - `wt config` - Manage configuration
+
+**Shortcut:** Use `@` to refer to your current HEAD (following git's convention):
+```bash
+wt switch @                              # Switch to current branch's worktree
+wt switch --create new-feature --base=@  # Branch from current HEAD
+wt remove @                              # Remove current worktree
+```
 
 See `wt --help` for details.
 
