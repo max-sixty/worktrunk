@@ -1910,6 +1910,12 @@ command = "{}"
     // This test explicitly sets PATH (which will be captured in snapshot) because it needs
     // to find mock commands in .bin directory. We use a clean, minimal PATH to avoid leaking
     // user-specific paths like ~/.cargo/bin into the snapshot.
+    //
+    // TODO: This hardcoded PATH works on macOS and Linux CI, but may not work on all
+    // environments (e.g., Windows, other package managers like nixpkgs). We should
+    // reassess whether there's a better approach that doesn't require hardcoding
+    // system paths. Ideally we'd avoid setting PATH entirely, but this test needs it
+    // for mock commands.
     let path_with_bin = format!(
         "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         bin_dir.display()
