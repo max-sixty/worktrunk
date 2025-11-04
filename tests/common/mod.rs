@@ -125,6 +125,9 @@ impl TestRepo {
         if std::env::var("COLUMNS").is_err() {
             cmd.env("COLUMNS", "150");
         }
+        // NOTE: We don't set PATH here. Tests inherit PATH from the test runner,
+        // which allows them to find git, shells, etc. Since we don't explicitly set it,
+        // insta-cmd won't capture it in snapshots, avoiding privacy leaks.
     }
 
     /// Get the root path of the repository
