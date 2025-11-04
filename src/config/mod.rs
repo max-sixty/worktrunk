@@ -200,9 +200,40 @@ pub struct ProjectConfig {
     pub post_merge_command: Option<CommandConfig>,
 }
 
+/// Represents a command with its template and optionally expanded form
+#[derive(Debug, Clone, PartialEq)]
+pub struct Command {
+    /// Optional name for the command (e.g., "build", "test", or auto-numbered "1", "2")
+    pub name: Option<String>,
+    /// Template string that may contain variables like {branch}, {worktree}
+    pub template: String,
+    /// Expanded command with variables substituted (same as template if not expanded yet)
+    pub expanded: String,
+}
+
+impl Command {
+    /// Create a new command from a template (not yet expanded)
+    pub fn new(name: Option<String>, template: String) -> Self {
+        Self {
+            name,
+            expanded: template.clone(),
+            template,
+        }
+    }
+
+    /// Create a command with both template and expanded forms
+    pub fn with_expansion(name: Option<String>, template: String, expanded: String) -> Self {
+        Self {
+            name,
+            template,
+            expanded,
+        }
+    }
+}
+
 /// Configuration for commands - canonical representation
 ///
-/// Internally stores commands as `Vec<(Option<name>, command)>` for uniform processing.
+/// Internally stores commands as `Vec<Command>` for uniform processing.
 /// Deserializes from three TOML formats:
 /// - Single string: `post-create-command = "npm install"`
 /// - Array: `post-create-command = ["npm install", "npm test"]`
@@ -215,12 +246,12 @@ pub struct ProjectConfig {
 /// This canonical form eliminates branching at call sites - code just iterates over commands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandConfig {
-    commands: Vec<(Option<String>, String)>,
+    commands: Vec<Command>,
 }
 
 impl CommandConfig {
     /// Returns the commands as a slice
-    pub fn commands(&self) -> &[(Option<String>, String)] {
+    pub fn commands(&self) -> &[Command] {
         &self.commands
     }
 }
@@ -241,15 +272,17 @@ impl<'de> Deserialize<'de> for CommandConfig {
 
         let toml = CommandConfigToml::deserialize(deserializer)?;
         let commands = match toml {
-            CommandConfigToml::Single(cmd) => vec![(None, cmd)],
+            CommandConfigToml::Single(cmd) => vec![Command::new(None, cmd)],
             CommandConfigToml::Multiple(cmds) => cmds
                 .into_iter()
                 .enumerate()
-                .map(|(i, cmd)| (Some((i + 1).to_string()), cmd))
+                .map(|(i, template)| Command::new(Some((i + 1).to_string()), template))
                 .collect(),
             CommandConfigToml::Named(map) => {
                 // IndexMap preserves insertion order from TOML
-                map.into_iter().map(|(k, v)| (Some(k), v)).collect()
+                map.into_iter()
+                    .map(|(name, template)| Command::new(Some(name), template))
+                    .collect()
             }
         };
         Ok(CommandConfig { commands })
@@ -265,8 +298,8 @@ impl Serialize for CommandConfig {
         use serde::ser::SerializeMap;
 
         // If single unnamed command, serialize as string
-        if self.commands.len() == 1 && self.commands[0].0.is_none() {
-            return self.commands[0].1.serialize(serializer);
+        if self.commands.len() == 1 && self.commands[0].name.is_none() {
+            return self.commands[0].template.serialize(serializer);
         }
 
         // If all commands are unnamed or numbered 1,2,3..., serialize as array
@@ -274,21 +307,22 @@ impl Serialize for CommandConfig {
             .commands
             .iter()
             .enumerate()
-            .all(|(i, (name, _))| name.as_ref().is_none_or(|n| n == &(i + 1).to_string()));
+            .all(|(i, cmd)| cmd.name.as_ref().is_none_or(|n| n == &(i + 1).to_string()));
 
         if all_numbered {
-            let cmds: Vec<_> = self.commands.iter().map(|(_, cmd)| cmd).collect();
-            return cmds.serialize(serializer);
+            let templates: Vec<_> = self.commands.iter().map(|cmd| &cmd.template).collect();
+            return templates.serialize(serializer);
         }
 
         // Otherwise serialize as named map
         // At this point, all commands must have names (from Named TOML format)
         let mut map = serializer.serialize_map(Some(self.commands.len()))?;
-        for (name, cmd) in &self.commands {
-            let key = name
+        for cmd in &self.commands {
+            let key = cmd
+                .name
                 .as_ref()
                 .expect("named format requires all commands to have names");
-            map.serialize_entry(key, cmd)?;
+            map.serialize_entry(key, &cmd.template)?;
         }
         map.end()
     }
@@ -835,7 +869,7 @@ mod tests {
         let cmd_config = config.post_create_command.unwrap();
         let commands = cmd_config.commands();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], (None, "npm install".to_string()));
+        assert_eq!(commands[0], Command::new(None, "npm install".to_string()));
     }
 
     #[test]
@@ -847,9 +881,12 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert_eq!(
             commands[0],
-            (Some("1".to_string()), "npm install".to_string())
+            Command::new(Some("1".to_string()), "npm install".to_string())
         );
-        assert_eq!(commands[1], (Some("2".to_string()), "npm test".to_string()));
+        assert_eq!(
+            commands[1],
+            Command::new(Some("2".to_string()), "npm test".to_string())
+        );
     }
 
     #[test]
@@ -866,11 +903,11 @@ mod tests {
         // Preserves TOML insertion order
         assert_eq!(
             commands[0],
-            (Some("server".to_string()), "npm run dev".to_string())
+            Command::new(Some("server".to_string()), "npm run dev".to_string())
         );
         assert_eq!(
             commands[1],
-            (Some("watch".to_string()), "npm run watch".to_string())
+            Command::new(Some("watch".to_string()), "npm run watch".to_string())
         );
     }
 
@@ -890,7 +927,7 @@ mod tests {
         // Extract just the names for easier verification
         let names: Vec<_> = commands
             .iter()
-            .map(|(n, _)| n.as_deref().unwrap())
+            .map(|cmd| cmd.name.as_deref().unwrap())
             .collect();
 
         // Verify TOML insertion order is preserved
@@ -920,12 +957,12 @@ task2 = "echo 'Task 2 running' > task2.txt"
         assert_eq!(commands.len(), 2);
         // Should be in TOML order: task1, task2
         assert_eq!(
-            commands[0].0.as_deref(),
+            commands[0].name.as_deref(),
             Some("task1"),
             "First command should be task1"
         );
         assert_eq!(
-            commands[1].0.as_deref(),
+            commands[1].name.as_deref(),
             Some("task2"),
             "Second command should be task2"
         );
@@ -951,7 +988,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         let cmd_config = config.pre_merge_command.unwrap();
         let commands = cmd_config.commands();
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0], (None, "cargo test".to_string()));
+        assert_eq!(commands[0], Command::new(None, "cargo test".to_string()));
     }
 
     #[test]
@@ -963,11 +1000,11 @@ task2 = "echo 'Task 2 running' > task2.txt"
         assert_eq!(commands.len(), 2);
         assert_eq!(
             commands[0],
-            (Some("1".to_string()), "cargo fmt -- --check".to_string())
+            Command::new(Some("1".to_string()), "cargo fmt -- --check".to_string())
         );
         assert_eq!(
             commands[1],
-            (Some("2".to_string()), "cargo test".to_string())
+            Command::new(Some("2".to_string()), "cargo test".to_string())
         );
     }
 
@@ -986,18 +1023,18 @@ task2 = "echo 'Task 2 running' > task2.txt"
         // Preserves TOML insertion order
         assert_eq!(
             commands[0],
-            (
+            Command::new(
                 Some("format".to_string()),
                 "cargo fmt -- --check".to_string()
             )
         );
         assert_eq!(
             commands[1],
-            (Some("lint".to_string()), "cargo clippy".to_string())
+            Command::new(Some("lint".to_string()), "cargo clippy".to_string())
         );
         assert_eq!(
             commands[2],
-            (Some("test".to_string()), "cargo test".to_string())
+            Command::new(Some("test".to_string()), "cargo test".to_string())
         );
     }
 
