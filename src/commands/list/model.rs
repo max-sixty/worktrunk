@@ -41,6 +41,8 @@ pub struct WorktreeInfo {
     pub worktree_state: Option<String>,
     pub pr_status: Option<PrStatus>,
     pub has_conflicts: bool,
+    /// Git status symbols (=, ↑, ↓, ⇡, ⇣, ?, !, +, », ✘) indicating working tree state
+    pub status_symbols: String,
 
     // Display fields for json-pretty format (with ANSI colors)
     #[serde(flatten)]
@@ -308,6 +310,126 @@ impl BranchInfo {
     }
 }
 
+/// Git status information parsed from `git status --porcelain`
+// TODO: Consider using a struct with bool fields instead of String for symbols
+// (has_untracked, has_modified, has_staged, has_renamed, has_deleted, has_conflicts,
+//  main_ahead, main_behind, upstream_ahead, upstream_behind)
+// Would enable querying individual states, but currently only used for display.
+struct GitStatusInfo {
+    /// Whether the working tree has any changes (staged or unstaged)
+    is_dirty: bool,
+    /// Status symbols: = (conflicts), ↑ (ahead of main), ↓ (behind main), ⇡ (ahead of remote), ⇣ (behind remote), ? (untracked), ! (modified), + (staged), » (renamed), ✘ (deleted)
+    symbols: String,
+}
+
+/// Parse git status --porcelain output to determine dirty state and status symbols
+/// This combines the dirty check and symbol computation in a single git command
+fn parse_git_status(
+    repo: &Repository,
+    main_ahead: usize,
+    main_behind: usize,
+    upstream_ahead: usize,
+    upstream_behind: usize,
+) -> Result<GitStatusInfo, GitError> {
+    let status_output = repo.run_command(&["status", "--porcelain"])?;
+
+    let mut has_conflicts = false;
+    let mut has_untracked = false;
+    let mut has_modified = false;
+    let mut has_staged = false;
+    let mut has_renamed = false;
+    let mut has_deleted = false;
+    let mut is_dirty = false;
+
+    for line in status_output.lines() {
+        if line.len() < 2 {
+            continue;
+        }
+
+        is_dirty = true; // Any line means changes exist
+
+        // Get status codes (first two bytes for ASCII compatibility)
+        let bytes = line.as_bytes();
+        let index_status = bytes[0] as char;
+        let worktree_status = bytes[1] as char;
+
+        // Unmerged paths (actual conflicts in working tree)
+        // U = unmerged, D = both deleted, A = both added
+        if index_status == 'U'
+            || worktree_status == 'U'
+            || (index_status == 'D' && worktree_status == 'D')
+            || (index_status == 'A' && worktree_status == 'A')
+        {
+            has_conflicts = true;
+        }
+
+        // Untracked files
+        if index_status == '?' && worktree_status == '?' {
+            has_untracked = true;
+        }
+
+        // Modified (unstaged changes in working tree)
+        if worktree_status == 'M' {
+            has_modified = true;
+        }
+
+        // Staged files (changes in index)
+        // Includes: A (added), M (modified), C (copied), but excludes D/R
+        if index_status == 'A' || index_status == 'M' || index_status == 'C' {
+            has_staged = true;
+        }
+
+        // Renamed files (staged rename)
+        if index_status == 'R' {
+            has_renamed = true;
+        }
+
+        // Deleted files (staged or unstaged)
+        if index_status == 'D' || worktree_status == 'D' {
+            has_deleted = true;
+        }
+    }
+
+    let mut symbols = String::with_capacity(10);
+
+    // Symbol order: conflicts (blocking) → branch divergence → working tree changes
+    // = (conflicts), ↑↓ (vs main), ⇡⇣ (vs remote), ?!+»✘ (working tree state)
+    if has_conflicts {
+        symbols.push('=');
+    }
+    // Main branch: simple arrows
+    if main_ahead > 0 {
+        symbols.push('↑');
+    }
+    if main_behind > 0 {
+        symbols.push('↓');
+    }
+    // Upstream/remote: double arrows
+    if upstream_ahead > 0 {
+        symbols.push('⇡');
+    }
+    if upstream_behind > 0 {
+        symbols.push('⇣');
+    }
+    if has_untracked {
+        symbols.push('?');
+    }
+    if has_modified {
+        symbols.push('!');
+    }
+    if has_staged {
+        symbols.push('+');
+    }
+    if has_renamed {
+        symbols.push('»');
+    }
+    if has_deleted {
+        symbols.push('✘');
+    }
+
+    Ok(GitStatusInfo { is_dirty, symbols })
+}
+
 impl WorktreeInfo {
     /// Create WorktreeInfo from a Worktree, enriching it with git metadata
     fn from_worktree(
@@ -322,13 +444,23 @@ impl WorktreeInfo {
         let commit = CommitDetails::gather(&wt_repo, &wt.head)?;
         let base_branch = primary.branch.as_deref().filter(|_| !is_primary);
         let counts = AheadBehind::compute(&wt_repo, base_branch, &wt.head)?;
+        let upstream = UpstreamStatus::calculate(&wt_repo, wt.branch.as_deref(), &wt.head)?;
 
-        // Fast dirty check - only compute expensive numstat if working tree is dirty
-        let is_dirty = wt_repo
-            .run_command(&["diff-index", "--quiet", "HEAD", "--"])
-            .is_err(); // Exit code 1 = dirty
+        // Parse git status once for both dirty check and status symbols
+        // Pass both main and upstream ahead/behind counts
+        let (upstream_ahead, upstream_behind) = upstream
+            .active()
+            .map(|(_, ahead, behind)| (ahead, behind))
+            .unwrap_or((0, 0));
+        let status_info = parse_git_status(
+            &wt_repo,
+            counts.ahead,
+            counts.behind,
+            upstream_ahead,
+            upstream_behind,
+        )?;
 
-        let working_tree_diff = if is_dirty {
+        let working_tree_diff = if status_info.is_dirty {
             wt_repo.working_tree_diff_stats()?
         } else {
             (0, 0) // Clean working tree
@@ -348,7 +480,7 @@ impl WorktreeInfo {
 
             if head_tree == base_tree {
                 // Trees are identical - check if working tree is also clean
-                if is_dirty {
+                if status_info.is_dirty {
                     // Rare case: trees match but working tree has uncommitted changes
                     // Need to compute actual diff to get accurate line counts
                     Some(wt_repo.working_tree_diff_vs_ref(base)?)
@@ -365,7 +497,6 @@ impl WorktreeInfo {
             Some((0, 0)) // Primary worktree always matches itself
         };
         let branch_diff = BranchDiffTotals::compute(&wt_repo, base_branch, &wt.head)?;
-        let upstream = UpstreamStatus::calculate(&wt_repo, wt.branch.as_deref(), &wt.head)?;
 
         // Get worktree state (merge/rebase/etc)
         let worktree_state = wt_repo.worktree_state()?;
@@ -400,6 +531,7 @@ impl WorktreeInfo {
             worktree_state,
             pr_status,
             has_conflicts,
+            status_symbols: status_info.symbols,
             display: DisplayFields::default(),
             working_diff_display: None,
         })

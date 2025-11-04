@@ -143,6 +143,23 @@ impl Repository {
         }
     }
 
+    /// Resolve a worktree name, expanding "@" to the current branch.
+    ///
+    /// # Arguments
+    /// * `name` - The worktree name to resolve (or "@" for current HEAD)
+    ///
+    /// # Returns
+    /// - `Ok(name)` if not "@"
+    /// - `Ok(current_branch)` if "@" and on a branch
+    /// - `Err(DetachedHead)` if "@" and in detached HEAD state
+    pub fn resolve_worktree_name(&self, name: &str) -> Result<String, GitError> {
+        if name == "@" {
+            self.current_branch()?.ok_or(GitError::DetachedHead)
+        } else {
+            Ok(name.to_string())
+        }
+    }
+
     /// Get the default branch name for the repository.
     ///
     /// **Performance note:** This method may trigger a network call on first invocation

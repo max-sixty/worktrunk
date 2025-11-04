@@ -114,62 +114,67 @@ fn diff_render_config(variant: DiffVariant) -> DiffRenderConfig {
     }
 }
 
-fn format_diff_like_column(
-    positive: usize,
-    negative: usize,
+struct DiffColumnConfig {
     digits: DiffDigits,
     total_width: usize,
     variant: DiffVariant,
     positive_style: Style,
     negative_style: Style,
+    always_show_zeros: bool,
+}
+
+fn format_diff_like_column(
+    positive: usize,
+    negative: usize,
+    config: DiffColumnConfig,
 ) -> StyledLine {
-    let config = diff_render_config(variant);
+    let render_config = diff_render_config(config.variant);
     let mut segment = StyledLine::new();
 
-    if positive == 0 && negative == 0 {
-        segment.push_raw(" ".repeat(total_width));
+    if positive == 0 && negative == 0 && !config.always_show_zeros {
+        segment.push_raw(" ".repeat(config.total_width));
         return segment;
     }
 
-    let positive_width = 1 + digits.added;
-    let negative_width = 1 + digits.deleted;
+    let positive_width = 1 + config.digits.added;
+    let negative_width = 1 + config.digits.deleted;
     let content_width = positive_width + 1 + negative_width;
-    let extra_padding = total_width.saturating_sub(content_width);
+    let extra_padding = config.total_width.saturating_sub(content_width);
 
-    if matches!(config.align, ValueAlign::Right) && extra_padding > 0 {
+    if matches!(render_config.align, ValueAlign::Right) && extra_padding > 0 {
         segment.push_raw(" ".repeat(extra_padding));
     }
 
-    if positive > 0 {
-        let value = format!("{}{}", config.positive_symbol, positive);
-        let formatted = match config.align {
+    if positive > 0 || (positive == 0 && config.always_show_zeros) {
+        let value = format!("{}{}", render_config.positive_symbol, positive);
+        let formatted = match render_config.align {
             ValueAlign::Right => format!("{:>width$}", value, width = positive_width),
             ValueAlign::Left => format!("{:<width$}", value, width = positive_width),
         };
-        segment.push_styled(formatted, positive_style);
+        segment.push_styled(formatted, config.positive_style);
     } else {
         segment.push_raw(" ".repeat(positive_width));
     }
 
     segment.push_raw(" ");
 
-    if negative > 0 {
-        let value = format!("{}{}", config.negative_symbol, negative);
-        let formatted = match config.align {
+    if negative > 0 || (negative == 0 && config.always_show_zeros) {
+        let value = format!("{}{}", render_config.negative_symbol, negative);
+        let formatted = match render_config.align {
             ValueAlign::Right => format!("{:>width$}", value, width = negative_width),
             ValueAlign::Left => format!("{:<width$}", value, width = negative_width),
         };
-        segment.push_styled(formatted, negative_style);
+        segment.push_styled(formatted, config.negative_style);
     } else {
         segment.push_raw(" ".repeat(negative_width));
     }
 
-    if matches!(config.align, ValueAlign::Left) && extra_padding > 0 {
+    if matches!(render_config.align, ValueAlign::Left) && extra_padding > 0 {
         segment.pad_to(segment.width() + extra_padding);
     }
 
-    if segment.width() < total_width {
-        segment.pad_to(total_width);
+    if segment.width() < config.total_width {
+        segment.pad_to(config.total_width);
     }
 
     segment
@@ -350,17 +355,36 @@ pub fn format_list_item_line(
                     line.push_raw(branch_text);
                 }
             }
+            (ColumnKind::Status, _) => {
+                if let Some(info) = worktree_info {
+                    let status_text = if is_last {
+                        info.status_symbols.clone()
+                    } else {
+                        format!("{:width$}", info.status_symbols, width = column.width)
+                    };
+                    if let Some(style) = text_style {
+                        line.push_styled(status_text, style);
+                    } else {
+                        line.push_raw(status_text);
+                    }
+                } else if !is_last {
+                    push_blank(&mut line, column.width);
+                }
+            }
             (ColumnKind::WorkingDiff, ColumnFormat::Diff { digits, variant }) => {
                 if let Some(info) = worktree_info {
                     let (wt_added, wt_deleted) = info.working_tree_diff;
                     let segment = format_diff_like_column(
                         wt_added,
                         wt_deleted,
-                        digits,
-                        column.width,
-                        variant,
-                        ADDITION,
-                        DELETION,
+                        DiffColumnConfig {
+                            digits,
+                            total_width: column.width,
+                            variant,
+                            positive_style: ADDITION,
+                            negative_style: DELETION,
+                            always_show_zeros: false,
+                        },
                     );
                     append_line(&mut line, segment);
                 } else if !is_last {
@@ -373,11 +397,14 @@ pub fn format_list_item_line(
                     let segment = format_diff_like_column(
                         counts.ahead,
                         counts.behind,
-                        digits,
-                        column.width,
-                        variant,
-                        ADDITION,
-                        dim_deletion,
+                        DiffColumnConfig {
+                            digits,
+                            total_width: column.width,
+                            variant,
+                            positive_style: ADDITION,
+                            negative_style: dim_deletion,
+                            always_show_zeros: false,
+                        },
                     );
                     append_line(&mut line, segment);
                 } else if !is_last {
@@ -389,11 +416,14 @@ pub fn format_list_item_line(
                     let segment = format_diff_like_column(
                         branch_diff.0,
                         branch_diff.1,
-                        digits,
-                        column.width,
-                        variant,
-                        ADDITION,
-                        DELETION,
+                        DiffColumnConfig {
+                            digits,
+                            total_width: column.width,
+                            variant,
+                            positive_style: ADDITION,
+                            negative_style: DELETION,
+                            always_show_zeros: false,
+                        },
                     );
                     append_line(&mut line, segment);
                 } else if !is_last {
@@ -440,11 +470,14 @@ pub fn format_list_item_line(
                     let segment = format_diff_like_column(
                         upstream_ahead,
                         upstream_behind,
-                        digits,
-                        column.width,
-                        variant,
-                        ADDITION,
-                        dim_deletion,
+                        DiffColumnConfig {
+                            digits,
+                            total_width: column.width,
+                            variant,
+                            positive_style: ADDITION,
+                            negative_style: dim_deletion,
+                            always_show_zeros: true,
+                        },
                     );
                     append_line(&mut line, segment);
                 } else if !is_last {
@@ -517,8 +550,18 @@ mod tests {
             deleted: 1,
         };
         let total = 6;
-        let result =
-            format_diff_like_column(1, 1, digits, total, DiffVariant::Signs, ADDITION, DELETION);
+        let result = format_diff_like_column(
+            1,
+            1,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Signs,
+                positive_style: ADDITION,
+                negative_style: DELETION,
+                always_show_zeros: false,
+            },
+        );
         assert_eq!(
             result.width(),
             total,
@@ -534,11 +577,14 @@ mod tests {
         let result = format_diff_like_column(
             10,
             50,
-            digits,
-            total,
-            DiffVariant::Signs,
-            ADDITION,
-            DELETION,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Signs,
+                positive_style: ADDITION,
+                negative_style: DELETION,
+                always_show_zeros: false,
+            },
         );
         assert_eq!(
             result.width(),
@@ -555,11 +601,14 @@ mod tests {
         let result = format_diff_like_column(
             100,
             50,
-            digits,
-            total,
-            DiffVariant::Signs,
-            ADDITION,
-            DELETION,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Signs,
+                positive_style: ADDITION,
+                negative_style: DELETION,
+                always_show_zeros: false,
+            },
         );
         assert_eq!(
             result.width(),
@@ -573,8 +622,18 @@ mod tests {
             deleted: 1,
         };
         let total = 6;
-        let result =
-            format_diff_like_column(0, 0, digits, total, DiffVariant::Signs, ADDITION, DELETION);
+        let result = format_diff_like_column(
+            0,
+            0,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Signs,
+                positive_style: ADDITION,
+                negative_style: DELETION,
+                always_show_zeros: false,
+            },
+        );
         assert_eq!(result.width(), total, "Empty diff should be 6 spaces");
     }
 
@@ -589,8 +648,18 @@ mod tests {
         };
         let total = 6;
 
-        let result =
-            format_diff_like_column(1, 1, digits, total, DiffVariant::Signs, ADDITION, DELETION);
+        let result = format_diff_like_column(
+            1,
+            1,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Signs,
+                positive_style: ADDITION,
+                negative_style: DELETION,
+                always_show_zeros: false,
+            },
+        );
         let rendered = result.render();
 
         // Strip ANSI codes to check alignment
@@ -728,11 +797,14 @@ mod tests {
             let result = format_diff_like_column(
                 ahead,
                 behind,
-                digits,
-                total,
-                DiffVariant::Arrows,
-                ADDITION,
-                dim_deletion,
+                DiffColumnConfig {
+                    digits,
+                    total_width: total,
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: dim_deletion,
+                    always_show_zeros: false,
+                },
             );
             assert_eq!(result.width(), total);
         }
@@ -754,23 +826,84 @@ mod tests {
         let empty = format_diff_like_column(
             0,
             0,
-            digits,
-            total,
-            DiffVariant::Arrows,
-            ADDITION,
-            dim_deletion,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Arrows,
+                positive_style: ADDITION,
+                negative_style: dim_deletion,
+                always_show_zeros: false,
+            },
         );
         assert_eq!(empty.width(), total);
 
         let behind_only = format_diff_like_column(
             0,
             50,
-            digits,
-            total,
-            DiffVariant::Arrows,
-            ADDITION,
-            dim_deletion,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Arrows,
+                positive_style: ADDITION,
+                negative_style: dim_deletion,
+                always_show_zeros: false,
+            },
         );
         assert_eq!(behind_only.width(), total);
+    }
+
+    #[test]
+    fn test_always_show_zeros_renders_zero_values() {
+        use super::super::columns::DiffVariant;
+        use worktrunk::styling::{ADDITION, DELETION};
+
+        let digits = DiffDigits {
+            added: 1,
+            deleted: 1,
+        };
+        let total = 7;
+
+        let dim_deletion = DELETION.dimmed();
+
+        // With always_show_zeros=false, (0, 0) renders as blank
+        let without = format_diff_like_column(
+            0,
+            0,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Arrows,
+                positive_style: ADDITION,
+                negative_style: dim_deletion,
+                always_show_zeros: false,
+            },
+        );
+        assert_eq!(without.width(), total);
+        let rendered_without = without.render();
+        let ansi_escape = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+        let clean_without = ansi_escape.replace_all(&rendered_without, "");
+        assert_eq!(clean_without.as_ref(), "       ", "Should render as blank");
+
+        // With always_show_zeros=true, (0, 0) renders as "↑0 ↓0"
+        let with = format_diff_like_column(
+            0,
+            0,
+            DiffColumnConfig {
+                digits,
+                total_width: total,
+                variant: DiffVariant::Arrows,
+                positive_style: ADDITION,
+                negative_style: dim_deletion,
+                always_show_zeros: true,
+            },
+        );
+        assert_eq!(with.width(), total);
+        let rendered_with = with.render();
+        let clean_with = ansi_escape.replace_all(&rendered_with, "");
+        assert_eq!(
+            clean_with.as_ref(),
+            "↑0 ↓0  ",
+            "Should render ↑0 ↓0 with padding"
+        );
     }
 }

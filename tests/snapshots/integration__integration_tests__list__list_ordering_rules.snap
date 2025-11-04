@@ -15,17 +15,17 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp9tgp6m/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpaEk7w8/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Branch           Main ↕  Path               Commit    Age            Message
-[36mmain           [0m          [36m./test-repo      [0m  [2m6c3da842[0m  [2m10 months ago[0m  [2mInitial commit on main[0m
-[1m[35mfeature-current[0m  [32m↑1[0m      [1m[35m./feature-current[0m  [2mfc28a4d1[0m  [2m9 months ago [0m  [2mCommit at 01:00[0m
-feature-newest   [32m↑1[0m      ./feature-newest   [2m136358eb[0m  [2m9 months ago [0m  [2mCommit at 03:00[0m
-feature-middle   [32m↑1[0m      ./feature-middle   [2ma0a4851a[0m  [2m9 months ago [0m  [2mCommit at 02:00[0m
-feature-oldest   [32m↑1[0m      ./feature-oldest   [2m1b1a2d78[0m  [2m9 months ago [0m  [2mCommit at 00:30[0m
+Branch           Status  Main ↕  Path               Commit    Age            Message
+[36mmain           [0m  [36m      [0m          [36m./test-repo      [0m  [2m6c3da842[0m  [2m10 months ago[0m  [2mInitial commit on main[0m
+[1m[35mfeature-current[0m  [1m[35m↑     [0m  [32m↑1[0m      [1m[35m./feature-current[0m  [2mfc28a4d1[0m  [2m9 months ago [0m  [2mCommit at 01:00[0m
+feature-newest   ↑       [32m↑1[0m      ./feature-newest   [2m136358eb[0m  [2m9 months ago [0m  [2mCommit at 03:00[0m
+feature-middle   ↑       [32m↑1[0m      ./feature-middle   [2ma0a4851a[0m  [2m9 months ago [0m  [2mCommit at 02:00[0m
+feature-oldest   ↑       [32m↑1[0m      ./feature-oldest   [2m1b1a2d78[0m  [2m9 months ago [0m  [2mCommit at 00:30[0m
 
 [2mShowing 5 worktrees, 4 ahead[0m
 

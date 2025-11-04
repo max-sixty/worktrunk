@@ -1,10 +1,27 @@
 use anstyle::Style;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use std::process;
+use std::sync::OnceLock;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{SUCCESS_EMOJI, println};
+
+/// Get the version string, trying git describe first, falling back to Cargo version
+fn version_str() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        let git_version = env!("VERGEN_GIT_DESCRIBE");
+        let cargo_version = env!("CARGO_PKG_VERSION");
+
+        // Try to use git describe, fall back to Cargo version if it's the idempotent placeholder
+        if git_version.contains("IDEMPOTENT") {
+            cargo_version.to_string()
+        } else {
+            git_version.to_string()
+        }
+    })
+}
 
 mod commands;
 mod display;
@@ -31,7 +48,7 @@ pub enum OutputFormat {
 #[derive(Parser)]
 #[command(name = "wt")]
 #[command(about = "Git worktree management", long_about = None)]
-#[command(version = env!("VERGEN_GIT_DESCRIBE"))]
+#[command(version = version_str())]
 #[command(disable_help_subcommand = true)]
 struct Cli {
     /// Enable verbose output (show git commands and debug info)
@@ -147,10 +164,11 @@ enum Commands {
     #[command(after_help = "\
 COLUMNS:
   Branch: Branch name
+  Status: Quick status symbols (see STATUS SYMBOLS below)
   Working ±: Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
   Main ↕: Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
   Main ± (--full): Line diffs in commits ahead of main (+added -deleted)
-  State: Status indicators (see STATE VALUES below)
+  State: Status indicators (see STATE COLUMN below)
   Path: Worktree directory location
   Remote ↕: Commits ahead↑/behind↓ relative to tracking branch (e.g. origin/branch)
   CI (--full): CI pipeline status (tries PR/MR checks first, falls back to branch workflows)
@@ -165,7 +183,19 @@ COLUMNS:
   Age: Time since last commit (relative)
   Message: Last commit message (truncated)
 
-STATE VALUES:
+STATUS SYMBOLS:
+  =  Merge conflicts (unmerged paths in working tree)
+  ↑  Ahead of main branch
+  ↓  Behind main branch
+  ⇡  Ahead of remote tracking branch
+  ⇣  Behind remote tracking branch
+  ?  Untracked files present
+  !  Modified files (unstaged changes)
+  +  Staged files (ready to commit)
+  »  Renamed files
+  ✘  Deleted files
+
+STATE COLUMN:
   (matches main): Working tree identical to main
   (no commits): No commits ahead, clean working tree
   (conflicts): Merge conflicts with main
@@ -239,14 +269,14 @@ Create and run command:
 Skip hooks during creation:
   wt switch --create temp --no-verify")]
     Switch {
-        /// Branch name or worktree path
+        /// Branch name, worktree path, or '@' for current HEAD
         branch: String,
 
         /// Create a new branch
         #[arg(short = 'c', long)]
         create: bool,
 
-        /// Base branch to create from (only with --create)
+        /// Base branch to create from (only with --create). Use '@' for current HEAD
         #[arg(short = 'b', long)]
         base: Option<String>,
 
@@ -307,7 +337,7 @@ Remove multiple worktrees:
 Switch to default in primary:
   wt remove  # (when already in primary worktree)")]
     Remove {
-        /// Worktree names or branches to remove (defaults to current worktree if none specified)
+        /// Worktree names or branches to remove (use '@' for current, defaults to current if none specified)
         worktrees: Vec<String>,
     },
 
@@ -564,11 +594,11 @@ fn main() {
             .git_context("Failed to load config")
             .and_then(|config| {
                 // Execute switch operation (creates worktree, runs post-create hooks)
-                let result =
+                let (result, resolved_branch) =
                     handle_switch(&branch, create, base.as_deref(), force, no_verify, &config)?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
-                handle_switch_output(&result, &branch, execute.is_some())?;
+                handle_switch_output(&result, &resolved_branch, execute.is_some())?;
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing
@@ -576,7 +606,11 @@ fn main() {
                 if !no_verify && let SwitchResult::CreatedWorktree { path, .. } = &result {
                     let repo = Repository::current();
                     if let Err(e) = commands::worktree::spawn_post_start_commands(
-                        path, &repo, &config, &branch, force,
+                        path,
+                        &repo,
+                        &config,
+                        &resolved_branch,
+                        force,
                     ) {
                         // Only treat CommandNotApproved as non-fatal (user declined)
                         // Other errors should still fail
@@ -609,8 +643,11 @@ fn main() {
                     let mut current = None;
 
                     for worktree_name in worktrees.iter() {
+                        // Resolve "@" to current branch (fail fast on errors like detached HEAD)
+                        let resolved = repo.resolve_worktree_name(worktree_name)?;
+
                         // Check if this is the current worktree by comparing branch names
-                        if let Ok(Some(worktree_path)) = repo.worktree_for_branch(worktree_name) {
+                        if let Ok(Some(worktree_path)) = repo.worktree_for_branch(&resolved) {
                             if Some(&worktree_path) == current_worktree.as_ref() {
                                 current = Some(worktree_name);
                             } else {

@@ -47,9 +47,12 @@ strum = { version = "0.27", features = ["derive"] }
 synoptic = "2"
 terminal_size = "0.4"
 toml = { version = "0.9", features = ["preserve_order"] }
-tree-sitter = "0.25"
-tree-sitter-bash = "0.25"
-tree-sitter-highlight = "0.25"
+# Using 0.20.x due to linking issues in 0.25.x with le16toh/be16toh on some platforms
+# See: https://github.com/tree-sitter/tree-sitter/issues/4186
+# All three crates must use the same version series to avoid native library conflicts
+tree-sitter = "0.20"
+tree-sitter-bash = "0.20"
+tree-sitter-highlight = "0.20"
 unicode-width = "0.2"
 
 [build-dependencies]

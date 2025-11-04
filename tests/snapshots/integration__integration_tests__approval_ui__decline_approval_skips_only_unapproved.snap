@@ -1,0 +1,25 @@
+---
+source: tests/integration_tests/approval_ui.rs
+expression: combined
+---
+exit_code: 0
+----- stdout -----
+
+🟡 [33mPermission required to execute [1m[33m2[0m commands[0m
+
+[1mtest-repo[0m ([2mtest-repo[0m) wants to execute:
+
+post-create:
+[40m [0m  [1m[34mecho[0m [32m'First command'[0m[0m
+
+post-create:
+[40m [0m  [1m[34mecho[0m [32m'Third command'[0m[0m
+
+
+[2mpost-create declined[0m
+✅ [32mCreated new worktree for [1m[32mtest-decline[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].test-decline[0m[0m
+
+To enable automatic cd, run: wt config shell
+
+----- stderr -----
+💡 Allow and remember? [1m[y/N][0m

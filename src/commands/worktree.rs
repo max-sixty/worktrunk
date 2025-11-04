@@ -104,8 +104,8 @@ use std::path::PathBuf;
 use worktrunk::config::{ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{
-    ADDITION, AnstyleStyle, CYAN, CYAN_BOLD, DELETION, GREEN, GREEN_BOLD, SUCCESS_EMOJI, WARNING,
-    WARNING_EMOJI, format_bash_with_gutter,
+    ADDITION, CYAN, CYAN_BOLD, DELETION, GREEN, GREEN_BOLD, SUCCESS_EMOJI, WARNING, WARNING_EMOJI,
+    format_bash_with_gutter,
 };
 
 use super::command_executor::{CommandContext, prepare_project_commands};
@@ -155,33 +155,46 @@ pub fn handle_switch(
     force: bool,
     no_verify: bool,
     config: &WorktrunkConfig,
-) -> Result<SwitchResult, GitError> {
+) -> Result<(SwitchResult, String), GitError> {
     let repo = Repository::current();
 
+    // Resolve "@" to current branch
+    let resolved_branch = repo.resolve_worktree_name(branch)?;
+
+    // Resolve base if provided
+    let resolved_base = if let Some(base_str) = base {
+        Some(repo.resolve_worktree_name(base_str)?)
+    } else {
+        None
+    };
+
     // Check for conflicting conditions
-    if create && repo.local_branch_exists(branch)? {
+    if create && repo.local_branch_exists(&resolved_branch)? {
         return Err(GitError::BranchAlreadyExists {
-            branch: branch.to_string(),
+            branch: resolved_branch.clone(),
         });
     }
 
     // Check if base flag was provided without create flag
-    if base.is_some() && !create {
+    if resolved_base.is_some() && !create {
         crate::output::progress(format!(
             "{WARNING_EMOJI} {WARNING}--base flag is only used with --create, ignoring{WARNING:#}"
         ))?;
     }
 
     // Check if worktree already exists for this branch
-    match repo.worktree_for_branch(branch)? {
+    match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
             // Canonicalize the path for cleaner display
             let canonical_existing_path = existing_path.canonicalize().unwrap_or(existing_path);
-            return Ok(SwitchResult::ExistingWorktree(canonical_existing_path));
+            return Ok((
+                SwitchResult::ExistingWorktree(canonical_existing_path),
+                resolved_branch,
+            ));
         }
         Some(_) => {
             return Err(GitError::WorktreeMissing {
-                branch: branch.to_string(),
+                branch: resolved_branch.clone(),
             });
         }
         None => {}
@@ -196,7 +209,7 @@ pub fn handle_switch(
         .to_str()
         .ok_or_else(|| GitError::CommandFailed("Invalid UTF-8 in path".to_string()))?;
 
-    let worktree_path = repo_root.join(config.format_path(repo_name, branch));
+    let worktree_path = repo_root.join(config.format_path(repo_name, &resolved_branch));
 
     // Create the worktree
     // Build git worktree add command
@@ -216,12 +229,12 @@ pub fn handle_switch(
     // Build args based on whether we're creating or checking out
     if create {
         args.push("-b");
-        args.push(branch);
+        args.push(&resolved_branch);
         if let Some(ref base_branch) = resolved_base {
             args.push(base_branch);
         }
     } else {
-        args.push(branch);
+        args.push(&resolved_branch);
     }
 
     repo.run_command(&args)
@@ -235,7 +248,8 @@ pub fn handle_switch(
     // Execute post-create commands (sequential, blocking)
     // Note: If user declines, continue anyway - worktree already created
     if !no_verify
-        && let Err(e) = execute_post_create_commands(&worktree_path, &repo, config, branch, force)
+        && let Err(e) =
+            execute_post_create_commands(&worktree_path, &repo, config, &resolved_branch, force)
     {
         // Only treat CommandNotApproved as non-fatal (user declined)
         // Other errors should still fail
@@ -247,27 +261,37 @@ pub fn handle_switch(
     // Note: post-start commands are spawned AFTER success message is shown
     // (see main.rs switch handler for temporal locality)
 
-    Ok(SwitchResult::CreatedWorktree {
-        path: worktree_path,
-        created_branch: create,
-        base_branch: resolved_base,
-    })
+    Ok((
+        SwitchResult::CreatedWorktree {
+            path: worktree_path,
+            created_branch: create,
+            base_branch: resolved_base,
+        },
+        resolved_branch,
+    ))
 }
 
 pub fn handle_remove(worktree_name: Option<&str>) -> Result<RemoveResult, GitError> {
-    // Show progress immediately, before slow validation
+    let repo = Repository::current();
+
+    // Resolve "@" to current branch early so progress message shows resolved name
+    let resolved_name = if let Some(name) = worktree_name {
+        Some(repo.resolve_worktree_name(name)?)
+    } else {
+        None
+    };
+
+    // Show progress with resolved name
     let cyan_bold = CYAN.bold();
-    let progress_msg = if let Some(b) = worktree_name {
+    let progress_msg = if let Some(ref b) = resolved_name {
         format!("🔄 {CYAN}Removing worktree for {cyan_bold}{b}{cyan_bold:#}...{CYAN:#}")
     } else {
         format!("🔄 {CYAN}Removing worktree...{CYAN:#}")
     };
     crate::output::progress(progress_msg)?;
 
-    let repo = Repository::current();
-
     // Two modes: remove current worktree vs. remove by name
-    match worktree_name {
+    match resolved_name.as_deref() {
         None => remove_current_worktree(&repo),
         Some(name) => remove_worktree_by_name(&repo, name),
     }
@@ -311,7 +335,7 @@ fn remove_current_worktree(repo: &Repository) -> Result<RemoveResult, GitError> 
     }
 }
 
-/// Remove a worktree by branch name
+/// Remove a worktree by branch name (branch_name should already be resolved)
 fn remove_worktree_by_name(repo: &Repository, branch_name: &str) -> Result<RemoveResult, GitError> {
     // Find the worktree for this branch
     let worktree_path = repo.worktree_for_branch(branch_name)?;
@@ -428,17 +452,7 @@ pub fn execute_post_create_commands(
 
     let repo_root = repo.main_worktree_root()?;
     let ctx = CommandContext::new(repo, config, branch, worktree_path, &repo_root, force);
-    let commands = prepare_project_commands(
-        post_create_config,
-        &ctx,
-        false,
-        &[],
-        "Post-create commands",
-        |_name, command| {
-            let dim = AnstyleStyle::new().dimmed();
-            crate::output::progress(format!("{dim}Skipping command: {command}{dim:#}")).ok();
-        },
-    )?;
+    let commands = prepare_project_commands(post_create_config, &ctx, false, &[], "post-create")?;
 
     if commands.is_empty() {
         return Ok(());
@@ -487,17 +501,7 @@ pub fn spawn_post_start_commands(
 
     let repo_root = repo.main_worktree_root()?;
     let ctx = CommandContext::new(repo, config, branch, worktree_path, &repo_root, force);
-    let commands = prepare_project_commands(
-        post_start_config,
-        &ctx,
-        false,
-        &[],
-        "Post-start commands",
-        |_name, command| {
-            let dim = AnstyleStyle::new().dimmed();
-            crate::output::progress(format!("{dim}Skipping command: {command}{dim:#}")).ok();
-        },
-    )?;
+    let commands = prepare_project_commands(post_start_config, &ctx, false, &[], "post-start")?;
 
     if commands.is_empty() {
         return Ok(());
@@ -553,17 +557,7 @@ pub fn execute_post_start_commands_sequential(
 
     let repo_root = repo.main_worktree_root()?;
     let ctx = CommandContext::new(repo, config, branch, worktree_path, &repo_root, force);
-    let commands = prepare_project_commands(
-        post_start_config,
-        &ctx,
-        false,
-        &[],
-        "Post-start commands",
-        |_name, command| {
-            let dim = AnstyleStyle::new().dimmed();
-            crate::output::progress(format!("{dim}Skipping command: {command}{dim:#}")).ok();
-        },
-    )?;
+    let commands = prepare_project_commands(post_start_config, &ctx, false, &[], "post-start")?;
 
     if commands.is_empty() {
         return Ok(());

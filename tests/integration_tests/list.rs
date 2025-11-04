@@ -442,3 +442,158 @@ fn test_list_ordering_rules() {
     // Run from feature-current worktree to test "current worktree" logic
     snapshot_list_from_dir("list_ordering_rules", &repo, &current_path);
 }
+
+#[test]
+fn test_list_with_upstream_tracking() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit on main");
+
+    // Set up remote - this already pushes main
+    repo.setup_remote("main");
+
+    // Scenario 1: Branch in sync with remote (should show ↑0 ↓0)
+    let in_sync_wt = repo.add_worktree("in-sync", "in-sync");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["push", "-u", "origin", "in-sync"])
+        .current_dir(&in_sync_wt)
+        .output()
+        .expect("Failed to push in-sync");
+
+    // Scenario 2: Branch ahead of remote (should show ↑2)
+    let ahead_wt = repo.add_worktree("ahead", "ahead");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["push", "-u", "origin", "ahead"])
+        .current_dir(&ahead_wt)
+        .output()
+        .expect("Failed to push ahead");
+
+    // Make 2 commits ahead
+    std::fs::write(ahead_wt.join("ahead1.txt"), "ahead 1").expect("Failed to write");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&ahead_wt)
+        .output()
+        .expect("Failed to add");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Ahead commit 1"])
+        .current_dir(&ahead_wt)
+        .output()
+        .expect("Failed to commit");
+
+    std::fs::write(ahead_wt.join("ahead2.txt"), "ahead 2").expect("Failed to write");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&ahead_wt)
+        .output()
+        .expect("Failed to add");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Ahead commit 2"])
+        .current_dir(&ahead_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Scenario 3: Branch behind remote (should show ↓1)
+    let behind_wt = repo.add_worktree("behind", "behind");
+    std::fs::write(behind_wt.join("behind.txt"), "behind").expect("Failed to write");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&behind_wt)
+        .output()
+        .expect("Failed to add");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Behind commit"])
+        .current_dir(&behind_wt)
+        .output()
+        .expect("Failed to commit");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["push", "-u", "origin", "behind"])
+        .current_dir(&behind_wt)
+        .output()
+        .expect("Failed to push");
+    // Reset local to one commit behind
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["reset", "--hard", "HEAD~1"])
+        .current_dir(&behind_wt)
+        .output()
+        .expect("Failed to reset");
+
+    // Scenario 4: Branch both ahead and behind (should show ↑1 ↓1)
+    let diverged_wt = repo.add_worktree("diverged", "diverged");
+    std::fs::write(diverged_wt.join("diverged.txt"), "diverged").expect("Failed to write");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&diverged_wt)
+        .output()
+        .expect("Failed to add");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Diverged remote commit"])
+        .current_dir(&diverged_wt)
+        .output()
+        .expect("Failed to commit");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["push", "-u", "origin", "diverged"])
+        .current_dir(&diverged_wt)
+        .output()
+        .expect("Failed to push");
+    // Reset and make different commit
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["reset", "--hard", "HEAD~1"])
+        .current_dir(&diverged_wt)
+        .output()
+        .expect("Failed to reset");
+    std::fs::write(diverged_wt.join("different.txt"), "different").expect("Failed to write");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&diverged_wt)
+        .output()
+        .expect("Failed to add");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Diverged local commit"])
+        .current_dir(&diverged_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Scenario 5: Branch without upstream (should show blank)
+    repo.add_worktree("no-upstream", "no-upstream");
+
+    // Run list --branches --full to show all columns including Remote
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    // Normalize paths
+    settings.add_filter(repo.root_path().to_str().unwrap(), "[REPO]");
+    for (name, path) in &repo.worktrees {
+        settings.add_filter(
+            path.to_str().unwrap(),
+            format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
+        );
+    }
+    settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]   ");
+    settings.add_filter(r"\\", "/");
+
+    settings.bind(|| {
+        let mut cmd = Command::new(get_cargo_bin("wt"));
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("list")
+            .arg("--branches")
+            .arg("--full")
+            .current_dir(repo.root_path());
+        assert_cmd_snapshot!("with_upstream_tracking", cmd);
+    });
+}

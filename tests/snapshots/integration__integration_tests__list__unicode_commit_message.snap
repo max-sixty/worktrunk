@@ -15,14 +15,14 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpCkMNDp/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpPvipjc/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Branch        Main ↕  State         Path            Commit    Age            Message
-[1m[35mmain        [0m                        [1m[35m./test-repo   [0m  [2me4614cb7[0m  [2m10 months ago[0m  [2mFix bug with café ☕ handling[0m
-[2mfeature-test[0m     [2m[31m↓1[0m   [2m(no commits)[0m  [2m./feature-test[0m  [2m0c53695b[0m  [2m10 months ago[0m  [2mAdd support for 日本語 and émoji 🎉[0m
+Branch        Status  Main ↕  State         Path            Commit    Age            Message
+[1m[35mmain        [0m  [1m[35m      [0m                        [1m[35m./test-repo   [0m  [2me4614cb7[0m  [2m10 months ago[0m  [2mFix bug with café ☕ handling[0m
+[2mfeature-test[0m  [2m↓     [0m     [2m[31m↓1[0m   [2m(no commits)[0m  [2m./feature-test[0m  [2m0c53695b[0m  [2m10 months ago[0m  [2mAdd support for 日本語 and émoji 🎉[0m
 
 [2mShowing 2 worktrees, 1 behind[0m
 

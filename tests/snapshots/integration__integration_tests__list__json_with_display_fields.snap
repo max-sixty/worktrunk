@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/list.rs
-assertion_line: 73
 info:
   program: wt
   args:
@@ -17,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpTx0Jtg/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpPhSJmc/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -56,7 +55,8 @@ exit_code: 0
     "upstream_behind": 0,
     "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false
+    "has_conflicts": false,
+    "status_symbols": ""
   },
   {
     "type": "worktree",
@@ -88,6 +88,7 @@ exit_code: 0
     "worktree_state": null,
     "pr_status": null,
     "has_conflicts": false,
+    "status_symbols": "↑↓?!",
     "commits_display": "[GREEN]↑2[RESET] [DIM][RED]↓2[RESET]",
     "branch_diff_display": "[GREEN]+1[RESET]",
     "working_diff_display": "[GREEN]+1[RESET] [RED]-1[RESET]"
@@ -122,6 +123,7 @@ exit_code: 0
     "worktree_state": null,
     "pr_status": null,
     "has_conflicts": false,
+    "status_symbols": "↓",
     "commits_display": "[DIM][RED]↓2[RESET]"
   }
 ]

@@ -1,5 +1,5 @@
 use worktrunk::HookType;
-use worktrunk::config::{ProjectConfig, WorktrunkConfig};
+use worktrunk::config::{Command, ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{
     AnstyleStyle, CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, HINT, HINT_EMOJI, WARNING, WARNING_EMOJI,
@@ -19,8 +19,10 @@ struct MergeCommandCollector<'a> {
     squash_enabled: bool,
 }
 
-/// Collected commands with project identifier
-type CollectedCommands = (Vec<(Option<String>, String)>, String);
+/// Commands collected for batch approval with their project identifier
+/// - `Vec<Command>`: Commands with both template and (initial) expanded forms
+/// - `String`: Project identifier for config lookup
+type CollectedCommands = (Vec<Command>, String);
 
 impl<'a> MergeCommandCollector<'a> {
     /// Collect all commands that will be executed during merge
@@ -155,13 +157,8 @@ pub fn handle_merge(
     .collect()?;
 
     // Approve all commands in a single batch
-    approve_command_batch(
-        &all_commands,
-        &project_id,
-        &config,
-        force,
-        "Merge operation",
-    )?;
+    // Commands collected here are not yet expanded - expansion happens later in prepare_project_commands
+    approve_command_batch(&all_commands, &project_id, &config, force, "merge")?;
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if !no_commit && repo.is_dirty()? {
@@ -501,12 +498,7 @@ pub fn run_pre_merge_commands(
         &ctx,
         false,
         &[("target", target_branch)],
-        "Pre-merge commands",
-        |_name, command| {
-            let dim = AnstyleStyle::new().dimmed();
-            crate::output::progress(format!("{dim}Skipping pre-merge command: {command}{dim:#}"))
-                .ok();
-        },
+        "pre-merge",
     )?;
     for prepared in commands {
         let label = crate::commands::format_command_label("pre-merge", prepared.name.as_deref());
@@ -563,11 +555,7 @@ pub fn execute_post_merge_commands(
         &ctx,
         false,
         &[("target", target_branch)],
-        "Post-merge commands",
-        |_name, command| {
-            let dim = AnstyleStyle::new().dimmed();
-            crate::output::progress(format!("{dim}Skipping command: {command}{dim:#}")).ok();
-        },
+        "post-merge",
     )?;
 
     if commands.is_empty() {
@@ -630,17 +618,8 @@ pub fn run_pre_commit_commands(
         vec![]
     };
 
-    let commands = prepare_project_commands(
-        pre_commit_config,
-        &ctx,
-        false,
-        &extra_vars,
-        "Pre-commit commands",
-        |_name, command| {
-            let dim = AnstyleStyle::new().dimmed();
-            crate::output::progress(format!("{dim}Skipping command: {command}{dim:#}")).ok();
-        },
-    )?;
+    let commands =
+        prepare_project_commands(pre_commit_config, &ctx, false, &extra_vars, "pre-commit")?;
 
     if commands.is_empty() {
         return Ok(());

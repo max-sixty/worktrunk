@@ -128,6 +128,7 @@ const COMMIT_HASH_WIDTH: usize = 8;
 /// Column header labels - single source of truth for all column headers.
 /// Both layout calculations and rendering use these constants.
 pub const HEADER_BRANCH: &str = "Branch";
+pub const HEADER_STATUS: &str = "Status";
 pub const HEADER_WORKING_DIFF: &str = "Working ±";
 pub const HEADER_AHEAD_BEHIND: &str = "Main ↕";
 pub const HEADER_BRANCH_DIFF: &str = "Main ±";
@@ -221,6 +222,7 @@ pub struct DiffWidths {
 
 pub struct ColumnWidths {
     pub branch: usize,
+    pub status: usize,
     pub time: usize,
     pub ci_status: usize,
     pub message: usize,
@@ -234,6 +236,7 @@ pub struct ColumnWidths {
 /// Tracks which columns have actual data (vs just headers)
 #[derive(Clone, Copy, Debug)]
 pub struct ColumnDataFlags {
+    pub status: bool,
     pub working_diff: bool,
     pub ahead_behind: bool,
     pub branch_diff: bool,
@@ -247,6 +250,7 @@ const EMPTY_PENALTY: u8 = 10;
 fn column_has_data(kind: ColumnKind, flags: &ColumnDataFlags) -> bool {
     match kind {
         ColumnKind::Branch => true,
+        ColumnKind::Status => flags.status,
         ColumnKind::WorkingDiff => flags.working_diff,
         ColumnKind::AheadBehind => flags.ahead_behind,
         ColumnKind::BranchDiff => flags.branch_diff,
@@ -353,6 +357,7 @@ fn ideal_for_column(
 ) -> Option<ColumnIdeal> {
     match spec.kind {
         ColumnKind::Branch => ColumnIdeal::text(widths.branch),
+        ColumnKind::Status => ColumnIdeal::text(widths.status),
         ColumnKind::States => ColumnIdeal::text(widths.states),
         ColumnKind::Path => ColumnIdeal::text(max_path_width),
         ColumnKind::Time => ColumnIdeal::text(widths.time),
@@ -372,6 +377,7 @@ pub fn calculate_column_widths(
 ) -> (ColumnWidths, ColumnDataFlags) {
     // Track maximum data widths (headers are enforced via fit_header() later)
     let mut max_branch = 0;
+    let mut max_status = 0;
     let mut max_time = 0;
     let mut max_message = 0;
     let mut max_states = 0;
@@ -397,6 +403,13 @@ pub fn calculate_column_widths(
 
         // Branch name
         max_branch = max_branch.max(item.branch_name().width());
+
+        // Status symbols (worktrees only)
+        if let Some(info) = worktree_info
+            && !info.status_symbols.is_empty()
+        {
+            max_status = max_status.max(info.status_symbols.width());
+        }
 
         // Time
         let time_str = crate::display::format_relative_time(commit.timestamp);
@@ -464,6 +477,9 @@ pub fn calculate_column_widths(
         max_upstream_behind_digits,
     );
 
+    let has_status_data = max_status > 0;
+    let final_status = fit_header(HEADER_STATUS, max_status);
+
     let has_states_data = max_states > 0;
     let final_states = fit_header(HEADER_STATE, max_states);
 
@@ -474,6 +490,7 @@ pub fn calculate_column_widths(
 
     let widths = ColumnWidths {
         branch: fit_header(HEADER_BRANCH, max_branch),
+        status: final_status,
         time: fit_header(HEADER_AGE, max_time),
         ci_status: fit_header(HEADER_CI, ci_status_width),
         message: fit_header(HEADER_MESSAGE, max_message),
@@ -485,6 +502,7 @@ pub fn calculate_column_widths(
     };
 
     let data_flags = ColumnDataFlags {
+        status: has_status_data,
         working_diff: working_diff.added_digits > 0 || working_diff.deleted_digits > 0,
         ahead_behind: ahead_behind.added_digits > 0 || ahead_behind.deleted_digits > 0,
         branch_diff: branch_diff.added_digits > 0 || branch_diff.deleted_digits > 0,
@@ -681,6 +699,7 @@ mod tests {
             worktree_state: None,
             pr_status: None,
             has_conflicts: false,
+            status_symbols: String::new(),
             display: DisplayFields::default(),
             working_diff_display: None,
         };
@@ -755,6 +774,7 @@ mod tests {
             worktree_state: None,
             pr_status: None,
             has_conflicts: false,
+            status_symbols: String::new(),
             display: DisplayFields::default(),
             working_diff_display: None,
         };
@@ -828,6 +848,7 @@ mod tests {
             worktree_state: None,
             pr_status: None,
             has_conflicts: false,
+            status_symbols: String::new(),
             display: DisplayFields::default(),
             working_diff_display: None,
         };
@@ -902,6 +923,7 @@ mod tests {
             worktree_state: None,                           // Hidden: no state
             pr_status: None,
             has_conflicts: false,
+            status_symbols: String::new(),
             display: DisplayFields::default(),
             working_diff_display: None,
         };

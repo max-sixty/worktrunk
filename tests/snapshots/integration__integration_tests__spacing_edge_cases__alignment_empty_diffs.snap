@@ -15,16 +15,16 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpkunaMG/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpaM0HGS/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Branch           Working ±  State           Path               Commit    Age            Message
-[1m[35mmain           [0m                             [1m[35m./test-repo      [0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
-[2malso-no-changes[0m             [2m(matches main)[0m  [2m./also-no-changes[0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
-[2mno-changes     [0m             [2m(matches main)[0m  [2m./no-changes     [0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
-with-changes         [32m+1[0m [31m-1[0m                  ./with-changes     [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+Branch           Status  Working ±  State           Path               Commit    Age            Message
+[1m[35mmain           [0m  [1m[35m      [0m                             [1m[35m./test-repo      [0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+[2malso-no-changes[0m  [2m      [0m             [2m(matches main)[0m  [2m./also-no-changes[0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+[2mno-changes     [0m  [2m      [0m             [2m(matches main)[0m  [2m./no-changes     [0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+with-changes     !           [32m+1[0m [31m-1[0m                  ./with-changes     [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
 
 [2mShowing 4 worktrees, 1 with changes[0m
 

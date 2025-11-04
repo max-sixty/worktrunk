@@ -362,12 +362,11 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
         "constant", // Constants/flags
     ];
 
-    let bash_language = tree_sitter_bash::LANGUAGE;
+    let bash_language = tree_sitter_bash::language();
     let bash_highlights = tree_sitter_bash::HIGHLIGHT_QUERY;
 
     let mut config = HighlightConfiguration::new(
-        bash_language.into(),
-        "bash",
+        bash_language,
         bash_highlights,
         "", // injections query
         "", // locals query
@@ -375,8 +374,7 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     .unwrap_or_else(|_| {
         // Fallback: if tree-sitter fails, use plain gutter formatting
         HighlightConfiguration::new(
-            bash_language.into(),
-            "bash",
+            bash_language,
             "", // empty query
             "",
             "",

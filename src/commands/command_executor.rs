@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use worktrunk::config::{CommandConfig, WorktrunkConfig, expand_template};
+use worktrunk::config::{Command, CommandConfig, WorktrunkConfig, expand_template};
 use worktrunk::git::{GitError, Repository};
 
 use super::command_approval::approve_command_batch;
@@ -43,12 +43,12 @@ impl<'a> CommandContext<'a> {
 /// Expand commands from a CommandConfig without approval
 ///
 /// This is the canonical command expansion implementation.
-/// Returns expanded commands as (name, command) tuples.
+/// Returns cloned commands with their expanded forms filled in.
 fn expand_commands(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
-) -> Result<Vec<(Option<String>, String)>, GitError> {
+) -> Result<Vec<Command>, GitError> {
     let commands = command_config.commands();
     if commands.is_empty() {
         return Ok(Vec::new());
@@ -73,33 +73,41 @@ fn expand_commands(
         base_extras.insert(key.to_string(), value.to_string());
     }
 
-    let mut expanded = Vec::new();
+    let mut expanded_commands = Vec::new();
 
-    for (name, command) in commands {
+    for cmd in commands {
         let extras_owned = base_extras.clone();
         let extras_ref: HashMap<&str, &str> = extras_owned
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        let expanded_cmd = expand_template(command, repo_name, ctx.branch, &extras_ref);
-        expanded.push((name.clone(), expanded_cmd));
+        let expanded_str = expand_template(&cmd.template, repo_name, ctx.branch, &extras_ref);
+        expanded_commands.push(Command::with_expansion(
+            cmd.name.clone(),
+            cmd.template.clone(),
+            expanded_str,
+        ));
     }
 
-    Ok(expanded)
+    Ok(expanded_commands)
 }
 
-pub fn prepare_project_commands<F>(
+/// Prepare project commands for execution with approval
+///
+/// This function:
+/// 1. Expands command templates with context variables
+/// 2. Requests user approval for unapproved commands (unless auto_trust or force)
+/// 3. Returns prepared commands ready for execution
+///
+/// Returns `Err(GitError::CommandNotApproved)` if the user declines approval.
+pub fn prepare_project_commands(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
     auto_trust: bool,
     extra_vars: &[(&str, &str)],
     approval_context: &str,
-    mut on_skip: F,
-) -> Result<Vec<PreparedCommand>, GitError>
-where
-    F: FnMut(Option<&str>, &str),
-{
+) -> Result<Vec<PreparedCommand>, GitError> {
     let commands = command_config.commands();
     if commands.is_empty() {
         return Ok(Vec::new());
@@ -107,27 +115,27 @@ where
 
     let project_id = ctx.repo.project_identifier()?;
 
-    // Approve using original command strings (before expansion)
+    // Expand commands before approval for transparency
+    let expanded_commands = expand_commands(command_config, ctx, extra_vars)?;
+
+    // Approve using expanded commands (which have both template and expanded forms)
     if !auto_trust
         && !approve_command_batch(
-            commands,
+            &expanded_commands,
             &project_id,
             ctx.config,
             ctx.force,
             approval_context,
         )?
     {
-        for (name, command) in commands {
-            on_skip(name.as_deref(), command);
-        }
         return Err(GitError::CommandNotApproved);
     }
 
-    // Expand commands after approval
-    let expanded = expand_commands(command_config, ctx, extra_vars)?;
-
-    Ok(expanded
+    Ok(expanded_commands
         .into_iter()
-        .map(|(name, expanded)| PreparedCommand { name, expanded })
+        .map(|cmd| PreparedCommand {
+            name: cmd.name,
+            expanded: cmd.expanded,
+        })
         .collect())
 }
