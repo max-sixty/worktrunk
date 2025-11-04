@@ -74,9 +74,10 @@ jobs:
 
     - name: 📋 Test
       uses: clechasseur/rs-cargo@v4
+      timeout-minutes: 10
       with:
         command: insta
-        args: test --test-runner=nextest
+        args: test --test-runner=nextest -- --nocapture
 
     - name: 📎 Clippy
       uses: clechasseur/rs-cargo@v4
