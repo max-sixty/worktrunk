@@ -22,6 +22,9 @@
 //! Paths are canonicalized to handle platform differences (especially macOS symlinks
 //! like /var -> /private/var). This ensures snapshot filters work correctly.
 
+// Test utilities are Unix-only since integration tests are Unix-only
+#![cfg(unix)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
