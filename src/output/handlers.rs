@@ -70,8 +70,9 @@ fn format_remove_message(result: &RemoveResult, branch: Option<&str>) -> String 
 }
 
 /// Shell integration hint message
-fn shell_integration_hint() -> &'static str {
-    "To enable automatic cd, run: wt config shell"
+fn shell_integration_hint() -> String {
+    use worktrunk::styling::{HINT, HINT_EMOJI};
+    format!("{HINT_EMOJI} {HINT}To enable automatic cd, run: wt config shell{HINT:#}")
 }
 
 /// Handle output for a switch operation

@@ -14,7 +14,7 @@ use render::{
     format_list_item_line,
 };
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{ADDITION, DELETION, println};
+use worktrunk::styling::{ADDITION, DELETION, INFO_EMOJI, println};
 
 /// Helper to enrich common display fields shared between worktrees and branches
 fn enrich_common_fields(
@@ -165,7 +165,7 @@ fn display_summary(items: &[ListItem], include_branches: bool) {
     }
 
     let summary = parts.join(", ");
-    println!("{dim}Showing {summary}{dim:#}");
+    println!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}");
 }
 
 #[derive(Default)]

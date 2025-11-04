@@ -1,9 +1,7 @@
 use worktrunk::HookType;
 use worktrunk::config::{ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{GitError, GitResultExt, Repository};
-use worktrunk::styling::{
-    AnstyleStyle, CYAN, CYAN_BOLD, HINT, HINT_EMOJI, eprintln, format_with_gutter,
-};
+use worktrunk::styling::{CYAN, CYAN_BOLD, HINT, HINT_EMOJI, eprintln, format_with_gutter};
 
 use super::merge::{
     commit_staged_changes, execute_post_merge_commands, format_commit_message_for_display,
@@ -192,9 +190,8 @@ pub fn handle_dev_squash(
     // Handle different scenarios
     if commit_count == 0 && !has_staged {
         // No commits and no staged changes - nothing to squash
-        let dim = AnstyleStyle::new().dimmed();
         crate::output::progress(format!(
-            "{dim}No commits to squash - already at merge base{dim:#}"
+            "{HINT_EMOJI} {HINT}No commits to squash - already at merge base{HINT:#}"
         ))?;
         return Ok(false);
     }

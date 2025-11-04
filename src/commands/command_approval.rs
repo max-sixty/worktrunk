@@ -5,8 +5,8 @@
 use worktrunk::config::{Command, WorktrunkConfig};
 use worktrunk::git::{GitError, GitResultExt};
 use worktrunk::styling::{
-    AnstyleStyle, HINT_EMOJI, WARNING, WARNING_EMOJI, format_bash_with_gutter, print, println,
-    stdout,
+    AnstyleStyle, HINT, HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, WARNING, WARNING_EMOJI,
+    format_bash_with_gutter, print, println, stdout,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -38,7 +38,7 @@ pub fn approve_command_batch(
 
     if !approved {
         let dim = AnstyleStyle::new().dimmed();
-        println!("{dim}{context} declined{dim:#}");
+        println!("{INFO_EMOJI} {dim}{context} declined{dim:#}");
         return Ok(false);
     }
 
@@ -61,7 +61,7 @@ pub fn approve_command_batch(
 
         if updated && let Err(e) = fresh_config.save() {
             log_approval_warning("Failed to save command approval", e);
-            println!("You will be prompted again next time.");
+            println!("{HINT_EMOJI} {HINT}You will be prompted again next time.{HINT:#}");
         }
     }
 
@@ -91,15 +91,17 @@ fn prompt_for_batch_approval(
         "{WARNING_EMOJI} {WARNING}Permission required to execute {warning_bold}{count}{warning_bold:#} command{plural}{WARNING:#}",
     );
     println!();
-    println!("{bold}{project_name}{bold:#} ({dim}{project_id}{dim:#}) wants to execute:");
+    println!(
+        "{INFO_EMOJI} {bold}{project_name}{bold:#} ({dim}{project_id}{dim:#}) wants to execute:"
+    );
     println!();
 
     for cmd in commands {
         // Format as: {context} {bold}{name}{bold:#}:
         // context is provided by caller in lowercase (e.g., "post-create", "pre-merge")
         let label = match &cmd.name {
-            Some(name) => format!("{context} {bold}{name}{bold:#}:"),
-            None => format!("{context}:"),
+            Some(name) => format!("{PROGRESS_EMOJI} {context} {bold}{name}{bold:#}:"),
+            None => format!("{PROGRESS_EMOJI} {context}:"),
         };
         println!("{label}");
         print!("{}", format_bash_with_gutter(&cmd.expanded, ""));

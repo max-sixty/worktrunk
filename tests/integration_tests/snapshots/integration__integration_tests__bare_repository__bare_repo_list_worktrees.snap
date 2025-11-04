@@ -21,6 +21,6 @@ Branch   Status  Working ±  Main ↕  State         Path                 Commit
 feature                                           ./test-repo.feature  72413a3b
 main     ↓                     ↓1   (no commits)  ./test-repo.main     6c3da842
 
-Showing 2 worktrees, 1 behind
+⚪ Showing 2 worktrees, 1 behind
 
 ----- stderr -----

@@ -2,7 +2,7 @@ use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::path::PathBuf;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{
-    AnstyleStyle, GREEN, HINT, HINT_EMOJI, SUCCESS_EMOJI, format_toml, print, println,
+    AnstyleStyle, GREEN, HINT, HINT_EMOJI, INFO_EMOJI, SUCCESS_EMOJI, format_toml, print, println,
 };
 
 /// Example configuration file content
@@ -62,22 +62,24 @@ pub fn handle_config_list() -> Result<(), GitError> {
 
 fn display_global_config() -> Result<(), GitError> {
     let bold = AnstyleStyle::new().bold();
-    let dim = AnstyleStyle::new().dimmed();
 
     // Get config path
     let config_path = get_global_config_path().ok_or_else(|| {
         GitError::CommandFailed("Could not determine global config path".to_string())
     })?;
 
-    println!("Global Config: {bold}{}{bold:#}", config_path.display());
+    println!(
+        "{INFO_EMOJI} Global Config: {bold}{}{bold:#}",
+        config_path.display()
+    );
 
     // Check if file exists
     if !config_path.exists() {
         println!("{HINT_EMOJI} {HINT}Not found (using defaults){HINT:#}");
         println!("{HINT_EMOJI} {HINT}Run 'wt config init' to create a config file{HINT:#}");
         println!();
-        println!("{dim}# Default configuration:{dim:#}");
-        println!("{dim}worktree-path = \"../{{repo}}.{{branch}}\"{dim:#}");
+        let default_config = "# Default configuration:\nworktree-path = \"../{{repo}}.{{branch}}\"";
+        print!("{}", format_toml(default_config, ""));
         return Ok(());
     }
 
@@ -105,13 +107,16 @@ fn display_project_config() -> Result<(), GitError> {
     let repo_root = match repo.worktree_root() {
         Ok(root) => root,
         Err(_) => {
-            println!("Project Config: {dim}Not in a git repository{dim:#}");
+            println!("{INFO_EMOJI} {dim}Project Config: Not in a git repository{dim:#}");
             return Ok(());
         }
     };
     let config_path = repo_root.join(".config").join("wt.toml");
 
-    println!("Project Config: {bold}{}{bold:#}", config_path.display());
+    println!(
+        "{INFO_EMOJI} Project Config: {bold}{}{bold:#}",
+        config_path.display()
+    );
 
     // Check if file exists
     if !config_path.exists() {

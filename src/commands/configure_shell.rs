@@ -2,7 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use worktrunk::shell::Shell;
-use worktrunk::styling::format_bash_with_gutter;
+use worktrunk::styling::{INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter};
 
 pub struct ConfigureResult {
     pub shell: Shell,
@@ -340,8 +340,16 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
         let bold = Style::new().bold();
         let shell = result.shell;
         let path = result.path.display();
+
+        // Choose emoji based on action type (matches main.rs execution output)
+        let emoji = match result.action {
+            ConfigAction::Added | ConfigAction::Created => SUCCESS_EMOJI,
+            ConfigAction::AlreadyExists => INFO_EMOJI,
+            ConfigAction::WouldAdd | ConfigAction::WouldCreate => PROGRESS_EMOJI,
+        };
+
         eprintln!(
-            "{} {bold}{shell}{bold:#} {bold}{path}{bold:#}",
+            "{emoji} {} {bold}{shell}{bold:#} {bold}{path}{bold:#}",
             result.action.description(),
         );
 

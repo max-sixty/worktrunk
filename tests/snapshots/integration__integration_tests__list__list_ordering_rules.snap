@@ -15,7 +15,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpue943Q/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpELt04Z/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -27,6 +27,6 @@ feature-newest   ↑                  [32m↑1[0m             ./feature-newest
 feature-middle   ↑                  [32m↑1[0m             ./feature-middle             [2ma0a4851a[0m  [2m9 months ago [0m  [2mCommit at 02:00[0m
 feature-oldest   ↑                  [32m↑1[0m             ./feature-oldest             [2m1b1a2d78[0m  [2m9 months ago [0m  [2mCommit at 00:30[0m
 
-[2mShowing 5 worktrees, 4 ahead[0m
+⚪ [2mShowing 5 worktrees, 4 ahead[0m
 
 ----- stderr -----

@@ -72,6 +72,9 @@ pub const WARNING_EMOJI: &str = "🟡";
 /// Hint emoji - use with HINT style: `println!("{HINT_EMOJI} {HINT}message{HINT:#}");`
 pub const HINT_EMOJI: &str = "💡";
 
+/// Info emoji - use with dimmed style: `println!("{INFO_EMOJI} {dim}message{dim:#}");`
+pub const INFO_EMOJI: &str = "⚪";
+
 /// Warning style (yellow) - use as `{WARNING}text{WARNING:#}`
 pub const WARNING: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
 

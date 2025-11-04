@@ -60,14 +60,14 @@ server = "npm run dev"
         success: true
         exit_code: 0
         ----- stdout -----
-        Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
+        ⚪ Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
         [40m [0m  worktree-path = [32m"../{main-worktree}.{branch}"[0m
         [40m [0m  
         [40m [0m  [1m[36m[[approved-commands]][0m
         [40m [0m  project = [32m"test-project"[0m
         [40m [0m  command = [32m"npm install"[0m
 
-        Project Config: [1m[REPO]/.config/wt.toml[0m
+        ⚪ Project Config: [1m[REPO]/.config/wt.toml[0m
         [40m [0m  post-create-command = [32m"npm install"[0m
         [40m [0m  
         [40m [0m  [1m[36m[post-start-command][0m
@@ -115,10 +115,10 @@ fn test_config_list_no_project_config() {
         success: true
         exit_code: 0
         ----- stdout -----
-        Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
+        ⚪ Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
         [40m [0m  worktree-path = [32m"../{main-worktree}.{branch}"[0m
 
-        Project Config: [1m[REPO]/.config/wt.toml[0m
+        ⚪ Project Config: [1m[REPO]/.config/wt.toml[0m
         💡 [2mNot found[0m
 
         ----- stderr -----
@@ -161,10 +161,10 @@ fn test_config_list_outside_git_repo() {
         success: true
         exit_code: 0
         ----- stdout -----
-        Global Config: [TEMP_HOME]/.config/worktrunk/config.toml
+        ⚪ Global Config: [TEMP_HOME]/.config/worktrunk/config.toml
            worktree-path = "../{main-worktree}.{branch}"
 
-        Project Config: Not in a git repository
+        ⚪ Project Config: Not in a git repository
 
         ----- stderr -----
         "#);

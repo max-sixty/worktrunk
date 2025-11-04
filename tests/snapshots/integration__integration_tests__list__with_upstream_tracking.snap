@@ -17,7 +17,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpPt1GBn/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpBGVcBa/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -30,6 +30,6 @@ diverged     ↑⇡⇣                [32m↑1[0m       [32m+1[0m           
 [2min-sync    [0m                                     [2m(matches main)[0m  [2m./in-sync    [0m  [32m↑0[0m [2m[31m↓0[0m         [2m6c3da842[0m  [2m10 months ago[0m  [2mInitial commit on main[0m
 [2mno-upstream[0m                                     [2m(matches main)[0m  [2m./no-upstream[0m                [2m6c3da842[0m  [2m10 months ago[0m  [2mInitial commit on main[0m
 
-[2mShowing 6 worktrees, 2 ahead[0m
+⚪ [2mShowing 6 worktrees, 2 ahead[0m
 
 ----- stderr -----

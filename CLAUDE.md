@@ -73,13 +73,47 @@ All styling uses the **anstyle ecosystem** for composable, auto-detecting termin
 
 ### Message Types
 
-Five canonical message patterns with their emojis:
+Six canonical message patterns with their emojis:
 
 1. **Progress**: 🔄 + cyan text (operations in progress)
 2. **Success**: ✅ + green text (successful completion)
 3. **Errors**: ❌ + red text (failures, invalid states)
 4. **Warnings**: 🟡 + yellow text (non-blocking issues)
-5. **Hints**: 💡 + dimmed text (helpful suggestions)
+5. **Hints**: 💡 + dimmed text (actionable suggestions, tips for user)
+6. **Info**: ⚪ + dimmed text (neutral status, system feedback, metadata)
+
+**Core Principle: Every user-facing message must have EITHER an emoji OR a gutter.**
+
+This provides consistent visual separation and hierarchy:
+- **Emoji**: For standalone messages (success, error, warning, hint, progress, info)
+- **Gutter**: For multi-line quoted content (commands, config, code blocks)
+- **Section headers**: Use emoji + header text, followed by gutter content
+- **Exception**: Lines within multi-line blocks that already have an emoji on the first line
+
+```rust
+// ✅ GOOD - standalone message with emoji
+println!("{SUCCESS_EMOJI} {GREEN}Created worktree{GREEN:#}");
+
+// ✅ GOOD - info message for neutral status
+println!("{INFO_EMOJI} {dim}post-create declined{dim:#}");
+
+// ✅ GOOD - quoted content with gutter
+print!("{}", format_with_gutter(&command));
+
+// ✅ GOOD - section header with emoji, followed by gutter content
+println!("{INFO_EMOJI} Global Config: {bold}{}{bold:#}", path.display());
+print!("{}", format_toml(&contents, ""));
+
+// ✅ GOOD - multi-line block with emoji on first line
+println!("{WARNING_EMOJI} {WARNING}Permission required{WARNING:#}");
+println!("Additional context on second line");  // Part of same block
+
+// ❌ BAD - standalone message without emoji or gutter
+println!("{dim}Operation declined{dim:#}");
+
+// ❌ BAD - section header without emoji
+println!("Config: {bold}{}{bold:#}", path);  // Should have INFO_EMOJI
+```
 
 ### stdout vs stderr: Separation by Source
 
@@ -214,6 +248,7 @@ output::success("✅ Committed changes (3 files, +45, -12) @ a1b2c3d")?;  // Sta
 - **`ERROR_EMOJI`**: ❌ (use with ERROR style)
 - **`WARNING_EMOJI`**: 🟡 (use with WARNING style)
 - **`HINT_EMOJI`**: 💡 (use with HINT style)
+- **`INFO_EMOJI`**: ⚪ (use with dimmed style)
 
 ### Inline Formatting Pattern
 
