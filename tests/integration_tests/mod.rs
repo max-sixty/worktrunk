@@ -1,3 +1,7 @@
+// Integration tests are Unix-only as they test bash/fish/zsh shell integration
+// and rely on Unix-specific TTY/stdin/stdout behavior
+#![cfg(unix)]
+
 // column_alignment merged into spacing_edge_cases
 pub mod approval_save;
 pub mod approval_ui;
