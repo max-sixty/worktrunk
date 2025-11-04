@@ -28,7 +28,9 @@ fn test_expand_template_branch_with_slashes() {
     assert_eq!(result, "echo feature-nested-branch");
 }
 
+// Tests with platform-specific shell escaping (Unix uses single quotes, Windows uses double quotes)
 #[test]
+#[cfg(unix)]
 fn test_expand_template_branch_with_spaces() {
     // Branch names with spaces are shell-escaped
     let extras = HashMap::new();
@@ -39,6 +41,7 @@ fn test_expand_template_branch_with_spaces() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_branch_with_special_shell_chars() {
     // Special shell characters are escaped
     let extras = HashMap::new();
@@ -50,6 +53,7 @@ fn test_expand_template_branch_with_special_shell_chars() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_branch_with_backticks() {
     // Backticks are escaped
     let extras = HashMap::new();
@@ -59,6 +63,7 @@ fn test_expand_template_branch_with_backticks() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_branch_with_quotes() {
     // Quotes are shell-escaped to prevent injection
     let extras = HashMap::new();
@@ -69,6 +74,7 @@ fn test_expand_template_branch_with_quotes() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_extra_vars_with_spaces() {
     // Extra variables with spaces are shell-escaped
     let mut extras = HashMap::new();
@@ -79,6 +85,7 @@ fn test_expand_template_extra_vars_with_spaces() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_extra_vars_with_dollar_sign() {
     // Dollar signs are shell-escaped to prevent variable expansion
     let mut extras = HashMap::new();
@@ -90,6 +97,7 @@ fn test_expand_template_extra_vars_with_dollar_sign() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_extra_vars_with_command_substitution() {
     // Special shell characters are shell-escaped to prevent injection
     let mut extras = HashMap::new();
@@ -138,6 +146,7 @@ fn test_expand_template_missing_variable() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_empty_branch() {
     let extras = HashMap::new();
     let result = expand_template("echo {branch}", "myrepo", "", &extras);
@@ -147,6 +156,7 @@ fn test_expand_template_empty_branch() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_expand_template_unicode_in_branch() {
     // Unicode characters in branch name are shell-escaped
     let extras = HashMap::new();
