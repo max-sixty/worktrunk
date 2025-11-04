@@ -205,8 +205,12 @@ fn test_expand_template_nested_curly_braces() {
 
 // Snapshot tests for shell escaping behavior
 // These verify the exact shell-escaped output for security-critical cases
+//
+// Unix-only: Shell escaping is platform-dependent (Unix uses single quotes,
+// Windows uses double quotes). These snapshots verify Unix shell behavior.
 
 #[test]
+#[cfg(unix)]
 fn snapshot_shell_escaping_special_chars() {
     let extras = HashMap::new();
 
@@ -235,6 +239,7 @@ fn snapshot_shell_escaping_special_chars() {
 }
 
 #[test]
+#[cfg(unix)]
 fn snapshot_shell_escaping_quotes() {
     let extras = HashMap::new();
 
@@ -256,6 +261,7 @@ fn snapshot_shell_escaping_quotes() {
 }
 
 #[test]
+#[cfg(unix)]
 fn snapshot_shell_escaping_paths() {
     let mut extras = HashMap::new();
 
@@ -280,6 +286,7 @@ fn snapshot_shell_escaping_paths() {
 }
 
 #[test]
+#[cfg(unix)]
 fn snapshot_complex_templates() {
     let mut extras = HashMap::new();
     extras.insert("worktree", "/path with spaces/wt");
