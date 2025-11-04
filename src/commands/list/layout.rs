@@ -145,34 +145,28 @@ pub const HEADER_MESSAGE: &str = "Message";
 /// This is the general solution for preventing header overflow: pass the header
 /// string and the calculated data width, and this returns the larger of the two.
 ///
-/// Ensures column width fits header text, unless data_width is 0 (empty column).
-///
-/// CRITICAL: Returns 0 when data_width is 0. This ensures empty columns don't
-/// allocate space for headers, allowing ColumnIdeal to return None, which prevents
-/// allocation even at low priority (12+) due to EMPTY_PENALTY.
+/// For empty columns (data_width = 0), returns header width. This allows empty
+/// columns to be allocated at low priority (base_priority + EMPTY_PENALTY) for
+/// visual consistency on wide terminals.
 fn fit_header(header: &str, data_width: usize) -> usize {
     use unicode_width::UnicodeWidthStr;
-    if data_width == 0 {
-        // Empty column - don't allocate space for header
-        return 0;
-    }
     data_width.max(header.width())
 }
 
 /// Calculates width for a diff-style column (format: "+added -deleted" or "↑ahead ↓behind").
 ///
 /// Returns DiffWidths with:
-/// - total: width including header minimum ("+{added} -{deleted}"), or 0 if no data
+/// - total: width including header minimum ("+{added} -{deleted}"), or just header width if no data
 /// - added_digits/deleted_digits: number of digits for each part
 ///
-/// Empty columns (both digits = 0) have total = 0, which causes ColumnIdeal::diff()
-/// to return None, preventing allocation even at low priority (12+).
+/// Empty columns (both digits = 0) get header width and are allocated at low priority
+/// (base_priority + EMPTY_PENALTY) for visual consistency on wide terminals.
 fn calculate_diff_width(header: &str, added_digits: usize, deleted_digits: usize) -> DiffWidths {
     let has_data = added_digits > 0 || deleted_digits > 0;
     let data_width = if has_data {
         1 + added_digits + 1 + 1 + deleted_digits // "+added -deleted"
     } else {
-        0 // fit_header will return 0 for empty columns
+        0 // fit_header will use header width for empty columns
     };
     let total = fit_header(header, data_width);
 
@@ -815,13 +809,13 @@ mod tests {
     }
 
     #[test]
-    fn test_column_positions_with_hidden_columns() {
+    fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
             AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, UpstreamStatus,
             WorktreeInfo,
         };
 
-        // Create minimal data - most columns will be hidden
+        // Create minimal data - most columns will be empty
         let info = WorktreeInfo {
             worktree: worktrunk::git::Worktree {
                 path: PathBuf::from("/test"),
@@ -865,38 +859,28 @@ mod tests {
             "Branch column should start at position 0"
         );
 
-        let empty_columns_visible = [
-            ColumnKind::WorkingDiff,
-            ColumnKind::AheadBehind,
-            ColumnKind::BranchDiff,
-            ColumnKind::States,
-            ColumnKind::Upstream,
-        ]
-        .iter()
-        .any(|kind| layout.columns.iter().any(|col| &col.kind == kind));
-
-        assert!(
-            !empty_columns_visible,
-            "Empty columns should be hidden (not allocated) when they have no data"
-        );
-
+        // Columns with data should always be visible (Branch, Path, Time, Commit, Message)
         let path_visible = layout
             .columns
             .iter()
             .any(|col| col.kind == ColumnKind::Path);
-        assert!(path_visible, "Path should always be visible");
+        assert!(path_visible, "Path should always be visible (has data)");
+
+        // Empty columns may or may not be visible depending on terminal width
+        // They have low priority (base_priority + EMPTY_PENALTY) so they're allocated
+        // only if space remains after higher-priority columns
     }
 
     #[test]
-    fn test_consecutive_hidden_columns_skip_correctly() {
+    fn test_consecutive_empty_columns_have_low_priority() {
         use crate::commands::list::model::{
             AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, UpstreamStatus,
             WorktreeInfo,
         };
 
-        // Create data where multiple consecutive columns are hidden:
-        // visible(branch) → hidden(working_diff) → hidden(ahead_behind) → hidden(branch_diff)
-        // → hidden(states) → visible(path)
+        // Create data where multiple consecutive columns are empty:
+        // visible(branch) → empty(working_diff) → empty(ahead_behind) → empty(branch_diff)
+        // → empty(states) → visible(path)
         let info = WorktreeInfo {
             worktree: worktrunk::git::Worktree {
                 path: PathBuf::from("/test/worktree"),
@@ -915,12 +899,12 @@ mod tests {
                 ahead: 0,
                 behind: 0,
             },
-            working_tree_diff: (0, 0), // Hidden: no dirty changes
+            working_tree_diff: (0, 0), // Empty: no dirty changes
             working_tree_diff_with_main: Some((0, 0)),
-            branch_diff: BranchDiffTotals { diff: (0, 0) }, // Hidden: no diff
-            is_primary: true,                               // Hidden: no ahead/behind for primary
-            upstream: UpstreamStatus::default(),            // Hidden: no upstream
-            worktree_state: None,                           // Hidden: no state
+            branch_diff: BranchDiffTotals { diff: (0, 0) }, // Empty: no diff
+            is_primary: true,                               // Empty: no ahead/behind for primary
+            upstream: UpstreamStatus::default(),            // Empty: no upstream
+            worktree_state: None,                           // Empty: no state
             pr_status: None,
             has_conflicts: false,
             status_symbols: String::new(),
@@ -937,7 +921,7 @@ mod tests {
             .any(|col| col.kind == ColumnKind::Path);
         assert!(
             path_visible,
-            "Path should be visible (has data, priority 6)"
+            "Path should be visible (has data, priority 7)"
         );
 
         let message_visible = layout
@@ -946,10 +930,10 @@ mod tests {
             .any(|col| col.kind == ColumnKind::Message);
         assert!(
             message_visible,
-            "Message should be allocated before empty columns"
+            "Message should be allocated before empty columns (priority 12 < empty columns)"
         );
 
         // Empty columns (priority 12+) may or may not be visible depending on terminal width.
-        // They rank lower than message (priority 11), so message allocates first.
+        // They rank lower than message (priority 12), so message allocates first.
     }
 }

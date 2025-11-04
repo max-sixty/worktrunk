@@ -128,6 +128,31 @@ Both dimming conditions use OR logic: either is sufficient to dim. "no commits" 
 
 </details>
 
+<details>
+<summary>Status column symbols in <code>wt list</code></summary>
+
+The Status column shows git repository state using compact symbols. Symbol order indicates priority: conflicts (blocking) → branch divergence → working tree changes.
+
+| Symbol | Meaning | Category |
+|--------|---------|----------|
+| `·` | Branch without worktree | N/A |
+| `=` | Conflicts with main | Blocking |
+| `↑` | Commits ahead of main | Branch divergence |
+| `↓` | Commits behind main | Branch divergence |
+| `⇡` | Commits ahead of remote | Remote divergence |
+| `⇣` | Commits behind remote | Remote divergence |
+| `?` | Untracked files | Working tree |
+| `!` | Modified files (unstaged) | Working tree |
+| `+` | Staged files | Working tree |
+| `»` | Renamed files | Working tree |
+| `✘` | Deleted files | Working tree |
+
+Symbols combine to show complete state (e.g., `↑↓!` means ahead of main, behind main, and has unstaged changes).
+
+**Branch-only entries:** Branches without worktrees show `·` in the Status column, indicating git status is not applicable (no working directory to check).
+
+</details>
+
 ## Configuration
 
 ```bash
@@ -457,6 +482,26 @@ eval "$(wt init oil)"
 ## Status
 
 Worktrunk is in active development. The core features are stable and ready for use. While the project is pre-1.0, the CLI interface and major features are unlikely to change significantly.
+
+## Developing
+
+<details>
+<summary><b>Version Bumping</b></summary>
+
+Uses [cargo-release](https://github.com/crate-ci/cargo-release):
+
+```bash
+cargo install cargo-release
+
+# Bump version, commit, tag, and push
+cargo release patch --execute   # 0.1.0 -> 0.1.1
+cargo release minor --execute   # 0.1.0 -> 0.2.0
+cargo release major --execute   # 0.1.0 -> 1.0.0
+```
+
+Omit `--execute` for dry-run.
+
+</details>
 
 ## FAQ
 

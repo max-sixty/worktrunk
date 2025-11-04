@@ -233,7 +233,8 @@ pub fn handle_merge(
     )?;
 
     // Get primary worktree path before cleanup (while we can still run git commands)
-    let primary_worktree_dir = repo.main_worktree_root()?;
+    let worktrees = repo.list_worktrees()?;
+    let primary_worktree_dir = worktrees.primary().path.clone();
 
     // Finish worktree unless --no-remove was specified
     if !no_remove {
@@ -270,6 +271,10 @@ pub fn handle_merge(
         let worktree_root = repo.worktree_root()?;
         repo.remove_worktree(&worktree_root)
             .git_context("Failed to remove worktree")?;
+        // Use -d (safe delete) instead of -D to protect against race conditions:
+        // If someone commits to the branch between our push and this deletion,
+        // -d will refuse to delete, preventing data loss.
+        // See test: test_merge_race_condition_commit_after_push
         primary_repo
             .run_command(&["branch", "-d", &current_branch])
             .git_context(&format!("Failed to delete branch '{}'", current_branch))?;
@@ -484,7 +489,7 @@ pub fn run_pre_merge_commands(
         return Ok(());
     };
 
-    let repo_root = repo.main_worktree_root()?;
+    let repo_root = repo.worktree_base()?;
     let ctx = CommandContext::new(
         repo,
         config,
@@ -601,7 +606,7 @@ pub fn run_pre_commit_commands(
         return Ok(());
     };
 
-    let repo_root = repo.main_worktree_root()?;
+    let repo_root = repo.worktree_base()?;
     let ctx = CommandContext::new(
         repo,
         config,

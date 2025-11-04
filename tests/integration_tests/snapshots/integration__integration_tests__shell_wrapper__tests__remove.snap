@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized().as_ref()
+expression: output.normalized()
 ---
 🔄 [36mRemoving worktree for [1m[36mto-remove[0m...[0m
-✅ [32mRemoved worktree for [1m[32mto-remove[0m[0m
+✅ [32mRemoved worktree & branch for [1m[32mto-remove[0m[0m

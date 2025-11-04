@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpacy9En/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpO74VSQ/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -329,6 +329,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (remove)
 _arguments "${_arguments_options[@]}" : \
+'--no-delete-branch[Don'\''t delete the branch after removing the worktree (by default, branches are deleted)]' \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \

@@ -36,18 +36,29 @@ fn format_remove_message(result: &RemoveResult, branch: Option<&str>) -> String 
         RemoveResult::RemovedWorktree {
             primary_path,
             changed_directory,
+            branch_name,
+            no_delete_branch,
             ..
         } => {
+            // Build the action description
+            let action = if *no_delete_branch {
+                "Removed worktree"
+            } else {
+                "Removed worktree & branch"
+            };
+
             let branch_suffix = branch
+                .or(Some(branch_name))
                 .map(|b| format!(" for {green_bold}{b}{green_bold:#}"))
                 .unwrap_or_default();
+
             if *changed_directory {
                 format!(
-                    "{SUCCESS_EMOJI} {GREEN}Removed worktree{branch_suffix}, returned to primary at {green_bold}{}{green_bold:#}{GREEN:#}",
+                    "{SUCCESS_EMOJI} {GREEN}{action}{branch_suffix}, returned to primary at {green_bold}{}{green_bold:#}{GREEN:#}",
                     primary_path.display()
                 )
             } else {
-                format!("{SUCCESS_EMOJI} {GREEN}Removed worktree{branch_suffix}{GREEN:#}")
+                format!("{SUCCESS_EMOJI} {GREEN}{action}{branch_suffix}{GREEN:#}")
             }
         }
         RemoveResult::SwitchedToDefault(branch) => {
@@ -107,6 +118,8 @@ pub fn handle_remove_output(result: &RemoveResult, branch: Option<&str>) -> Resu
         primary_path,
         worktree_path,
         changed_directory,
+        branch_name,
+        no_delete_branch,
     } = result
     {
         // 1. Emit cd directive if needed - shell will execute this immediately
@@ -120,6 +133,28 @@ pub fn handle_remove_output(result: &RemoveResult, branch: Option<&str>) -> Resu
         let repo = worktrunk::git::Repository::current();
         repo.remove_worktree(worktree_path)
             .git_context("Failed to remove worktree")?;
+
+        // 3. Delete the branch (unless --no-delete-branch was specified)
+        if !no_delete_branch {
+            // Create a Repository instance from the primary path to ensure we're running
+            // the command from a valid directory (the worktree we just removed may have
+            // been the current directory)
+            let primary_repo = worktrunk::git::Repository::at(primary_path);
+
+            // Use safe delete (-d) which fails if branch has unmerged commits
+            let result = primary_repo.run_command(&["branch", "-d", branch_name]);
+            if let Err(e) = result {
+                // If branch deletion fails, show a warning but don't error
+                // This matches the user's request: "print a nice message, don't raise some big error"
+                use worktrunk::styling::{WARNING, WARNING_EMOJI};
+                let warning_bold = WARNING.bold();
+                // Normalize error message to single line to prevent formatting issues
+                let error_msg = e.to_string().replace('\n', " ").trim().to_string();
+                super::progress(format!(
+                    "{WARNING_EMOJI} {WARNING}Could not delete branch {warning_bold}{branch_name}{warning_bold:#}: {error_msg}{WARNING:#}"
+                ))?;
+            }
+        }
     }
 
     // Show success message (includes emoji and color)

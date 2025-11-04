@@ -318,7 +318,7 @@ impl BranchInfo {
 struct GitStatusInfo {
     /// Whether the working tree has any changes (staged or unstaged)
     is_dirty: bool,
-    /// Status symbols: = (conflicts), ↑ (ahead of main), ↓ (behind main), ⇡ (ahead of remote), ⇣ (behind remote), ? (untracked), ! (modified), + (staged), » (renamed), ✘ (deleted)
+    /// Status symbols: · (branch only, no worktree), = (conflicts), ↑ (ahead of main), ↓ (behind main), ⇡ (ahead of remote), ⇣ (behind remote), ? (untracked), ! (modified), + (staged), » (renamed), ✘ (deleted)
     symbols: String,
 }
 
@@ -551,14 +551,15 @@ pub fn gather_list_data(
         return Ok(None);
     }
 
-    // First worktree is the primary - clone it for use in closure
-    let primary = worktrees[0].clone();
+    // Get primary worktree - clone it for use in closure
+    let primary = worktrees.primary().clone();
 
     // Get current worktree to identify active one
     let current_worktree_path = repo.worktree_root().ok();
 
     // Gather enhanced information for all worktrees in parallel
     let worktree_results: Vec<Result<WorktreeInfo, GitError>> = worktrees
+        .all()
         .par_iter()
         .map(|wt| WorktreeInfo::from_worktree(wt, &primary, fetch_ci, check_conflicts))
         .collect();

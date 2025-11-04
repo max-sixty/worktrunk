@@ -184,6 +184,7 @@ COLUMNS:
   Message: Last commit message (truncated)
 
 STATUS SYMBOLS:
+  ·  Branch without worktree (no working directory to check)
   =  Merge conflicts (unmerged paths in working tree)
   ↑  Ahead of main branch
   ↓  Behind main branch
@@ -316,20 +317,25 @@ Remove Multiple Worktrees:
 
 CLEANUP:
 
-When removing a worktree:
+When removing a worktree (by default):
   1. Validates worktree has no uncommitted changes
   2. Changes directory (if removing current worktree)
   3. Deletes worktree directory
   4. Removes git worktree metadata
-  5. Deletes associated branch
+  5. Deletes associated branch (uses git branch -d, safe delete)
+     - If branch has unmerged commits, shows warning but continues
+     - Use --no-delete-branch to skip branch deletion
 
 EXAMPLES:
 
-Remove current worktree:
+Remove current worktree and branch:
   wt remove
 
-Remove specific worktree:
+Remove specific worktree and branch:
   wt remove feature-branch
+
+Remove worktree but keep branch:
+  wt remove --no-delete-branch feature-branch
 
 Remove multiple worktrees:
   wt remove old-feature another-branch
@@ -339,6 +345,10 @@ Switch to default in primary:
     Remove {
         /// Worktree names or branches to remove (use '@' for current, defaults to current if none specified)
         worktrees: Vec<String>,
+
+        /// Don't delete the branch after removing the worktree (by default, branches are deleted)
+        #[arg(long = "no-delete-branch")]
+        no_delete_branch: bool,
     },
 
     /// Merge worktree into target branch
@@ -627,10 +637,14 @@ fn main() {
 
                 Ok(())
             }),
-        Commands::Remove { worktrees } => {
+        Commands::Remove {
+            worktrees,
+            no_delete_branch,
+        } => {
             if worktrees.is_empty() {
                 // No worktrees specified, remove current worktree
-                handle_remove(None).and_then(|result| handle_remove_output(&result, None))
+                handle_remove(None, no_delete_branch)
+                    .and_then(|result| handle_remove_output(&result, None))
             } else {
                 // When removing multiple worktrees, we need to handle the current worktree last
                 // to avoid deleting the directory we're currently in
@@ -662,13 +676,13 @@ fn main() {
                     // Remove others first, then current last
                     // Progress messages shown by handle_remove_output for all cases
                     for worktree in others.iter() {
-                        let result = handle_remove(Some(worktree.as_str()))?;
+                        let result = handle_remove(Some(worktree.as_str()), no_delete_branch)?;
                         handle_remove_output(&result, Some(worktree.as_str()))?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some(current_name) = current {
-                        let result = handle_remove(Some(current_name.as_str()))?;
+                        let result = handle_remove(Some(current_name.as_str()), no_delete_branch)?;
                         handle_remove_output(&result, Some(current_name.as_str()))?;
                     }
 

@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmprYnT86/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpwoMAjs/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -280,6 +280,7 @@ complete -c wt -n "__fish_wt_using_subcommand switch" -s f -l force -d 'Skip con
 complete -c wt -n "__fish_wt_using_subcommand switch" -l no-verify -d 'Skip all project hooks (post-create, post-start)'
 complete -c wt -n "__fish_wt_using_subcommand switch" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand switch" -s h -l help -d 'Print help'
+complete -c wt -n "__fish_wt_using_subcommand remove" -l no-delete-branch -d 'Don\'t delete the branch after removing the worktree (by default, branches are deleted)'
 complete -c wt -n "__fish_wt_using_subcommand remove" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand remove" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-squash -d 'Disable squashing commits (by default, commits are squashed into one before merging)'

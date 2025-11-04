@@ -15,15 +15,15 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpdfdCKu/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpV1rC2l/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Branch  Status  Working ±  State           Path         Commit    Age            Message
-[1m[35mmain  [0m  [1m[35m      [0m                             [1m[35m./test-repo[0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
-[2mhuge  [0m  [2m?     [0m             [2m(matches main)[0m  [2m./huge     [0m  [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
-tiny    !           [32m+1[0m [31m-1[0m                  ./tiny       [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+[1mBranch[0m  [1mStatus[0m  [1mWorking ±[0m  [1mMain ↕[0m  [1mState         [0m  [1mPath       [0m  [1mRemote ↕[0m  [1mCommit  [0m  [1mAge          [0m  [1mMessage[0m
+[1m[35mmain  [0m                                             [1m[35m./test-repo[0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+[2mhuge  [0m  ?                          [2m(matches main)[0m  [2m./huge     [0m            [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
+tiny    !           [32m+1[0m [31m-1[0m                          ./tiny                 [2mb834638e[0m  [2m10 months ago[0m  [2mInitial commit[0m
 
 [2mShowing 3 worktrees, 1 with changes[0m
 

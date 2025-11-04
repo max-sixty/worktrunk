@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpIW4lMG/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpIA7lzg/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -481,7 +481,7 @@ _wt() {
             return 0
             ;;
         wt__remove)
-            opts="-v -h --verbose --help [WORKTREES]..."
+            opts="-v -h --no-delete-branch --verbose --help [WORKTREES]..."
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

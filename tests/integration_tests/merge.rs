@@ -2244,3 +2244,111 @@ fn test_merge_primary_on_different_branch_dirty() {
         Some(&feature_wt),
     );
 }
+
+#[test]
+fn test_merge_race_condition_commit_after_push() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add worktree");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature", "feature");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Merge to main (this pushes the branch to main)
+    snapshot_merge(
+        "merge_race_condition_before_new_commit",
+        &repo,
+        &["main", "--no-remove"],
+        Some(&feature_wt),
+    );
+
+    // RACE CONDITION: Simulate another developer adding a commit to the feature branch
+    // after the merge/push but before worktree removal and branch deletion.
+    // Since feature is already checked out in feature_wt, we'll add the commit directly there.
+    fs::write(feature_wt.join("extra.txt"), "race condition commit").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "extra.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add extra file (race condition)"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Now simulate what wt merge would do: remove the worktree
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "remove", feature_wt.to_str().unwrap()])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to remove worktree");
+
+    // Try to delete the branch with -d (safe delete)
+    // This should FAIL because the branch has the race condition commit not in main
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["branch", "-d", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to run git branch -d");
+
+    // Verify the deletion failed (non-zero exit code)
+    assert!(
+        !output.status.success(),
+        "git branch -d should fail when branch has unmerged commits"
+    );
+
+    // Verify the error message mentions the branch is not fully merged
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not fully merged") || stderr.contains("not merged"),
+        "Error should mention branch is not fully merged, got: {}",
+        stderr
+    );
+
+    // Verify the branch still exists (wasn't deleted)
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["branch", "--list", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to list branches");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("feature"),
+        "Branch should still exist after failed deletion"
+    );
+}

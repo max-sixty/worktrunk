@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 // Import types and functions from parent module (mod.rs)
 use super::{
-    GitError, Worktree, parse_local_default_branch, parse_numstat, parse_remote_default_branch,
+    GitError, WorktreeList, parse_local_default_branch, parse_numstat, parse_remote_default_branch,
     parse_worktree_list,
 };
 
@@ -45,6 +46,15 @@ impl<T, E: std::fmt::Display> GitResultExt<T> for Result<T, E> {
     }
 }
 
+/// Internal layout information for a repository.
+///
+/// Cached to avoid repeated git queries.
+#[derive(Debug, Clone)]
+struct RepositoryLayout {
+    /// Base path for worktrees (repo root for normal repos, bare repo path for bare repos)
+    worktree_base: PathBuf,
+}
+
 /// Repository context for git operations.
 ///
 /// Provides a more ergonomic API than the `*_in(path, ...)` functions by
@@ -60,15 +70,19 @@ impl<T, E: std::fmt::Display> GitResultExt<T> for Result<T, E> {
 /// let is_dirty = repo.is_dirty()?;
 /// # Ok::<(), worktrunk::git::GitError>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Repository {
     path: PathBuf,
+    layout: OnceLock<RepositoryLayout>,
 }
 
 impl Repository {
     /// Create a repository context at the specified path.
     pub fn at(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            layout: OnceLock::new(),
+        }
     }
 
     /// Create a repository context for the current directory.
@@ -81,6 +95,43 @@ impl Repository {
     /// Get the path this repository context operates on.
     pub fn path(&self) -> &std::path::Path {
         &self.path
+    }
+
+    /// Get the repository layout, initializing it if needed.
+    fn layout(&self) -> Result<&RepositoryLayout, GitError> {
+        if let Some(layout) = self.layout.get() {
+            return Ok(layout);
+        }
+
+        let git_common_dir = self
+            .git_common_dir()?
+            .canonicalize()
+            .map_err(|e| GitError::CommandFailed(format!("Failed to canonicalize path: {}", e)))?;
+
+        let is_bare = self.is_bare_repo()?;
+
+        let worktree_base = if is_bare {
+            git_common_dir.clone()
+        } else {
+            git_common_dir
+                .parent()
+                .ok_or_else(|| GitError::CommandFailed("Invalid git directory".to_string()))?
+                .to_path_buf()
+        };
+
+        let layout = RepositoryLayout { worktree_base };
+
+        // set() returns Err if already set, but we checked above, so ignore the result
+        let _ = self.layout.set(layout);
+
+        // Now get() will succeed
+        Ok(self.layout.get().expect("just set"))
+    }
+
+    /// Check if this is a bare repository (no working tree).
+    fn is_bare_repo(&self) -> Result<bool, GitError> {
+        let output = self.run_command(&["config", "--bool", "core.bare"])?;
+        Ok(output.trim() == "true")
     }
 
     /// Get the primary remote name for this repository.
@@ -271,21 +322,14 @@ impl Repository {
         Ok(PathBuf::from(stdout.trim()))
     }
 
-    /// Get the main worktree root (top-level directory of the main worktree).
+    /// Get the base directory where worktrees are created relative to.
     ///
-    /// This returns the main worktree's root, even when called from a linked worktree.
-    /// The main worktree is the original repository created by git-init or git-clone.
-    /// Use this when you need to reference the primary worktree location.
-    pub fn main_worktree_root(&self) -> Result<PathBuf, GitError> {
-        let git_common_dir = self
-            .git_common_dir()?
-            .canonicalize()
-            .map_err(|e| GitError::CommandFailed(format!("Failed to canonicalize path: {}", e)))?;
-
-        git_common_dir
-            .parent()
-            .ok_or_else(|| GitError::CommandFailed("Invalid git directory".to_string()))
-            .map(|p| p.to_path_buf())
+    /// For normal repositories: the parent of .git (the repo root).
+    /// For bare repositories: the bare repository directory itself.
+    ///
+    /// This is the path that should be used when constructing worktree paths.
+    pub fn worktree_base(&self) -> Result<PathBuf, GitError> {
+        Ok(self.layout()?.worktree_base.clone())
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -518,9 +562,13 @@ impl Repository {
     }
 
     /// List all worktrees for this repository.
-    pub fn list_worktrees(&self) -> Result<Vec<Worktree>, GitError> {
+    ///
+    /// Returns a WorktreeList that automatically filters out bare repositories
+    /// and provides access to the primary worktree.
+    pub fn list_worktrees(&self) -> Result<WorktreeList, GitError> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
-        parse_worktree_list(&stdout)
+        let raw_worktrees = parse_worktree_list(&stdout)?;
+        WorktreeList::from_raw(raw_worktrees)
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -528,9 +576,9 @@ impl Repository {
         let worktrees = self.list_worktrees()?;
 
         Ok(worktrees
-            .into_iter()
+            .iter()
             .find(|wt| wt.branch.as_deref() == Some(branch))
-            .map(|wt| wt.path))
+            .map(|wt| wt.path.clone()))
     }
 
     /// Get branches that don't have worktrees (available for switch).
@@ -539,8 +587,10 @@ impl Repository {
         let worktrees = self.list_worktrees()?;
 
         // Collect branches that have worktrees
-        let branches_with_worktrees: std::collections::HashSet<String> =
-            worktrees.into_iter().filter_map(|wt| wt.branch).collect();
+        let branches_with_worktrees: std::collections::HashSet<String> = worktrees
+            .iter()
+            .filter_map(|wt| wt.branch.clone())
+            .collect();
 
         // Filter out branches with worktrees
         Ok(all_branches
@@ -658,8 +708,8 @@ impl Repository {
             return Ok(url.to_string());
         }
 
-        // Fall back to repository name (use main worktree for consistency across all worktrees)
-        let repo_root = self.main_worktree_root()?;
+        // Fall back to repository name (use worktree base for consistency across all worktrees)
+        let repo_root = self.worktree_base()?;
         let repo_name = repo_root
             .file_name()
             .and_then(|name| name.to_str())
@@ -771,7 +821,7 @@ impl Repository {
 
 #[cfg(test)]
 mod tests {
-    use super::super::finalize_worktree;
+    use super::super::{Worktree, finalize_worktree};
     use super::*;
 
     #[test]
