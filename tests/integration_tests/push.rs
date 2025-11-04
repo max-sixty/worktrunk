@@ -299,6 +299,78 @@ fn test_push_error_with_merge_commits() {
 }
 
 #[test]
+fn test_push_with_merge_commits_allowed() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create feature branch
+    let feature_wt = repo.add_worktree("feature", "feature");
+    std::fs::write(feature_wt.join("file1.txt"), "content1").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file1.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Commit 1"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Create another branch for merging
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "-b", "temp"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to create temp branch");
+
+    std::fs::write(feature_wt.join("file2.txt"), "content2").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file2.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Commit 2"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Switch back to feature and merge temp (creating merge commit)
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "feature"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to checkout feature");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["merge", "temp", "--no-ff", "-m", "Merge temp"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to merge");
+
+    // Push to main with --allow-merge-commits (should succeed with acknowledgment)
+    snapshot_push(
+        "push_with_merge_commits_allowed",
+        &repo,
+        &["main", "--allow-merge-commits"],
+        Some(&feature_wt),
+    );
+}
+
+#[test]
 fn test_push_no_remote() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");

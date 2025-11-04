@@ -299,7 +299,7 @@ pub fn handle_merge(
 
 /// Format the merge summary message (includes emoji and color for consistency)
 fn format_merge_summary(primary_path: Option<&std::path::Path>) -> String {
-    use worktrunk::styling::{GREEN, HINT, HINT_EMOJI, SUCCESS_EMOJI};
+    use worktrunk::styling::{GREEN, SUCCESS_EMOJI};
     let green_bold = GREEN.bold();
 
     // Show where we ended up
@@ -309,7 +309,7 @@ fn format_merge_summary(primary_path: Option<&std::path::Path>) -> String {
             path.display()
         )
     } else {
-        format!("{HINT_EMOJI} {HINT}Use 'wt remove' to remove worktree{HINT:#}")
+        format!("{SUCCESS_EMOJI} {GREEN}Worktree preserved (--no-remove){GREEN:#}")
     }
 }
 

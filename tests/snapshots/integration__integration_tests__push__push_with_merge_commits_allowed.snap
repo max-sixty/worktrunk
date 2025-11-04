@@ -1,0 +1,40 @@
+---
+source: tests/integration_tests/push.rs
+info:
+  program: wt
+  args:
+    - dev
+    - push
+    - main
+    - "--allow-merge-commits"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpTA9M28/test-config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+🔄 [36mPushing 3 commits to [1m[36mmain[0m @ [2m[SHA][0m (no commit/squash/rebase needed, merge commits allowed)
+
+*   [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Merge temp
+[31m|[m[32m/[m  
+[31m|[m * [SHA][33m ([m[1;32mtemp[m[33m)[m Commit 2
+[31m|[m[31m/[m  
+* [SHA] Commit 1
+
+ file1.txt | 1 [32m+[m
+ file2.txt | 1 [32m+[m
+ 2 files changed, 2 insertions(+)
+
+✅ [32mPushed to [1m[32mmain[0m[0m (3 commits, 2 files, [32m+2[0m)
+
+----- stderr -----

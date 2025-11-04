@@ -1983,7 +1983,7 @@ fn test_merge_no_commit_with_clean_tree() {
          1 file changed, 1 insertion(+)
 
         ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
-        💡 [2mUse 'wt remove' to remove worktree[0m
+        ✅ [32mWorktree preserved (--no-remove)[0m
 
         ----- stderr -----
         ");
@@ -2090,7 +2090,7 @@ fn test_merge_no_commit_no_squash_no_remove_redundant() {
          1 file changed, 1 insertion(+)
 
         ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
-        💡 [2mUse 'wt remove' to remove worktree[0m
+        ✅ [32mWorktree preserved (--no-remove)[0m
 
         ----- stderr -----
         ");

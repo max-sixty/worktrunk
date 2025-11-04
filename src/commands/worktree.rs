@@ -640,7 +640,8 @@ pub fn handle_push(
     }
 
     // Check for merge commits unless allowed
-    if !allow_merge_commits && repo.has_merge_commits(&target_branch, "HEAD")? {
+    let has_merge_commits = repo.has_merge_commits(&target_branch, "HEAD")?;
+    if !allow_merge_commits && has_merge_commits {
         return Err(GitError::MergeCommitsFound);
     }
 
@@ -682,7 +683,10 @@ pub fn handle_push(
 
         let cyan_dim = CYAN.dimmed();
 
-        // Build parenthetical showing which operations didn't happen
+        // Build parenthetical showing which operations didn't happen and flags used
+        let mut notes = Vec::new();
+
+        // Skipped operations
         let mut skipped_ops = Vec::new();
         if !committed && !squashed {
             // Neither commit nor squash happened - combine them
@@ -691,11 +695,19 @@ pub fn handle_push(
         if !rebased {
             skipped_ops.push("rebase");
         }
+        if !skipped_ops.is_empty() {
+            notes.push(format!("no {} needed", skipped_ops.join("/")));
+        }
 
-        let operations_note = if skipped_ops.is_empty() {
+        // Flag acknowledgments
+        if allow_merge_commits && has_merge_commits {
+            notes.push("merge commits allowed".to_string());
+        }
+
+        let operations_note = if notes.is_empty() {
             String::new()
         } else {
-            format!(" (no {} needed)", skipped_ops.join("/"))
+            format!(" ({})", notes.join(", "))
         };
 
         crate::output::progress(format!(
