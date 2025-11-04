@@ -1,10 +1,27 @@
 use anstyle::Style;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use std::process;
+use std::sync::OnceLock;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{SUCCESS_EMOJI, println};
+
+/// Get the version string, trying git describe first, falling back to Cargo version
+fn version_str() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        let git_version = env!("VERGEN_GIT_DESCRIBE");
+        let cargo_version = env!("CARGO_PKG_VERSION");
+
+        // Try to use git describe, fall back to Cargo version if it's the idempotent placeholder
+        if git_version.contains("IDEMPOTENT") {
+            cargo_version.to_string()
+        } else {
+            git_version.to_string()
+        }
+    })
+}
 
 mod commands;
 mod display;
@@ -31,7 +48,7 @@ pub enum OutputFormat {
 #[derive(Parser)]
 #[command(name = "wt")]
 #[command(about = "Git worktree management", long_about = None)]
-#[command(version = env!("VERGEN_GIT_DESCRIBE"))]
+#[command(version = version_str())]
 #[command(disable_help_subcommand = true)]
 struct Cli {
     /// Enable verbose output (show git commands and debug info)
