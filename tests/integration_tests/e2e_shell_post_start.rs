@@ -16,16 +16,6 @@ fn get_shell_binary(shell: &str) -> &str {
     }
 }
 
-/// Helper to check if a shell is available on the system
-fn is_shell_available(shell: &str) -> bool {
-    let binary = get_shell_binary(shell);
-    Command::new("which")
-        .arg(binary)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Execute a shell script in the given shell and return stdout
 fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
     let binary = get_shell_binary(shell);
@@ -242,11 +232,6 @@ approved-commands = ["sleep 0.5 && echo 'Background task done' > bg_marker.txt"]
 /// Test that multiple post-start commands run in parallel with shell integration
 #[test]
 fn test_bash_post_start_multiple_parallel_commands() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -326,11 +311,6 @@ approved-commands = [
 /// Test that post-create commands block before shell returns
 #[test]
 fn test_bash_post_create_blocks() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -406,11 +386,6 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
 /// Test fish shell specifically with background tasks
 #[test]
 fn test_fish_post_start_background() {
-    if !is_shell_available("fish") {
-        eprintln!("Skipping test: fish not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
