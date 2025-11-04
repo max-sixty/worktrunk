@@ -170,10 +170,7 @@ fn test_switch_internal_with_execute() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    #[cfg(not(target_os = "windows"))]
     let execute_cmd = "echo 'line1'\necho 'line2'";
-    #[cfg(target_os = "windows")]
-    let execute_cmd = "echo line1 && echo line2";
 
     snapshot_switch_with_global_flags(
         "switch_internal_with_execute",
@@ -215,10 +212,6 @@ fn test_switch_execute_creates_file() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    // Use platform-specific command
-    #[cfg(target_os = "windows")]
-    let create_file_cmd = "echo test > test.txt";
-    #[cfg(not(target_os = "windows"))]
     let create_file_cmd = "echo 'test content' > test.txt";
 
     snapshot_switch(
@@ -248,10 +241,6 @@ fn test_switch_execute_with_existing_worktree() {
     // Create a worktree first
     repo.add_worktree("existing-exec", "existing-exec");
 
-    // Use platform-specific command
-    #[cfg(target_os = "windows")]
-    let create_file_cmd = "echo existing > existing.txt";
-    #[cfg(not(target_os = "windows"))]
     let create_file_cmd = "echo 'existing worktree' > existing.txt";
 
     snapshot_switch(
@@ -266,10 +255,6 @@ fn test_switch_execute_multiline() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    // Test multi-line command execution
-    #[cfg(target_os = "windows")]
-    let multiline_cmd = "echo line1\r\necho line2\r\necho line3";
-    #[cfg(not(target_os = "windows"))]
     let multiline_cmd = "echo 'line1'\necho 'line2'\necho 'line3'";
 
     snapshot_switch(
@@ -310,9 +295,6 @@ fn test_switch_no_config_commands_skips_post_start_commands() {
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
 
-    #[cfg(target_os = "windows")]
-    let create_file_cmd = "echo marker > marker.txt";
-    #[cfg(not(target_os = "windows"))]
     let create_file_cmd = "echo 'marker' > marker.txt";
 
     fs::write(

@@ -13,16 +13,6 @@ fn get_shell_binary(shell: &str) -> &str {
     }
 }
 
-/// Helper to check if a shell is available on the system
-fn is_shell_available(shell: &str) -> bool {
-    let binary = get_shell_binary(shell);
-    Command::new("which")
-        .arg(binary)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Execute a shell script in the given shell and return stdout
 fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
     let binary = get_shell_binary(shell);
@@ -208,11 +198,6 @@ fn test_e2e_remove_returns_to_main(#[case] shell: &str) {
 
 #[test]
 fn test_bash_e2e_switch_preserves_output() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -246,11 +231,6 @@ fn test_bash_e2e_switch_preserves_output() {
 
 #[test]
 fn test_bash_e2e_error_handling() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -282,11 +262,6 @@ fn test_bash_e2e_error_handling() {
 
 #[test]
 fn test_bash_e2e_switch_to_existing_worktree() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -320,11 +295,6 @@ fn test_bash_e2e_switch_to_existing_worktree() {
 
 #[test]
 fn test_bash_e2e_multiple_switches() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
     repo.setup_remote("main");
@@ -364,11 +334,6 @@ fn test_bash_e2e_multiple_switches() {
 
 #[test]
 fn test_bash_e2e_switch_linebreaks() {
-    if !is_shell_available("bash") {
-        eprintln!("Skipping test: bash not available");
-        return;
-    }
-
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 

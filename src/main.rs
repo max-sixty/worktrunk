@@ -192,6 +192,52 @@ Rows are dimmed when no unique work (either no commits and clean working tree, o
     },
 
     /// Switch to a worktree
+    #[command(after_help = "\
+BEHAVIOR:
+
+Switching to Existing Worktree:
+  - If worktree exists for branch, changes directory to it
+  - No hooks run
+  - No branch creation
+
+Creating New Worktree (--create):
+  1. Creates new branch (defaults to current default branch as base)
+  2. Creates worktree in parallel directory (../<branch>)
+  3. Runs post-create hooks sequentially (blocking)
+  4. Shows success message
+  5. Spawns post-start hooks in background (non-blocking)
+  6. Changes directory to new worktree
+
+HOOKS:
+
+post-create (sequential, blocking):
+  - Run after worktree creation, before success message
+  - Typically: npm install, cargo build, setup tasks
+  - Failures block the operation
+  - Skip with --no-verify
+
+post-start (parallel, background):
+  - Spawned after success message shown
+  - Typically: dev servers, file watchers, editors
+  - Run in background, failures logged but don't block
+  - Skip with --no-verify
+
+EXAMPLES:
+
+Switch to existing worktree:
+  wt switch feature-branch
+
+Create new worktree from main:
+  wt switch --create new-feature
+
+Create from specific base:
+  wt switch --create hotfix --base production
+
+Create and run command:
+  wt switch --create docs --execute \"code .\"
+
+Skip hooks during creation:
+  wt switch --create temp --no-verify")]
     Switch {
         /// Branch name or worktree path
         branch: String,
@@ -218,6 +264,48 @@ Rows are dimmed when no unique work (either no commits and clean working tree, o
     },
 
     /// Finish current worktree, returning to primary if current
+    #[command(after_help = "\
+BEHAVIOR:
+
+Remove Current Worktree (no arguments):
+  - Requires clean working tree (no uncommitted changes)
+  - If in worktree: removes it and switches to primary worktree
+  - If in primary worktree: switches to default branch (e.g., main)
+  - If already on default branch in primary: does nothing
+
+Remove Specific Worktree (by name):
+  - Requires target worktree has clean working tree
+  - Removes specified worktree(s) and associated branches
+  - If removing current worktree, switches to primary first
+  - Can remove multiple worktrees in one command
+
+Remove Multiple Worktrees:
+  - When removing multiple, current worktree is removed last
+  - Prevents deleting directory you're currently in
+  - Each worktree must have clean working tree
+
+CLEANUP:
+
+When removing a worktree:
+  1. Validates worktree has no uncommitted changes
+  2. Changes directory (if removing current worktree)
+  3. Deletes worktree directory
+  4. Removes git worktree metadata
+  5. Deletes associated branch
+
+EXAMPLES:
+
+Remove current worktree:
+  wt remove
+
+Remove specific worktree:
+  wt remove feature-branch
+
+Remove multiple worktrees:
+  wt remove old-feature another-branch
+
+Switch to default in primary:
+  wt remove  # (when already in primary worktree)")]
     Remove {
         /// Worktree names or branches to remove (defaults to current worktree if none specified)
         worktrees: Vec<String>,
