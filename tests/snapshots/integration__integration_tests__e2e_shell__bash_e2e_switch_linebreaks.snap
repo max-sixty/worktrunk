@@ -2,5 +2,5 @@
 source: tests/integration_tests/e2e_shell.rs
 expression: output
 ---
-✅ [32mCreated new worktree for [1m[32mtest-branch[0m[32m, changed directory to [1m[32m[REPO].test-branch[0m[0m
+✅ [32mCreated new worktree for [1m[32mtest-branch[0m[32m from [1m[32mmain[0m[32m, changed directory to [1m[32m[REPO].test-branch[0m[0m
 MARKER

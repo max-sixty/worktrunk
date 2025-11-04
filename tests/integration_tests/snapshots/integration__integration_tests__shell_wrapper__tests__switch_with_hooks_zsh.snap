@@ -12,7 +12,7 @@ Building project...
 [40m [0m  [1m[34mecho[0m [32m'Building project...'[0m[0m
 
 
-✅ [32mCreated new worktree for [1m[32mfeature-hooks[0m[32m, changed directory to [1m[32m[TMPDIR]/test-repo.feature-hooks[0m[0m
+✅ [32mCreated new worktree for [1m[32mfeature-hooks[0m[32m from [1m[32mmain[0m[32m, changed directory to [1m[32m[TMPDIR]/test-repo.feature-hooks[0m[0m
 🔄 [36mRunning post-start: [1mserver[0m[0m
 [40m [0m  [1m[34mecho[0m [32m'Starting dev server on port 3000'[0m[0m
 

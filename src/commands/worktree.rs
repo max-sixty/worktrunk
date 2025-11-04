@@ -201,10 +201,23 @@ pub fn handle_switch(
     // Create the worktree
     // Build git worktree add command
     let mut args = vec!["worktree", "add", worktree_path.to_str().unwrap()];
+
+    // Resolve the base branch if creating a new branch
+    let resolved_base = if create {
+        // Default to default branch if no base specified
+        match base {
+            Some(b) => Some(b.to_string()),
+            None => Some(repo.resolve_target_branch(None)?),
+        }
+    } else {
+        None
+    };
+
+    // Build args based on whether we're creating or checking out
     if create {
         args.push("-b");
         args.push(branch);
-        if let Some(base_branch) = base {
+        if let Some(ref base_branch) = resolved_base {
             args.push(base_branch);
         }
     } else {
@@ -237,7 +250,7 @@ pub fn handle_switch(
     Ok(SwitchResult::CreatedWorktree {
         path: worktree_path,
         created_branch: create,
-        base_branch: base.map(String::from),
+        base_branch: resolved_base,
     })
 }
 

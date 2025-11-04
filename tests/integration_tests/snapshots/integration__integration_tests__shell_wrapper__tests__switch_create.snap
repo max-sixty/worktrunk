@@ -1,5 +1,5 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: output.normalized().as_ref()
+expression: output.normalized()
 ---
-✅ [32mCreated new worktree for [1m[32mfeature[0m[32m, changed directory to [1m[32m[TMPDIR]/test-repo.feature[0m[0m
+✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m, changed directory to [1m[32m[TMPDIR]/test-repo.feature[0m[0m

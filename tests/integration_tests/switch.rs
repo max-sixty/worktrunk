@@ -404,8 +404,8 @@ fn test_switch_no_config_commands_with_force() {
 fn test_switch_create_no_remote() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
-    // Deliberately NOT calling setup_remote to test the error case
+    // Deliberately NOT calling setup_remote to test local branch inference
 
-    // Try to create a branch without specifying base (should fail - no remote to get default branch)
+    // Create a branch without specifying base - should infer default branch locally
     snapshot_switch("switch_create_no_remote", &repo, &["--create", "feature"]);
 }
