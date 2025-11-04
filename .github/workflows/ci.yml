@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -56,6 +56,19 @@ jobs:
       run: |
         brew install fish
         # bash and zsh are pre-installed on macOS
+
+    - name: Install Tier 1 shells - Windows
+      if: runner.os == 'Windows'
+      run: |
+        # Git Bash is pre-installed on GitHub Actions Windows runners
+        # Install scoop package manager if not present
+        if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
+          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+        }
+        # Install fish via scoop
+        scoop install fish
+        # Note: zsh is not commonly available on Windows, skipping for now
+      shell: pwsh
 
     - name: 🏭 Compile
       uses: clechasseur/rs-cargo@v4
