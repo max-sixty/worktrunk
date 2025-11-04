@@ -480,8 +480,29 @@ pub fn gather_list_data(
         }
     }
 
-    // Sort by most recent commit (descending)
-    items.sort_by_key(|item| std::cmp::Reverse(item.commit_timestamp()));
+    // Sort by:
+    // 1. Main worktree (primary) always first
+    // 2. Current worktree second (if not main)
+    // 3. Remaining worktrees by age (most recent first)
+    items.sort_by_key(|item| {
+        let is_primary = item.is_primary();
+        let is_current = item
+            .worktree_path()
+            .and_then(|p| current_worktree_path.as_ref().map(|cp| p == cp))
+            .unwrap_or(false);
+
+        // Primary sort key: 0 = main, 1 = current (non-main), 2 = others
+        let priority = if is_primary {
+            0
+        } else if is_current {
+            1
+        } else {
+            2
+        };
+
+        // Secondary sort: timestamp (reversed for descending order)
+        (priority, std::cmp::Reverse(item.commit_timestamp()))
+    });
 
     Ok(Some(ListData {
         items,
