@@ -91,13 +91,28 @@ Five canonical message patterns with their emojis:
 **Why:** Simple reasoning (one decision point), better for piping (`wt list | jq`), child output never interferes with directives. Trade-off: violates Unix convention of errors→stderr, but our "errors" are structured program output, not crashes.
 
 ```rust
-// ALL our output goes to stdout (including errors)
+// ALL our output goes to stdout (including errors and interactive prompts)
 println!("{ERROR_EMOJI} {ERROR}Branch already exists{ERROR:#}");
+
+// Interactive prompts are worktrunk output → stdout
+print!("{HINT_EMOJI} Allow and remember? [y/N] ");
 
 // Redirect child processes to stderr
 let wrapped = format!("{{ {}; }} 1>&2", command);
 Command::new("sh").arg("-c").arg(&wrapped).status()?;
 ```
+
+**Interactive prompts and stdin:**
+- Prompts are worktrunk output → always use stdout
+- **CRITICAL**: Flush stdout before blocking on stdin to prevent interleaving:
+  ```rust
+  print!("💡 Allow and remember? [y/N] ");
+  stdout().flush()?;  // Ensures prompt is visible before blocking
+
+  let mut response = String::new();
+  io::stdin().read_line(&mut response)?;
+  ```
+- Without flushing, buffered stdout can appear after the prompt is shown
 
 ### Temporal Locality: Output Should Be Close to Operations
 

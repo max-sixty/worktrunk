@@ -5,8 +5,8 @@
 use worktrunk::config::{Command, WorktrunkConfig};
 use worktrunk::git::{GitError, GitResultExt};
 use worktrunk::styling::{
-    AnstyleStyle, HINT_EMOJI, WARNING, WARNING_EMOJI, eprint, format_bash_with_gutter, print,
-    println, stderr,
+    AnstyleStyle, HINT_EMOJI, WARNING, WARNING_EMOJI, format_bash_with_gutter, print, println,
+    stdout,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -106,8 +106,11 @@ fn prompt_for_batch_approval(
         println!();
     }
 
-    eprint!("{HINT_EMOJI} Allow and remember? {bold}[y/N]{bold:#} ");
-    stderr().flush()?;
+    // Flush stdout before showing prompt to ensure all output is visible
+    stdout().flush()?;
+
+    print!("{HINT_EMOJI} Allow and remember? {bold}[y/N]{bold:#} ");
+    stdout().flush()?;
 
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
