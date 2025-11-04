@@ -1798,15 +1798,18 @@ EOF
 "#;
     fs::write(bin_dir.join("llm"), llm_script).expect("Failed to write llm script");
 
-    // Make scripts executable
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(bin_dir.join("cargo")).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(bin_dir.join("cargo"), perms).unwrap();
+    // Make scripts executable (Unix only - Windows doesn't use executable bits)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(bin_dir.join("cargo")).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(bin_dir.join("cargo"), perms).unwrap();
 
-    let mut perms = fs::metadata(bin_dir.join("llm")).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(bin_dir.join("llm"), perms).unwrap();
+        let mut perms = fs::metadata(bin_dir.join("llm")).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(bin_dir.join("llm"), perms).unwrap();
+    }
 
     let config_content = r#"
 [pre-merge-command]
