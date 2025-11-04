@@ -61,13 +61,9 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         # Git Bash is pre-installed on GitHub Actions Windows runners
-        # Install scoop package manager if not present
-        if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
-          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-        }
-        # Install fish via scoop
-        scoop install fish
-        # Note: zsh is not commonly available on Windows, skipping for now
+        # Fish and zsh are not commonly available on native Windows (require WSL/MSYS2)
+        # CI will test with bash only on Windows
+        echo "Using Git Bash for Windows tests"
       shell: pwsh
 
     - name: 🏭 Compile
