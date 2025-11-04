@@ -68,6 +68,7 @@ fn test_init_invalid_shell() {
     });
 }
 
+#[cfg(unix)]
 #[test]
 fn test_fish_no_duplicate_base_completion() {
     // Verify that the fish completion doesn't have duplicate entries for --base

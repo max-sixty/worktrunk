@@ -901,6 +901,7 @@ approved-commands = ["echo 'background task'"]
     // process substitution. These have known limitations (fish-shell #1040)
     // but work correctly for our use case.
 
+    #[cfg(unix)]
     #[test]
     fn test_fish_wrapper_preserves_progress_messages() {
         let repo = TestRepo::new();
@@ -952,6 +953,7 @@ approved-commands = ["echo 'fish background task'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_fish_multiline_command_execution() {
         let repo = TestRepo::new();
@@ -990,6 +992,7 @@ approved-commands = ["echo 'fish background task'"]
         assert_snapshot!(output.normalized());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_fish_wrapper_handles_empty_chunks() {
         let repo = TestRepo::new();

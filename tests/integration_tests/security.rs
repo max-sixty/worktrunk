@@ -370,6 +370,7 @@ fn test_commit_message_with_directive_not_executed() {
 /// Test that path display with directives doesn't get executed
 ///
 /// This tests if file paths shown in output could inject directives
+#[cfg(unix)]
 #[test]
 fn test_path_with_directive_not_executed() {
     let repo = TestRepo::new();

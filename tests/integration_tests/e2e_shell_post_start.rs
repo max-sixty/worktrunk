@@ -384,6 +384,7 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
 }
 
 /// Test fish shell specifically with background tasks
+#[cfg(unix)]
 #[test]
 fn test_fish_post_start_background() {
     let repo = TestRepo::new();
