@@ -125,7 +125,11 @@ impl BareRepoTest {
             .current_dir(worktree_path)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Test User")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
             .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_NAME", "Test User")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
             .output()
             .expect("Failed to commit");
