@@ -457,3 +457,15 @@ eval "$(wt init oil)"
 ## Status
 
 Worktrunk is in active development. The core features are stable and ready for use. While the project is pre-1.0, the CLI interface and major features are unlikely to change significantly.
+
+## FAQ
+
+### Installation fails with C compilation errors
+
+If you encounter errors related to tree-sitter or C compilation (like "error: 'for' loop initial declarations are only allowed in C99 mode" or "undefined reference to le16toh"), install without syntax highlighting:
+
+```bash
+cargo install worktrunk --no-default-features
+```
+
+This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
