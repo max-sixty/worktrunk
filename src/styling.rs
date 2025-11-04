@@ -332,6 +332,7 @@ pub fn format_with_gutter(content: &str, left_margin: &str, max_width: Option<us
 /// ```ignore
 /// print!("{}", format_bash_with_gutter("npm install --frozen-lockfile"));
 /// ```
+#[cfg(feature = "syntax-highlighting")]
 pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
@@ -431,6 +432,39 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     output
 }
 
+/// Format bash commands with gutter (fallback without syntax highlighting)
+///
+/// This version is used when the `syntax-highlighting` feature is disabled.
+/// It provides the same gutter formatting without tree-sitter dependencies.
+#[cfg(not(feature = "syntax-highlighting"))]
+pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
+    let gutter = Style::new().bg_color(Some(Color::Ansi(AnsiColor::Black)));
+    let mut output = String::new();
+
+    // Calculate available width for wrapping
+    let term_width = get_terminal_width();
+    let left_margin_width = left_margin.width();
+    let available_width = term_width.saturating_sub(3 + left_margin_width);
+
+    // Wrap lines at word boundaries
+    let mut wrapped_lines = Vec::new();
+    for line in content.lines() {
+        let wrapped = wrap_text_at_width(line, available_width);
+        wrapped_lines.extend(wrapped);
+    }
+
+    // Process each wrapped line with plain gutter (no syntax highlighting)
+    for line in &wrapped_lines {
+        output.push_str(&format!("{left_margin}{gutter} {gutter:#}  "));
+        output.push_str(line);
+        // Ensure all styles are reset at end of line to prevent leaking into child process output
+        output.push_str(&format!("{}", anstyle::Reset));
+        output.push('\n');
+    }
+
+    output
+}
+
 // ============================================================================
 // Bash Syntax Highlighting
 // ============================================================================
@@ -445,6 +479,7 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
 /// - "comment": hash-prefixed comments
 /// - "operator": operators like &&, ||, |, $, -, etc.
 /// - "constant": flags (arguments starting with -)
+#[cfg(feature = "syntax-highlighting")]
 fn bash_token_style(kind: &str) -> Option<Style> {
     match kind {
         // Commands (npm, git, cargo, echo, cd, etc.) - bold blue

@@ -597,3 +597,18 @@ fn test_list_with_upstream_tracking() {
         assert_cmd_snapshot!("with_upstream_tracking", cmd);
     });
 }
+
+#[test]
+fn test_list_primary_on_different_branch() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    repo.switch_primary_to("develop");
+    assert_eq!(repo.current_branch(), "develop");
+
+    repo.add_worktree("feature-a", "feature-a");
+    repo.add_worktree("feature-b", "feature-b");
+
+    snapshot_list("list_primary_on_different_branch", &repo);
+}

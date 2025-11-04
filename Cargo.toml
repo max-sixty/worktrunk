@@ -15,6 +15,10 @@ consolidate-commits = true
 [features]
 # Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
 tier-2-integration-tests = []
+# Enable syntax highlighting for bash commands in output (requires tree-sitter)
+# This is optional to avoid C compilation issues on some platforms
+default = ["syntax-highlighting"]
+syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
 
 [lib]
 name = "worktrunk"
@@ -50,9 +54,11 @@ toml = { version = "0.9", features = ["preserve_order"] }
 # Using 0.20.x due to linking issues in 0.25.x with le16toh/be16toh on some platforms
 # See: https://github.com/tree-sitter/tree-sitter/issues/4186
 # All three crates must use the same version series to avoid native library conflicts
-tree-sitter = "0.20"
-tree-sitter-bash = "0.20"
-tree-sitter-highlight = "0.20"
+# These are optional dependencies controlled by the "syntax-highlighting" feature.
+# To build without C compilation requirements, use: cargo install worktrunk --no-default-features
+tree-sitter = { version = "0.20", optional = true }
+tree-sitter-bash = { version = "0.20", optional = true }
+tree-sitter-highlight = { version = "0.20", optional = true }
 unicode-width = "0.2"
 
 [build-dependencies]
