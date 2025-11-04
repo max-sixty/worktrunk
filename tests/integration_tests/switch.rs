@@ -391,3 +391,29 @@ fn test_switch_create_no_remote() {
     // Create a branch without specifying base - should infer default branch locally
     snapshot_switch("switch_create_no_remote", &repo, &["--create", "feature"]);
 }
+
+#[test]
+fn test_switch_primary_on_different_branch() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    repo.switch_primary_to("develop");
+    assert_eq!(repo.current_branch(), "develop");
+
+    // Create a feature worktree using the default branch (main)
+    // This should work fine even though primary is on develop
+    snapshot_switch(
+        "switch_primary_on_different_branch",
+        &repo,
+        &["--create", "feature-from-main"],
+    );
+
+    // Also test switching to an existing branch
+    repo.add_worktree("existing-branch", "existing-branch");
+    snapshot_switch(
+        "switch_to_existing_primary_on_different_branch",
+        &repo,
+        &["existing-branch"],
+    );
+}

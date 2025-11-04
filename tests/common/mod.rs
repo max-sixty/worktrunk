@@ -420,6 +420,33 @@ impl TestRepo {
             .expect("Failed to check origin/HEAD");
         output.status.success()
     }
+
+    /// Switch the primary worktree to a different branch
+    ///
+    /// Creates a new branch and switches to it in the primary worktree.
+    /// This is useful for testing scenarios where the primary worktree is not on the main branch.
+    pub fn switch_primary_to(&self, branch: &str) {
+        let mut cmd = Command::new("git");
+        self.configure_git_cmd(&mut cmd);
+        cmd.args(["switch", "-c", branch])
+            .current_dir(&self.root)
+            .output()
+            .unwrap_or_else(|_| panic!("Failed to create {} branch", branch));
+    }
+
+    /// Get the current branch of the primary worktree
+    ///
+    /// Returns the name of the current branch, or panics if HEAD is detached.
+    pub fn current_branch(&self) -> String {
+        let mut cmd = Command::new("git");
+        self.configure_git_cmd(&mut cmd);
+        let output = cmd
+            .args(["branch", "--show-current"])
+            .current_dir(&self.root)
+            .output()
+            .expect("Failed to get current branch");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
 }
 
 /// Create configured insta Settings for snapshot tests

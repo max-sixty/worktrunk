@@ -2131,3 +2131,113 @@ fn test_merge_no_commits_with_changes() {
         Some(&feature_wt),
     );
 }
+
+#[test]
+fn test_merge_primary_on_different_branch() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    repo.switch_primary_to("develop");
+    assert_eq!(repo.current_branch(), "develop");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature-from-develop", "feature-from-develop");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    snapshot_merge(
+        "merge_primary_on_different_branch",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+
+    // Verify primary switched to main after merge
+    assert_eq!(repo.current_branch(), "main");
+}
+
+#[test]
+fn test_merge_primary_on_different_branch_dirty() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Make main and develop diverge - modify file.txt on main
+    fs::write(repo.root_path().join("file.txt"), "main version").expect("Failed to modify file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file.txt"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Update file on main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to commit");
+
+    // Create a develop branch from the previous commit (before the main update)
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["rev-parse", "HEAD~1"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to get previous commit");
+    let base_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["switch", "-c", "develop", &base_commit])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to create develop branch");
+
+    // Modify file.txt in develop (uncommitted) to a different value
+    // This will conflict when trying to switch to main
+    fs::write(repo.root_path().join("file.txt"), "develop local changes")
+        .expect("Failed to modify file");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature-dirty-primary", "feature-dirty-primary");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Try to merge to main - should fail because primary has uncommitted changes that conflict
+    snapshot_merge(
+        "merge_primary_on_different_branch_dirty",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}

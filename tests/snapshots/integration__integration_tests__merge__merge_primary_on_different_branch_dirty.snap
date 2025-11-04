@@ -1,0 +1,41 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - merge
+    - main
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp25DBdp/test-config.toml
+---
+success: false
+exit_code: 1
+----- stdout -----
+🔄 [36mRebasing onto [1m[36mmain[0m[36m...[0m
+✅ [32mRebased onto [1m[32mmain[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m @ [2m[SHA][0m (no commit/squash needed)
+
+* [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature-dirty-primary[m[33m)[m Add feature file
+
+ feature.txt | 1 [32m+[m
+ 1 file changed, 1 insertion(+)
+
+✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
+✅ [32mReturned to primary at [1m[32m[REPO][0m[0m
+🔄 [36mSwitching to [1m[36mmain[0m[36m...[0m
+
+----- stderr -----
+Failed to switch to 'main': error: Your local changes to the following files would be overwritten by checkout:
+	file.txt
+Please commit your changes or stash them before you switch branches.
+Aborting
