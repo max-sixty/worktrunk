@@ -1907,11 +1907,18 @@ command = "{}"
     fs::write(repo.test_config_path(), worktrunk_config).expect("Failed to write worktrunk config");
 
     // Merge with --force to skip approval prompts for commands
-    // Set PATH to include .bin directory so mock cargo command is found
+    // This test explicitly sets PATH (which will be captured in snapshot) because it needs
+    // to find mock commands in .bin directory. We use a clean, minimal PATH to avoid leaking
+    // user-specific paths like ~/.cargo/bin into the snapshot.
+    //
+    // TODO: This hardcoded PATH works on macOS and Linux CI, but may not work on all
+    // environments (e.g., Windows, other package managers like nixpkgs). We should
+    // reassess whether there's a better approach that doesn't require hardcoding
+    // system paths. Ideally we'd avoid setting PATH entirely, but this test needs it
+    // for mock commands.
     let path_with_bin = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
+        "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        bin_dir.display()
     );
     snapshot_merge_with_env(
         "readme_example_complex",
