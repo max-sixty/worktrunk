@@ -151,6 +151,13 @@ enum BetaCommand {
     },
 
     /// Interactive worktree selector
+    ///
+    /// Preview modes (toggle with 1/2/3):
+    /// - Mode 1: Working tree changes
+    /// - Mode 2: History (commits not on main shown bright, commits on main dimmed)
+    /// - Mode 3: Branch diff (line changes ahead of main)
+    ///
+    /// Note: When viewing main itself, all commits shown without dimming
     Select,
 }
 

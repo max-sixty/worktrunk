@@ -135,33 +135,34 @@ impl WorktreeSkimItem {
 
     /// Render Mode 2: History preview
     fn render_history_preview(&self) -> String {
-        const HISTORY_LIMIT: &str = "40";
+        const HISTORY_LIMIT: &str = "10";
 
         let mut output = String::new();
         let repo = Repository::current();
+        let head = self.item.head();
 
-        let counts = self.item.counts();
+        // Get merge-base with main
+        //
+        // Note on error handling: This code runs in an interactive preview pane that updates
+        // on every keystroke. We intentionally use silent fallbacks rather than propagating
+        // errors to avoid disruptive error messages during navigation. The preview is
+        // supplementary - users can still select worktrees even if preview fails.
+        //
+        // Alternative: Check specific conditions (main branch exists, valid HEAD, etc.) before
+        // running git commands. This would provide better diagnostics but adds latency to
+        // every preview render. Trade-off: simplicity + speed vs. detailed error messages.
+        let Ok(merge_base_output) = repo.run_command(&["merge-base", "main", head]) else {
+            output.push_str("No commits\n");
+            return output;
+        };
 
-        // Show commits since diverging from main, with merge-base boundary
-        if counts.ahead > 0 {
-            // Use --boundary to show the merge-base commit where we diverged
-            let head = self.item.head();
-            let range = format!("main..{}", head);
-            if let Ok(log_output) = repo.run_command(&[
-                "log",
-                "--graph",
-                "--boundary",
-                "--decorate",
-                "--oneline",
-                "--color=always",
-                &range,
-            ]) {
-                output.push_str(&log_output);
-            } else {
-                output.push_str("No commits\n");
-            }
-        } else {
-            // Not ahead of main - just show recent history
+        let merge_base = merge_base_output.trim();
+
+        let branch = self.item.branch_name();
+        let is_main = branch == "main" || branch == "master";
+
+        if is_main {
+            // Viewing main itself - show history without dimming
             if let Ok(log_output) = repo.run_command(&[
                 "log",
                 "--graph",
@@ -170,11 +171,33 @@ impl WorktreeSkimItem {
                 "--color=always",
                 "-n",
                 HISTORY_LIMIT,
-                self.item.head(),
+                head,
             ]) {
                 output.push_str(&log_output);
-            } else {
-                output.push_str("No commits\n");
+            }
+        } else {
+            // Not on main - show bright commits not on main, dimmed commits on main
+
+            // Part 1: Bright commits (merge-base..HEAD)
+            let range = format!("{}..{}", merge_base, head);
+            if let Ok(log_output) =
+                repo.run_command(&["log", "--graph", "--oneline", "--color=always", &range])
+            {
+                output.push_str(&log_output);
+            }
+
+            // Part 2: Dimmed commits on main (history before merge-base)
+            if let Ok(log_output) = repo.run_command(&[
+                "log",
+                "--graph",
+                "--oneline",
+                "--format=%C(dim)%h %s%C(reset)",
+                "--color=always",
+                "-n",
+                HISTORY_LIMIT,
+                merge_base,
+            ]) {
+                output.push_str(&log_output);
             }
         }
 

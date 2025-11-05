@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpLSFnWp/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpQ1zKBh/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -280,7 +280,7 @@ complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_f
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s h -l help -d 'Print help'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand list" -l format -d 'Output format' -r -f -a "table\t'Human-readable table format'
 json\t'Machine-readable JSON with display fields (includes styled unicode for rendering)'"
 complete -c wt -n "__fish_wt_using_subcommand list" -l branches -d 'Include branches without worktrees'
