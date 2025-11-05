@@ -180,7 +180,6 @@ COLUMNS:
   Working ±: Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
   Main ↕: Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
   Main ± (--full): Line diffs in commits ahead of main (+added -deleted)
-  State: Status indicators (see STATE COLUMN below)
   Path: Worktree directory location
   Remote ↕: Commits ahead↑/behind↓ relative to tracking branch (e.g. origin/branch)
   CI (--full): CI pipeline status (tries PR/MR checks first, falls back to branch workflows)
@@ -195,9 +194,16 @@ COLUMNS:
   Age: Time since last commit (relative)
   Message: Last commit message (truncated)
 
-STATUS SYMBOLS:
+STATUS SYMBOLS (order: = ≡∅ ↻⋈ ◇⊠⚠ ↑↓ ⇡⇣ ?!+»✘):
   ·  Branch without worktree (no working directory to check)
   =  Merge conflicts (unmerged paths in working tree)
+  ≡  Working tree matches main (identical contents, regardless of commit history)
+  ∅  No commits (no commits ahead AND no uncommitted changes)
+  ↻  Rebase in progress
+  ⋈  Merge in progress
+  ◇  Bare worktree (no working directory)
+  ⊠  Locked worktree
+  ⚠  Prunable worktree
   ↑  Ahead of main branch
   ↓  Behind main branch
   ⇡  Ahead of remote tracking branch
@@ -208,14 +214,7 @@ STATUS SYMBOLS:
   »  Renamed files
   ✘  Deleted files
 
-STATE COLUMN:
-  (matches main): Working tree identical to main
-  (no commits): No commits ahead, clean working tree
-  (conflicts): Merge conflicts with main
-  [MERGING]/[REBASING]: Git operations in progress
-  (bare)/(locked)/(prunable): Worktree properties
-
-Rows are dimmed when no unique work (either no commits and clean working tree, or matches main).")]
+Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).")]
     List {
         /// Output format
         #[arg(long, value_enum, default_value = "table")]
@@ -228,7 +227,7 @@ Rows are dimmed when no unique work (either no commits and clean working tree, o
         /// Show CI status, conflict detection, and complete diff statistics
         ///
         /// Adds columns: CI (pipeline status), Main ± (line diffs).
-        /// Enables conflict detection (shows "(conflicts)" in State column).
+        /// Enables conflict detection (shows "=" symbol in Status column).
         /// Requires network requests and git merge-tree operations.
         #[arg(long, verbatim_doc_comment)]
         full: bool,

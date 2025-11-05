@@ -109,45 +109,36 @@ wt remove @                              # Remove current worktree
 See `wt --help` for details.
 
 <details>
-<summary>Worktree states in <code>wt list</code></summary>
-
-The State column shows worktree status. **Dimmed rows** indicate worktrees with no marginal information beyond main (no unique work).
-
-**Dimming logic:** Lines dim when they provide no marginal information - either no commits ahead OR working tree matches main exactly. This focuses attention on worktrees containing work.
-
-| State | Meaning | Dimmed? |
-|-------|---------|---------|
-| **no commits** | No commits on top of main AND no uncommitted changes (`ahead == 0` and `working_tree_diff == (0, 0)`). | Yes |
-| **matches main** | Working tree contents identical to main branch, regardless of commit history (`working_tree_diff_with_main == (0, 0)`). | Yes |
-| **conflicts** | Merge conflicts detected with main | No |
-| **[MERGING]**, **[REBASING]**, etc. | Git operation in progress | No |
-| **bare** | Bare worktree (no working directory) | No |
-| **locked**, **prunable** | Git worktree management states | No |
-
-Both dimming conditions use OR logic: either is sufficient to dim. "no commits" means clean worktree with no commits ahead. "matches main" means the current working tree state is identical to main, even if commit history differs (e.g., commits were made but later reverted).
-
-</details>
-
-<details>
 <summary>Status column symbols in <code>wt list</code></summary>
 
-The Status column shows git repository state using compact symbols. Symbol order indicates priority: conflicts (blocking) → branch divergence → working tree changes.
+The Status column shows git repository state using compact symbols. Symbol order indicates priority: conflicts (blocking) → worktree state → git operations → branch divergence → working tree changes.
 
-| Symbol | Meaning | Category |
-|--------|---------|----------|
-| `·` | Branch without worktree | N/A |
-| `=` | Conflicts with main | Blocking |
-| `↑` | Commits ahead of main | Branch divergence |
-| `↓` | Commits behind main | Branch divergence |
-| `⇡` | Commits ahead of remote | Remote divergence |
-| `⇣` | Commits behind remote | Remote divergence |
-| `?` | Untracked files | Working tree |
-| `!` | Modified files (unstaged) | Working tree |
-| `+` | Staged files | Working tree |
-| `»` | Renamed files | Working tree |
-| `✘` | Deleted files | Working tree |
+**Symbol order:** `= ≡∅ ↻⋈ ◇⊠⚠ ↑↓ ⇡⇣ ?!+»✘`
 
-Symbols combine to show complete state (e.g., `↑↓!` means ahead of main, behind main, and has unstaged changes).
+| Symbol | Meaning | Category | Dimmed? |
+|--------|---------|----------|---------|
+| `·` | Branch without worktree | N/A | No |
+| `=` | Conflicts with main | Blocking | No |
+| `≡` | Working tree matches main (identical to main branch, regardless of commit history) | Worktree state | Yes |
+| `∅` | No commits (no commits ahead AND no uncommitted changes) | Worktree state | Yes |
+| `↻` | Rebase in progress | Git operation | No |
+| `⋈` | Merge in progress | Git operation | No |
+| `◇` | Bare worktree (no working directory) | Worktree attribute | No |
+| `⊠` | Locked worktree | Worktree attribute | No |
+| `⚠` | Prunable worktree | Worktree attribute | No |
+| `↑` | Commits ahead of main | Branch divergence | No |
+| `↓` | Commits behind main | Branch divergence | No |
+| `⇡` | Commits ahead of remote | Remote divergence | No |
+| `⇣` | Commits behind remote | Remote divergence | No |
+| `?` | Untracked files | Working tree | No |
+| `!` | Modified files (unstaged) | Working tree | No |
+| `+` | Staged files | Working tree | No |
+| `»` | Renamed files | Working tree | No |
+| `✘` | Deleted files | Working tree | No |
+
+Symbols combine to show complete state (e.g., `≡↓!` means matches main, behind main, and has unstaged changes).
+
+**Dimming logic:** **Dimmed rows** indicate worktrees with no marginal information beyond main (no unique work). Lines dim when they have either `≡` (matches main) OR `∅` (no commits). Both conditions use OR logic: either is sufficient to dim. This focuses attention on worktrees containing work.
 
 **Branch-only entries:** Branches without worktrees show `·` in the Status column, indicating git status is not applicable (no working directory to check).
 

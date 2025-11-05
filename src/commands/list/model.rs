@@ -258,13 +258,6 @@ impl ListItem {
             ListItem::Branch(info) => info.pr_status.as_ref(),
         }
     }
-
-    pub fn has_conflicts(&self) -> bool {
-        match self {
-            ListItem::Worktree(info) => info.has_conflicts,
-            ListItem::Branch(info) => info.has_conflicts,
-        }
-    }
 }
 
 impl BranchInfo {
@@ -531,6 +524,56 @@ impl WorktreeInfo {
             false
         };
 
+        // Build complete status symbols by appending state symbols
+        // Order: = ≡∅ ↻⋈ ◇⊠⚠ ↑↓ ⇡⇣ ?!+»✘
+        let mut symbols = status_info.symbols;
+
+        // Add merge conflicts indicator if this branch has conflicts with base
+        // (different from git status conflicts which are already in symbols)
+        if has_conflicts && !symbols.contains('=') {
+            symbols.insert(0, '=');
+        }
+
+        // State symbols (insert after conflicts but before branch divergence)
+        // Find insertion point (after '=' if present, otherwise at start)
+        let insert_pos = symbols
+            .find(|c| ['↑', '↓', '⇡', '⇣', '?', '!', '+', '»', '✘'].contains(&c))
+            .unwrap_or(symbols.len());
+
+        let mut state_symbols = String::new();
+
+        // ≡ matches main (working tree identical to main)
+        // ∅ no commits (no commits ahead AND clean working tree, AND not matches main)
+        if !is_primary {
+            if working_tree_diff_with_main == Some((0, 0)) {
+                state_symbols.push('≡');
+            } else if counts.ahead == 0 && working_tree_diff == (0, 0) {
+                state_symbols.push('∅');
+            }
+        }
+
+        // ↻ rebase, ⋈ merge (git operations in progress)
+        if let Some(state) = &worktree_state {
+            if state.contains("rebase") {
+                state_symbols.push('↻');
+            } else if state.contains("merge") {
+                state_symbols.push('⋈');
+            }
+        }
+
+        // ◇ bare, ⊠ locked, ⚠ prunable (worktree attributes)
+        if wt.bare {
+            state_symbols.push('◇');
+        }
+        if wt.locked.is_some() {
+            state_symbols.push('⊠');
+        }
+        if wt.prunable.is_some() {
+            state_symbols.push('⚠');
+        }
+
+        symbols.insert_str(insert_pos, &state_symbols);
+
         // Read user-defined status from git config
         let user_status = read_user_status(&wt_repo);
 
@@ -546,7 +589,7 @@ impl WorktreeInfo {
             worktree_state,
             pr_status,
             has_conflicts,
-            status_symbols: status_info.symbols,
+            status_symbols: symbols,
             user_status,
             display: DisplayFields::default(),
             working_diff_display: None,

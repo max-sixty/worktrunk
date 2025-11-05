@@ -132,7 +132,6 @@ pub const HEADER_STATUS: &str = "Status";
 pub const HEADER_WORKING_DIFF: &str = "Working ±";
 pub const HEADER_AHEAD_BEHIND: &str = "Main ↕";
 pub const HEADER_BRANCH_DIFF: &str = "Main ±";
-pub const HEADER_STATE: &str = "State";
 pub const HEADER_PATH: &str = "Path";
 pub const HEADER_UPSTREAM: &str = "Remote ↕";
 pub const HEADER_AGE: &str = "Age";
@@ -224,7 +223,6 @@ pub struct ColumnWidths {
     pub working_diff: DiffWidths,
     pub branch_diff: DiffWidths,
     pub upstream: DiffWidths,
-    pub states: usize,
 }
 
 /// Tracks which columns have actual data (vs just headers)
@@ -235,7 +233,6 @@ pub struct ColumnDataFlags {
     pub ahead_behind: bool,
     pub branch_diff: bool,
     pub upstream: bool,
-    pub states: bool,
     pub ci_status: bool,
 }
 
@@ -248,7 +245,6 @@ fn column_has_data(kind: ColumnKind, flags: &ColumnDataFlags) -> bool {
         ColumnKind::WorkingDiff => flags.working_diff,
         ColumnKind::AheadBehind => flags.ahead_behind,
         ColumnKind::BranchDiff => flags.branch_diff,
-        ColumnKind::States => flags.states,
         ColumnKind::Path => true,
         ColumnKind::Upstream => flags.upstream,
         ColumnKind::Time => true,
@@ -352,7 +348,6 @@ fn ideal_for_column(
     match spec.kind {
         ColumnKind::Branch => ColumnIdeal::text(widths.branch),
         ColumnKind::Status => ColumnIdeal::text(widths.status),
-        ColumnKind::States => ColumnIdeal::text(widths.states),
         ColumnKind::Path => ColumnIdeal::text(max_path_width),
         ColumnKind::Time => ColumnIdeal::text(widths.time),
         ColumnKind::CiStatus => ColumnIdeal::text(widths.ci_status),
@@ -374,7 +369,6 @@ pub fn calculate_column_widths(
     let mut max_status = 0;
     let mut max_time = 0;
     let mut max_message = 0;
-    let mut max_states = 0;
 
     // Track diff component widths separately
     let mut max_wt_added_digits = 0;
@@ -441,12 +435,6 @@ pub fn calculate_column_widths(
             max_upstream_behind_digits =
                 max_upstream_behind_digits.max(upstream_behind.to_string().len());
         }
-
-        // States (includes conflicts, worktree states, etc.)
-        let states = super::render::format_all_states(item);
-        if !states.is_empty() {
-            max_states = max_states.max(states.width());
-        }
     }
 
     // Calculate diff widths using helper (format: "+left -right")
@@ -473,9 +461,6 @@ pub fn calculate_column_widths(
     let has_status_data = max_status > 0;
     let final_status = fit_header(HEADER_STATUS, max_status);
 
-    let has_states_data = max_states > 0;
-    let final_states = fit_header(HEADER_STATE, max_states);
-
     // CI status column: Always 2 chars wide
     // Only show if we attempted to fetch CI data (regardless of whether any items have status)
     let has_ci_status = fetch_ci && items.iter().any(|item| item.pr_status().is_some());
@@ -491,7 +476,6 @@ pub fn calculate_column_widths(
         working_diff,
         branch_diff,
         upstream,
-        states: final_states,
     };
 
     let data_flags = ColumnDataFlags {
@@ -500,7 +484,6 @@ pub fn calculate_column_widths(
         ahead_behind: ahead_behind.added_digits > 0 || ahead_behind.deleted_digits > 0,
         branch_diff: branch_diff.added_digits > 0 || branch_diff.deleted_digits > 0,
         upstream: upstream.added_digits > 0 || upstream.deleted_digits > 0,
-        states: has_states_data,
         ci_status: has_ci_status,
     };
 

@@ -200,44 +200,6 @@ fn format_ci_status(pr_status: &PrStatus) -> StyledLine {
     segment
 }
 
-pub fn format_all_states(item: &ListItem) -> String {
-    let mut states = Vec::new();
-
-    // Add conflicts state (applies to both worktrees and branches)
-    if item.has_conflicts() {
-        states.push("(conflicts)".to_string());
-    }
-
-    // Worktree-specific states
-    if let Some(info) = item.worktree_info() {
-        // State priority: "matches main" takes precedence over "no commits"
-        // since it's more specific (working tree identical to main)
-        if !info.is_primary && info.working_tree_diff_with_main == Some((0, 0)) {
-            states.push("(matches main)".to_string());
-        } else if !info.is_primary && item.counts().ahead == 0 && info.working_tree_diff == (0, 0) {
-            // Only show "no commits" if working tree doesn't match main
-            states.push("(no commits)".to_string());
-        }
-
-        if let Some(state) = info.worktree_state.as_ref() {
-            states.push(format!("[{}]", state));
-        }
-
-        if info.worktree.bare {
-            states.push("(bare)".to_string());
-        }
-
-        if let Some(state) = optional_reason_state("locked", info.worktree.locked.as_deref()) {
-            states.push(state);
-        }
-        if let Some(state) = optional_reason_state("prunable", info.worktree.prunable.as_deref()) {
-            states.push(state);
-        }
-    }
-
-    states.join(" ")
-}
-
 pub fn format_header_line(layout: &LayoutConfig) {
     let style = Style::new().bold();
     let mut line = StyledLine::new();
@@ -254,16 +216,6 @@ pub fn format_header_line(layout: &LayoutConfig) {
     }
 
     println!("{}", line.render());
-}
-
-fn optional_reason_state(label: &str, reason: Option<&str>) -> Option<String> {
-    reason.map(|value| {
-        if value.is_empty() {
-            format!("({label})")
-        } else {
-            format!("({label}: {value})")
-        }
-    })
 }
 
 /// Check if a branch/worktree is potentially removable
@@ -427,23 +379,6 @@ pub fn format_list_item_line(
                         },
                     );
                     append_line(&mut line, segment);
-                } else if !is_last {
-                    push_blank(&mut line, column.width);
-                }
-            }
-            (ColumnKind::States, _) => {
-                let states = format_all_states(item);
-                if !states.is_empty() {
-                    let states_text = if is_last {
-                        states
-                    } else {
-                        format!("{:width$}", states, width = column.width)
-                    };
-                    if let Some(style) = text_style {
-                        line.push_styled(states_text, style);
-                    } else {
-                        line.push_raw(states_text);
-                    }
                 } else if !is_last {
                     push_blank(&mut line, column.width);
                 }
