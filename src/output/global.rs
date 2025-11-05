@@ -124,6 +124,20 @@ pub fn warning(message: impl Into<String>) -> io::Result<()> {
     })
 }
 
+/// Emit gutter-formatted content
+///
+/// Gutter content has its own visual structure (column 0 gutter + content),
+/// so no additional emoji is added. Use with `format_with_gutter()` or `format_bash_with_gutter()`.
+pub fn gutter(content: impl Into<String>) -> io::Result<()> {
+    OUTPUT_CONTEXT.with(|ctx| {
+        let c = content.into();
+        match &mut *ctx.borrow_mut() {
+            OutputHandler::Interactive(i) => i.gutter(c),
+            OutputHandler::Directive(d) => d.gutter(c),
+        }
+    })
+}
+
 /// Request directory change (for shell integration)
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     OUTPUT_CONTEXT.with(|ctx| {

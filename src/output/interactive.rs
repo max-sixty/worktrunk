@@ -57,6 +57,14 @@ impl InteractiveOutput {
         Ok(())
     }
 
+    pub fn gutter(&mut self, content: String) -> io::Result<()> {
+        // Gutter content has its own visual structure - just print it
+        use worktrunk::styling::print;
+        print!("{content}");
+        stdout().flush()?;
+        Ok(())
+    }
+
     pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         // In interactive mode, we can't actually change directory
         // Just store the target for execute commands

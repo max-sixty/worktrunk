@@ -275,7 +275,7 @@ pub fn handle_dev_squash(
 
     // Display the generated commit message
     let formatted_message = format_commit_message_for_display(&commit_message);
-    crate::output::progress(format_with_gutter(&formatted_message, "", None))?;
+    crate::output::gutter(format_with_gutter(&formatted_message, "", None))?;
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
     repo.run_command(&["reset", "--soft", &merge_base])

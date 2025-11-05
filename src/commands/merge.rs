@@ -404,7 +404,7 @@ pub fn commit_staged_changes(
     let commit_message = crate::llm::generate_commit_message(commit_generation_config)?;
 
     let formatted_message = format_commit_message_for_display(&commit_message);
-    crate::output::progress(format_with_gutter(&formatted_message, "", None))?;
+    crate::output::gutter(format_with_gutter(&formatted_message, "", None))?;
 
     repo.run_command(&["commit", "-m", &commit_message])
         .git_context("Failed to commit")?;

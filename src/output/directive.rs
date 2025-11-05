@@ -75,6 +75,12 @@ impl DirectiveOutput {
         io::stdout().flush()
     }
 
+    pub fn gutter(&mut self, content: String) -> io::Result<()> {
+        // Gutter content has its own visual structure - print with NUL terminator
+        write!(io::stdout(), "{content}\0")?;
+        io::stdout().flush()
+    }
+
     pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         write!(io::stdout(), "__WORKTRUNK_CD__{}\0", path.display())?;
         io::stdout().flush()
