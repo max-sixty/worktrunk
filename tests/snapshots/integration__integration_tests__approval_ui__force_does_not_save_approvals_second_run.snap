@@ -11,7 +11,7 @@ exit_code: 0
 
 ----- stderr -----
 
-🟡 [33m[1m[33mtest-repo[0m ([2m[33mtest-repo[0m) wants to execute [1m[33m1[0m command:[0m
+🟡 [33m[1m[33mtest-repo[0m[0m (test-repo) [33mwants to execute [1m[33m1[0m command:[0m
 
 🔄 post-create:
 [40m [0m  [1m[34mecho[0m [32m'test command'[0m [36m>[0m output.txt[0m

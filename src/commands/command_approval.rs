@@ -88,13 +88,12 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> std::io
     let project_name = project_id.split('/').next_back().unwrap_or(project_id);
     let bold = AnstyleStyle::new().bold();
     let warning_bold = WARNING.bold();
-    let warning_dim = WARNING.dimmed();
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
     eprintln!();
     eprintln!(
-        "{WARNING_EMOJI} {WARNING}{warning_bold}{project_name}{warning_bold:#} ({warning_dim}{project_id}{warning_dim:#}) wants to execute {warning_bold}{count}{warning_bold:#} command{plural}:{WARNING:#}"
+        "{WARNING_EMOJI} {WARNING}{warning_bold}{project_name}{warning_bold:#}{WARNING:#} ({project_id}) {WARNING}wants to execute {warning_bold}{count}{warning_bold:#} command{plural}:{WARNING:#}"
     );
     eprintln!();
 
