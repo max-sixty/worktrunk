@@ -612,3 +612,136 @@ fn test_list_primary_on_different_branch() {
 
     snapshot_list("list_primary_on_different_branch", &repo);
 }
+
+#[test]
+fn test_list_with_user_status() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Worktree with user status only (no git changes)
+    let clean_wt = repo.add_worktree("clean-with-status", "clean-with-status");
+
+    // Enable worktree config
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "extensions.worktreeConfig", "true"])
+        .current_dir(&clean_wt)
+        .output()
+        .expect("Failed to enable worktree config");
+
+    // Set user status
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "--worktree", "worktrunk.status", "waiting"])
+        .current_dir(&clean_wt)
+        .output()
+        .expect("Failed to set user status");
+
+    // Worktree with both git status and user status
+    let dirty_wt = repo.add_worktree("dirty-with-status", "dirty-with-status");
+
+    // Enable worktree config
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "extensions.worktreeConfig", "true"])
+        .current_dir(&dirty_wt)
+        .output()
+        .expect("Failed to enable worktree config");
+
+    // Set user status
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "--worktree", "worktrunk.status", "*"])
+        .current_dir(&dirty_wt)
+        .output()
+        .expect("Failed to set user status");
+
+    // Add uncommitted changes
+    std::fs::write(dirty_wt.join("new.txt"), "content").expect("Failed to write file");
+
+    // Worktree with git status only (no user status)
+    let dirty_no_status_wt = repo.add_worktree("dirty-no-status", "dirty-no-status");
+    std::fs::write(dirty_no_status_wt.join("file.txt"), "content").expect("Failed to write file");
+
+    // Worktree with neither (control)
+    repo.add_worktree("clean-no-status", "clean-no-status");
+
+    snapshot_list("with_user_status", &repo);
+}
+
+#[test]
+fn test_list_json_with_user_status() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Worktree with user status
+    let with_status_wt = repo.add_worktree("with-status", "with-status");
+
+    // Enable worktree config
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "extensions.worktreeConfig", "true"])
+        .current_dir(&with_status_wt)
+        .output()
+        .expect("Failed to enable worktree config");
+
+    // Set user status
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "--worktree", "worktrunk.status", "processing..."])
+        .current_dir(&with_status_wt)
+        .output()
+        .expect("Failed to set user status");
+
+    // Worktree without user status
+    repo.add_worktree("without-status", "without-status");
+
+    snapshot_list_json("json_with_user_status", &repo);
+}
+
+#[test]
+fn test_list_user_status_with_special_characters() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Test with emoji
+    let emoji_wt = repo.add_worktree("emoji", "emoji");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "extensions.worktreeConfig", "true"])
+        .current_dir(&emoji_wt)
+        .output()
+        .expect("Failed to enable worktree config");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "--worktree", "worktrunk.status", "🔄"])
+        .current_dir(&emoji_wt)
+        .output()
+        .expect("Failed to set user status");
+
+    // Test with multiple characters
+    let multi_wt = repo.add_worktree("multi", "multi");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "extensions.worktreeConfig", "true"])
+        .current_dir(&multi_wt)
+        .output()
+        .expect("Failed to enable worktree config");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "config",
+        "--worktree",
+        "worktrunk.status",
+        "blocked: needs review",
+    ])
+    .current_dir(&multi_wt)
+    .output()
+    .expect("Failed to set user status");
+
+    snapshot_list("user_status_special_chars", &repo);
+}

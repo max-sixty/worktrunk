@@ -356,9 +356,9 @@ pub fn format_list_item_line(
                 }
             }
             (ColumnKind::Status, _) => {
-                // Determine status content: actual symbols or middle dot indicator for branch-only entries
+                // Combine git status symbols + user-defined status from worktrunk.status
                 let status_content = if let Some(info) = worktree_info {
-                    info.status_symbols.clone()
+                    info.combined_status()
                 } else {
                     "·".to_string()
                 };

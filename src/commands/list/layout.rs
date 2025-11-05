@@ -398,11 +398,10 @@ pub fn calculate_column_widths(
         // Branch name
         max_branch = max_branch.max(item.branch_name().width());
 
-        // Status symbols (worktrees only)
-        if let Some(info) = worktree_info
-            && !info.status_symbols.is_empty()
-        {
-            max_status = max_status.max(info.status_symbols.width());
+        // Status column: git status symbols + user-defined status (worktrees only)
+        if let Some(info) = worktree_info {
+            let combined_width = info.combined_status().width();
+            max_status = max_status.max(combined_width);
         }
 
         // Time
@@ -694,6 +693,7 @@ mod tests {
             pr_status: None,
             has_conflicts: false,
             status_symbols: String::new(),
+            user_status: None,
             display: DisplayFields::default(),
             working_diff_display: None,
         };
@@ -769,6 +769,7 @@ mod tests {
             pr_status: None,
             has_conflicts: false,
             status_symbols: String::new(),
+            user_status: None,
             display: DisplayFields::default(),
             working_diff_display: None,
         };
@@ -843,6 +844,7 @@ mod tests {
             pr_status: None,
             has_conflicts: false,
             status_symbols: String::new(),
+            user_status: None,
             display: DisplayFields::default(),
             working_diff_display: None,
         };
@@ -908,6 +910,7 @@ mod tests {
             pr_status: None,
             has_conflicts: false,
             status_symbols: String::new(),
+            user_status: None,
             display: DisplayFields::default(),
             working_diff_display: None,
         };

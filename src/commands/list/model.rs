@@ -43,6 +43,9 @@ pub struct WorktreeInfo {
     pub has_conflicts: bool,
     /// Git status symbols (=, ↑, ↓, ⇡, ⇣, ?, !, +, », ✘) indicating working tree state
     pub status_symbols: String,
+    /// User-defined status from worktrunk.status git config
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_status: Option<String>,
 
     // Display fields for json-pretty format (with ANSI colors)
     #[serde(flatten)]
@@ -173,6 +176,7 @@ impl UpstreamStatus {
 /// Unified type for displaying worktrees and branches in the same table
 #[derive(serde::Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)]
 pub enum ListItem {
     Worktree(WorktreeInfo),
     Branch(BranchInfo),
@@ -308,6 +312,14 @@ impl BranchInfo {
             display: DisplayFields::default(),
         })
     }
+}
+
+/// Read user-defined status from worktrunk.status git config
+fn read_user_status(repo: &Repository) -> Option<String> {
+    repo.run_command(&["config", "--worktree", "--get", "worktrunk.status"])
+        .ok()
+        .map(|output| output.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Git status information parsed from `git status --porcelain`
@@ -519,6 +531,9 @@ impl WorktreeInfo {
             false
         };
 
+        // Read user-defined status from git config
+        let user_status = read_user_status(&wt_repo);
+
         Ok(WorktreeInfo {
             worktree: wt.clone(),
             commit,
@@ -532,9 +547,26 @@ impl WorktreeInfo {
             pr_status,
             has_conflicts,
             status_symbols: status_info.symbols,
+            user_status,
             display: DisplayFields::default(),
             working_diff_display: None,
         })
+    }
+
+    /// Combine git status symbols and user-defined status
+    /// Returns the combined string with a space separator if both are present
+    pub fn combined_status(&self) -> String {
+        if !self.status_symbols.is_empty() {
+            if let Some(ref user_status) = self.user_status {
+                format!("{} {}", self.status_symbols, user_status)
+            } else {
+                self.status_symbols.clone()
+            }
+        } else if let Some(ref user_status) = self.user_status {
+            user_status.clone()
+        } else {
+            String::new()
+        }
     }
 }
 
