@@ -51,6 +51,7 @@ pub fn handle_dev_run_hook(hook_type: HookType, force: bool) -> Result<(), GitEr
                 &config,
                 force,
                 target_branch.as_deref(),
+                false, // auto_trust: standalone command, needs approval
             )
         }
         HookType::PreMerge => {
@@ -137,6 +138,7 @@ pub fn handle_dev_commit(force: bool, no_verify: bool) -> Result<(), GitError> {
             &config,
             force,
             None,
+            false, // auto_trust: standalone command, needs approval
         )?;
     }
 
@@ -148,11 +150,16 @@ pub fn handle_dev_commit(force: bool, no_verify: bool) -> Result<(), GitError> {
 }
 
 /// Handle `wt dev squash` command
+///
+/// # Arguments
+/// * `auto_trust` - If true, skip approval prompts for pre-commit commands (already approved in batch)
+///
 /// Returns true if a commit or squash operation occurred, false if nothing needed to be done
 pub fn handle_dev_squash(
     target: Option<&str>,
     force: bool,
     no_verify: bool,
+    auto_trust: bool,
 ) -> Result<bool, GitError> {
     let repo = Repository::current();
     let config = WorktrunkConfig::load().git_context("Failed to load config")?;
@@ -175,6 +182,7 @@ pub fn handle_dev_squash(
             &config,
             force,
             Some(&target_branch),
+            auto_trust,
         )?;
     }
 

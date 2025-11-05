@@ -591,7 +591,7 @@ fn main() {
                 target,
                 force,
                 no_verify,
-            } => handle_dev_squash(target.as_deref(), force, no_verify).map(|_| ()),
+            } => handle_dev_squash(target.as_deref(), force, no_verify, false).map(|_| ()),
             DevCommand::Push {
                 target,
                 allow_merge_commits,

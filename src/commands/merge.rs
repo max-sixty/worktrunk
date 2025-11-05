@@ -16,7 +16,6 @@ struct MergeCommandCollector<'a> {
     repo: &'a Repository,
     no_commit: bool,
     no_verify: bool,
-    squash_enabled: bool,
 }
 
 /// Commands collected for batch approval with their project identifier
@@ -40,10 +39,11 @@ impl<'a> MergeCommandCollector<'a> {
         // Collect original commands (not expanded) for approval
         // Expansion happens later in prepare_project_commands during execution
 
-        // Collect pre-commit commands (if we'll commit without squashing)
+        // Collect pre-commit commands if we'll commit (direct or via squash) and not skipping verification
+        // These run before: (1) direct commit (line 179), or (2) squash commit (line 194 → handle_dev_squash)
         if !self.no_commit
             && self.repo.is_dirty()?
-            && !self.squash_enabled
+            && !self.no_verify
             && let Some(pre_commit_config) = &project_config.pre_commit_command
         {
             all_commands.extend(pre_commit_config.commands_with_phase(CommandPhase::PreCommit));
@@ -152,7 +152,6 @@ pub fn handle_merge(
         repo: &repo,
         no_commit,
         no_verify,
-        squash_enabled,
     }
     .collect()?;
 
@@ -449,6 +448,7 @@ fn handle_commit_changes(
             &config,
             force,
             target_branch,
+            true, // auto_trust: commands already approved in merge batch
         )?;
     }
 
@@ -472,7 +472,8 @@ fn handle_commit_changes(
 
 fn handle_squash(target_branch: &str, no_verify: bool, force: bool) -> Result<bool, GitError> {
     // Delegate to the atomic dev command
-    super::dev::handle_dev_squash(Some(target_branch), force, no_verify)
+    // auto_trust=true because commands already approved in merge batch
+    super::dev::handle_dev_squash(Some(target_branch), force, no_verify, true)
 }
 
 /// Run pre-merge commands sequentially (blocking, fail-fast)
@@ -501,7 +502,7 @@ pub fn run_pre_merge_commands(
     let commands = prepare_project_commands(
         pre_merge_config,
         &ctx,
-        false,
+        true, // auto_trust: commands already approved in batch
         &[("target", target_branch)],
         CommandPhase::PreMerge,
     )?;
@@ -564,7 +565,7 @@ pub fn execute_post_merge_commands(
     let commands = prepare_project_commands(
         post_merge_config,
         &ctx,
-        false,
+        true, // auto_trust: commands already approved in batch
         &[("target", target_branch)],
         CommandPhase::PostMerge,
     )?;
@@ -599,6 +600,7 @@ pub fn execute_post_merge_commands(
 }
 
 /// Run pre-commit commands sequentially (blocking, fail-fast)
+#[allow(clippy::too_many_arguments)]
 pub fn run_pre_commit_commands(
     project_config: &ProjectConfig,
     current_branch: &str,
@@ -607,6 +609,7 @@ pub fn run_pre_commit_commands(
     config: &WorktrunkConfig,
     force: bool,
     target_branch: Option<&str>,
+    auto_trust: bool,
 ) -> Result<(), GitError> {
     let Some(pre_commit_config) = &project_config.pre_commit_command else {
         return Ok(());
@@ -632,7 +635,7 @@ pub fn run_pre_commit_commands(
     let commands = prepare_project_commands(
         pre_commit_config,
         &ctx,
-        false,
+        auto_trust,
         &extra_vars,
         CommandPhase::PreCommit,
     )?;
