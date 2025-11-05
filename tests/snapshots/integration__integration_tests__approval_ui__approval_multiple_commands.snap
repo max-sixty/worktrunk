@@ -11,7 +11,7 @@ exit_code: 0
 
 ----- stderr -----
 
-🟡 [33m[1m[33mtest-repo[0m wants to execute [1m[33m4[0m commands:[0m
+🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m4[0m[33m commands:[0m
 
 🔄 post-create:
 [40m [0m  [1m[34mecho[0m [32m'Branch: test-nested-branch'[0m[0m
