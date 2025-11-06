@@ -4,6 +4,7 @@ use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, GREEN_BOLD, HINT, HINT_EMOJI};
 
 use super::command_approval::approve_command_batch;
+use super::command_executor::CommandContext;
 use super::commit::{CommitOptions, commit_changes, warn_untracked_auto_stage};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline};
@@ -129,9 +130,18 @@ pub fn handle_merge(
             false // Staged but didn't commit (will squash later)
         } else {
             // Commit immediately when not squashing
-            let mut options = CommitOptions::new(&repo, &config, &worktree_path, &current_branch);
+            let repo_root = repo.worktree_base()?;
+            let commit_ctx = CommandContext::new(
+                &repo,
+                &config,
+                &current_branch,
+                &worktree_path,
+                &repo_root,
+                force,
+            );
+            let mut options = CommitOptions::new(&commit_ctx);
             options.target_branch = Some(&target_branch);
-            options.force = force;
+            options.no_verify = no_verify;
             options.tracked_only = tracked_only;
             options.auto_trust = true; // commands already approved in merge batch
             options.warn_about_untracked = !tracked_only;

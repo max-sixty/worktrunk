@@ -1,21 +1,17 @@
-use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{CommandPhase, CommitGenerationConfig, ProjectConfig, WorktrunkConfig};
+use worktrunk::config::{CommandPhase, CommitGenerationConfig, ProjectConfig};
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{AnstyleStyle, CYAN, GREEN, HINT, WARNING, format_with_gutter};
 
+use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
 use super::project_config::load_project_config;
 
 /// Options for committing current changes.
 pub struct CommitOptions<'a> {
-    pub repo: &'a Repository,
-    pub config: &'a WorktrunkConfig,
-    pub worktree_path: &'a Path,
-    pub current_branch: &'a str,
+    pub ctx: &'a CommandContext<'a>,
     pub target_branch: Option<&'a str>,
     pub no_verify: bool,
-    pub force: bool,
     pub tracked_only: bool,
     pub auto_trust: bool,
     pub warn_about_untracked: bool,
@@ -24,20 +20,11 @@ pub struct CommitOptions<'a> {
 
 impl<'a> CommitOptions<'a> {
     /// Convenience constructor for the common case where untracked files should trigger a warning.
-    pub fn new(
-        repo: &'a Repository,
-        config: &'a WorktrunkConfig,
-        worktree_path: &'a Path,
-        current_branch: &'a str,
-    ) -> Self {
+    pub fn new(ctx: &'a CommandContext<'a>) -> Self {
         Self {
-            repo,
-            config,
-            worktree_path,
-            current_branch,
+            ctx,
             target_branch: None,
             no_verify: false,
-            force: false,
             tracked_only: false,
             auto_trust: false,
             warn_about_untracked: true,
@@ -162,51 +149,44 @@ pub fn commit_staged_changes(
 /// Commit uncommitted changes with the shared commit pipeline.
 pub fn commit_changes(options: CommitOptions<'_>) -> Result<(), GitError> {
     if !options.no_verify
-        && let Some(project_config) = load_project_config(options.repo)?
+        && let Some(project_config) = load_project_config(options.ctx.repo)?
     {
         run_pre_commit_commands(
             &project_config,
-            options.current_branch,
-            options.worktree_path,
-            options.repo,
-            options.config,
-            options.force,
+            options.ctx,
             options.target_branch,
             options.auto_trust,
         )?;
     }
 
     if options.warn_about_untracked && !options.tracked_only {
-        warn_untracked_auto_stage(options.repo)?;
+        warn_untracked_auto_stage(options.ctx.repo)?;
     }
 
     if options.tracked_only {
         options
+            .ctx
             .repo
             .run_command(&["add", "-u"])
             .git_context("Failed to stage tracked changes")?;
     } else {
         options
+            .ctx
             .repo
             .run_command(&["add", "-A"])
             .git_context("Failed to stage changes")?;
     }
 
     commit_staged_changes(
-        &options.config.commit_generation,
+        &options.ctx.config.commit_generation,
         options.show_no_squash_note,
     )
 }
 
 /// Run pre-commit commands sequentially (blocking, fail-fast).
-#[allow(clippy::too_many_arguments)]
 pub fn run_pre_commit_commands(
     project_config: &ProjectConfig,
-    current_branch: &str,
-    worktree_path: &Path,
-    repo: &Repository,
-    config: &WorktrunkConfig,
-    force: bool,
+    ctx: &CommandContext,
     target_branch: Option<&str>,
     auto_trust: bool,
 ) -> Result<(), GitError> {
@@ -214,14 +194,13 @@ pub fn run_pre_commit_commands(
         return Ok(());
     };
 
-    let repo_root = repo.worktree_base()?;
     let pipeline = HookPipeline::new(
-        repo,
-        config,
-        current_branch,
-        worktree_path,
-        &repo_root,
-        force,
+        ctx.repo,
+        ctx.config,
+        ctx.branch,
+        ctx.worktree_path,
+        ctx.repo_root,
+        ctx.force,
     );
 
     let extra_vars: Vec<(&str, &str)> = target_branch

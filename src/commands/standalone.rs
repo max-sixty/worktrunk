@@ -4,6 +4,7 @@ use worktrunk::styling::{
     AnstyleStyle, CYAN, CYAN_BOLD, GREEN_BOLD, HINT, HINT_EMOJI, eprintln, format_with_gutter,
 };
 
+use super::command_executor::CommandContext;
 use super::commit::{
     CommitOptions, commit_changes, commit_staged_changes, format_commit_message_for_display,
     run_pre_commit_commands, show_llm_config_hint_if_needed,
@@ -43,13 +44,12 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> Result<()
             check_hook_configured(&project_config.pre_commit_command, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             let target_branch = repo.default_branch().ok();
+            let repo_root = repo.worktree_base()?;
+            let ctx =
+                CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, force);
             run_pre_commit_commands(
                 &project_config,
-                &branch,
-                &worktree_path,
-                &repo,
-                &config,
-                force,
+                &ctx,
                 target_branch.as_deref(),
                 false, // auto_trust: standalone command, needs approval
             )
@@ -103,9 +103,17 @@ pub fn handle_standalone_commit(force: bool, no_verify: bool) -> Result<(), GitE
         worktree_path,
     } = CommandEnv::current()?;
 
-    let mut options = CommitOptions::new(&repo, &config, &worktree_path, &current_branch);
+    let repo_root = repo.worktree_base()?;
+    let commit_ctx = CommandContext::new(
+        &repo,
+        &config,
+        &current_branch,
+        &worktree_path,
+        &repo_root,
+        force,
+    );
+    let mut options = CommitOptions::new(&commit_ctx);
     options.no_verify = no_verify;
-    options.force = force;
     options.auto_trust = false;
     options.show_no_squash_note = false;
 
@@ -136,16 +144,16 @@ pub fn handle_standalone_squash(
 
     // Run pre-commit hook unless explicitly skipped
     if !skip_pre_commit && let Some(project_config) = load_project_config(&repo)? {
-        run_pre_commit_commands(
-            &project_config,
-            &current_branch,
-            &worktree_path,
+        let repo_root = repo.worktree_base()?;
+        let ctx = CommandContext::new(
             &repo,
             &config,
+            &current_branch,
+            &worktree_path,
+            &repo_root,
             force,
-            Some(&target_branch),
-            auto_trust,
-        )?;
+        );
+        run_pre_commit_commands(&project_config, &ctx, Some(&target_branch), auto_trust)?;
     }
 
     // Get merge base with target branch
