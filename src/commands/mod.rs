@@ -8,6 +8,7 @@ pub mod init;
 pub mod list;
 pub mod merge;
 pub mod process;
+#[cfg(unix)]
 pub mod select;
 pub mod worktree;
 
@@ -23,6 +24,7 @@ pub use configure_shell::{ConfigAction, handle_configure_shell};
 pub use init::handle_init;
 pub use list::handle_list;
 pub use merge::handle_merge;
+#[cfg(unix)]
 pub use select::handle_select;
 pub use worktree::{handle_remove, handle_switch};
 
