@@ -18,8 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 /// Strip ANSI escape codes from a string
 fn strip_ansi_codes(s: &str) -> String {
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
-    re.replace_all(s, "").to_string()
+    strip_ansi_escapes::strip_str(s)
 }
 
 /// Represents the start position of each column in a table row

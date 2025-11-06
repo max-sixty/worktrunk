@@ -11,46 +11,9 @@ use super::highlighting::bash_token_style;
 /// Default terminal width fallback if detection fails
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
-/// Strip ANSI escape codes from a string to get the visual content
-///
-/// Handles standard ANSI SGR (Select Graphic Rendition) codes: ESC[...m
-///
-/// # Scope
-/// - Designed for git output (log, diff) which produces well-formed SGR sequences
-/// - Only handles ESC[...m (SGR), not cursor movement or other ANSI codes
-/// - Malformed sequences (ESC without [, or ESC[ without m) are preserved in output
+/// Strip ANSI escape codes from a string using strip-ansi-escapes
 fn strip_ansi_codes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            // Start of ANSI escape sequence
-            chars.next(); // consume '['
-
-            // Skip until 'm' (SGR terminator) or end of string
-            // Note: If sequence is incomplete (no 'm'), we'll consume rest of iterator
-            // and result will be missing that content. This is acceptable for git output
-            // which always produces well-formed sequences.
-            let mut found_terminator = false;
-            for next_ch in chars.by_ref() {
-                if next_ch == 'm' {
-                    found_terminator = true;
-                    break;
-                }
-            }
-
-            // If sequence was incomplete, we've consumed the rest of the string
-            // This is a reasonable failure mode for malformed input
-            if !found_terminator {
-                break;
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
+    strip_ansi_escapes::strip_str(s)
 }
 
 /// Calculate visual width of a string, ignoring ANSI escape codes
