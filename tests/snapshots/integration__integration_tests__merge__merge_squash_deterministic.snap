@@ -12,11 +12,10 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp0ndIjW/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpdTaIlL/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -39,7 +38,7 @@ exit_code: 0
 [40m [0m   file3.txt | 1 [32m+[m
 [40m [0m   3 files changed, 3 insertions(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 3 files, [32m+3[0m)
-✅ [32mReturned to primary at [1m[32m[REPO][0m[0m
 🔄 [36mRemoving worktree & branch...[0m
+✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, returned to primary at [1m[32m[REPO][0m[0m
 
 ----- stderr -----

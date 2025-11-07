@@ -121,7 +121,11 @@ pub fn execute_user_command(command: &str) -> Result<(), GitError> {
 }
 
 /// Handle output for a remove operation
-pub fn handle_remove_output(result: &RemoveResult, branch: Option<&str>) -> Result<(), GitError> {
+pub fn handle_remove_output(
+    result: &RemoveResult,
+    branch: Option<&str>,
+    strict_branch_deletion: bool,
+) -> Result<(), GitError> {
     // Track whether branch was actually deleted (will be computed based on deletion attempt)
     let branch_deleted = if let RemoveResult::RemovedWorktree {
         primary_path,
@@ -155,9 +159,13 @@ pub fn handle_remove_output(result: &RemoveResult, branch: Option<&str>) -> Resu
             match primary_repo.run_command(&["branch", "-d", branch_name]) {
                 Ok(_) => true,
                 Err(e) => {
-                    // If branch deletion fails, show a warning but don't error
-                    // This matches the user's request: "print a nice message, don't raise some big error"
-                    use worktrunk::git::GitError;
+                    if strict_branch_deletion {
+                        return Err(GitError::CommandFailed(format!(
+                            "Failed to delete branch '{branch_name}': {e}"
+                        )));
+                    }
+
+                    // If branch deletion fails in non-strict mode, show a warning but don't error
                     use worktrunk::styling::{WARNING, WARNING_BOLD, format_with_gutter};
 
                     // Show the warning message with branch name

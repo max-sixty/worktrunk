@@ -245,7 +245,7 @@ fn main() {
             if worktrees.is_empty() {
                 // No worktrees specified, remove current worktree
                 handle_remove(None, no_delete_branch)
-                    .and_then(|result| handle_remove_output(&result, None))
+                    .and_then(|result| handle_remove_output(&result, None, false))
             } else {
                 // When removing multiple worktrees, we need to handle the current worktree last
                 // to avoid deleting the directory we're currently in
@@ -278,13 +278,13 @@ fn main() {
                     // Progress messages shown by handle_remove_output for all cases
                     for worktree in others.iter() {
                         let result = handle_remove(Some(worktree.as_str()), no_delete_branch)?;
-                        handle_remove_output(&result, Some(worktree.as_str()))?;
+                        handle_remove_output(&result, Some(worktree.as_str()), false)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some(current_name) = current {
                         let result = handle_remove(Some(current_name.as_str()), no_delete_branch)?;
-                        handle_remove_output(&result, Some(current_name.as_str()))?;
+                        handle_remove_output(&result, Some(current_name.as_str()), false)?;
                     }
 
                     Ok(())

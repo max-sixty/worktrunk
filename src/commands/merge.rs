@@ -9,7 +9,7 @@ use super::commit::{CommitOptions, commit_changes};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline};
 use super::project_config::{collect_commands_for_hooks, load_project_config};
-use super::worktree::handle_push;
+use super::worktree::{RemoveResult, handle_push};
 
 /// Context for collecting merge commands
 struct MergeCommandCollector<'a> {
@@ -192,18 +192,7 @@ pub fn handle_merge(
         // This prevents showing "Cleaning up worktree..." before failing
         repo.ensure_clean_working_tree()?;
 
-        // STEP 2: Emit CD directive and flush - shell executes cd immediately
-        crate::output::change_directory(&primary_worktree_dir)?;
-        crate::output::flush()?;
-
-        // Show success message now that user has been cd'd to primary
-        use worktrunk::styling::GREEN;
-        crate::output::success(format!(
-            "{GREEN}Returned to primary at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
-            primary_worktree_dir.display()
-        ))?;
-
-        // STEP 3: Switch to target branch in primary worktree (fails safely if there's an issue)
+        // STEP 2: Switch to target branch in primary worktree (fails safely if there's an issue)
         let primary_repo = Repository::at(&primary_worktree_dir);
         let new_branch = primary_repo.current_branch()?;
         if new_branch.as_deref() != Some(&target_branch) {
@@ -215,18 +204,17 @@ pub fn handle_merge(
                 .git_context(&format!("Failed to switch to '{}'", target_branch))?;
         }
 
-        // STEP 4: Remove worktree and delete branch
+        // STEP 3: Remove worktree via shared remove output handler so final message matches wt remove
         crate::output::progress(format!("{CYAN}Removing worktree & branch...{CYAN:#}"))?;
         let worktree_root = repo.worktree_root()?;
-        repo.remove_worktree(&worktree_root)
-            .git_context("Failed to remove worktree")?;
-        // Use -d (safe delete) instead of -D to protect against race conditions:
-        // If someone commits to the branch between our push and this deletion,
-        // -d will refuse to delete, preventing data loss.
-        // See test: test_merge_race_condition_commit_after_push
-        primary_repo
-            .run_command(&["branch", "-d", &current_branch])
-            .git_context(&format!("Failed to delete branch '{}'", current_branch))?;
+        let remove_result = RemoveResult::RemovedWorktree {
+            primary_path: primary_worktree_dir.clone(),
+            worktree_path: worktree_root,
+            changed_directory: true,
+            branch_name: current_branch.clone(),
+            no_delete_branch: false,
+        };
+        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true)?;
     } else {
         // Print comprehensive summary (worktree preserved)
         handle_merge_summary_output(None)?;
