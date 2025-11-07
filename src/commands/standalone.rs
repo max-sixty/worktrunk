@@ -117,7 +117,7 @@ pub fn handle_standalone_commit(force: bool, no_verify: bool) -> Result<(), GitE
     commit_changes(options)
 }
 
-/// Handle `wt beta squash` command
+/// Handle shared squash workflow (used by `wt beta squash` and `wt merge`)
 ///
 /// # Arguments
 /// * `auto_trust` - If true, skip approval prompts for pre-commit commands (already approved in batch)
@@ -125,7 +125,7 @@ pub fn handle_standalone_commit(force: bool, no_verify: bool) -> Result<(), GitE
 /// * `warn_about_untracked` - Emit a warning before auto-staging untracked files
 ///
 /// Returns true if a commit or squash operation occurred, false if nothing needed to be done
-pub fn handle_standalone_squash(
+pub fn handle_squash(
     target: Option<&str>,
     force: bool,
     skip_pre_commit: bool,
@@ -283,17 +283,9 @@ pub fn handle_standalone_squash(
     Ok(true)
 }
 
-/// Handle `wt beta push` command
-pub fn handle_standalone_push(
-    target: Option<&str>,
-    allow_merge_commits: bool,
-) -> Result<(), GitError> {
-    super::worktree::handle_push(target, allow_merge_commits, "Pushed to", None, None, None)
-}
-
-/// Handle `wt beta rebase` command
+/// Handle shared rebase workflow (used by `wt beta rebase` and `wt merge`)
 /// Returns true if rebasing occurred, false if already up-to-date
-pub fn handle_standalone_rebase(target: Option<&str>) -> Result<bool, GitError> {
+pub fn handle_rebase(target: Option<&str>) -> Result<bool, GitError> {
     let repo = Repository::current();
 
     // Get target branch (default to default branch if not provided)

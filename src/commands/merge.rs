@@ -144,14 +144,21 @@ pub fn handle_merge(
 
     // Squash commits if enabled - track whether squashing occurred
     let squashed = if squash_enabled {
-        handle_squash(&target_branch, force, no_verify, tracked_only)?
+        super::standalone::handle_squash(
+            Some(&target_branch),
+            force,
+            no_verify,
+            true,
+            tracked_only,
+            !tracked_only,
+        )?
     } else {
         false
     };
 
     // Rebase onto target (skip if --no-commit) - track whether rebasing occurred
     let rebased = if !no_commit {
-        super::standalone::handle_standalone_rebase(Some(&target_branch))?
+        super::standalone::handle_rebase(Some(&target_branch))?
     } else {
         false
     };
@@ -275,24 +282,6 @@ fn handle_merge_summary_output(primary_path: Option<&std::path::Path>) -> Result
 
     Ok(())
 }
-
-fn handle_squash(
-    target_branch: &str,
-    force: bool,
-    skip_pre_commit: bool,
-    tracked_only: bool,
-) -> Result<bool, GitError> {
-    // Delegate to the shared standalone implementation (auto_trust=true: commands approved in batch)
-    super::standalone::handle_standalone_squash(
-        Some(target_branch),
-        force,
-        skip_pre_commit,
-        true,
-        tracked_only,
-        !tracked_only,
-    )
-}
-
 /// Run pre-merge commands sequentially (blocking, fail-fast)
 pub fn run_pre_merge_commands(
     project_config: &ProjectConfig,

@@ -16,13 +16,12 @@ pub use crate::cli::OutputFormat;
 use commands::command_executor::CommandContext;
 #[cfg(unix)]
 use commands::handle_select;
-use commands::worktree::SwitchResult;
+use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     ConfigAction, handle_complete, handle_config_help, handle_config_init, handle_config_list,
     handle_config_refresh_cache, handle_configure_shell, handle_init, handle_list, handle_merge,
-    handle_remove, handle_standalone_ask_approvals, handle_standalone_commit,
-    handle_standalone_push, handle_standalone_rebase, handle_standalone_run_hook,
-    handle_standalone_squash, handle_switch,
+    handle_rebase, handle_remove, handle_squash, handle_standalone_ask_approvals,
+    handle_standalone_commit, handle_standalone_run_hook, handle_switch,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -168,15 +167,19 @@ fn main() {
                 target,
                 force,
                 no_verify,
-            } => handle_standalone_squash(target.as_deref(), force, no_verify, false, false, true)
-                .map(|_| ()),
+            } => handle_squash(target.as_deref(), force, no_verify, false, false, true).map(|_| ()),
             StandaloneCommand::Push {
                 target,
                 allow_merge_commits,
-            } => handle_standalone_push(target.as_deref(), allow_merge_commits),
-            StandaloneCommand::Rebase { target } => {
-                handle_standalone_rebase(target.as_deref()).map(|_| ())
-            }
+            } => handle_push(
+                target.as_deref(),
+                allow_merge_commits,
+                "Pushed to",
+                None,
+                None,
+                None,
+            ),
+            StandaloneCommand::Rebase { target } => handle_rebase(target.as_deref()).map(|_| ()),
             StandaloneCommand::AskApprovals { force, all } => {
                 handle_standalone_ask_approvals(force, all)
             }
