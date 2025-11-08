@@ -10,8 +10,28 @@
 // This approach uses stable APIs and handles edge cases that clap's completion system
 // isn't designed for. See the extensive test suite in tests/integration_tests/completion.rs
 
+use clap::{Arg, Command, CommandFactory};
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{ERROR, ERROR_EMOJI, println};
+
+/// Completion item with optional help text for fish shell descriptions
+#[derive(Debug)]
+struct Item {
+    name: String,
+    help: Option<String>,
+}
+
+/// Print completion items in fish-friendly format (name\thelp)
+/// Other shells ignore the tab separator and just use the name
+fn print_items(items: impl IntoIterator<Item = Item>) {
+    for Item { name, help } in items {
+        if let Some(help) = help {
+            println!("{name}\t{help}");
+        } else {
+            println!("{name}");
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 enum CompletionContext {
@@ -20,7 +40,6 @@ enum CompletionContext {
     MergeTarget,
     RemoveBranch,
     BaseFlag,
-    DevRunHook,
     Unknown,
 }
 
@@ -102,15 +121,6 @@ fn parse_completion_context(args: &[String]) -> CompletionContext {
         }
     }
 
-    // Handle beta subcommand
-    if subcommand == "beta" && args.len() > subcommand_index + 1 {
-        let beta_subcommand = &args[subcommand_index + 1];
-        if beta_subcommand == "run-hook" {
-            // Complete hook types for the positional argument
-            return CompletionContext::DevRunHook;
-        }
-    }
-
     // Special handling for switch --create: don't complete new branch names
     if subcommand == "switch" {
         let has_create = args.iter().any(|arg| arg == "--create" || arg == "-c");
@@ -147,6 +157,88 @@ where
     })
 }
 
+/// Extract possible values from a clap Arg (handles ValueEnum and explicit PossibleValue lists)
+fn items_from_arg(arg: &Arg, prefix: &str) -> Vec<Item> {
+    // Read clap's declared possible values (ValueEnum or explicit PossibleValue list)
+    let possible_values = arg.get_possible_values();
+
+    if possible_values.is_empty() {
+        return Vec::new();
+    }
+
+    possible_values
+        .into_iter()
+        .filter(|pv| !pv.is_hide_set())
+        .map(|pv| {
+            let name = pv.get_name().to_string();
+            let help = pv.get_help().map(|s| s.to_string());
+            (name, help)
+        })
+        // Do a cheap prefix filter; shells will filter too, but this helps bash/zsh
+        .filter(|(name, _)| name.starts_with(prefix))
+        .map(|(name, help)| Item { name, help })
+        .collect()
+}
+
+/// Generic fallback that reflects on clap's Command tree to find possible values
+/// This automatically handles all ValueEnum types without manual registration
+fn clap_fallback(args: &[String]) -> Vec<Item> {
+    // args look like: ["wt", "<subcmds...>", "<partial or prev>", [partial]?]
+    let mut cmd = crate::cli::Cli::command();
+    cmd.build(); // Required for introspection (completions/help)
+
+    // Find the active subcommand frame by walking the command tree
+    let mut i = 1; // Skip binary name
+    let mut cur: &Command = &cmd;
+    while i < args.len() {
+        let tok = &args[i];
+        if let Some(sc) = cur.find_subcommand(tok) {
+            cur = sc;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+
+    // Use the last two args to determine what we're completing
+    // This works for both positionals and flag values
+    let last = args.last().map(String::as_str).unwrap_or("");
+    let prev = args.iter().rev().nth(1).map(|s| s.as_str());
+
+    // 1) If we are completing a value for an option (prev was a flag), use that option's possible values
+    if let Some(p) = prev {
+        // Long form: --name
+        if let Some(long) = p.strip_prefix("--")
+            && let Some(arg) = cur
+                .get_opts()
+                .find(|a| a.get_long().is_some_and(|l| l == long))
+        {
+            return items_from_arg(arg, last);
+        }
+        // Short form: -n
+        if let Some(short) = p
+            .strip_prefix('-')
+            .filter(|s| s.len() == 1)
+            .and_then(|s| s.chars().next())
+            && let Some(arg) = cur.get_opts().find(|a| a.get_short() == Some(short))
+        {
+            return items_from_arg(arg, last);
+        }
+    }
+
+    // 2) Otherwise, we're likely on a positional; try the "next" positional that has fixed values
+    // Heuristic: first positional with possible_values
+    if let Some(arg) = cur
+        .get_positionals()
+        .find(|a| !a.get_possible_values().is_empty())
+    {
+        return items_from_arg(arg, last);
+    }
+
+    // 3) Nothing to contribute
+    Vec::new()
+}
+
 pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
     let context = parse_completion_context(&args);
 
@@ -156,22 +248,21 @@ pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
         | CompletionContext::MergeTarget
         | CompletionContext::RemoveBranch
         | CompletionContext::BaseFlag => {
-            // Complete with all branches
+            // Complete with all branches (runtime-fetched values)
             let branches = get_branches_for_completion(|| Repository::current().all_branches());
             for branch in branches {
                 println!("{}", branch);
             }
         }
-        CompletionContext::DevRunHook => {
-            // Complete with hook types
-            println!("post-create");
-            println!("post-start");
-            println!("pre-commit");
-            println!("pre-merge");
-            println!("post-merge");
-        }
         CompletionContext::Unknown => {
-            // No completions
+            // Use clap's reflection to find possible values for ValueEnum types
+            // This automatically handles init <Shell>, config shell --shell <Shell>,
+            // and any future ValueEnum arguments without manual registration
+            let items = clap_fallback(&args);
+            if !items.is_empty() {
+                print_items(items);
+            }
+            // else: intentionally print nothing
         }
     }
 
@@ -353,26 +444,22 @@ mod tests {
     #[test]
     fn test_parse_completion_context_dev_run_hook() {
         // "wt beta run-hook <cursor>"
+        // Now handled by clap fallback via Unknown context
         let args = vec!["wt".to_string(), "beta".to_string(), "run-hook".to_string()];
-        assert_eq!(
-            parse_completion_context(&args),
-            CompletionContext::DevRunHook
-        );
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
     }
 
     #[test]
     fn test_parse_completion_context_dev_run_hook_partial() {
         // "wt beta run-hook po<cursor>"
+        // Now handled by clap fallback via Unknown context
         let args = vec![
             "wt".to_string(),
             "beta".to_string(),
             "run-hook".to_string(),
             "po".to_string(),
         ];
-        assert_eq!(
-            parse_completion_context(&args),
-            CompletionContext::DevRunHook
-        );
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
     }
 
     #[test]
@@ -398,6 +485,7 @@ mod tests {
 
     #[test]
     fn test_parse_completion_context_beta_run_hook_with_source() {
+        // Now handled by clap fallback via Unknown context
         let args = vec![
             "wt".to_string(),
             "--source".to_string(),
@@ -405,10 +493,7 @@ mod tests {
             "run-hook".to_string(),
             "po".to_string(),
         ];
-        assert_eq!(
-            parse_completion_context(&args),
-            CompletionContext::DevRunHook
-        );
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
     }
 
     #[test]
@@ -439,5 +524,47 @@ mod tests {
         // Empty string doesn't start with '-', so it's treated as the subcommand position
         let args = vec!["wt".to_string(), "--source".to_string(), "".to_string()];
         assert_eq!(find_subcommand_index(&args), Some(2));
+    }
+
+    #[test]
+    fn test_parse_completion_context_init() {
+        // "wt init <cursor>"
+        // Now handled by clap fallback via Unknown context
+        let args = vec!["wt".to_string(), "init".to_string()];
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
+    }
+
+    #[test]
+    fn test_parse_completion_context_init_partial() {
+        // "wt init fi<cursor>"
+        // Now handled by clap fallback via Unknown context
+        let args = vec!["wt".to_string(), "init".to_string(), "fi".to_string()];
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
+    }
+
+    #[test]
+    fn test_parse_completion_context_init_with_source() {
+        // "wt --source init fi<cursor>"
+        // Now handled by clap fallback via Unknown context
+        let args = vec![
+            "wt".to_string(),
+            "--source".to_string(),
+            "init".to_string(),
+            "fi".to_string(),
+        ];
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
+    }
+
+    #[test]
+    fn test_parse_completion_context_init_with_verbose() {
+        // "wt -v init ba<cursor>"
+        // Now handled by clap fallback via Unknown context
+        let args = vec![
+            "wt".to_string(),
+            "-v".to_string(),
+            "init".to_string(),
+            "ba".to_string(),
+        ];
+        assert_eq!(parse_completion_context(&args), CompletionContext::Unknown);
     }
 }

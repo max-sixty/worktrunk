@@ -750,8 +750,112 @@ fn test_complete_dev_run_hook_with_partial_input() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let hooks: Vec<&str> = stdout.lines().collect();
 
-    // Should still show all hook types (filtering happens in the shell)
+    // With clap fallback, we filter by prefix
     assert!(hooks.contains(&"post-create"));
     assert!(hooks.contains(&"post-start"));
     assert!(hooks.contains(&"post-merge"));
+    // Should NOT contain hooks that don't match the prefix
+    assert!(!hooks.contains(&"pre-commit"));
+    assert!(!hooks.contains(&"pre-merge"));
+}
+
+#[test]
+fn test_complete_init_shows_shells() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion for init command with no input
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "init", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells: Vec<&str> = stdout.lines().collect();
+
+    // Should show all shell types
+    assert!(shells.contains(&"bash"));
+    assert!(shells.contains(&"fish"));
+    assert!(shells.contains(&"zsh"));
+    assert!(shells.contains(&"elvish"));
+    assert!(shells.contains(&"nushell"));
+    assert!(shells.contains(&"oil"));
+    assert!(shells.contains(&"powershell"));
+    assert!(shells.contains(&"xonsh"));
+}
+
+#[test]
+fn test_complete_init_partial() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion with partial input "fi"
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "init", "fi"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells: Vec<&str> = stdout.lines().collect();
+
+    // With clap fallback, we filter by prefix
+    assert!(shells.contains(&"fish"));
+    // Should NOT contain shells that don't match the prefix
+    assert!(!shells.contains(&"bash"));
+    assert!(!shells.contains(&"zsh"));
+}
+
+#[test]
+fn test_complete_config_shell_flag() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion for config shell --shell flag
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "config", "shell", "--shell", "z"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells: Vec<&str> = stdout.lines().collect();
+
+    // Should filter by prefix
+    assert!(shells.contains(&"zsh"));
+    assert!(!shells.contains(&"bash"));
+    assert!(!shells.contains(&"fish"));
+}
+
+#[test]
+fn test_complete_list_format_flag() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion for list --format flag
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "list", "--format", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Each line is "name\tdescription" (fish format)
+    // Just check that both format names appear
+    assert!(stdout.contains("table"));
+    assert!(stdout.contains("json"));
 }
