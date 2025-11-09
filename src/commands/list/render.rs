@@ -55,11 +55,13 @@ fn format_plain_diff_from_config(
     }
 }
 
-/// Format diff-style values as plain text with ANSI colors (for json-pretty)
-pub fn format_diff_plain(kind: ColumnKind, positive: usize, negative: usize) -> Option<String> {
-    let config = kind.diff_display_config()?;
+impl ColumnKind {
+    /// Format diff-style values as plain text with ANSI colors (for json-pretty).
+    pub(crate) fn format_diff_plain(self, positive: usize, negative: usize) -> Option<String> {
+        let config = self.diff_display_config()?;
 
-    format_plain_diff_from_config(positive, negative, config)
+        format_plain_diff_from_config(positive, negative, config)
+    }
 }
 
 impl PrStatus {

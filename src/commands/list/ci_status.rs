@@ -178,7 +178,7 @@ impl PrStatus {
         let ci_status = if pr_info.merge_state_status.as_deref() == Some("DIRTY") {
             CiStatus::Conflicts
         } else {
-            Self::analyze_github_checks(&pr_info.status_check_rollup)
+            pr_info.ci_status()
         };
 
         let is_stale = pr_info
@@ -191,38 +191,6 @@ impl PrStatus {
             ci_status,
             is_stale,
         })
-    }
-
-    fn analyze_github_checks(checks: &Option<Vec<GitHubCheck>>) -> CiStatus {
-        let Some(checks) = checks else {
-            return CiStatus::NoCI;
-        };
-
-        if checks.is_empty() {
-            return CiStatus::NoCI;
-        }
-
-        let has_pending = checks.iter().any(|c| {
-            matches!(
-                c.status.as_deref(),
-                Some("IN_PROGRESS" | "QUEUED" | "PENDING" | "EXPECTED")
-            )
-        });
-
-        let has_failure = checks.iter().any(|c| {
-            matches!(
-                c.conclusion.as_deref(),
-                Some("FAILURE" | "ERROR" | "CANCELLED")
-            )
-        });
-
-        if has_pending {
-            CiStatus::Running
-        } else if has_failure {
-            CiStatus::Failed
-        } else {
-            CiStatus::Passed
-        }
     }
 
     fn detect_gitlab(branch: &str, local_head: &str) -> Option<Self> {
@@ -263,7 +231,7 @@ impl PrStatus {
         } else if mr_info.detailed_merge_status.as_deref() == Some("ci_must_pass") {
             CiStatus::Failed
         } else {
-            Self::analyze_gitlab_pipeline(mr_info.pipeline_status())
+            mr_info.ci_status()
         };
 
         let is_stale = mr_info.sha != local_head;
@@ -272,23 +240,6 @@ impl PrStatus {
             ci_status,
             is_stale,
         })
-    }
-
-    fn analyze_gitlab_pipeline(pipeline_status: Option<&String>) -> CiStatus {
-        match pipeline_status.map(|s| s.as_str()) {
-            Some(
-                "running"
-                | "pending"
-                | "preparing"
-                | "waiting_for_resource"
-                | "created"
-                | "scheduled",
-            ) => CiStatus::Running,
-            Some("failed" | "canceled") => CiStatus::Failed,
-            Some("success") => CiStatus::Passed,
-            Some("skipped" | "manual") | None => CiStatus::NoCI,
-            _ => CiStatus::NoCI,
-        }
     }
 
     fn detect_github_workflow(
@@ -346,26 +297,13 @@ impl PrStatus {
         let run = runs.first()?;
 
         // Analyze workflow run status
-        let ci_status = Self::analyze_github_workflow_run(run);
+        let ci_status = run.ci_status();
 
         // Workflow runs don't have staleness concept (no PR to compare against)
         Some(PrStatus {
             ci_status,
             is_stale: false,
         })
-    }
-
-    fn analyze_github_workflow_run(run: &GitHubWorkflowRun) -> CiStatus {
-        match run.status.as_deref() {
-            Some("in_progress" | "queued" | "pending" | "waiting") => CiStatus::Running,
-            Some("completed") => match run.conclusion.as_deref() {
-                Some("success") => CiStatus::Passed,
-                Some("failure" | "cancelled" | "timed_out" | "action_required") => CiStatus::Failed,
-                Some("skipped" | "neutral") | None => CiStatus::NoCI,
-                _ => CiStatus::NoCI,
-            },
-            _ => CiStatus::NoCI,
-        }
     }
 
     fn detect_gitlab_pipeline(branch: &str, _local_head: &str) -> Option<Self> {
@@ -397,9 +335,11 @@ impl PrStatus {
         // Extract status from format like "• (running) #12345"
         let status_start = first_line.find('(')?;
         let status_end = first_line.find(')')?;
-        let status = &first_line[status_start + 1..status_end];
-
-        let ci_status = Self::analyze_gitlab_pipeline(Some(&status.to_string()));
+        let status = first_line[status_start + 1..status_end].to_string();
+        let ci_status = GitLabPipeline {
+            status: Some(status),
+        }
+        .ci_status();
 
         Some(PrStatus {
             ci_status,
@@ -431,6 +371,55 @@ struct GitHubWorkflowRun {
     conclusion: Option<String>,
 }
 
+impl GitHubPrInfo {
+    fn ci_status(&self) -> CiStatus {
+        let Some(checks) = &self.status_check_rollup else {
+            return CiStatus::NoCI;
+        };
+
+        if checks.is_empty() {
+            return CiStatus::NoCI;
+        }
+
+        let has_pending = checks.iter().any(|c| {
+            matches!(
+                c.status.as_deref(),
+                Some("IN_PROGRESS" | "QUEUED" | "PENDING" | "EXPECTED")
+            )
+        });
+
+        let has_failure = checks.iter().any(|c| {
+            matches!(
+                c.conclusion.as_deref(),
+                Some("FAILURE" | "ERROR" | "CANCELLED")
+            )
+        });
+
+        if has_pending {
+            CiStatus::Running
+        } else if has_failure {
+            CiStatus::Failed
+        } else {
+            CiStatus::Passed
+        }
+    }
+}
+
+impl GitHubWorkflowRun {
+    fn ci_status(&self) -> CiStatus {
+        match self.status.as_deref() {
+            Some("in_progress" | "queued" | "pending" | "waiting") => CiStatus::Running,
+            Some("completed") => match self.conclusion.as_deref() {
+                Some("success") => CiStatus::Passed,
+                Some("failure" | "cancelled" | "timed_out" | "action_required") => CiStatus::Failed,
+                Some("skipped" | "neutral") | None => CiStatus::NoCI,
+                _ => CiStatus::NoCI,
+            },
+            _ => CiStatus::NoCI,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct GitLabMrInfo {
     state: String,
@@ -442,15 +431,35 @@ struct GitLabMrInfo {
 }
 
 impl GitLabMrInfo {
-    fn pipeline_status(&self) -> Option<&String> {
+    fn ci_status(&self) -> CiStatus {
         self.head_pipeline
             .as_ref()
             .or(self.pipeline.as_ref())
-            .and_then(|p| p.status.as_ref())
+            .map(GitLabPipeline::ci_status)
+            .unwrap_or(CiStatus::NoCI)
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct GitLabPipeline {
     status: Option<String>,
+}
+
+impl GitLabPipeline {
+    fn ci_status(&self) -> CiStatus {
+        match self.status.as_deref() {
+            Some(
+                "running"
+                | "pending"
+                | "preparing"
+                | "waiting_for_resource"
+                | "created"
+                | "scheduled",
+            ) => CiStatus::Running,
+            Some("failed" | "canceled" | "manual") => CiStatus::Failed,
+            Some("success") => CiStatus::Passed,
+            Some("skipped") | None => CiStatus::NoCI,
+            _ => CiStatus::NoCI,
+        }
+    }
 }

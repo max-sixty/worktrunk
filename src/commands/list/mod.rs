@@ -13,7 +13,6 @@ use super::repository_ext::RepositoryCliExt;
 use columns::ColumnKind;
 use layout::calculate_responsive_layout;
 use model::{ListData, ListItem};
-use render::format_diff_plain;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{INFO_EMOJI, println};
 
@@ -24,15 +23,15 @@ fn enrich_common_fields(
     upstream: &model::UpstreamStatus,
     pr_status: &Option<ci_status::PrStatus>,
 ) -> model::DisplayFields {
-    let commits_display = format_diff_plain(ColumnKind::AheadBehind, counts.ahead, counts.behind);
+    let commits_display = ColumnKind::AheadBehind.format_diff_plain(counts.ahead, counts.behind);
 
     let (added, deleted) = branch_diff.diff;
-    let branch_diff_display = format_diff_plain(ColumnKind::BranchDiff, added, deleted);
+    let branch_diff_display = ColumnKind::BranchDiff.format_diff_plain(added, deleted);
 
     let upstream_display = upstream
         .active()
         .and_then(|(_, upstream_ahead, upstream_behind)| {
-            format_diff_plain(ColumnKind::Upstream, upstream_ahead, upstream_behind)
+            ColumnKind::Upstream.format_diff_plain(upstream_ahead, upstream_behind)
         });
 
     let ci_status_display = pr_status.as_ref().map(ci_status::PrStatus::format_plain);
@@ -44,39 +43,6 @@ fn enrich_common_fields(
         ci_status_display,
         status_display: None, // Status display is populated in WorktreeInfo/BranchInfo constructors
     }
-}
-
-/// Enrich a ListItem with display fields for json-pretty format
-fn enrich_with_display_fields(mut item: ListItem) -> ListItem {
-    match &mut item {
-        ListItem::Worktree(info) => {
-            let mut display = enrich_common_fields(
-                &info.counts,
-                &info.branch_diff,
-                &info.upstream,
-                &info.pr_status,
-            );
-            // Preserve status_display that was set in constructor
-            display.status_display = info.display.status_display.clone();
-            info.display = display;
-
-            // Working tree specific field
-            let (added, deleted) = info.working_tree_diff;
-            info.working_diff_display = format_diff_plain(ColumnKind::WorkingDiff, added, deleted);
-        }
-        ListItem::Branch(info) => {
-            let mut display = enrich_common_fields(
-                &info.counts,
-                &info.branch_diff,
-                &info.upstream,
-                &info.pr_status,
-            );
-            // Preserve status_display that was set in constructor
-            display.status_display = info.display.status_display.clone();
-            info.display = display;
-        }
-    }
-    item
 }
 
 pub fn handle_list(
@@ -95,8 +61,10 @@ pub fn handle_list(
 
     match format {
         crate::OutputFormat::Json => {
-            let enriched_items: Vec<_> =
-                items.into_iter().map(enrich_with_display_fields).collect();
+            let enriched_items: Vec<_> = items
+                .into_iter()
+                .map(ListItem::with_display_fields)
+                .collect();
 
             let json = serde_json::to_string_pretty(&enriched_items).map_err(|e| {
                 GitError::CommandFailed(format!("Failed to serialize to JSON: {}", e))
@@ -196,5 +164,41 @@ impl SummaryMetrics {
         if counts.ahead > 0 {
             self.ahead_items += 1;
         }
+    }
+}
+
+impl ListItem {
+    /// Enrich a ListItem with display fields for json-pretty format.
+    fn with_display_fields(mut self) -> Self {
+        match &mut self {
+            ListItem::Worktree(info) => {
+                let mut display = enrich_common_fields(
+                    &info.counts,
+                    &info.branch_diff,
+                    &info.upstream,
+                    &info.pr_status,
+                );
+                // Preserve status_display that was set in constructor
+                display.status_display = info.display.status_display.clone();
+                info.display = display;
+
+                // Working tree specific field
+                let (added, deleted) = info.working_tree_diff;
+                info.working_diff_display =
+                    ColumnKind::WorkingDiff.format_diff_plain(added, deleted);
+            }
+            ListItem::Branch(info) => {
+                let mut display = enrich_common_fields(
+                    &info.counts,
+                    &info.branch_diff,
+                    &info.upstream,
+                    &info.pr_status,
+                );
+                // Preserve status_display that was set in constructor
+                display.status_display = info.display.status_display.clone();
+                info.display = display;
+            }
+        }
+        self
     }
 }
