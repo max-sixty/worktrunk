@@ -9,14 +9,14 @@ mod spacing_test;
 #[cfg(test)]
 mod status_column_tests;
 
+use columns::ColumnKind;
 use layout::calculate_responsive_layout;
 use model::{ListData, ListItem, gather_list_data};
 use render::{
-    format_ahead_behind_plain, format_ci_status_plain, format_diff_plain, format_header_line,
-    format_list_item_line,
+    format_ci_status_plain, format_diff_plain, format_header_line, format_list_item_line,
 };
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{ADDITION, DELETION, INFO_EMOJI, println};
+use worktrunk::styling::{INFO_EMOJI, println};
 
 /// Helper to enrich common display fields shared between worktrees and branches
 fn enrich_common_fields(
@@ -25,27 +25,15 @@ fn enrich_common_fields(
     upstream: &model::UpstreamStatus,
     pr_status: &Option<ci_status::PrStatus>,
 ) -> model::DisplayFields {
-    let commits_display = format_ahead_behind_plain(counts.ahead, counts.behind);
+    let commits_display = format_diff_plain(ColumnKind::AheadBehind, counts.ahead, counts.behind);
 
     let (added, deleted) = branch_diff.diff;
-    let branch_diff_display = format_diff_plain(added, deleted);
+    let branch_diff_display = format_diff_plain(ColumnKind::BranchDiff, added, deleted);
 
     let upstream_display = upstream
         .active()
-        .map(|(_, upstream_ahead, upstream_behind)| {
-            // Always show arrows for upstream (even ↑0 ↓0) to distinguish from no remote
-            format_ahead_behind_plain(upstream_ahead, upstream_behind).unwrap_or_else(|| {
-                let dim_deletion = DELETION.dimmed();
-                format!(
-                    "{}↑{}{} {}↓{}{}",
-                    ADDITION,
-                    0,
-                    ADDITION.render_reset(),
-                    dim_deletion,
-                    0,
-                    dim_deletion.render_reset()
-                )
-            })
+        .and_then(|(_, upstream_ahead, upstream_behind)| {
+            format_diff_plain(ColumnKind::Upstream, upstream_ahead, upstream_behind)
         });
 
     let ci_status_display = pr_status.as_ref().map(format_ci_status_plain);
@@ -75,7 +63,7 @@ fn enrich_with_display_fields(mut item: ListItem) -> ListItem {
 
             // Working tree specific field
             let (added, deleted) = info.working_tree_diff;
-            info.working_diff_display = format_diff_plain(added, deleted);
+            info.working_diff_display = format_diff_plain(ColumnKind::WorkingDiff, added, deleted);
         }
         ListItem::Branch(info) => {
             let mut display = enrich_common_fields(

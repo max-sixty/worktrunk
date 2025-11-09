@@ -1,60 +1,65 @@
 use crate::display::{format_relative_time, shorten_path, truncate_at_word_boundary};
 use anstyle::{AnsiColor, Color, Style};
 use std::path::Path;
-use worktrunk::styling::{ADDITION, CURRENT, DELETION, StyledLine, println};
+use worktrunk::styling::{CURRENT, StyledLine, println};
 
 use super::ci_status::{CiStatus, PrStatus};
 use super::columns::{ColumnKind, DiffVariant};
-use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
+use super::layout::{
+    ColumnFormat, ColumnLayout, DiffColumnConfig, DiffDisplayConfig, LayoutConfig,
+};
 use super::model::{
     AheadBehind, CommitDetails, ListItem, PositionMask, UpstreamStatus, WorktreeInfo,
 };
 
-/// Format ahead/behind counts as plain text with ANSI colors (for json-pretty)
-pub fn format_ahead_behind_plain(ahead: usize, behind: usize) -> Option<String> {
-    match (ahead, behind) {
-        (0, 0) => None,
-        (a, 0) => Some(format!("{}↑{}{}", ADDITION, a, ADDITION.render_reset())),
-        (0, b) => {
-            let dim_deletion = DELETION.dimmed();
-            Some(format!(
-                "{}↓{}{}",
-                dim_deletion,
-                b,
-                dim_deletion.render_reset()
-            ))
-        }
-        (a, b) => {
-            let dim_deletion = DELETION.dimmed();
-            Some(format!(
-                "{}↑{}{} {}↓{}{}",
-                ADDITION,
-                a,
-                ADDITION.render_reset(),
-                dim_deletion,
-                b,
-                dim_deletion.render_reset()
-            ))
-        }
+fn format_plain_diff_from_config(
+    positive: usize,
+    negative: usize,
+    config: DiffDisplayConfig,
+) -> Option<String> {
+    if !config.always_show_zeros && positive == 0 && negative == 0 {
+        return None;
+    }
+
+    let (positive_symbol, negative_symbol) = match config.variant {
+        DiffVariant::Signs => ("+", "-"),
+        DiffVariant::Arrows => ("↑", "↓"),
+    };
+
+    let mut parts = Vec::with_capacity(2);
+
+    if positive > 0 || config.always_show_zeros {
+        parts.push(format!(
+            "{}{}{}{}",
+            config.positive_style,
+            positive_symbol,
+            positive,
+            config.positive_style.render_reset()
+        ));
+    }
+
+    if negative > 0 || config.always_show_zeros {
+        parts.push(format!(
+            "{}{}{}{}",
+            config.negative_style,
+            negative_symbol,
+            negative,
+            config.negative_style.render_reset()
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
     }
 }
 
-/// Format diff values as plain text with ANSI colors (for json-pretty)
-pub fn format_diff_plain(added: usize, deleted: usize) -> Option<String> {
-    match (added, deleted) {
-        (0, 0) => None,
-        (a, 0) => Some(format!("{}+{}{}", ADDITION, a, ADDITION.render_reset())),
-        (0, d) => Some(format!("{}-{}{}", DELETION, d, DELETION.render_reset())),
-        (a, d) => Some(format!(
-            "{}+{}{} {}-{}{}",
-            ADDITION,
-            a,
-            ADDITION.render_reset(),
-            DELETION,
-            d,
-            DELETION.render_reset()
-        )),
-    }
+/// Format diff-style values as plain text with ANSI colors (for json-pretty)
+pub fn format_diff_plain(kind: ColumnKind, positive: usize, negative: usize) -> Option<String> {
+    let config = kind.diff_display_config()?;
+
+    format_plain_diff_from_config(positive, negative, config)
 }
 
 /// Determine the style for a CI status (color + optional dimming)
@@ -122,10 +127,10 @@ fn format_diff_like_column(
     negative: usize,
     config: DiffColumnConfig,
 ) -> StyledLine {
-    let render_config = diff_render_config(config.variant);
+    let render_config = diff_render_config(config.display.variant);
     let mut segment = StyledLine::new();
 
-    if positive == 0 && negative == 0 && !config.always_show_zeros {
+    if positive == 0 && negative == 0 && !config.display.always_show_zeros {
         segment.push_raw(" ".repeat(config.total_width));
         return segment;
     }
@@ -139,26 +144,26 @@ fn format_diff_like_column(
         segment.push_raw(" ".repeat(extra_padding));
     }
 
-    if positive > 0 || (positive == 0 && config.always_show_zeros) {
+    if positive > 0 || (positive == 0 && config.display.always_show_zeros) {
         let value = format!("{}{}", render_config.positive_symbol, positive);
         let formatted = match render_config.align {
             ValueAlign::Right => format!("{:>width$}", value, width = positive_width),
             ValueAlign::Left => format!("{:<width$}", value, width = positive_width),
         };
-        segment.push_styled(formatted, config.positive_style);
+        segment.push_styled(formatted, config.display.positive_style);
     } else {
         segment.push_raw(" ".repeat(positive_width));
     }
 
     segment.push_raw(" ");
 
-    if negative > 0 || (negative == 0 && config.always_show_zeros) {
+    if negative > 0 || (negative == 0 && config.display.always_show_zeros) {
         let value = format!("{}{}", render_config.negative_symbol, negative);
         let formatted = match render_config.align {
             ValueAlign::Right => format!("{:>width$}", value, width = negative_width),
             ValueAlign::Left => format!("{:<width$}", value, width = negative_width),
         };
-        segment.push_styled(formatted, config.negative_style);
+        segment.push_styled(formatted, config.display.negative_style);
     } else {
         segment.push_raw(" ".repeat(negative_width));
     }
@@ -468,8 +473,8 @@ pub fn format_list_item_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::list::layout::DiffDigits;
-    use worktrunk::styling::StyledLine;
+    use crate::commands::list::layout::{DiffDigits, DiffDisplayConfig};
+    use worktrunk::styling::{ADDITION, DELETION, StyledLine};
 
     #[test]
     fn test_format_diff_column_pads_to_total_width() {
@@ -487,10 +492,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Signs,
-                positive_style: ADDITION,
-                negative_style: DELETION,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Signs,
+                    positive_style: ADDITION,
+                    negative_style: DELETION,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(
@@ -511,10 +518,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Signs,
-                positive_style: ADDITION,
-                negative_style: DELETION,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Signs,
+                    positive_style: ADDITION,
+                    negative_style: DELETION,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(
@@ -535,10 +544,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Signs,
-                positive_style: ADDITION,
-                negative_style: DELETION,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Signs,
+                    positive_style: ADDITION,
+                    negative_style: DELETION,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(
@@ -559,10 +570,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Signs,
-                positive_style: ADDITION,
-                negative_style: DELETION,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Signs,
+                    positive_style: ADDITION,
+                    negative_style: DELETION,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(result.width(), total, "Empty diff should be 6 spaces");
@@ -585,10 +598,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Signs,
-                positive_style: ADDITION,
-                negative_style: DELETION,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Signs,
+                    positive_style: ADDITION,
+                    negative_style: DELETION,
+                    always_show_zeros: false,
+                },
             },
         );
         let rendered = result.render();
@@ -731,10 +746,12 @@ mod tests {
                 DiffColumnConfig {
                     digits,
                     total_width: total,
-                    variant: DiffVariant::Arrows,
-                    positive_style: ADDITION,
-                    negative_style: dim_deletion,
-                    always_show_zeros: false,
+                    display: DiffDisplayConfig {
+                        variant: DiffVariant::Arrows,
+                        positive_style: ADDITION,
+                        negative_style: dim_deletion,
+                        always_show_zeros: false,
+                    },
                 },
             );
             assert_eq!(result.width(), total);
@@ -760,10 +777,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Arrows,
-                positive_style: ADDITION,
-                negative_style: dim_deletion,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: dim_deletion,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(empty.width(), total);
@@ -774,10 +793,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Arrows,
-                positive_style: ADDITION,
-                negative_style: dim_deletion,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: dim_deletion,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(behind_only.width(), total);
@@ -803,10 +824,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Arrows,
-                positive_style: ADDITION,
-                negative_style: dim_deletion,
-                always_show_zeros: false,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: dim_deletion,
+                    always_show_zeros: false,
+                },
             },
         );
         assert_eq!(without.width(), total);
@@ -822,10 +845,12 @@ mod tests {
             DiffColumnConfig {
                 digits,
                 total_width: total,
-                variant: DiffVariant::Arrows,
-                positive_style: ADDITION,
-                negative_style: dim_deletion,
-                always_show_zeros: true,
+                display: DiffDisplayConfig {
+                    variant: DiffVariant::Arrows,
+                    positive_style: ADDITION,
+                    negative_style: dim_deletion,
+                    always_show_zeros: true,
+                },
             },
         );
         assert_eq!(with.width(), total);
