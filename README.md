@@ -13,8 +13,7 @@ afterward is manual. Worktrunk automates that lifecycle.
 
 Automates the full lifecycle: create worktree, work, merge back, remove worktree.
 
-<!-- Output generated from: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap -->
-
+<!-- Output generated from: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap (snapshot output includes [SHA]/[REPO]; replace with representative values when copying into README) -->
 ```bash
 $ wt switch --create fix-auth
 # Shell now in ../repo.fix-auth/
@@ -23,14 +22,12 @@ $ wt switch --create fix-auth
 $ wt merge
 🔄 Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
 
-* a1b2c3d (HEAD -> fix-auth) Implement JWT validation
-
- auth.rs | 1 +
- 1 file changed, 1 insertion(+)
-
-✅ Merged to main (1 commit, 1 file, +1)
-✅ Returned to primary at ../repo/
+   * a1b2c3d (HEAD -> fix-auth) Implement JWT validation
+    auth.rs | 13 +++++++++++++
+    1 file changed, 13 insertions(+)
+✅ Merged to main (1 commit, 1 file, +13)
 🔄 Removing worktree & branch...
+✅ Removed worktree & branch for fix-auth, returned to primary at ../repo/
 # Shell back in main
 ```
 
@@ -333,31 +330,24 @@ Automate common tasks by creating `.config/wt.toml` in your repository root. Run
 
 **Example output with hooks:**
 
-<!-- Output generated from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap -->
+<!-- Output generated from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap (snapshot output includes [SHA]/[REPO]; replace with representative values when copying into README) -->
 
 ```bash
 $ wt merge
-🔄 Squashing 3 commits into 1 (3 files, +3)...
+🔄 Squashing 3 commits into 1 (3 files, +33)...
 🔄 Generating squash commit message...
-  feat(auth): Implement JWT authentication system
+   feat(auth): Implement JWT authentication system
 
-  Add comprehensive JWT token handling including validation, refresh logic,
-  and authentication tests. This establishes the foundation for secure
-  API authentication.
+   Add comprehensive JWT token handling including validation, refresh logic,
+   and authentication tests. This establishes the foundation for secure
+   API authentication.
 
-  - Implement token refresh mechanism with expiry handling
-  - Add JWT encoding/decoding with signature verification
-  - Create test suite covering all authentication flows
-
+   - Implement token refresh mechanism with expiry handling
+   - Add JWT encoding/decoding with signature verification
+   - Create test suite covering all authentication flows
 ✅ Squashed @ a1b2c3d
-🔄 Running pre-merge lint
-  cargo clippy
-
-    Checking worktrunk v0.1.0
-    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
-
-🔄 Running pre-merge test
-  cargo test
+🔄 Running pre-merge test:
+   cargo test
 
     Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
@@ -370,20 +360,26 @@ test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
 
-🔄 Merging 1 commit to main @ a1b2c3d (no rebasing needed)
+🔄 Running pre-merge lint:
+   cargo clippy
 
-* a1b2c3d (HEAD -> feature-auth) feat(auth): Implement JWT authentication system
+    Checking worktrunk v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
 
- auth.rs      | 1 +
- auth_test.rs | 1 +
- jwt.rs       | 1 +
- 3 files changed, 3 insertions(+)
+🔄 Merging 1 commit to main @ a1b2c3d (no rebase needed)
 
-✅ Merged to main (1 commit, 3 files, +3)
-✅ Returned to primary at ../repo/
+   * a1b2c3d (HEAD -> feature-auth) feat(auth): Implement JWT authentication system
+
+    auth.rs      |  8 ++++++++
+    auth_test.rs | 17 +++++++++++++++++
+    jwt.rs       |  8 ++++++++
+    3 files changed, 33 insertions(+)
+
+✅ Merged to main (1 commit, 3 files, +33)
 🔄 Removing worktree & branch...
-🔄 Running post-merge install
-  cargo install --path .
+✅ Removed worktree & branch for feature-auth, returned to primary at ../repo/
+🔄 Running post-merge install:
+   cargo install --path .
 
   Installing worktrunk v0.1.0
    Compiling worktrunk v0.1.0

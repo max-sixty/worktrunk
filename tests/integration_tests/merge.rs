@@ -1573,8 +1573,21 @@ fn test_readme_example_simple() {
 
     // Create a fix-auth worktree and make a commit
     let feature_wt = repo.add_worktree("fix-auth", "fix-auth");
-    std::fs::write(feature_wt.join("auth.rs"), "// JWT validation code")
-        .expect("Failed to write file");
+    let auth_rs = r#"// JWT validation utilities
+pub struct JwtClaims {
+    pub sub: String,
+    pub scope: String,
+}
+
+pub fn validate(token: &str) -> bool {
+    token.starts_with("Bearer ") && token.split('.').count() == 3
+}
+
+pub fn refresh(refresh_token: &str) -> String {
+    format!("{}::refreshed", refresh_token)
+}
+"#;
+    std::fs::write(feature_wt.join("auth.rs"), auth_rs).expect("Failed to write file");
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
@@ -1718,8 +1731,16 @@ EOF
     let feature_wt = repo.add_worktree("feature-auth", "feature-auth");
 
     // First commit: token refresh
-    std::fs::write(feature_wt.join("auth.rs"), "// Token refresh logic\n")
-        .expect("Failed to write file");
+    let commit_one = r#"// Token refresh logic
+pub fn refresh(secret: &str, expires_in: u32) -> String {
+    format!("{}::{}", secret, expires_in)
+}
+
+pub fn needs_rotation(issued_at: u64, ttl: u64, now: u64) -> bool {
+    now.saturating_sub(issued_at) > ttl
+}
+"#;
+    std::fs::write(feature_wt.join("auth.rs"), commit_one).expect("Failed to write file");
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "auth.rs"])
@@ -1734,7 +1755,16 @@ EOF
         .expect("Failed to commit");
 
     // Second commit: JWT validation
-    std::fs::write(feature_wt.join("jwt.rs"), "// JWT validation\n").expect("Failed to write file");
+    let commit_two = r#"// JWT validation
+pub fn validate_signature(payload: &str, signature: &str) -> bool {
+    !payload.is_empty() && signature.len() > 12
+}
+
+pub fn decode_claims(token: &str) -> Option<&str> {
+    token.split('.').nth(1)
+}
+"#;
+    std::fs::write(feature_wt.join("jwt.rs"), commit_two).expect("Failed to write file");
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "jwt.rs"])
@@ -1749,7 +1779,25 @@ EOF
         .expect("Failed to commit");
 
     // Third commit: tests
-    std::fs::write(feature_wt.join("auth_test.rs"), "// Tests\n").expect("Failed to write file");
+    let commit_three = r#"// Tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_rotates_secret() {
+        let token = refresh("token", 30);
+        assert!(token.contains("token::30"));
+    }
+
+    #[test]
+    fn decode_claims_returns_payload() {
+        let token = "header.payload.signature";
+        assert_eq!(decode_claims(token), Some("payload"));
+    }
+}
+"#;
+    std::fs::write(feature_wt.join("auth_test.rs"), commit_three).expect("Failed to write file");
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "auth_test.rs"])

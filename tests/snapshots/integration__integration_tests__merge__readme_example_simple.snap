@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/merge.rs
+assertion_line: 11
 info:
   program: wt
   args:
@@ -15,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpRLrXwu/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpl3Y22A/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -23,9 +24,9 @@ exit_code: 0
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
 
 [40m [0m  * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfix-auth[m[33m)[m Implement JWT validation
-[40m [0m   auth.rs | 1 [32m+[m
-[40m [0m   1 file changed, 1 insertion(+)
-✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
+[40m [0m   auth.rs | 13 [32m+++++++++++++[m
+[40m [0m   1 file changed, 13 insertions(+)
+✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+13[0m)
 🔄 [36mRemoving worktree & branch...[0m
 ✅ [32mRemoved worktree & branch for [1m[32mfix-auth[0m[32m, returned to primary at [1m[32m[REPO][0m[0m
 
