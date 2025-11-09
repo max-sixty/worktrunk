@@ -74,21 +74,26 @@ pub enum GitError {
     BranchDeletionFailed { branch: String, error: String },
 }
 
+impl GitError {
+    /// Create a formatted user-facing error message with emoji and styling.
+    ///
+    /// Use this for application errors (not raw git output).
+    /// For raw git stderr, use `CommandFailed` directly.
+    pub fn message(msg: impl Into<String>) -> Self {
+        use crate::styling::{ERROR, ERROR_EMOJI};
+        let msg = msg.into();
+        GitError::CommandFailed(format!("{ERROR_EMOJI} {ERROR}{msg}{ERROR:#}"))
+    }
+}
+
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use crate::styling::{ERROR, ERROR_BOLD, ERROR_EMOJI, HINT, HINT_EMOJI};
 
         match self {
-            // Generic error - format with emoji and styling
-            // Skip formatting if message already contains ANSI codes (from nested error formatting)
-            GitError::CommandFailed(msg) => {
-                if msg.contains("\x1b[") || msg.contains("[31m") || msg.contains("[0m") {
-                    // Already formatted, just pass through
-                    write!(f, "{}", msg)
-                } else {
-                    write!(f, "{ERROR_EMOJI} {ERROR}{msg}{ERROR:#}")
-                }
-            }
+            // Generic error - raw passthrough, no formatting
+            // Specific error variants should be used for git command failures that need formatting
+            GitError::CommandFailed(msg) => write!(f, "{}", msg),
 
             // ParseError messages need formatting
             GitError::ParseError(msg) => {
@@ -232,7 +237,8 @@ impl std::fmt::Display for GitError {
 
             // Push failed
             GitError::PushFailed { error } => {
-                write!(f, "{ERROR_EMOJI} {ERROR}Push failed: {error}{ERROR:#}")
+                let header = format!("{ERROR_EMOJI} {ERROR}Push failed{ERROR:#}");
+                write!(f, "{}", format_error_block(header, error))
             }
 
             // Rebase conflict

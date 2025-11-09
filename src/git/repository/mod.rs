@@ -39,11 +39,19 @@ pub trait GitResultExt<T> {
 
 impl<T, E: std::fmt::Display> GitResultExt<T> for Result<T, E> {
     fn git_context(self, context: &str) -> Result<T, GitError> {
-        self.map_err(|e| GitError::CommandFailed(format!("{}: {}", context, e)))
+        use crate::styling::{ERROR, ERROR_EMOJI, format_with_gutter};
+        self.map_err(|e| {
+            let error_str = e.to_string();
+            let header = format!("{ERROR_EMOJI} {ERROR}{context}{ERROR:#}");
+            // External errors always use gutter formatting (canonical path)
+            let formatted = format!("{}\n\n{}", header, format_with_gutter(&error_str, "", None));
+            GitError::CommandFailed(formatted)
+        })
     }
 
     fn git_err(self) -> Result<T, GitError> {
-        self.map_err(|e| GitError::CommandFailed(e.to_string()))
+        use crate::styling::{ERROR, ERROR_EMOJI};
+        self.map_err(|e| GitError::CommandFailed(format!("{ERROR_EMOJI} {ERROR}{e}{ERROR:#}")))
     }
 }
 
@@ -116,7 +124,7 @@ impl Repository {
         } else {
             git_common_dir
                 .parent()
-                .ok_or_else(|| GitError::CommandFailed("Invalid git directory".to_string()))?
+                .ok_or_else(|| GitError::message("Invalid git directory"))?
                 .to_path_buf()
         };
 
@@ -239,8 +247,8 @@ impl Repository {
                 let output = self
                     .run_command(&["rev-parse", "--abbrev-ref", "@{-1}"])
                     .map_err(|_| {
-                        GitError::CommandFailed(
-                            "No previous branch found in reflog. Use 'wt list' to see available worktrees.".to_string(),
+                        GitError::message(
+                            "No previous branch found in reflog. Use 'wt list' to see available worktrees."
                         )
                     })?;
                 Ok(output.trim().to_string())
@@ -673,7 +681,7 @@ impl Repository {
     pub fn remove_worktree(&self, path: &std::path::Path) -> Result<(), GitError> {
         let path_str = path
             .to_str()
-            .ok_or_else(|| GitError::CommandFailed("Invalid UTF-8 in worktree path".to_string()))?;
+            .ok_or_else(|| GitError::message("Invalid UTF-8 in worktree path"))?;
         self.run_command(&["worktree", "remove", path_str])?;
         Ok(())
     }
@@ -769,9 +777,7 @@ impl Repository {
         let repo_name = repo_root
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                GitError::CommandFailed("Could not determine repository name".to_string())
-            })?;
+            .ok_or_else(|| GitError::message("Could not determine repository name"))?;
 
         Ok(repo_name.to_string())
     }

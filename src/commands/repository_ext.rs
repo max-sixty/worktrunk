@@ -192,7 +192,7 @@ impl RepositoryCliExt for Repository {
             let worktree_root = self.worktree_root()?;
             let current_branch = self
                 .current_branch()?
-                .ok_or_else(|| GitError::CommandFailed("Not on a branch".to_string()))?;
+                .ok_or_else(|| GitError::message("Not on a branch"))?;
             let worktrees = self.list_worktrees()?;
             let primary_worktree_dir = worktrees.worktrees[0].path.clone();
 

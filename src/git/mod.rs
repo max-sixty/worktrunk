@@ -64,7 +64,7 @@ impl WorktreeList {
         let worktrees: Vec<_> = raw_worktrees.into_iter().filter(|wt| !wt.bare).collect();
 
         if worktrees.is_empty() {
-            return Err(GitError::CommandFailed("No worktrees found".to_string()));
+            return Err(GitError::message("No worktrees found"));
         }
 
         Ok(Self { worktrees })

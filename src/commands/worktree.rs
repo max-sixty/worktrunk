@@ -202,9 +202,9 @@ pub fn handle_switch(
 
     let repo_name = repo_root
         .file_name()
-        .ok_or_else(|| GitError::CommandFailed("Invalid repository path".to_string()))?
+        .ok_or_else(|| GitError::message("Invalid repository path"))?
         .to_str()
-        .ok_or_else(|| GitError::CommandFailed("Invalid UTF-8 in path".to_string()))?;
+        .ok_or_else(|| GitError::message("Invalid UTF-8 in path"))?;
 
     let worktree_path = repo_root.join(config.format_path(repo_name, &resolved_branch));
 
@@ -575,6 +575,7 @@ pub fn handle_push(
         if let Some(stash) = target_worktree_stash.take() {
             stash.restore()?;
         }
+        // CommandFailed contains raw git output, wrap in PushFailed for proper formatting
         return Err(GitError::PushFailed {
             error: e.to_string(),
         });
