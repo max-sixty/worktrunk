@@ -1,7 +1,5 @@
-use rayon::prelude::*;
 use std::path::PathBuf;
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{HINT, HINT_EMOJI, WARNING, WARNING_BOLD, WARNING_EMOJI, println};
 
 use super::ci_status::PrStatus;
 
@@ -267,7 +265,7 @@ impl ListItem {
 
 impl BranchInfo {
     /// Create BranchInfo from a branch name, enriching it with git metadata
-    fn from_branch(
+    pub(crate) fn from_branch(
         branch: &str,
         repo: &Repository,
         primary_branch: Option<&str>,
@@ -790,7 +788,7 @@ fn parse_git_status(
 
 impl WorktreeInfo {
     /// Create WorktreeInfo from a Worktree, enriching it with git metadata
-    fn from_worktree(
+    pub(crate) fn from_worktree(
         wt: &worktrunk::git::Worktree,
         primary: &worktrunk::git::Worktree,
         fetch_ci: bool,
@@ -954,108 +952,4 @@ impl WorktreeInfo {
             working_diff_display: None,
         })
     }
-}
-
-/// Gather list data (worktrees + optional branches).
-pub fn gather_list_data(
-    repo: &Repository,
-    show_branches: bool,
-    fetch_ci: bool,
-    check_conflicts: bool,
-) -> Result<Option<ListData>, GitError> {
-    let worktrees = repo.list_worktrees()?;
-
-    if worktrees.worktrees.is_empty() {
-        return Ok(None);
-    }
-
-    // Get primary worktree - clone it for use in closure
-    let primary = worktrees.worktrees[0].clone();
-
-    // Get current worktree to identify active one
-    let current_worktree_path = repo.worktree_root().ok();
-
-    // Gather enhanced information for all worktrees in parallel
-    let worktree_results: Vec<Result<WorktreeInfo, GitError>> = worktrees
-        .worktrees
-        .par_iter()
-        .map(|wt| WorktreeInfo::from_worktree(wt, &primary, fetch_ci, check_conflicts))
-        .collect();
-
-    // Build list of items to display (worktrees + optional branches)
-    let mut items: Vec<ListItem> = Vec::new();
-
-    // Process worktree results
-    for result in worktree_results {
-        match result {
-            Ok(info) => items.push(ListItem::Worktree(info)),
-            Err(e) => {
-                // Worktree enrichment failures are critical - propagate error
-                return Err(e);
-            }
-        }
-    }
-
-    // Process branches in parallel if requested
-    if show_branches {
-        let available_branches = repo.available_branches()?;
-        let primary_branch = primary.branch.as_deref();
-
-        let branch_results: Vec<(String, Result<BranchInfo, GitError>)> = available_branches
-            .par_iter()
-            .map(|branch| {
-                let result = BranchInfo::from_branch(
-                    branch,
-                    repo,
-                    primary_branch,
-                    fetch_ci,
-                    check_conflicts,
-                );
-                (branch.clone(), result)
-            })
-            .collect();
-
-        for (branch, result) in branch_results {
-            match result {
-                Ok(branch_info) => items.push(ListItem::Branch(branch_info)),
-                Err(e) => {
-                    println!(
-                        "{WARNING_EMOJI} {WARNING}Failed to enrich branch {WARNING_BOLD}{branch}{WARNING_BOLD:#}: {e}{WARNING:#}"
-                    );
-                    println!(
-                        "{HINT_EMOJI} {HINT}This branch will be shown with limited information{HINT:#}"
-                    );
-                }
-            }
-        }
-    }
-
-    // Sort by:
-    // 1. Main worktree (primary) always first
-    // 2. Current worktree second (if not main)
-    // 3. Remaining worktrees by age (most recent first)
-    items.sort_by_key(|item| {
-        let is_primary = item.is_primary();
-        let is_current = item
-            .worktree_path()
-            .and_then(|p| current_worktree_path.as_ref().map(|cp| p == cp))
-            .unwrap_or(false);
-
-        // Primary sort key: 0 = main, 1 = current (non-main), 2 = others
-        let priority = if is_primary {
-            0
-        } else if is_current {
-            1
-        } else {
-            2
-        };
-
-        // Secondary sort: timestamp (reversed for descending order)
-        (priority, std::cmp::Reverse(item.commit_timestamp()))
-    });
-
-    Ok(Some(ListData {
-        items,
-        current_worktree_path,
-    }))
 }

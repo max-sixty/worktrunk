@@ -6,7 +6,8 @@ use std::sync::Arc;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 
-use super::list::model::{ListItem, gather_list_data};
+use super::list::model::ListItem;
+use super::repository_ext::RepositoryCliExt;
 use super::worktree::handle_switch;
 use crate::output::handle_switch_output;
 
@@ -230,7 +231,7 @@ pub fn handle_select() -> Result<(), GitError> {
     let _state = PreviewState::new();
 
     // Gather list data using existing logic
-    let Some(list_data) = gather_list_data(&repo, false, false, false)? else {
+    let Some(list_data) = repo.gather_list_data(false, false, false)? else {
         return Ok(());
     };
 

@@ -9,9 +9,10 @@ mod spacing_test;
 #[cfg(test)]
 mod status_column_tests;
 
+use super::repository_ext::RepositoryCliExt;
 use columns::ColumnKind;
 use layout::calculate_responsive_layout;
-use model::{ListData, ListItem, gather_list_data};
+use model::{ListData, ListItem};
 use render::{
     format_ci_status_plain, format_diff_plain, format_header_line, format_list_item_line,
 };
@@ -89,7 +90,7 @@ pub fn handle_list(
     let Some(ListData {
         items,
         current_worktree_path,
-    }) = gather_list_data(&repo, show_branches, show_full, show_full)?
+    }) = repo.gather_list_data(show_branches, show_full, show_full)?
     else {
         return Ok(());
     };
