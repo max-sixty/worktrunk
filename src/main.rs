@@ -222,7 +222,7 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    if let Err(e) = commands::worktree::spawn_post_start_commands(&ctx) {
+                    if let Err(e) = ctx.spawn_post_start_commands() {
                         // Only treat CommandNotApproved as non-fatal (user declined)
                         // Other errors should still fail
                         if !matches!(e, GitError::CommandNotApproved) {

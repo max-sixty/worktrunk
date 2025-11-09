@@ -1,11 +1,11 @@
 use worktrunk::HookType;
 use worktrunk::config::{CommandPhase, CommitGenerationConfig, ProjectConfig};
 use worktrunk::git::{GitError, GitResultExt, Repository};
-use worktrunk::styling::{AnstyleStyle, CYAN, GREEN, HINT, WARNING, format_with_gutter};
+use worktrunk::styling::{AnstyleStyle, CYAN, GREEN, HINT, format_with_gutter};
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
-use super::project_config::ProjectConfigRepoExt;
+use super::repository_ext::RepositoryCliExt;
 
 /// Options for committing current changes.
 pub struct CommitOptions<'a> {
@@ -63,37 +63,6 @@ pub fn show_llm_config_hint_if_needed(
             "{HINT}Using fallback commit message. Run 'wt config help' to configure LLM-generated messages{HINT:#}"
         ))?;
     }
-    Ok(())
-}
-
-fn get_untracked_files(status_output: &str) -> Vec<String> {
-    status_output
-        .lines()
-        .filter_map(|line| line.strip_prefix("?? "))
-        .map(|filename| filename.to_string())
-        .collect()
-}
-
-/// Warn about untracked files being auto-staged.
-pub fn warn_untracked_auto_stage(repo: &Repository) -> Result<(), GitError> {
-    let status = repo
-        .run_command(&["status", "--porcelain"])
-        .git_context("Failed to get status")?;
-    let untracked = get_untracked_files(&status);
-
-    if untracked.is_empty() {
-        return Ok(());
-    }
-
-    let count = untracked.len();
-    let file_word = if count == 1 { "file" } else { "files" };
-    crate::output::warning(format!(
-        "{WARNING}Auto-staging {count} untracked {file_word}:{WARNING:#}"
-    ))?;
-
-    let joined_files = untracked.join("\n");
-    crate::output::gutter(format_with_gutter(&joined_files, "", None))?;
-
     Ok(())
 }
 
@@ -164,7 +133,7 @@ pub fn commit_changes(options: CommitOptions<'_>) -> Result<(), GitError> {
     }
 
     if options.warn_about_untracked && !options.tracked_only {
-        warn_untracked_auto_stage(options.ctx.repo)?;
+        options.ctx.repo.warn_if_auto_staging_untracked()?;
     }
 
     if options.tracked_only {

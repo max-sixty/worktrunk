@@ -11,6 +11,7 @@ pub mod list;
 pub mod merge;
 pub mod process;
 pub mod project_config;
+pub mod repository_ext;
 #[cfg(unix)]
 pub mod select;
 pub mod standalone;

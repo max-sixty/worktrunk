@@ -108,7 +108,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
-use super::project_config::ProjectConfigRepoExt;
+use super::repository_ext::RepositoryCliExt;
 
 /// Result of a worktree switch operation
 pub enum SwitchResult {
@@ -288,7 +288,7 @@ pub fn handle_switch(
             &repo_root,
             force,
         );
-        if let Err(e) = execute_post_create_commands(&ctx) {
+        if let Err(e) = ctx.execute_post_create_commands() {
             // Only treat CommandNotApproved as non-fatal (user declined)
             // Other errors should still fail
             if !matches!(e, GitError::CommandNotApproved) {
@@ -574,69 +574,71 @@ impl TargetWorktreeStash {
     }
 }
 
-/// Execute post-create commands sequentially (blocking)
-pub fn execute_post_create_commands(ctx: &CommandContext) -> Result<(), GitError> {
-    let project_config = match ctx.repo.load_project_config()? {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
+impl<'a> CommandContext<'a> {
+    /// Execute post-create commands sequentially (blocking)
+    pub fn execute_post_create_commands(&self) -> Result<(), GitError> {
+        let project_config = match self.repo.load_project_config()? {
+            Some(cfg) => cfg,
+            None => return Ok(()),
+        };
 
-    let Some(post_create_config) = &project_config.post_create_command else {
-        return Ok(());
-    };
+        let Some(post_create_config) = &project_config.post_create_command else {
+            return Ok(());
+        };
 
-    let pipeline = HookPipeline::new(*ctx);
-    pipeline.run_sequential(
-        post_create_config,
-        CommandPhase::PostCreate,
-        false,
-        &[],
-        "post-create",
-        HookFailureStrategy::Warn,
-    )
-}
+        let pipeline = HookPipeline::new(*self);
+        pipeline.run_sequential(
+            post_create_config,
+            CommandPhase::PostCreate,
+            false,
+            &[],
+            "post-create",
+            HookFailureStrategy::Warn,
+        )
+    }
 
-/// Spawn post-start commands in parallel as background processes (non-blocking)
-pub fn spawn_post_start_commands(ctx: &CommandContext) -> Result<(), GitError> {
-    let project_config = match ctx.repo.load_project_config()? {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
+    /// Spawn post-start commands in parallel as background processes (non-blocking)
+    pub fn spawn_post_start_commands(&self) -> Result<(), GitError> {
+        let project_config = match self.repo.load_project_config()? {
+            Some(cfg) => cfg,
+            None => return Ok(()),
+        };
 
-    let Some(post_start_config) = &project_config.post_start_command else {
-        return Ok(());
-    };
+        let Some(post_start_config) = &project_config.post_start_command else {
+            return Ok(());
+        };
 
-    let pipeline = HookPipeline::new(*ctx);
-    pipeline.spawn_detached(
-        post_start_config,
-        CommandPhase::PostStart,
-        false,
-        &[],
-        "post-start",
-    )
-}
+        let pipeline = HookPipeline::new(*self);
+        pipeline.spawn_detached(
+            post_start_config,
+            CommandPhase::PostStart,
+            false,
+            &[],
+            "post-start",
+        )
+    }
 
-/// Execute post-start commands sequentially (blocking) - for testing
-pub fn execute_post_start_commands_sequential(ctx: &CommandContext) -> Result<(), GitError> {
-    let project_config = match ctx.repo.load_project_config()? {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
+    /// Execute post-start commands sequentially (blocking) - for testing
+    pub fn execute_post_start_commands_sequential(&self) -> Result<(), GitError> {
+        let project_config = match self.repo.load_project_config()? {
+            Some(cfg) => cfg,
+            None => return Ok(()),
+        };
 
-    let Some(post_start_config) = &project_config.post_start_command else {
-        return Ok(());
-    };
+        let Some(post_start_config) = &project_config.post_start_command else {
+            return Ok(());
+        };
 
-    let pipeline = HookPipeline::new(*ctx);
-    pipeline.run_sequential(
-        post_start_config,
-        CommandPhase::PostStart,
-        false,
-        &[],
-        "post-start",
-        HookFailureStrategy::Warn,
-    )
+        let pipeline = HookPipeline::new(*self);
+        pipeline.run_sequential(
+            post_start_config,
+            CommandPhase::PostStart,
+            false,
+            &[],
+            "post-start",
+            HookFailureStrategy::Warn,
+        )
+    }
 }
 
 /// Push changes to target branch

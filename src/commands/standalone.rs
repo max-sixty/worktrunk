@@ -6,12 +6,12 @@ use worktrunk::styling::{
 
 use super::commit::{
     CommitOptions, commit_changes, commit_staged_changes, format_commit_message_for_display,
-    run_pre_commit_commands, show_llm_config_hint_if_needed, warn_untracked_auto_stage,
+    run_pre_commit_commands, show_llm_config_hint_if_needed,
 };
 use super::context::CommandEnv;
 use super::merge::{execute_post_merge_commands, run_pre_merge_commands};
-use super::project_config::{ProjectConfigRepoExt, collect_commands_for_hooks};
-use super::worktree::{execute_post_create_commands, execute_post_start_commands_sequential};
+use super::project_config::collect_commands_for_hooks;
+use super::repository_ext::RepositoryCliExt;
 
 /// Handle `wt beta run-hook` command
 pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> Result<(), GitError> {
@@ -30,11 +30,11 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> Result<()
     match hook_type {
         HookType::PostCreate => {
             check_hook_configured(&project_config.post_create_command, hook_type)?;
-            execute_post_create_commands(&ctx)
+            ctx.execute_post_create_commands()
         }
         HookType::PostStart => {
             check_hook_configured(&project_config.post_start_command, hook_type)?;
-            execute_post_start_commands_sequential(&ctx)
+            ctx.execute_post_start_commands_sequential()
         }
         HookType::PreCommit => {
             check_hook_configured(&project_config.pre_commit_command, hook_type)?;
@@ -110,7 +110,7 @@ pub fn handle_squash(
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     if warn_about_untracked && !tracked_only {
-        warn_untracked_auto_stage(repo)?;
+        repo.warn_if_auto_staging_untracked()?;
     }
 
     if tracked_only {

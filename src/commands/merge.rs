@@ -8,7 +8,8 @@ use super::command_executor::CommandContext;
 use super::commit::{CommitOptions, commit_changes};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline};
-use super::project_config::{ProjectConfigRepoExt, collect_commands_for_hooks};
+use super::project_config::collect_commands_for_hooks;
+use super::repository_ext::RepositoryCliExt;
 use super::worktree::{RemoveResult, handle_push};
 
 /// Context for collecting merge commands
