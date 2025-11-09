@@ -1,12 +1,15 @@
 use rayon::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::list::model::{BranchInfo, ListData, ListItem, WorktreeInfo};
+use super::worktree::RemoveResult;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{
-    ERROR, ERROR_EMOJI, HINT, HINT_BOLD, HINT_EMOJI, WARNING, WARNING_BOLD, WARNING_EMOJI,
-    format_with_gutter, println,
+    CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, HINT, HINT_BOLD, HINT_EMOJI, WARNING, WARNING_BOLD,
+    WARNING_EMOJI, format_with_gutter, println,
 };
 
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
@@ -28,6 +31,24 @@ pub trait RepositoryCliExt {
         fetch_ci: bool,
         check_conflicts: bool,
     ) -> Result<Option<ListData>, GitError>;
+
+    /// Remove the currently checked-out worktree or switch back to the default branch if invoked
+    /// from the primary repo root.
+    fn remove_current_worktree(&self, no_delete_branch: bool) -> Result<RemoveResult, GitError>;
+
+    /// Remove a worktree identified by branch name.
+    fn remove_worktree_by_name(
+        &self,
+        branch_name: &str,
+        no_delete_branch: bool,
+    ) -> Result<RemoveResult, GitError>;
+
+    /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
+    fn prepare_target_worktree(
+        &self,
+        target_worktree: Option<&PathBuf>,
+        target_branch: &str,
+    ) -> Result<Option<TargetWorktreeStash>, GitError>;
 }
 
 impl RepositoryCliExt for Repository {
@@ -163,6 +184,174 @@ impl RepositoryCliExt for Repository {
             current_worktree_path,
         }))
     }
+
+    fn remove_current_worktree(&self, no_delete_branch: bool) -> Result<RemoveResult, GitError> {
+        self.ensure_clean_working_tree()?;
+
+        if self.is_in_worktree()? {
+            let worktree_root = self.worktree_root()?;
+            let current_branch = self
+                .current_branch()?
+                .ok_or_else(|| GitError::CommandFailed("Not on a branch".to_string()))?;
+            let worktrees = self.list_worktrees()?;
+            let primary_worktree_dir = worktrees.worktrees[0].path.clone();
+
+            return Ok(RemoveResult::RemovedWorktree {
+                primary_path: primary_worktree_dir,
+                worktree_path: worktree_root,
+                changed_directory: true,
+                branch_name: current_branch,
+                no_delete_branch,
+            });
+        }
+
+        let current_branch = self.current_branch()?;
+        let default_branch = self.default_branch()?;
+
+        if current_branch.as_deref() == Some(&default_branch) {
+            return Ok(RemoveResult::AlreadyOnDefault(default_branch));
+        }
+
+        if let Err(err) = self.run_command(&["switch", &default_branch]) {
+            return Err(match err {
+                GitError::CommandFailed(msg) => GitError::SwitchFailed {
+                    branch: default_branch.clone(),
+                    error: msg,
+                },
+                other => other,
+            });
+        }
+
+        Ok(RemoveResult::SwitchedToDefault(default_branch))
+    }
+
+    fn remove_worktree_by_name(
+        &self,
+        branch_name: &str,
+        no_delete_branch: bool,
+    ) -> Result<RemoveResult, GitError> {
+        let worktree_path = match self.worktree_for_branch(branch_name)? {
+            Some(path) => path,
+            None => {
+                return Err(GitError::NoWorktreeFound {
+                    branch: branch_name.to_string(),
+                });
+            }
+        };
+
+        if !worktree_path.exists() {
+            return Err(GitError::WorktreeMissing {
+                branch: branch_name.to_string(),
+            });
+        }
+
+        let target_repo = Repository::at(&worktree_path);
+        target_repo.ensure_clean_working_tree()?;
+
+        let current_worktree = self.worktree_root()?;
+        let removing_current = current_worktree == worktree_path;
+
+        let (primary_path, changed_directory) = if removing_current {
+            let worktrees = self.list_worktrees()?;
+            (worktrees.worktrees[0].path.clone(), true)
+        } else {
+            (current_worktree, false)
+        };
+
+        Ok(RemoveResult::RemovedWorktree {
+            primary_path,
+            worktree_path,
+            changed_directory,
+            branch_name: branch_name.to_string(),
+            no_delete_branch,
+        })
+    }
+
+    fn prepare_target_worktree(
+        &self,
+        target_worktree: Option<&PathBuf>,
+        target_branch: &str,
+    ) -> Result<Option<TargetWorktreeStash>, GitError> {
+        let Some(wt_path) = target_worktree else {
+            return Ok(None);
+        };
+
+        let wt_repo = Repository::at(wt_path);
+        if !wt_repo.is_dirty()? {
+            return Ok(None);
+        }
+
+        let push_files = self.changed_files(target_branch, "HEAD")?;
+        let wt_status_output = wt_repo.run_command(&["status", "--porcelain"])?;
+
+        let wt_files: Vec<String> = wt_status_output
+            .lines()
+            .filter_map(|line| {
+                line.split_once(' ')
+                    .map(|(_, filename)| filename.trim().to_string())
+            })
+            .collect();
+
+        let overlapping: Vec<String> = push_files
+            .iter()
+            .filter(|f| wt_files.contains(f))
+            .cloned()
+            .collect();
+
+        if !overlapping.is_empty() {
+            return Err(GitError::ConflictingChanges {
+                files: overlapping,
+                worktree_path: wt_path.clone(),
+            });
+        }
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let stash_name = format!(
+            "worktrunk autostash::{}::{}::{}",
+            target_branch,
+            process::id(),
+            nanos
+        );
+
+        crate::output::progress(format!(
+            "{CYAN}Stashing changes in {CYAN_BOLD}{}{CYAN_BOLD:#}{CYAN}...{CYAN:#}",
+            wt_path.display()
+        ))?;
+
+        let stash_output =
+            wt_repo.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
+
+        if stash_output.contains("No local changes to save") {
+            return Ok(None);
+        }
+
+        let list_output = wt_repo.run_command(&["stash", "list", "--format=%gd%x00%gs%x00"])?;
+        let mut parts = list_output.split('\0');
+        let mut stash_ref = None;
+        while let Some(id) = parts.next() {
+            if id.is_empty() {
+                continue;
+            }
+            if let Some(message) = parts.next()
+                && (message == stash_name || message.ends_with(&stash_name))
+            {
+                stash_ref = Some(id.to_string());
+                break;
+            }
+        }
+
+        let Some(stash_ref) = stash_ref else {
+            return Err(GitError::CommandFailed(format!(
+                "Failed to locate autostash entry '{}'",
+                stash_name
+            )));
+        };
+
+        Ok(Some(TargetWorktreeStash::new(wt_path, stash_ref)))
+    }
 }
 
 fn load_project_config_at(repo_root: &Path) -> Result<Option<ProjectConfig>, GitError> {
@@ -175,4 +364,40 @@ fn get_untracked_files(status_output: &str) -> Vec<String> {
         .filter_map(|line| line.strip_prefix("?? "))
         .map(|filename| filename.to_string())
         .collect()
+}
+
+pub(crate) struct TargetWorktreeStash {
+    repo: Repository,
+    path: PathBuf,
+    stash_ref: String,
+}
+
+impl TargetWorktreeStash {
+    pub(crate) fn new(path: &Path, stash_ref: String) -> Self {
+        Self {
+            repo: Repository::at(path),
+            path: path.to_path_buf(),
+            stash_ref,
+        }
+    }
+
+    pub(crate) fn restore(self) -> Result<(), GitError> {
+        crate::output::progress(format!(
+            "{CYAN}Restoring stashed changes in {CYAN_BOLD}{}{CYAN_BOLD:#}{CYAN}...{CYAN:#}",
+            self.path.display()
+        ))?;
+
+        if let Err(_e) = self
+            .repo
+            .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
+        {
+            crate::output::warning(format!(
+                "{WARNING}Failed to restore stash {WARNING_BOLD}{stash_ref}{WARNING_BOLD:#}{WARNING} - run 'git stash pop {stash_ref}' in {WARNING_BOLD}{path}{WARNING_BOLD:#}{WARNING:#}",
+                stash_ref = self.stash_ref,
+                path = self.path.display(),
+            ))?;
+        }
+
+        Ok(())
+    }
 }
