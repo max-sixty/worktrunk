@@ -41,15 +41,14 @@ impl<'a> MergeCommandCollector<'a> {
         // These run before: (1) direct commit (line 179), or (2) squash commit (line 194 → handle_dev_squash)
         let mut hooks = Vec::new();
 
-        if !self.no_commit && self.repo.is_dirty()? {
+        if !self.no_commit && !self.no_verify && self.repo.is_dirty()? {
             hooks.push(HookType::PreCommit);
         }
 
         if !self.no_verify {
             hooks.push(HookType::PreMerge);
+            hooks.push(HookType::PostMerge);
         }
-
-        hooks.push(HookType::PostMerge);
 
         all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
 
@@ -208,20 +207,22 @@ pub fn handle_merge(
         handle_merge_summary_output(None)?;
     }
 
-    // Execute post-merge commands in the main worktree
-    // This runs after cleanup so the context is clear to the user
-    // Create a fresh Repository instance at the primary worktree (the old repo may be invalid)
-    let primary_repo = Repository::at(&primary_worktree_dir);
-    let primary_repo_root = primary_worktree_dir.clone();
-    let ctx = CommandContext::new(
-        &primary_repo,
-        config,
-        &current_branch,
-        &primary_worktree_dir,
-        &primary_repo_root,
-        force,
-    );
-    execute_post_merge_commands(&ctx, &target_branch)?;
+    if !no_verify {
+        // Execute post-merge commands in the main worktree
+        // This runs after cleanup so the context is clear to the user
+        // Create a fresh Repository instance at the primary worktree (the old repo may be invalid)
+        let primary_repo = Repository::at(&primary_worktree_dir);
+        let primary_repo_root = primary_worktree_dir.clone();
+        let ctx = CommandContext::new(
+            &primary_repo,
+            config,
+            &current_branch,
+            &primary_worktree_dir,
+            &primary_repo_root,
+            force,
+        );
+        execute_post_merge_commands(&ctx, &target_branch)?;
+    }
 
     Ok(())
 }

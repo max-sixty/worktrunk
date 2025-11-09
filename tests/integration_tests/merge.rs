@@ -1213,6 +1213,66 @@ fn test_merge_post_merge_command_success() {
 }
 
 #[test]
+fn test_merge_post_merge_command_skipped_with_no_verify() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create project config with post-merge command that writes a marker file
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"post-merge-command = "echo 'merged {branch} to {target}' > post-merge-ran.txt""#,
+    )
+    .expect("Failed to write config");
+
+    repo.commit("Add config");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add worktree");
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature", "feature");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Merge with --no-verify - hook should be skipped entirely
+    snapshot_merge(
+        "merge_post_merge_command_no_verify",
+        &repo,
+        &["main", "--force", "--no-verify"],
+        Some(&feature_wt),
+    );
+
+    // Verify the command did not run in the main worktree
+    let marker_file = repo.root_path().join("post-merge-ran.txt");
+    assert!(
+        !marker_file.exists(),
+        "Post-merge command should not run when --no-verify is set"
+    );
+}
+
+#[test]
 fn test_merge_post_merge_command_failure() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");

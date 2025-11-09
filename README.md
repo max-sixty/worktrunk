@@ -1,7 +1,6 @@
 # Worktrunk
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Crates.io](https://img.shields.io/crates/v/worktrunk.svg)](https://crates.io/crates/worktrunk)
 
 Git worktree lifecycle automation, designed around running concurrent AI coding agents.
 
