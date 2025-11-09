@@ -1,6 +1,6 @@
 [package]
 name = "worktrunk"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
