@@ -444,7 +444,7 @@ git clone https://github.com/max-sixty/worktrunk.git worktrunk-skills
         ]
       }
     ],
-    "Stop": [
+    "Notification": [
       {
         "matcher": "",
         "hooks": [
@@ -473,7 +473,7 @@ git clone https://github.com/max-sixty/worktrunk.git worktrunk-skills
 Now when you use Claude:
 
 - Sets status to `🤖` for the current branch when you submit a prompt (working)
-- Changes to `💬` when Claude returns a response (ready for your input)
+- Changes to `💬` when Claude needs your input (waiting for permission or idle)
 - Clears the status completely when the session ends
 
 **Status from other terminal:**
@@ -485,7 +485,7 @@ Branch     Status      Working ±  Path
 main                              ./myapp/
 feature-x  ↑!🤖        +5 -2     ./myapp.feature-x/
 
-# After Claude responds (waiting for your input)
+# When Claude needs your input (permission or idle)
 $ wt list
 Branch     Status      Working ±  Path
 main                              ./myapp/

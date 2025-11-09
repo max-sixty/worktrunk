@@ -10,7 +10,7 @@
         ]
       }
     ],
-    "Stop": [
+    "Notification": [
       {
         "matcher": "",
         "hooks": [

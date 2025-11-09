@@ -30,6 +30,7 @@ repos:
       - id: markdown-link-check
         name: markdown-link-check
         types: [markdown]
+        args: ["--config", ".markdown-link-check.json"]
   - repo: local
     hooks:
       - id: no-dbg
