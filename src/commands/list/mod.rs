@@ -13,7 +13,7 @@ use super::repository_ext::RepositoryCliExt;
 use columns::ColumnKind;
 use layout::calculate_responsive_layout;
 use model::{ListData, ListItem};
-use render::{format_diff_plain, format_list_item_line};
+use render::format_diff_plain;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{INFO_EMOJI, println};
 
@@ -107,7 +107,7 @@ pub fn handle_list(
             let layout = calculate_responsive_layout(&items, show_full, show_full);
             layout.format_header_line();
             for item in &items {
-                format_list_item_line(item, &layout, current_worktree_path.as_ref());
+                layout.format_list_item_line(item, current_worktree_path.as_ref());
             }
             display_summary(&items, show_branches, &layout);
         }

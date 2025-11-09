@@ -146,7 +146,7 @@
 //!     .filter(|spec| /* visibility gates: show_full, fetch_ci */)
 //!     .map(|spec| ColumnCandidate {
 //!         spec,
-//!         priority: if column_has_data(spec.kind, &data_flags) {
+//!         priority: if spec.kind.has_data(&data_flags) {
 //!             spec.base_priority
 //!         } else {
 //!             spec.base_priority + EMPTY_PENALTY
@@ -325,22 +325,6 @@ pub struct LayoutMetadata {
 
 const EMPTY_PENALTY: u8 = 10;
 
-fn column_has_data(kind: ColumnKind, flags: &ColumnDataFlags) -> bool {
-    match kind {
-        ColumnKind::Branch => true,
-        ColumnKind::Status => flags.status,
-        ColumnKind::WorkingDiff => flags.working_diff,
-        ColumnKind::AheadBehind => flags.ahead_behind,
-        ColumnKind::BranchDiff => flags.branch_diff,
-        ColumnKind::Path => true,
-        ColumnKind::Upstream => flags.upstream,
-        ColumnKind::Time => true,
-        ColumnKind::CiStatus => flags.ci_status,
-        ColumnKind::Commit => true,
-        ColumnKind::Message => true,
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct DiffDigits {
     pub added: usize,
@@ -386,6 +370,22 @@ impl ColumnKind {
                 always_show_zeros: true,
             }),
             _ => None,
+        }
+    }
+
+    pub fn has_data(self, flags: &ColumnDataFlags) -> bool {
+        match self {
+            ColumnKind::Branch => true,
+            ColumnKind::Status => flags.status,
+            ColumnKind::WorkingDiff => flags.working_diff,
+            ColumnKind::AheadBehind => flags.ahead_behind,
+            ColumnKind::BranchDiff => flags.branch_diff,
+            ColumnKind::Path => true,
+            ColumnKind::Upstream => flags.upstream,
+            ColumnKind::Time => true,
+            ColumnKind::CiStatus => flags.ci_status,
+            ColumnKind::Commit => true,
+            ColumnKind::Message => true,
         }
     }
 }
@@ -706,7 +706,7 @@ pub fn calculate_responsive_layout(
         })
         .map(|spec| ColumnCandidate {
             spec,
-            priority: if column_has_data(spec.kind, &data_flags) {
+            priority: if spec.kind.has_data(&data_flags) {
                 spec.base_priority
             } else {
                 spec.base_priority + EMPTY_PENALTY
@@ -719,7 +719,7 @@ pub fn calculate_responsive_layout(
     // Store which candidates have data for later calculation of hidden columns
     let candidates_with_data: Vec<_> = candidates
         .iter()
-        .map(|c| (c.spec.kind, column_has_data(c.spec.kind, &data_flags)))
+        .map(|c| (c.spec.kind, c.spec.kind.has_data(&data_flags)))
         .collect();
 
     const MIN_MESSAGE: usize = 20;

@@ -223,6 +223,25 @@ impl LayoutConfig {
 
         println!("{}", line.render());
     }
+
+    pub fn format_list_item_line(
+        &self,
+        item: &ListItem,
+        current_worktree_path: Option<&std::path::PathBuf>,
+    ) {
+        let ctx = ListRowContext::new(item, current_worktree_path);
+        let line = self.render_line(|column| {
+            column.render_cell(
+                &ctx,
+                &self.status_position_mask,
+                self.max_git_symbols_width,
+                &self.common_prefix,
+                self.max_message_len,
+            )
+        });
+
+        println!("{}", line.render());
+    }
 }
 
 struct ListRowContext<'a> {
@@ -237,16 +256,15 @@ struct ListRowContext<'a> {
 }
 
 impl<'a> ListRowContext<'a> {
-    fn new(item: &'a ListItem, current_worktree_path: Option<&'a std::path::PathBuf>) -> Self {
+    fn new(item: &'a ListItem, current_worktree_path: Option<&std::path::PathBuf>) -> Self {
         let worktree_info = item.worktree_info();
         let counts = item.counts();
         let commit = item.commit_details();
         let branch_diff = item.branch_diff().diff;
         let upstream = item.upstream();
         let head = item.head();
-        let text_style = resolve_text_style(item, worktree_info, current_worktree_path);
 
-        Self {
+        let mut ctx = Self {
             item,
             worktree_info,
             counts,
@@ -254,150 +272,36 @@ impl<'a> ListRowContext<'a> {
             upstream,
             commit,
             head,
-            text_style,
-        }
+            text_style: None,
+        };
+
+        ctx.text_style = ctx.compute_text_style(current_worktree_path);
+        ctx
     }
 
     fn short_head(&self) -> &str {
         &self.head[..8.min(self.head.len())]
     }
-}
 
-fn resolve_text_style(
-    item: &ListItem,
-    worktree_info: Option<&WorktreeInfo>,
-    current_worktree_path: Option<&std::path::PathBuf>,
-) -> Option<Style> {
-    let base_style = worktree_info.and_then(|info| {
-        let is_current = current_worktree_path
-            .map(|p| p == &info.worktree.path)
-            .unwrap_or(false);
-        match (is_current, info.is_primary) {
-            (true, _) => Some(CURRENT),
-            (_, true) => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)))),
-            _ => None,
-        }
-    });
+    fn compute_text_style(
+        &self,
+        current_worktree_path: Option<&std::path::PathBuf>,
+    ) -> Option<Style> {
+        let base_style = self.worktree_info.and_then(|info| {
+            let is_current = current_worktree_path
+                .map(|p| p == &info.worktree.path)
+                .unwrap_or(false);
+            match (is_current, info.is_primary) {
+                (true, _) => Some(CURRENT),
+                (_, true) => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)))),
+                _ => None,
+            }
+        });
 
-    if item.is_potentially_removable() {
-        Some(base_style.unwrap_or_default().dimmed())
-    } else {
-        base_style
-    }
-}
-
-fn render_list_cell(
-    column: &ColumnLayout,
-    ctx: &ListRowContext,
-    status_mask: &PositionMask,
-    max_git_symbols_width: usize,
-    common_prefix: &Path,
-    max_message_len: usize,
-) -> StyledLine {
-    match column.kind {
-        ColumnKind::Branch => {
-            let mut cell = StyledLine::new();
-            let text = ctx.item.branch_name().to_string();
-            if let Some(style) = ctx.text_style {
-                cell.push_styled(text, style);
-            } else {
-                cell.push_raw(text);
-            }
-            cell
-        }
-        ColumnKind::Status => {
-            // Status column combines two aligned subcolumns:
-            // 1. Git status symbols (variable width, aligned by position)
-            // 2. User-defined status (aligned at fixed position after max git symbols)
-            let mut cell = StyledLine::new();
-
-            // Git status symbols (worktrees only)
-            if let Some(info) = ctx.worktree_info {
-                let git_symbols_start = cell.width();
-                cell.push_raw(info.status_symbols.render_with_mask(status_mask));
-
-                // Only pad if this row has user status (to align the user status subcolumn)
-                if let Some(ref user_status) = info.user_status {
-                    cell.pad_to(git_symbols_start + max_git_symbols_width);
-                    cell.push_raw(user_status.clone());
-                }
-            } else if let ListItem::Branch(branch_info) = ctx.item {
-                // Branch-only entries: pad to max_git_symbols_width, then render user status
-                // This aligns user status with worktree entries
-                if let Some(ref user_status) = branch_info.user_status {
-                    let git_symbols_start = cell.width();
-                    cell.pad_to(git_symbols_start + max_git_symbols_width);
-                    cell.push_raw(user_status.clone());
-                }
-            }
-
-            cell
-        }
-        ColumnKind::WorkingDiff => {
-            let Some((added, deleted)) = ctx.worktree_info.map(|info| info.working_tree_diff)
-            else {
-                return StyledLine::new();
-            };
-            column.render_diff_cell(added, deleted)
-        }
-        ColumnKind::AheadBehind => {
-            if ctx.item.is_primary() {
-                return StyledLine::new();
-            }
-            let ahead = ctx.counts.ahead;
-            let behind = ctx.counts.behind;
-            if ahead == 0 && behind == 0 {
-                return StyledLine::new();
-            }
-            column.render_diff_cell(ahead, behind)
-        }
-        ColumnKind::BranchDiff => {
-            if ctx.item.is_primary() {
-                return StyledLine::new();
-            }
-            column.render_diff_cell(ctx.branch_diff.0, ctx.branch_diff.1)
-        }
-        ColumnKind::Path => {
-            let Some(info) = ctx.worktree_info else {
-                return StyledLine::new();
-            };
-            let mut cell = StyledLine::new();
-            let path_str = shorten_path(&info.worktree.path, common_prefix);
-            if let Some(style) = ctx.text_style {
-                cell.push_styled(path_str, style);
-            } else {
-                cell.push_raw(path_str);
-            }
-            cell
-        }
-        ColumnKind::Upstream => {
-            let Some((_, ahead, behind)) = ctx.upstream.active() else {
-                return StyledLine::new();
-            };
-            column.render_diff_cell(ahead, behind)
-        }
-        ColumnKind::Time => {
-            let mut cell = StyledLine::new();
-            let time_str = format_relative_time(ctx.commit.timestamp);
-            cell.push_styled(time_str, Style::new().dimmed());
-            cell
-        }
-        ColumnKind::CiStatus => {
-            let Some(pr_status) = ctx.item.pr_status() else {
-                return StyledLine::new();
-            };
-            pr_status.render_indicator()
-        }
-        ColumnKind::Commit => {
-            let mut cell = StyledLine::new();
-            cell.push_styled(ctx.short_head().to_string(), Style::new().dimmed());
-            cell
-        }
-        ColumnKind::Message => {
-            let mut cell = StyledLine::new();
-            let msg = truncate_at_word_boundary(&ctx.commit.commit_message, max_message_len);
-            cell.push_styled(msg, Style::new().dimmed());
-            cell
+        if self.item.is_potentially_removable() {
+            Some(base_style.unwrap_or_default().dimmed())
+        } else {
+            base_style
         }
     }
 }
@@ -412,32 +316,115 @@ impl ColumnLayout {
 
         format_diff_like_column(positive, negative, config)
     }
-}
 
-/// Render a list item (worktree or branch) as a formatted line
-pub fn format_list_item_line(
-    item: &ListItem,
-    layout: &LayoutConfig,
-    current_worktree_path: Option<&std::path::PathBuf>,
-) {
-    let ctx = ListRowContext::new(item, current_worktree_path);
-    let status_mask = &layout.status_position_mask;
-    let max_git_symbols_width = layout.max_git_symbols_width;
-    let common_prefix = &layout.common_prefix;
-    let max_message_len = layout.max_message_len;
+    fn render_cell(
+        &self,
+        ctx: &ListRowContext,
+        status_mask: &PositionMask,
+        max_git_symbols_width: usize,
+        common_prefix: &Path,
+        max_message_len: usize,
+    ) -> StyledLine {
+        match self.kind {
+            ColumnKind::Branch => {
+                let mut cell = StyledLine::new();
+                let text = ctx.item.branch_name().to_string();
+                if let Some(style) = ctx.text_style {
+                    cell.push_styled(text, style);
+                } else {
+                    cell.push_raw(text);
+                }
+                cell
+            }
+            ColumnKind::Status => {
+                let mut cell = StyledLine::new();
 
-    let line = layout.render_line(|column| {
-        render_list_cell(
-            column,
-            &ctx,
-            status_mask,
-            max_git_symbols_width,
-            common_prefix,
-            max_message_len,
-        )
-    });
+                if let Some(info) = ctx.worktree_info {
+                    let git_symbols_start = cell.width();
+                    cell.push_raw(info.status_symbols.render_with_mask(status_mask));
 
-    println!("{}", line.render());
+                    if let Some(ref user_status) = info.user_status {
+                        cell.pad_to(git_symbols_start + max_git_symbols_width);
+                        cell.push_raw(user_status.clone());
+                    }
+                } else if let ListItem::Branch(branch_info) = ctx.item
+                    && let Some(ref user_status) = branch_info.user_status
+                {
+                    let git_symbols_start = cell.width();
+                    cell.pad_to(git_symbols_start + max_git_symbols_width);
+                    cell.push_raw(user_status.clone());
+                }
+
+                cell
+            }
+            ColumnKind::WorkingDiff => {
+                let Some((added, deleted)) = ctx.worktree_info.map(|info| info.working_tree_diff)
+                else {
+                    return StyledLine::new();
+                };
+                self.render_diff_cell(added, deleted)
+            }
+            ColumnKind::AheadBehind => {
+                if ctx.item.is_primary() {
+                    return StyledLine::new();
+                }
+                let ahead = ctx.counts.ahead;
+                let behind = ctx.counts.behind;
+                if ahead == 0 && behind == 0 {
+                    return StyledLine::new();
+                }
+                self.render_diff_cell(ahead, behind)
+            }
+            ColumnKind::BranchDiff => {
+                if ctx.item.is_primary() {
+                    return StyledLine::new();
+                }
+                self.render_diff_cell(ctx.branch_diff.0, ctx.branch_diff.1)
+            }
+            ColumnKind::Path => {
+                let Some(info) = ctx.worktree_info else {
+                    return StyledLine::new();
+                };
+                let mut cell = StyledLine::new();
+                let path_str = shorten_path(&info.worktree.path, common_prefix);
+                if let Some(style) = ctx.text_style {
+                    cell.push_styled(path_str, style);
+                } else {
+                    cell.push_raw(path_str);
+                }
+                cell
+            }
+            ColumnKind::Upstream => {
+                let Some((_, ahead, behind)) = ctx.upstream.active() else {
+                    return StyledLine::new();
+                };
+                self.render_diff_cell(ahead, behind)
+            }
+            ColumnKind::Time => {
+                let mut cell = StyledLine::new();
+                let time_str = format_relative_time(ctx.commit.timestamp);
+                cell.push_styled(time_str, Style::new().dimmed());
+                cell
+            }
+            ColumnKind::CiStatus => {
+                let Some(pr_status) = ctx.item.pr_status() else {
+                    return StyledLine::new();
+                };
+                pr_status.render_indicator()
+            }
+            ColumnKind::Commit => {
+                let mut cell = StyledLine::new();
+                cell.push_styled(ctx.short_head().to_string(), Style::new().dimmed());
+                cell
+            }
+            ColumnKind::Message => {
+                let mut cell = StyledLine::new();
+                let msg = truncate_at_word_boundary(&ctx.commit.commit_message, max_message_len);
+                cell.push_styled(msg, Style::new().dimmed());
+                cell
+            }
+        }
+    }
 }
 
 #[cfg(test)]
