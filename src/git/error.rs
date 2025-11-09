@@ -122,16 +122,18 @@ impl std::fmt::Display for GitError {
                 command_name,
                 error,
                 exit_code: _,
-            } => match command_name {
-                Some(name) => write!(
+            } => {
+                // Build optional command name suffix
+                let name_suffix = command_name
+                    .as_ref()
+                    .map(|n| format!(": {ERROR_BOLD}{n}{ERROR_BOLD:#}"))
+                    .unwrap_or_default();
+
+                write!(
                     f,
-                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed: {ERROR_BOLD}{name}{ERROR_BOLD:#}{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
-                ),
-                None => write!(
-                    f,
-                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
-                ),
-            },
+                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed{name_suffix}{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
+                )
+            }
 
             // Uncommitted changes
             GitError::UncommittedChanges => {
@@ -282,14 +284,15 @@ impl std::fmt::Display for GitError {
                 base_branch,
                 error,
             } => {
-                let header = match base_branch {
-                    Some(base) => format!(
-                        "{ERROR_EMOJI} {ERROR}Failed to create worktree for {ERROR_BOLD}{branch}{ERROR_BOLD:#}{ERROR} from base {ERROR_BOLD}{base}{ERROR_BOLD:#}{ERROR:#}"
-                    ),
-                    None => format!(
-                        "{ERROR_EMOJI} {ERROR}Failed to create worktree for {ERROR_BOLD}{branch}{ERROR_BOLD:#}{ERROR:#}"
-                    ),
-                };
+                // Build optional base branch suffix (includes re-establishing ERROR color)
+                let base_suffix = base_branch
+                    .as_ref()
+                    .map(|base| format!("{ERROR} from base {ERROR_BOLD}{base}{ERROR_BOLD:#}"))
+                    .unwrap_or_default();
+
+                let header = format!(
+                    "{ERROR_EMOJI} {ERROR}Failed to create worktree for {ERROR_BOLD}{branch}{ERROR_BOLD:#}{base_suffix}{ERROR:#}"
+                );
                 write!(f, "{}", format_error_block(header, error))
             }
 
