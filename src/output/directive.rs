@@ -75,6 +75,11 @@ impl DirectiveOutput {
         io::stdout().flush()
     }
 
+    pub fn blank_line(&mut self) -> io::Result<()> {
+        // Blank lines are only meaningful in interactive mode; no-op here to avoid empty directives
+        Ok(())
+    }
+
     pub fn gutter(&mut self, content: String) -> io::Result<()> {
         // Gutter content has its own visual structure - print with NUL terminator
         write!(io::stdout(), "{content}\0")?;

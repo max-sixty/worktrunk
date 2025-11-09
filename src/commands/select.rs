@@ -9,7 +9,7 @@ use worktrunk::git::{GitError, GitResultExt, Repository};
 use super::list::model::ListItem;
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::handle_switch;
-use crate::output::handle_switch_output;
+use crate::output::{blank_line, handle_switch_output};
 
 /// Preview modes for the interactive selector
 ///
@@ -357,6 +357,9 @@ pub fn handle_select() -> Result<(), GitError> {
         // handle_switch can handle both branch names and worktree paths
         let (result, resolved_branch) =
             handle_switch(&identifier, false, None, false, false, &config)?;
+
+        // Skim leaves the prompt on the same line, so insert a blank line before our messages
+        blank_line()?;
 
         // Show success message (show shell integration hint if not configured)
         handle_switch_output(&result, &resolved_branch, false)?;

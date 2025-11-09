@@ -124,6 +124,14 @@ pub fn warning(message: impl Into<String>) -> io::Result<()> {
     })
 }
 
+/// Insert a blank line between UI output and worktrunk messages
+pub fn blank_line() -> io::Result<()> {
+    OUTPUT_CONTEXT.with(|ctx| match &mut *ctx.borrow_mut() {
+        OutputHandler::Interactive(i) => i.blank_line(),
+        OutputHandler::Directive(d) => d.blank_line(),
+    })
+}
+
 /// Emit gutter-formatted content
 ///
 /// Gutter content has its own visual structure (column 0 gutter + content),

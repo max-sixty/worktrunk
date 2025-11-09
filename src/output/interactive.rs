@@ -57,6 +57,12 @@ impl InteractiveOutput {
         Ok(())
     }
 
+    pub fn blank_line(&mut self) -> io::Result<()> {
+        // Ensure subsequent output starts on a fresh line after interactive UIs like skim
+        println!();
+        stdout().flush()
+    }
+
     pub fn gutter(&mut self, content: String) -> io::Result<()> {
         // Gutter content has its own visual structure - just print it
         use worktrunk::styling::print;
