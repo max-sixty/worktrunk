@@ -1,5 +1,6 @@
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 // Import types and functions from parent module (mod.rs)
@@ -192,6 +193,28 @@ impl Repository {
         } else {
             Ok(Some(branch.to_string()))
         }
+    }
+
+    /// Read a user-defined status from `worktrunk.status.<branch>` in git config.
+    pub fn branch_keyed_status(&self, branch: &str) -> Option<String> {
+        let config_key = format!("worktrunk.status.{}", branch);
+        self.run_command(&["config", "--get", &config_key])
+            .ok()
+            .map(|output| output.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Read user-defined status, preferring worktree config then falling back to branch-keyed.
+    pub fn user_status(&self, branch: Option<&str>) -> Option<String> {
+        if let Ok(output) = self.run_command(&["config", "--worktree", "--get", "worktrunk.status"])
+        {
+            let status = output.trim().to_string();
+            if !status.is_empty() {
+                return Some(status);
+            }
+        }
+
+        branch.and_then(|branch| self.branch_keyed_status(branch))
     }
 
     /// Resolve a worktree name, expanding "@" to the current branch and "-" to the previous branch.
@@ -849,6 +872,82 @@ impl Repository {
             log::debug!("  → exit code: non-zero");
         }
         Ok(success)
+    }
+
+    /// Run git diff through a renderer (pager) if configured, otherwise return colored diff output.
+    pub fn run_diff_with_pager(&self, args: &[&str]) -> Result<String, GitError> {
+        let mut git_args = args.to_vec();
+        git_args.push("--color=always");
+        let git_output = self.run_command(&git_args)?;
+
+        let result = match pager_config().as_ref() {
+            Some(pager_cmd) => invoke_renderer(pager_cmd, &git_output).unwrap_or(git_output),
+            None => {
+                log::debug!("Using git output directly");
+                git_output
+            }
+        };
+
+        Ok(result)
+    }
+}
+
+fn pager_config() -> &'static Option<String> {
+    static PAGER_CONFIG: OnceLock<Option<String>> = OnceLock::new();
+    PAGER_CONFIG.get_or_init(detect_pager)
+}
+
+fn detect_pager() -> Option<String> {
+    let repo = Repository::current();
+
+    let validate = |s: &str| -> Option<String> {
+        let trimmed = s.trim();
+        (!trimmed.is_empty() && trimmed != "cat").then(|| trimmed.to_string())
+    };
+
+    std::env::var("GIT_PAGER")
+        .ok()
+        .and_then(|s| validate(&s))
+        .or_else(|| {
+            repo.run_command(&["config", "--get", "pager.diff"])
+                .ok()
+                .and_then(|s| validate(&s))
+        })
+        .or_else(|| {
+            repo.run_command(&["config", "--get", "core.pager"])
+                .ok()
+                .and_then(|s| validate(&s))
+        })
+        .or_else(|| std::env::var("PAGER").ok().and_then(|s| validate(&s)))
+}
+
+fn invoke_renderer(pager_cmd: &str, git_output: &str) -> Option<String> {
+    log::debug!("Invoking renderer: {}", pager_cmd);
+
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg(pager_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("PAGER", "cat")
+        .env("DELTA_PAGER", "cat")
+        .env("BAT_PAGER", "");
+
+    let mut child = cmd.spawn().ok()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(git_output.as_bytes());
+        drop(stdin);
+    }
+
+    let output = child.wait_with_output().ok()?;
+    if output.status.success() {
+        log::debug!("Renderer succeeded, output len={}", output.stdout.len());
+        String::from_utf8(output.stdout).ok()
+    } else {
+        log::debug!("Renderer failed with status={:?}", output.status);
+        None
     }
 }
 

@@ -5,7 +5,7 @@ use worktrunk::styling::{AnstyleStyle, CYAN, GREEN, HINT, WARNING, format_with_g
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
-use super::project_config::load_project_config;
+use super::project_config::ProjectConfigRepoExt;
 
 /// Options for committing current changes.
 pub struct CommitOptions<'a> {
@@ -153,7 +153,7 @@ pub fn commit_staged_changes(
 /// Commit uncommitted changes with the shared commit pipeline.
 pub fn commit_changes(options: CommitOptions<'_>) -> Result<(), GitError> {
     if !options.no_verify
-        && let Some(project_config) = load_project_config(options.ctx.repo)?
+        && let Some(project_config) = options.ctx.repo.load_project_config()?
     {
         run_pre_commit_commands(
             &project_config,

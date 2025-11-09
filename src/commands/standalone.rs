@@ -10,9 +10,7 @@ use super::commit::{
 };
 use super::context::CommandEnv;
 use super::merge::{execute_post_merge_commands, run_pre_merge_commands};
-use super::project_config::{
-    collect_commands_for_hooks, load_project_config, require_project_config,
-};
+use super::project_config::{ProjectConfigRepoExt, collect_commands_for_hooks};
 use super::worktree::{execute_post_create_commands, execute_post_start_commands_sequential};
 
 /// Handle `wt beta run-hook` command
@@ -23,7 +21,7 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> Result<()
     let ctx = env.context(force);
 
     // Load project config (show helpful error if missing)
-    let project_config = require_project_config(repo)?;
+    let project_config = repo.require_project_config()?;
 
     // TODO: Add support for custom variable overrides (e.g., --var key=value)
     // This would allow testing hooks with different contexts without being in that context
@@ -124,7 +122,7 @@ pub fn handle_squash(
     }
 
     // Run pre-commit hook unless explicitly skipped
-    if !skip_pre_commit && let Some(project_config) = load_project_config(repo)? {
+    if !skip_pre_commit && let Some(project_config) = repo.load_project_config()? {
         run_pre_commit_commands(&project_config, &ctx, Some(&target_branch), auto_trust)?;
     }
 
@@ -319,7 +317,7 @@ pub fn handle_standalone_ask_approvals(force: bool, show_all: bool) -> Result<()
     let config = WorktrunkConfig::load().git_context("Failed to load config")?;
 
     // Load project config (show helpful error if missing)
-    let project_config = require_project_config(&repo)?;
+    let project_config = repo.require_project_config()?;
 
     // Collect all commands from the project config
     let all_hooks = [

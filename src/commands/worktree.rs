@@ -108,7 +108,7 @@ use worktrunk::styling::{
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
-use super::project_config::load_project_config;
+use super::project_config::ProjectConfigRepoExt;
 
 /// Result of a worktree switch operation
 pub enum SwitchResult {
@@ -576,7 +576,7 @@ impl TargetWorktreeStash {
 
 /// Execute post-create commands sequentially (blocking)
 pub fn execute_post_create_commands(ctx: &CommandContext) -> Result<(), GitError> {
-    let project_config = match load_project_config(ctx.repo)? {
+    let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(()),
     };
@@ -598,7 +598,7 @@ pub fn execute_post_create_commands(ctx: &CommandContext) -> Result<(), GitError
 
 /// Spawn post-start commands in parallel as background processes (non-blocking)
 pub fn spawn_post_start_commands(ctx: &CommandContext) -> Result<(), GitError> {
-    let project_config = match load_project_config(ctx.repo)? {
+    let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(()),
     };
@@ -619,7 +619,7 @@ pub fn spawn_post_start_commands(ctx: &CommandContext) -> Result<(), GitError> {
 
 /// Execute post-start commands sequentially (blocking) - for testing
 pub fn execute_post_start_commands_sequential(ctx: &CommandContext) -> Result<(), GitError> {
-    let project_config = match load_project_config(ctx.repo)? {
+    let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(()),
     };

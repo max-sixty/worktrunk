@@ -299,7 +299,7 @@ impl BranchInfo {
         };
 
         // Read user-defined status from git config (branch-keyed only, no worktree)
-        let user_status = read_branch_keyed_status(repo, branch);
+        let user_status = repo.branch_keyed_status(branch);
 
         // Create display fields with status
         // For branches without worktrees, status is just user status or "·"
@@ -323,33 +323,6 @@ impl BranchInfo {
             display,
         })
     }
-}
-
-/// Read user-defined status from branch-keyed config only (`worktrunk.status.<branch>`)
-/// Used for branch-only entries that don't have a worktree
-fn read_branch_keyed_status(repo: &Repository, branch: &str) -> Option<String> {
-    let config_key = format!("worktrunk.status.{}", branch);
-    repo.run_command(&["config", "--get", &config_key])
-        .ok()
-        .map(|output| output.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-/// Read user-defined status from git config
-/// Tries worktree-specific config first (`worktrunk.status`), then falls back to branch-keyed (`worktrunk.status.<branch>`)
-/// Used for worktree entries
-fn read_user_status(repo: &Repository, branch: Option<&str>) -> Option<String> {
-    // Try worktree-specific config first (requires extensions.worktreeConfig)
-    if let Ok(output) = repo.run_command(&["config", "--worktree", "--get", "worktrunk.status"]) {
-        let status = output.trim().to_string();
-        if !status.is_empty() {
-            return Some(status);
-        }
-    }
-
-    // Fall back to branch-keyed config (works everywhere)
-    let branch = branch?;
-    read_branch_keyed_status(repo, branch)
 }
 
 /// Main branch divergence state
@@ -945,7 +918,7 @@ impl WorktreeInfo {
         }
 
         // Read user-defined status from git config (worktree-specific or branch-keyed)
-        let user_status = read_user_status(&wt_repo, wt.branch.as_deref());
+        let user_status = wt_repo.user_status(wt.branch.as_deref());
 
         // Create display fields with rendered status
         let status_display = if !symbols.is_empty() || user_status.is_some() {

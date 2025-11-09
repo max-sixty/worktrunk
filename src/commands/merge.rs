@@ -8,7 +8,7 @@ use super::command_executor::CommandContext;
 use super::commit::{CommitOptions, commit_changes};
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline};
-use super::project_config::{collect_commands_for_hooks, load_project_config};
+use super::project_config::{ProjectConfigRepoExt, collect_commands_for_hooks};
 use super::worktree::{RemoveResult, handle_push};
 
 /// Context for collecting merge commands
@@ -29,7 +29,7 @@ impl<'a> MergeCommandCollector<'a> {
     /// Returns original (unexpanded) commands for approval matching
     fn collect(self) -> Result<CollectedCommands, GitError> {
         let mut all_commands = Vec::new();
-        let project_config = match load_project_config(self.repo)? {
+        let project_config = match self.repo.load_project_config()? {
             Some(cfg) => cfg,
             None => return Ok((all_commands, self.repo.project_identifier()?)),
         };
@@ -149,7 +149,7 @@ pub fn handle_merge(
 
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
-    if !no_verify && let Some(project_config) = load_project_config(repo)? {
+    if !no_verify && let Some(project_config) = repo.load_project_config()? {
         let ctx = env.context(force);
         run_pre_merge_commands(&project_config, &ctx, &target_branch)?;
     }
@@ -283,7 +283,7 @@ pub fn execute_post_merge_commands(
     target_branch: &str,
 ) -> Result<(), GitError> {
     // Load project config from the main worktree path directly
-    let project_config = match load_project_config(ctx.repo)? {
+    let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(()),
     };

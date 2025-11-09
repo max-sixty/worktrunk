@@ -1,10 +1,8 @@
 use skim::prelude::*;
 use std::borrow::Cow;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 
@@ -75,112 +73,6 @@ impl Drop for PreviewState {
     }
 }
 
-/// Cached pager configuration to avoid repeated detection
-static PAGER_CONFIG: OnceLock<Option<String>> = OnceLock::new();
-
-/// Get cached pager configuration, detecting on first call
-fn get_pager_config() -> &'static Option<String> {
-    PAGER_CONFIG.get_or_init(detect_pager)
-}
-
-/// Detect configured diff renderer (colorizer) for preview output
-///
-/// Respects user's git pager configuration, but treats the tool as a
-/// non-interactive renderer (not a pager) in the preview context.
-///
-/// Priority order:
-/// 1. GIT_PAGER environment variable (git's own preference)
-/// 2. git config pager.diff or core.pager
-/// 3. PAGER environment variable (system default)
-/// 4. None (fallback to plain colored output)
-///
-/// Returns the renderer command string to be executed via shell
-fn detect_pager() -> Option<String> {
-    let repo = Repository::current();
-
-    // Helper to validate pager value
-    let validate = |s: &str| -> Option<String> {
-        let trimmed = s.trim();
-        (!trimmed.is_empty() && trimmed != "cat").then(|| trimmed.to_string())
-    };
-
-    // Check sources in priority order
-    std::env::var("GIT_PAGER")
-        .ok()
-        .and_then(|s| validate(&s))
-        .or_else(|| {
-            repo.run_command(&["config", "--get", "pager.diff"])
-                .ok()
-                .and_then(|s| validate(&s))
-        })
-        .or_else(|| {
-            repo.run_command(&["config", "--get", "core.pager"])
-                .ok()
-                .and_then(|s| validate(&s))
-        })
-        .or_else(|| std::env::var("PAGER").ok().and_then(|s| validate(&s)))
-}
-
-/// Invoke a pager/renderer command with git output
-///
-/// Returns Some(output) on success, None on any failure (spawn, wait, or non-zero exit)
-fn invoke_renderer(pager_cmd: &str, git_output: &str) -> Option<String> {
-    log::debug!("Invoking renderer: {}", pager_cmd);
-
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(pager_cmd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env("PAGER", "cat")
-        .env("DELTA_PAGER", "cat")
-        .env("BAT_PAGER", "");
-
-    let mut child = cmd.spawn().ok()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(git_output.as_bytes());
-        drop(stdin);
-    }
-
-    let output = child.wait_with_output().ok()?;
-    if output.status.success() {
-        log::debug!("Renderer succeeded, output len={}", output.stdout.len());
-        String::from_utf8(output.stdout).ok()
-    } else {
-        log::debug!("Renderer failed with status={:?}", output.status);
-        None
-    }
-}
-
-/// Run git diff through configured renderer (colorizer), or fall back to --color=always
-///
-/// The renderer is run in non-interactive mode (via environment variables) suitable
-/// for embedding in a TUI preview pane. Interactive paging features are disabled.
-fn run_diff_with_pager(repo: &Repository, args: &[&str]) -> Result<String, GitError> {
-    // First get git output with color
-    let mut git_args = args.to_vec();
-    git_args.push("--color=always");
-    let git_output = repo.run_command(&git_args)?;
-
-    // SECURITY NOTE: Using sh -c to invoke renderer inherits git's security model.
-    // Git itself uses sh -c for pagers (for shell features like pipes, aliases, etc.)
-    // Users who can control GIT_PAGER/PAGER can already execute arbitrary commands
-    // via normal git operations, so this doesn't introduce new attack surface.
-    // The renderer command comes from trusted sources (user's own env vars and git config).
-
-    let result = match get_pager_config().as_ref() {
-        Some(pager_cmd) => invoke_renderer(pager_cmd, &git_output).unwrap_or(git_output),
-        None => {
-            log::debug!("Using git output directly");
-            git_output
-        }
-    };
-
-    Ok(result)
-}
-
 /// Wrapper to implement SkimItem for ListItem
 struct WorktreeSkimItem {
     display_text: String,
@@ -226,7 +118,7 @@ impl WorktreeSkimItem {
             output.push_str("\n\n");
 
             // Show full diff with renderer
-            if let Ok(diff) = run_diff_with_pager(&repo, args) {
+            if let Ok(diff) = repo.run_diff_with_pager(args) {
                 output.push_str(&diff);
             }
         } else {
