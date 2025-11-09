@@ -29,8 +29,11 @@ if (which wt | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empty) {
         }
 
         # Execute command if one was specified
+        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
+        # If wt succeeds but command fails, returns the command's exit code.
         if ($exec_cmd != "") {
-            nu -c $exec_cmd
+            let cmd_result = (do { nu -c $exec_cmd } | complete)
+            return $cmd_result.exit_code
         }
 
         # Return the exit code

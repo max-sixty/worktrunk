@@ -76,6 +76,16 @@ impl InteractiveOutput {
         // Execute command in the target directory with streaming output
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
 
+        // TODO: Consider using exec() to replace wt process with the command
+        // Currently: wt spawns command as child, waits, then exits
+        // Alternative: use std::os::unix::process::CommandExt::exec() to replace wt entirely
+        // Trade-offs:
+        // - Pro: Removes wt from process tree (cleaner `ps` output)
+        // - Pro: Command becomes direct child of shell (more natural process hierarchy)
+        // - Con: Can't show wt's success messages before exec (they'd be lost)
+        // - Con: Unix-only (no Windows equivalent)
+        // - Con: More complex error handling (exec only returns on error)
+
         // Use shared streaming execution (no stdout->stderr redirect for --execute)
         execute_streaming(&command, exec_dir, false)?;
 

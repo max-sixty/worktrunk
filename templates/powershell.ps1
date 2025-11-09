@@ -40,8 +40,11 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         }
 
         # Execute command if one was specified
+        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
+        # If wt succeeds but command fails, returns the command's exit code.
         if ($execCmd) {
             Invoke-Expression $execCmd
+            $exitCode = $LASTEXITCODE
         }
 
         # Return the exit code

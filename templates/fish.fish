@@ -76,13 +76,11 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
         end
 
         # Execute command if one was specified
-        # Exit code semantics: Returns wt's exit code, not the executed command's.
-        # This allows detecting wt failures (e.g., branch creation errors).
-        # The executed command runs for side effects; its failure is logged but doesn't affect exit code.
+        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
+        # If wt succeeds but command fails, returns the command's exit code.
         if test -n "$exec_cmd"
-            if not eval $exec_cmd
-                echo "Warning: Command execution failed (exit code $status)" >&2
-            end
+            eval $exec_cmd
+            set exit_code $status
         end
 
         return $exit_code

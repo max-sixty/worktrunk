@@ -33,8 +33,12 @@ if shutil.which("wt") is not None or os.environ.get('WORKTRUNK_BIN'):
                     print(chunk)
 
         # Execute command if one was specified
+        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
+        # If wt succeeds but command fails, returns the command's exit code.
         if exec_cmd:
             execx(exec_cmd)
+            # execx() sets __xonsh__.env['LASTRETURNCODE'] to the exit code
+            return __xonsh__.env.get('LASTRETURNCODE', 0)
 
         # Return the exit code, defaulting to 0 if the subprocess did not set one
         return result.returncode if result.returncode is not None else 0

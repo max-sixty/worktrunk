@@ -573,6 +573,48 @@ mod tests {
         }
     }
 
+    /// Test that --execute command exit codes are propagated
+    /// Verifies that when wt succeeds but the --execute command fails,
+    /// the wrapper returns the command's exit code, not wt's.
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str) {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Use --force to skip approval prompt in tests
+        // wt should succeed (creates worktree), but the execute command should fail with exit 42
+        let output = exec_through_wrapper(
+            shell,
+            &repo,
+            "switch",
+            &[
+                "--create",
+                "test-exit-code",
+                "--execute",
+                "exit 42",
+                "--force",
+            ],
+        );
+
+        // Shell-agnostic assertions
+        assert_eq!(
+            output.exit_code, 42,
+            "{}: Should propagate execute command's exit code (42), not wt's (0)",
+            shell
+        );
+        output.assert_no_directive_leaks();
+
+        // Should still show wt's success message (worktree was created)
+        assert!(
+            output.combined.contains("Created new worktree"),
+            "{}: Should show wt's success message even though execute command failed",
+            shell
+        );
+    }
+
     /// Test switch --create with post-create-command (blocking) and post-start-command (background)
     /// Note: bash and fish disabled due to flaky PTY buffering race conditions
     ///

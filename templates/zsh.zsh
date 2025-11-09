@@ -45,13 +45,11 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         # Execute command if one was specified
         # Security: Command is user-provided from -x flag; eval is intentional.
         # NUL-termination allows multi-line commands.
-        # Exit code semantics: Returns wt's exit code, not the executed command's.
-        # This allows detecting wt failures (e.g., branch creation errors).
-        # The executed command runs for side effects; its failure is logged but doesn't affect exit code.
+        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
+        # If wt succeeds but command fails, returns the command's exit code.
         if [[ -n "$exec_cmd" ]]; then
-            if ! eval "$exec_cmd"; then
-                echo "Warning: Command execution failed (exit code $?)" >&2
-            fi
+            eval "$exec_cmd"
+            exit_code=$?
         fi
 
         return $exit_code

@@ -43,8 +43,16 @@ if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
         }
 
         # Execute command if one was specified
+        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
+        # If wt succeeds but command fails, returns the command's exit code.
         if (!=s $exec-cmd "") {
-            eval $exec-cmd
+            try {
+                eval $exec-cmd
+                set exit-code = 0
+            } catch e {
+                # Command failed - set exit code to 1 (elvish exceptions don't always preserve exit codes)
+                set exit-code = 1
+            }
         }
 
         # Return exit code (will throw exception if non-zero)
