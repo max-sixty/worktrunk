@@ -2,7 +2,7 @@ use skim::prelude::*;
 use std::borrow::Cow;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 
@@ -79,6 +79,9 @@ struct WorktreeSkimItem {
     display_text: String,
     branch_name: String,
     item: Arc<ListItem>,
+    preview_working_tree: OnceLock<String>,
+    preview_history: OnceLock<String>,
+    preview_branch_diff: OnceLock<String>,
 }
 
 impl SkimItem for WorktreeSkimItem {
@@ -92,17 +95,26 @@ impl SkimItem for WorktreeSkimItem {
 
     fn preview(&self, _context: PreviewContext<'_>) -> ItemPreview {
         let mode = PreviewMode::read_from_state();
-        let preview_text = match mode {
-            PreviewMode::WorkingTree => self.render_working_tree_preview(),
-            PreviewMode::History => self.render_history_preview(),
-            PreviewMode::BranchDiff => self.render_branch_diff_preview(),
-        };
-
-        ItemPreview::AnsiText(preview_text)
+        ItemPreview::AnsiText(self.preview_for_mode(mode).clone())
     }
 }
 
 impl WorktreeSkimItem {
+    /// Lazily render each preview mode and cache the result so redraws reuse it.
+    fn preview_for_mode(&self, mode: PreviewMode) -> &String {
+        match mode {
+            PreviewMode::WorkingTree => self
+                .preview_working_tree
+                .get_or_init(|| self.render_working_tree_preview()),
+            PreviewMode::History => self
+                .preview_history
+                .get_or_init(|| self.render_history_preview()),
+            PreviewMode::BranchDiff => self
+                .preview_branch_diff
+                .get_or_init(|| self.render_branch_diff_preview()),
+        }
+    }
+
     /// Common diff rendering pattern: check stat, show stat + full diff if non-empty
     fn render_diff_preview(&self, args: &[&str], no_changes_msg: &str) -> String {
         let mut output = String::new();
@@ -275,6 +287,9 @@ pub fn handle_select() -> Result<(), GitError> {
                 display_text,
                 branch_name,
                 item: Arc::new(item),
+                preview_working_tree: OnceLock::new(),
+                preview_history: OnceLock::new(),
+                preview_branch_diff: OnceLock::new(),
             }) as Arc<dyn SkimItem>
         })
         .collect();
