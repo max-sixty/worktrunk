@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "worktrunk-config",
-      "description": "Configuration guidance for Worktrunk - helps set up LLM integration and project automation hooks",
+      "description": "Complete Worktrunk integration for Claude Code. Provides: (1) configuration skill for setting up LLM integration, project hooks, and worktree automation, (2) automatic hooks that track AI activity per branch (🤖💬 indicators in wt list). Use when configuring Worktrunk, setting up hooks, or wanting visibility into which branches have active Claude sessions.",
       "source": "./",
       "strict": false,
       "skills": [
