@@ -15,4 +15,4 @@ expression: output.normalized()
 
 Command failed with exit code: exit status: 1
 
-💡 [2mUse --no-hooks to skip pre-merge commands[0m
+💡 [2mUse --no-verify to skip pre-merge commands[0m

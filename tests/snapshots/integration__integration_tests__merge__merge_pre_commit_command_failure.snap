@@ -31,4 +31,4 @@ exit_code: 1
 
 Command failed with exit code: exit status: 1
 
-💡 [2mUse --no-hooks to skip pre-commit commands[0m
+💡 [2mUse --no-verify to skip pre-commit commands[0m

@@ -120,11 +120,11 @@ impl std::fmt::Display for GitError {
             } => match command_name {
                 Some(name) => write!(
                     f,
-                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed: {ERROR_BOLD}{name}{ERROR_BOLD:#}{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-hooks to skip {hook_type} commands{HINT:#}"
+                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed: {ERROR_BOLD}{name}{ERROR_BOLD:#}{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
                 ),
                 None => write!(
                     f,
-                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-hooks to skip {hook_type} commands{HINT:#}"
+                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
                 ),
             },
 

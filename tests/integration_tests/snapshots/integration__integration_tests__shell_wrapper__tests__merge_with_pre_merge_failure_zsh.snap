@@ -8,7 +8,7 @@ expression: output.normalized()
 
 Command failed with exit code: exit status: 1
 
-💡 [2mUse --no-hooks to skip pre-merge commands[0m
+💡 [2mUse --no-verify to skip pre-merge commands[0m
 🔄 [36mRunning pre-merge [1mformat[0m:[0m
 [40m [0m  [1m[34mecho[0m [32m'✓ Code formatting check passed'[0m[0m
 
