@@ -62,36 +62,44 @@ pub fn format_diff_plain(kind: ColumnKind, positive: usize, negative: usize) -> 
     format_plain_diff_from_config(positive, negative, config)
 }
 
-/// Determine the style for a CI status (color + optional dimming)
-fn ci_status_style(pr_status: &PrStatus) -> Style {
-    let color = match pr_status.ci_status {
-        CiStatus::Passed => AnsiColor::Green,
-        CiStatus::Running => AnsiColor::Blue,
-        CiStatus::Failed => AnsiColor::Red,
-        CiStatus::Conflicts => AnsiColor::Yellow,
-        CiStatus::NoCI => AnsiColor::BrightBlack,
-    };
+impl PrStatus {
+    /// Determine the style for a CI status (color + optional dimming)
+    fn style(&self) -> Style {
+        let color = match self.ci_status {
+            CiStatus::Passed => AnsiColor::Green,
+            CiStatus::Running => AnsiColor::Blue,
+            CiStatus::Failed => AnsiColor::Red,
+            CiStatus::Conflicts => AnsiColor::Yellow,
+            CiStatus::NoCI => AnsiColor::BrightBlack,
+        };
 
-    if pr_status.is_stale {
-        Style::new().fg_color(Some(Color::Ansi(color))).dimmed()
-    } else {
-        Style::new().fg_color(Some(Color::Ansi(color)))
+        if self.is_stale {
+            Style::new().fg_color(Some(Color::Ansi(color))).dimmed()
+        } else {
+            Style::new().fg_color(Some(Color::Ansi(color)))
+        }
     }
-}
 
-/// Format CI status as plain text with ANSI colors (for json-pretty)
-pub fn format_ci_status_plain(pr_status: &PrStatus) -> String {
-    let style = ci_status_style(pr_status);
+    /// Format CI status as plain text with ANSI colors (for json-pretty)
+    pub fn format_plain(&self) -> String {
+        let style = self.style();
 
-    let status_str = match pr_status.ci_status {
-        CiStatus::Passed => "passed",
-        CiStatus::Running => "running",
-        CiStatus::Failed => "failed",
-        CiStatus::Conflicts => "conflicts",
-        CiStatus::NoCI => "no-ci",
-    };
+        let status_str = match self.ci_status {
+            CiStatus::Passed => "passed",
+            CiStatus::Running => "running",
+            CiStatus::Failed => "failed",
+            CiStatus::Conflicts => "conflicts",
+            CiStatus::NoCI => "no-ci",
+        };
 
-    format!("{}● {}{}", style, status_str, style.render_reset())
+        format!("{}● {}{}", style, status_str, style.render_reset())
+    }
+
+    fn render_indicator(&self) -> StyledLine {
+        let mut segment = StyledLine::new();
+        segment.push_styled("●".to_string(), self.style());
+        segment
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -179,81 +187,41 @@ fn format_diff_like_column(
     segment
 }
 
-/// Format CI status indicator using the statusline.sh color scheme
-fn format_ci_status(pr_status: &PrStatus) -> StyledLine {
-    let mut segment = StyledLine::new();
-    let style = ci_status_style(pr_status);
-    segment.push_styled("●".to_string(), style);
-    segment
-}
-
-fn render_line<F>(layout: &LayoutConfig, mut render_cell: F) -> StyledLine
-where
-    F: FnMut(&ColumnLayout) -> StyledLine,
-{
-    let mut line = StyledLine::new();
-    if layout.columns.is_empty() {
-        return line;
-    }
-
-    let last_index = layout.columns.len() - 1;
-
-    for (index, column) in layout.columns.iter().enumerate() {
-        line.pad_to(column.start);
-        line.extend(render_cell(column));
-
-        if index != last_index {
-            line.pad_to(column.start + column.width);
+impl LayoutConfig {
+    fn render_line<F>(&self, mut render_cell: F) -> StyledLine
+    where
+        F: FnMut(&ColumnLayout) -> StyledLine,
+    {
+        let mut line = StyledLine::new();
+        if self.columns.is_empty() {
+            return line;
         }
-    }
 
-    line
-}
+        let last_index = self.columns.len() - 1;
 
-pub fn format_header_line(layout: &LayoutConfig) {
-    let style = Style::new().bold();
-    let line = render_line(layout, |column| {
-        let mut cell = StyledLine::new();
-        if !column.header.is_empty() {
-            cell.push_styled(column.header.to_string(), style);
+        for (index, column) in self.columns.iter().enumerate() {
+            line.pad_to(column.start);
+            line.extend(render_cell(column));
+
+            if index != last_index {
+                line.pad_to(column.start + column.width);
+            }
         }
-        cell
-    });
 
-    println!("{}", line.render());
-}
-
-/// Check if a branch/worktree is potentially removable
-///
-/// Dims rows for worktrees/branches that likely don't contain unique work
-/// beyond what's already in the main branch. This helps focus attention on
-/// worktrees that contain work.
-///
-/// Dims when (using OR logic):
-/// - No commits AND clean working tree (ahead == 0 AND working_tree_diff == (0, 0)):
-///   The worktree has no commits ahead and no uncommitted changes
-/// - Working tree matches main (working_tree_diff_with_main == Some((0, 0))):
-///   The working tree contents are identical to main, regardless of commit history
-///
-/// Either condition alone is sufficient to dim, as both indicate "no unique work here".
-fn is_potentially_removable(item: &ListItem) -> bool {
-    if item.is_primary() {
-        return false;
+        line
     }
 
-    let counts = item.counts();
+    pub fn format_header_line(&self) {
+        let style = Style::new().bold();
+        let line = self.render_line(|column| {
+            let mut cell = StyledLine::new();
+            if !column.header.is_empty() {
+                cell.push_styled(column.header.to_string(), style);
+            }
+            cell
+        });
 
-    if let Some(info) = item.worktree_info() {
-        // Condition 1: No commits ahead AND no uncommitted changes
-        let no_commits_and_clean = counts.ahead == 0 && info.working_tree_diff == (0, 0);
-
-        // Condition 2: Working tree matches main (regardless of commit history)
-        let matches_main = info.working_tree_diff_with_main == Some((0, 0));
-
-        no_commits_and_clean || matches_main
-    } else {
-        // For branches without worktrees, just check if no commits ahead
-        counts.ahead == 0
+        println!("{}", line.render());
     }
 }
 
@@ -311,7 +279,7 @@ fn resolve_text_style(
         }
     });
 
-    if is_potentially_removable(item) {
+    if item.is_potentially_removable() {
         Some(base_style.unwrap_or_default().dimmed())
     } else {
         base_style
@@ -370,7 +338,7 @@ fn render_list_cell(
             else {
                 return StyledLine::new();
             };
-            render_diff_cell(column, added, deleted)
+            column.render_diff_cell(added, deleted)
         }
         ColumnKind::AheadBehind => {
             if ctx.item.is_primary() {
@@ -381,13 +349,13 @@ fn render_list_cell(
             if ahead == 0 && behind == 0 {
                 return StyledLine::new();
             }
-            render_diff_cell(column, ahead, behind)
+            column.render_diff_cell(ahead, behind)
         }
         ColumnKind::BranchDiff => {
             if ctx.item.is_primary() {
                 return StyledLine::new();
             }
-            render_diff_cell(column, ctx.branch_diff.0, ctx.branch_diff.1)
+            column.render_diff_cell(ctx.branch_diff.0, ctx.branch_diff.1)
         }
         ColumnKind::Path => {
             let Some(info) = ctx.worktree_info else {
@@ -406,7 +374,7 @@ fn render_list_cell(
             let Some((_, ahead, behind)) = ctx.upstream.active() else {
                 return StyledLine::new();
             };
-            render_diff_cell(column, ahead, behind)
+            column.render_diff_cell(ahead, behind)
         }
         ColumnKind::Time => {
             let mut cell = StyledLine::new();
@@ -418,7 +386,7 @@ fn render_list_cell(
             let Some(pr_status) = ctx.item.pr_status() else {
                 return StyledLine::new();
             };
-            format_ci_status(pr_status)
+            pr_status.render_indicator()
         }
         ColumnKind::Commit => {
             let mut cell = StyledLine::new();
@@ -434,14 +402,16 @@ fn render_list_cell(
     }
 }
 
-fn render_diff_cell(column: &ColumnLayout, positive: usize, negative: usize) -> StyledLine {
-    let ColumnFormat::Diff(config) = column.format else {
-        return StyledLine::new();
-    };
+impl ColumnLayout {
+    fn render_diff_cell(&self, positive: usize, negative: usize) -> StyledLine {
+        let ColumnFormat::Diff(config) = self.format else {
+            return StyledLine::new();
+        };
 
-    debug_assert_eq!(config.total_width, column.width);
+        debug_assert_eq!(config.total_width, self.width);
 
-    format_diff_like_column(positive, negative, config)
+        format_diff_like_column(positive, negative, config)
+    }
 }
 
 /// Render a list item (worktree or branch) as a formatted line
@@ -456,7 +426,7 @@ pub fn format_list_item_line(
     let common_prefix = &layout.common_prefix;
     let max_message_len = layout.max_message_len;
 
-    let line = render_line(layout, |column| {
+    let line = layout.render_line(|column| {
         render_list_cell(
             column,
             &ctx,

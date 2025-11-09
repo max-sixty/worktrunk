@@ -527,7 +527,7 @@ pub fn calculate_column_widths(items: &[ListItem], fetch_ci: bool) -> LayoutMeta
         // Position mask is collected here for selective rendering
         if let Some(info) = worktree_info {
             // Collect position usage from this item's status symbols
-            let item_mask = super::model::PositionMask::from_symbols(&info.status_symbols);
+            let item_mask = info.status_symbols.position_mask();
             status_position_mask.merge(&item_mask);
         }
 

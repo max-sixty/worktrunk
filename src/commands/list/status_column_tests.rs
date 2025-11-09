@@ -30,7 +30,7 @@ mod status_column_rendering_tests {
     //      Expected: "≡"
     #[test]
     fn test_single_symbol_position_0b() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // Symbols: [≡]
         // Max git width: 1
@@ -41,7 +41,7 @@ mod status_column_rendering_tests {
             ..Default::default()
         };
 
-        let mask = PositionMask::from_symbols(&symbols);
+        let mask = symbols.position_mask();
         let result = symbols.render_with_mask(&mask);
 
         assert_eq!(result, "≡");
@@ -52,7 +52,7 @@ mod status_column_rendering_tests {
     //      Expected: "!"
     #[test]
     fn test_single_symbol_position_3() {
-        use super::super::model::{PositionMask, StatusSymbols};
+        use super::super::model::StatusSymbols;
 
         // Symbols: [!]
         // Max git width: 1
@@ -63,7 +63,7 @@ mod status_column_rendering_tests {
             ..Default::default()
         };
 
-        let mask = PositionMask::from_symbols(&symbols);
+        let mask = symbols.position_mask();
         let result = symbols.render_with_mask(&mask);
 
         assert_eq!(result, "!");
@@ -80,7 +80,7 @@ mod status_column_rendering_tests {
     //      Row 2: " !" (space in col 0, ! in col 1)
     #[test]
     fn test_two_different_positions_align() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // Position mask: [0b, 3] → 2-column grid
         // Row 1: symbol at position 0b (col 0)
@@ -92,7 +92,7 @@ mod status_column_rendering_tests {
             working_tree: "!".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: only position 0b
         let row1 = StatusSymbols {
@@ -119,7 +119,7 @@ mod status_column_rendering_tests {
     //      Row 2: "?" (col 0 filled with ?)
     #[test]
     fn test_same_position_symbols_no_padding() {
-        use super::super::model::{PositionMask, StatusSymbols};
+        use super::super::model::StatusSymbols;
 
         // Position mask: [3] → 1-column grid
         // Both rows have symbol at position 3 (col 0)
@@ -129,7 +129,7 @@ mod status_column_rendering_tests {
             working_tree: "!".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: ! at position 3
         let row1 = StatusSymbols {
@@ -154,7 +154,7 @@ mod status_column_rendering_tests {
     //      Expected: "≡?" (col 0=≡, col 1=?)
     #[test]
     fn test_multiple_symbols_one_row() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // Position mask: [0b, 3] → 2-column grid
         // Row 1: symbols at both positions
@@ -165,7 +165,7 @@ mod status_column_rendering_tests {
             ..Default::default()
         };
 
-        let mask = PositionMask::from_symbols(&row);
+        let mask = row.position_mask();
         assert_eq!(row.render_with_mask(&mask), "≡?");
     }
 
@@ -180,7 +180,7 @@ mod status_column_rendering_tests {
     //      Row 2: "≡!" (col 0=≡, col 1=!)
     #[test]
     fn test_multiple_symbols_with_position_gap() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // Position mask: [0b, 3] → 2-column grid
         // Row 1: col 0 filled, col 1 empty
@@ -192,7 +192,7 @@ mod status_column_rendering_tests {
             working_tree: "!".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: only position 0b
         let row1 = StatusSymbols {
@@ -214,13 +214,13 @@ mod status_column_rendering_tests {
     //      Expected: ""
     #[test]
     fn test_empty_status() {
-        use super::super::model::{PositionMask, StatusSymbols};
+        use super::super::model::StatusSymbols;
 
         // Git symbols: None
         // User status: None
         // Expected: "" (empty string)
         let symbols = StatusSymbols::default();
-        let mask = PositionMask::from_symbols(&symbols);
+        let mask = symbols.position_mask();
 
         assert_eq!(symbols.render_with_mask(&mask), "");
     }
@@ -239,7 +239,7 @@ mod status_column_rendering_tests {
     //      Row 3: "  !" (col 0=space, col 1=space, col 2=!)
     #[test]
     fn test_three_different_positions() {
-        use super::super::model::{BranchState, MainDivergence, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, MainDivergence, StatusSymbols};
 
         // Position mask: [0b, 1, 3] → 3-column grid
         // Create mask from all three positions
@@ -249,7 +249,7 @@ mod status_column_rendering_tests {
             working_tree: "!".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: only position 0b
         let row1 = StatusSymbols {
@@ -278,7 +278,7 @@ mod status_column_rendering_tests {
     //      Expected: "≡↻"
     #[test]
     fn test_adjacent_positions_no_space() {
-        use super::super::model::{BranchState, GitOperation, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, GitOperation, StatusSymbols};
 
         // Symbols: [≡↻]
         // Position mask: 0b + 0c (adjacent)
@@ -289,7 +289,7 @@ mod status_column_rendering_tests {
             ..Default::default()
         };
 
-        let mask = PositionMask::from_symbols(&row);
+        let mask = row.position_mask();
         assert_eq!(row.render_with_mask(&mask), "≡↻");
     }
 
@@ -298,7 +298,7 @@ mod status_column_rendering_tests {
     //      Expected: "≡!+"
     #[test]
     fn test_all_positions_filled() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // Symbols: [≡!+]
         // Position mask: 0b + 3 (+ continuation)
@@ -309,7 +309,7 @@ mod status_column_rendering_tests {
             ..Default::default()
         };
 
-        let mask = PositionMask::from_symbols(&row);
+        let mask = row.position_mask();
         assert_eq!(row.render_with_mask(&mask), "≡!+");
     }
 
@@ -323,7 +323,7 @@ mod status_column_rendering_tests {
     //      Row 3: "↓!+"
     #[test]
     fn test_real_world_complex_1() {
-        use super::super::model::{BranchState, MainDivergence, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, MainDivergence, StatusSymbols};
 
         // Position mask: 0b + 1 + 3 (3-column grid)
         // Row 1: 0b=≡, 3=?, user=🤖 (user status tested separately)
@@ -337,7 +337,7 @@ mod status_column_rendering_tests {
             working_tree: "!+".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: position 0b and 3 (note: user status alignment tested separately)
         let row1 = StatusSymbols {
@@ -374,7 +374,7 @@ mod status_column_rendering_tests {
     //      Row 2: " !" (col 0=space, col 1=!)
     #[test]
     fn test_real_world_extreme_diffs() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // This is the actual failing test case from spacing_edge_cases
         // Position mask: [0b, 3] → 2-column grid
@@ -387,7 +387,7 @@ mod status_column_rendering_tests {
             working_tree: "?".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: both columns filled
         let row1 = StatusSymbols {
@@ -420,7 +420,7 @@ mod status_column_rendering_tests {
     //      Row 1: "≡      " (7 chars with spaces for all positions)
     #[test]
     fn test_position_mask_removes_unused_positions() {
-        use super::super::model::{BranchState, PositionMask, StatusSymbols};
+        use super::super::model::{BranchState, StatusSymbols};
 
         // Position mask: [0b, 3] → 2-column grid
         // Only used positions create columns
@@ -432,7 +432,7 @@ mod status_column_rendering_tests {
             working_tree: "!".to_string(),
             ..Default::default()
         };
-        let mask = PositionMask::from_symbols(&mask_builder);
+        let mask = mask_builder.position_mask();
 
         // Row 1: only position 0b
         let row1 = StatusSymbols {

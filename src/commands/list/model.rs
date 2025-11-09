@@ -261,6 +261,23 @@ impl ListItem {
             ListItem::Branch(info) => info.pr_status.as_ref(),
         }
     }
+
+    /// Determine if the item contains no unique work and can likely be removed.
+    pub(crate) fn is_potentially_removable(&self) -> bool {
+        if self.is_primary() {
+            return false;
+        }
+
+        let counts = self.counts();
+
+        if let Some(info) = self.worktree_info() {
+            let no_commits_and_clean = counts.ahead == 0 && info.working_tree_diff == (0, 0);
+            let matches_main = info.working_tree_diff_with_main == Some((0, 0));
+            no_commits_and_clean || matches_main
+        } else {
+            counts.ahead == 0
+        }
+    }
 }
 
 impl BranchInfo {
@@ -489,20 +506,6 @@ impl PositionMask {
         positions: [true; 7],
     };
 
-    /// Create a mask from a StatusSymbols instance
-    pub fn from_symbols(symbols: &StatusSymbols) -> Self {
-        let mut positions = [false; 7];
-        positions[Self::POS_0A_CONFLICTS] = symbols.has_conflicts;
-        positions[Self::POS_0B_BRANCH_STATE] = symbols.branch_state != BranchState::None;
-        positions[Self::POS_0C_GIT_OPERATION] = symbols.git_operation != GitOperation::None;
-        positions[Self::POS_0D_WORKTREE_ATTRS] = !symbols.worktree_attrs.is_empty();
-        positions[Self::POS_1_MAIN_DIVERGENCE] = symbols.main_divergence != MainDivergence::None;
-        positions[Self::POS_2_UPSTREAM_DIVERGENCE] =
-            symbols.upstream_divergence != UpstreamDivergence::None;
-        positions[Self::POS_3_WORKING_TREE] = !symbols.working_tree.is_empty();
-        Self { positions }
-    }
-
     /// Merge this mask with another, keeping positions that are used in either
     pub fn merge(&mut self, other: &Self) {
         for (i, &other_val) in other.positions.iter().enumerate() {
@@ -656,6 +659,21 @@ impl StatusSymbols {
         }
 
         result
+    }
+
+    /// Derive a position mask that tracks which symbol slots contain data.
+    pub fn position_mask(&self) -> PositionMask {
+        let mut positions = [false; 7];
+        positions[PositionMask::POS_0A_CONFLICTS] = self.has_conflicts;
+        positions[PositionMask::POS_0B_BRANCH_STATE] = self.branch_state != BranchState::None;
+        positions[PositionMask::POS_0C_GIT_OPERATION] = self.git_operation != GitOperation::None;
+        positions[PositionMask::POS_0D_WORKTREE_ATTRS] = !self.worktree_attrs.is_empty();
+        positions[PositionMask::POS_1_MAIN_DIVERGENCE] =
+            self.main_divergence != MainDivergence::None;
+        positions[PositionMask::POS_2_UPSTREAM_DIVERGENCE] =
+            self.upstream_divergence != UpstreamDivergence::None;
+        positions[PositionMask::POS_3_WORKING_TREE] = !self.working_tree.is_empty();
+        PositionMask { positions }
     }
 
     /// Check if symbols are empty
