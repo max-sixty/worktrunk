@@ -1,22 +1,20 @@
 # Worktrunk
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-Git worktree lifecycle automation. Built for running multiple AI coding agents without conflicts.
-
-<!-- Add after publishing to crates.io:
 [![Crates.io](https://img.shields.io/crates/v/worktrunk.svg)](https://crates.io/crates/worktrunk)
--->
 
-Git worktrees let multiple agents work on one repo without colliding—each gets a separate directory sharing history. But creating worktrees, tracking paths, and cleaning up afterward is manual. Worktrunk automates the lifecycle: create, switch, clean up—your shell stays put.
+Git worktree lifecycle automation, designed around running concurrent AI coding agents.
 
-Running ten agents on different features? `wt switch --create feature-a`, `wt switch --create feature-b`, and they're isolated. Agent finishes? `wt remove feature-a` cleans up automatically. No path juggling, no stale directories.
+Git worktrees let multiple agents work on one repo without colliding; each gets
+a separate directory. But creating worktrees, tracking paths, and cleaning up
+afterward is manual. Worktrunk automates that lifecycle.
 
 ## What It Does
 
 Automates the full lifecycle: create worktree, work, merge back, remove worktree.
 
 <!-- Output generated from: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap -->
+
 ```bash
 $ wt switch --create fix-auth
 # Shell now in ../repo.fix-auth/
@@ -36,8 +34,6 @@ $ wt merge
 # Shell back in main
 ```
 
-Shell integration means directories change automatically. Merge handles staging, committing, merging, pushing, cleanup. One command.
-
 ## Installation
 
 ```bash
@@ -48,16 +44,19 @@ wt config shell  # Sets up shell integration
 ## Three Commands
 
 **Create workspace:**
+
 ```bash
 wt switch --create feature-name
 ```
 
 **Finish and merge:**
+
 ```bash
 wt merge
 ```
 
 **See active worktrees:**
+
 ```bash
 wt list
 ```
@@ -65,12 +64,14 @@ wt list
 ## Automation Features
 
 **LLM commits** - AI generates merge commits from diff and history:
+
 ```bash
 wt merge
 wt config help  # Setup guide
 ```
 
 **Project hooks** - Auto-run tests, install deps:
+
 ```toml
 # .config/wt.toml
 [pre-merge-command]
@@ -100,6 +101,7 @@ These trade manual control for automation. For fine-grained control, use `git wo
 - `wt config` - Manage configuration
 
 **Shortcut:** Use `@` to refer to your current HEAD (following git's convention):
+
 ```bash
 wt switch @                              # Switch to current branch's worktree
 wt switch --create new-feature --base=@  # Branch from current HEAD
@@ -115,26 +117,26 @@ The Status column shows git repository state using compact symbols. Symbol order
 
 **Symbol order:** `= ≡∅ ↻⋈ ◇⊠⚠ ↑↓ ⇡⇣ ?!+»✘`
 
-| Symbol | Meaning | Category | Dimmed? |
-|--------|---------|----------|---------|
-| `·` | Branch without worktree | N/A | No |
-| `=` | Conflicts with main | Blocking | No |
-| `≡` | Working tree matches main (identical to main branch, regardless of commit history) | Worktree state | Yes |
-| `∅` | No commits (no commits ahead AND no uncommitted changes) | Worktree state | Yes |
-| `↻` | Rebase in progress | Git operation | No |
-| `⋈` | Merge in progress | Git operation | No |
-| `◇` | Bare worktree (no working directory) | Worktree attribute | No |
-| `⊠` | Locked worktree | Worktree attribute | No |
-| `⚠` | Prunable worktree | Worktree attribute | No |
-| `↑` | Commits ahead of main | Branch divergence | No |
-| `↓` | Commits behind main | Branch divergence | No |
-| `⇡` | Commits ahead of remote | Remote divergence | No |
-| `⇣` | Commits behind remote | Remote divergence | No |
-| `?` | Untracked files | Working tree | No |
-| `!` | Modified files (unstaged) | Working tree | No |
-| `+` | Staged files | Working tree | No |
-| `»` | Renamed files | Working tree | No |
-| `✘` | Deleted files | Working tree | No |
+| Symbol | Meaning                                                                            | Category           | Dimmed? |
+| ------ | ---------------------------------------------------------------------------------- | ------------------ | ------- |
+| `·`    | Branch without worktree                                                            | N/A                | No      |
+| `=`    | Conflicts with main                                                                | Blocking           | No      |
+| `≡`    | Working tree matches main (identical to main branch, regardless of commit history) | Worktree state     | Yes     |
+| `∅`    | No commits (no commits ahead AND no uncommitted changes)                           | Worktree state     | Yes     |
+| `↻`    | Rebase in progress                                                                 | Git operation      | No      |
+| `⋈`    | Merge in progress                                                                  | Git operation      | No      |
+| `◇`    | Bare worktree (no working directory)                                               | Worktree attribute | No      |
+| `⊠`    | Locked worktree                                                                    | Worktree attribute | No      |
+| `⚠`    | Prunable worktree                                                                  | Worktree attribute | No      |
+| `↑`    | Commits ahead of main                                                              | Branch divergence  | No      |
+| `↓`    | Commits behind main                                                                | Branch divergence  | No      |
+| `⇡`    | Commits ahead of remote                                                            | Remote divergence  | No      |
+| `⇣`    | Commits behind remote                                                              | Remote divergence  | No      |
+| `?`    | Untracked files                                                                    | Working tree       | No      |
+| `!`    | Modified files (unstaged)                                                          | Working tree       | No      |
+| `+`    | Staged files                                                                       | Working tree       | No      |
+| `»`    | Renamed files                                                                      | Working tree       | No      |
+| `✘`    | Deleted files                                                                      | Working tree       | No      |
 
 Symbols combine to show complete state (e.g., `≡↓!` means matches main, behind main, and has unstaged changes).
 
@@ -230,7 +232,9 @@ Recent commit style ({{ recent_commits | length }} commits):
 
 Changes to commit:
 ```
+
 {{ git_diff }}
+
 ```
 
 Requirements:
@@ -274,12 +278,14 @@ squash-template-file = "~/.config/worktrunk/squash-template.jinja"
 **Available template variables:**
 
 Normal commits:
+
 - `{{ git_diff }}` - Staged changes
 - `{{ branch }}` - Current branch name
 - `{{ recent_commits }}` - Array of recent commit messages (for style matching)
 - `{{ repo }}` - Repository name
 
 Squash commits:
+
 - `{{ commits }}` - Array of commit messages being squashed
 - `{{ target_branch }}` - Branch being merged into (e.g., "main")
 - `{{ branch }}` - Current branch name
@@ -311,13 +317,13 @@ Automate common tasks by creating `.config/wt.toml` in your repository root. Run
 <details>
 <summary>All available hooks</summary>
 
-| Hook | When It Runs | Execution | Failure Behavior |
-|------|--------------|-----------|------------------|
-| **post-create-command** | After `git worktree add` completes | Sequential, blocking | Logs warning, continues with remaining commands |
-| **post-start-command** | After post-create completes | Parallel, non-blocking (background processes) | Logs warning, doesn't affect switch result |
-| **pre-commit-command** | Before committing changes during `wt merge` (both squash and no-squash modes) | Sequential, blocking, fail-fast | Terminates merge immediately |
-| **pre-merge-command** | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast | Terminates merge immediately |
-| **post-merge-command** | After successful merge and push to target branch, before cleanup | Sequential, blocking | Logs warning, continues with remaining commands |
+| Hook                    | When It Runs                                                                   | Execution                                     | Failure Behavior                                |
+| ----------------------- | ------------------------------------------------------------------------------ | --------------------------------------------- | ----------------------------------------------- |
+| **post-create-command** | After `git worktree add` completes                                             | Sequential, blocking                          | Logs warning, continues with remaining commands |
+| **post-start-command**  | After post-create completes                                                    | Parallel, non-blocking (background processes) | Logs warning, doesn't affect switch result      |
+| **pre-commit-command**  | Before committing changes during `wt merge` (both squash and no-squash modes)  | Sequential, blocking, fail-fast               | Terminates merge immediately                    |
+| **pre-merge-command**   | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast               | Terminates merge immediately                    |
+| **post-merge-command**  | After successful merge and push to target branch, before cleanup               | Sequential, blocking                          | Logs warning, continues with remaining commands |
 
 **Template variables:** `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
 
@@ -419,6 +425,7 @@ The custom emoji appears directly after the git status symbols.
 Claude Code can automatically set/clear emoji status when coding sessions start and end. This shows which branches have active AI sessions.
 
 **Easy setup:** Install the Worktrunk Claude Code plugin which includes these hooks automatically:
+
 <!-- [Worktrunk Claude Code plugin](https://github.com/max-sixty/worktrunk) -->
 
 ```bash
@@ -468,6 +475,7 @@ git clone https://github.com/max-sixty/worktrunk.git worktrunk-skills
 ```
 
 Now when you use Claude:
+
 - Sets status to `🤖` for the current branch when you submit a prompt (working)
 - Changes to `💬` when Claude returns a response (ready for your input)
 - Clears the status completely when the session ends
@@ -502,11 +510,13 @@ feature-x  ↑!💬        +5 -2     ./myapp.feature-x/
 For true per-worktree isolation (different status for multiple worktrees on the same branch), use worktree-specific config:
 
 **One-time setup (enables per-worktree config for the repo):**
+
 ```bash
 git config extensions.worktreeConfig true
 ```
 
 **Set status from within a worktree:**
+
 ```bash
 # From within the worktree
 git config --worktree worktrunk.status "🚧"
@@ -516,6 +526,7 @@ git config --worktree --unset worktrunk.status
 ```
 
 **Claude Code hooks for per-worktree:**
+
 ```json
 {
   "hooks": {
@@ -586,46 +597,55 @@ This adds shell integration to your config files (supports Bash, Zsh, Fish, Nush
 Add one line to your shell config:
 
 **Bash** (`~/.bashrc`):
+
 ```bash
 eval "$(wt init bash)"
 ```
 
 **Fish** (`~/.config/fish/config.fish`):
+
 ```fish
 wt init fish | source
 ```
 
 **Zsh** (`~/.zshrc`):
+
 ```bash
 eval "$(wt init zsh)"
 ```
 
 **Nushell** (`~/.config/nushell/env.nu`):
+
 ```nu
 wt init nushell | save -f ~/.cache/wt-init.nu
 ```
 
 Then add to `~/.config/nushell/config.nu`:
+
 ```nu
 source ~/.cache/wt-init.nu
 ```
 
 **PowerShell** (profile):
+
 ```powershell
 wt init powershell | Out-String | Invoke-Expression
 ```
 
 **Elvish** (`~/.config/elvish/rc.elv`):
+
 ```elvish
 eval (wt init elvish | slurp)
 ```
 
 **Xonsh** (`~/.xonshrc`):
+
 ```python
 execx($(wt init xonsh))
 ```
 
 **Oil Shell** (`~/.config/oil/oshrc`):
+
 ```bash
 eval "$(wt init oil)"
 ```
