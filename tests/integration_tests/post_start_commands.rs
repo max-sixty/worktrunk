@@ -9,13 +9,14 @@ use std::time::Duration;
 // These allow time for background processes to complete and write output files
 
 /// Short wait for fast commands (simple echo statements)
-const SLEEP_FAST_COMMAND: Duration = Duration::from_millis(500);
+const SLEEP_FAST_COMMAND: Duration = Duration::from_millis(100);
 
 /// Standard wait for background commands with sleep/processing
-const SLEEP_BACKGROUND_COMMAND: Duration = Duration::from_secs(1);
+const SLEEP_BACKGROUND_COMMAND: Duration = Duration::from_millis(200);
 
-/// Extended wait for commands that need extra time (e.g., in e2e shell tests)
-const SLEEP_EXTENDED: Duration = Duration::from_secs(2);
+/// Extended wait for commands that include explicit sleep in the command itself
+/// (e.g., "sleep 0.1 && echo ..." requires at least 100ms + margin)
+const SLEEP_EXTENDED: Duration = Duration::from_millis(250);
 
 /// Helper to create snapshot with normalized paths and SHAs
 ///
@@ -238,7 +239,7 @@ fn test_post_start_single_background_command() {
 
     // Create project config with a background command
     repo.write_project_config(
-        r#"post-start-command = "sleep 1 && echo 'Background task done' > background.txt""#,
+        r#"post-start-command = "sleep 0.1 && echo 'Background task done' > background.txt""#,
     );
 
     repo.commit("Add background command");
@@ -248,7 +249,7 @@ fn test_post_start_single_background_command() {
         r#"worktree-path = "../{main-worktree}.{branch}"
 
 [projects."test-repo"]
-approved-commands = ["sleep 1 && echo 'Background task done' > background.txt"]
+approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"]
 "#,
     );
 
@@ -329,7 +330,7 @@ fn test_both_post_create_and_post_start() {
         r#"post-create-command = "echo 'Setup done' > setup.txt"
 
 [post-start-command]
-server = "sleep 0.5 && echo 'Server running' > server.txt"
+server = "sleep 0.05 && echo 'Server running' > server.txt"
 "#,
     );
 
@@ -342,7 +343,7 @@ server = "sleep 0.5 && echo 'Server running' > server.txt"
 [projects."test-repo"]
 approved-commands = [
     "echo 'Setup done' > setup.txt",
-    "sleep 0.5 && echo 'Server running' > server.txt",
+    "sleep 0.05 && echo 'Server running' > server.txt",
 ]
 "#,
     );
@@ -357,8 +358,8 @@ approved-commands = [
         "Post-create command should have completed before wt exits"
     );
 
-    // Wait for background command
-    thread::sleep(SLEEP_BACKGROUND_COMMAND);
+    // Wait for background command (command has sleep 0.05 + margin)
+    thread::sleep(Duration::from_millis(150));
 
     // Server file should exist after background task completes
     assert!(

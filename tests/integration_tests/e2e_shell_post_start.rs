@@ -28,7 +28,7 @@ fn test_e2e_post_start_background_command(#[case] shell: &str) {
     fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-start-command = "sleep 0.5 && echo 'Background task done' > bg_marker.txt""#,
+        r#"post-start-command = "sleep 0.05 && echo 'Background task done' > bg_marker.txt""#,
     )
     .expect("Failed to write config");
 
@@ -40,7 +40,7 @@ fn test_e2e_post_start_background_command(#[case] shell: &str) {
         r#"worktree-path = "../{main-worktree}.{branch}"
 
 [projects."test-repo"]
-approved-commands = ["sleep 0.5 && echo 'Background task done' > bg_marker.txt"]
+approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"]
 "#,
     )
     .expect("Failed to write user config");
@@ -71,8 +71,8 @@ approved-commands = ["sleep 0.5 && echo 'Background task done' > bg_marker.txt"]
         output
     );
 
-    // Wait for background command to complete
-    thread::sleep(Duration::from_secs(2));
+    // Wait for background command to complete (command has sleep 0.05 + margin)
+    thread::sleep(Duration::from_millis(150));
 
     // Verify background command actually ran
     let worktree_path = repo
@@ -143,8 +143,8 @@ fn test_bash_post_start_multiple_parallel_commands() {
     fs::write(
         config_dir.join("wt.toml"),
         r#"[post-start-command]
-task1 = "sleep 0.5 && echo 'Task 1' > task1.txt"
-task2 = "sleep 0.5 && echo 'Task 2' > task2.txt"
+task1 = "sleep 0.05 && echo 'Task 1' > task1.txt"
+task2 = "sleep 0.05 && echo 'Task 2' > task2.txt"
 "#,
     )
     .expect("Failed to write config");
@@ -158,8 +158,8 @@ task2 = "sleep 0.5 && echo 'Task 2' > task2.txt"
 
 [projects."test-repo"]
 approved-commands = [
-    "sleep 0.5 && echo 'Task 1' > task1.txt",
-    "sleep 0.5 && echo 'Task 2' > task2.txt",
+    "sleep 0.05 && echo 'Task 1' > task1.txt",
+    "sleep 0.05 && echo 'Task 2' > task2.txt",
 ]
 "#,
     )
@@ -187,8 +187,8 @@ approved-commands = [
         output
     );
 
-    // Wait for background commands to complete
-    thread::sleep(Duration::from_secs(1));
+    // Wait for background commands to complete (commands have sleep 0.05 + margin)
+    thread::sleep(Duration::from_millis(150));
 
     // Verify both background commands ran
     let worktree_path = repo
@@ -290,7 +290,7 @@ fn test_fish_post_start_background() {
     fs::write(
         config_dir.join("wt.toml"),
         r#"[post-start-command]
-fish_bg = "sleep 0.5 && echo 'Fish background done' > fish_bg.txt"
+fish_bg = "sleep 0.05 && echo 'Fish background done' > fish_bg.txt"
 "#,
     )
     .expect("Failed to write config");
@@ -303,7 +303,7 @@ fish_bg = "sleep 0.5 && echo 'Fish background done' > fish_bg.txt"
         r#"worktree-path = "../{main-worktree}.{branch}"
 
 [projects."test-repo"]
-approved-commands = ["sleep 0.5 && echo 'Fish background done' > fish_bg.txt"]
+approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
 "#,
     )
     .expect("Failed to write test config");
@@ -331,8 +331,8 @@ approved-commands = ["sleep 0.5 && echo 'Fish background done' > fish_bg.txt"]
         output
     );
 
-    // Wait for background command
-    thread::sleep(Duration::from_secs(1));
+    // Wait for background command (command has sleep 0.05 + margin)
+    thread::sleep(Duration::from_millis(150));
 
     // Verify background command ran
     let worktree_path = repo
