@@ -58,6 +58,38 @@ cargo install worktrunk
 wt config shell  # Sets up shell integration
 ```
 
+## Tips
+
+**Create an alias for your favorite agent** - Shell aliases streamline common workflows. For example, to create a worktree and immediately start Claude:
+
+```bash
+alias wsl='wt switch --create --execute=claude'
+```
+
+Now `wsl new-feature` creates a branch, sets up the worktree, runs initialization hooks, and launches Claude in that directory.
+
+**Automatic branch status in Claude Code** - The Claude Code integration shows which branches have active AI sessions. When Claude starts working, the branch shows `🤖` in `wt list`. When waiting for input, it shows `💬`. Setup instructions: [Custom Worktree Status](#custom-worktree-status).
+
+**Auto-generated commit messages** - Simon Willison's [llm](https://llm.datasette.io/) tool integrates seamlessly with worktrunk's commit generation. Install it, configure the command, and `wt merge` will automatically generate contextual commit messages. Setup guide: [LLM-Powered Commit Messages](#llm-powered-commit-messages).
+
+**Environment setup with hooks** - Each worktree is a separate directory. Use `post-create-command` to ensure consistent environments:
+
+```toml
+# In .config/wt.toml
+[post-create-command]
+"setup" = "uv sync && nvm install"
+```
+
+**Delegate to task runners** - Reference existing Justfile/Makefile commands instead of duplicating logic:
+
+```toml
+[post-create-command]
+"setup" = "just install"
+
+[pre-merge-command]
+"validate" = "just test lint"
+```
+
 ## Automation Features
 
 ### LLM-Powered Commit Messages
