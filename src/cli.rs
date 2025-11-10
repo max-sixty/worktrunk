@@ -55,6 +55,44 @@ pub enum ConfigCommand {
     /// Refresh the cached default branch by querying the remote
     RefreshCache,
     /// Configure shell by writing to config files
+    #[command(long_about = r#"Configure shell by writing to config files
+
+This command automatically adds the appropriate integration line to your shell's config file.
+It supports Bash, Zsh, Fish, Nushell, PowerShell, Elvish, Xonsh, and Oil.
+
+The integration enables 'wt switch' to change directories and 'wt remove' to return to the
+previous location.
+
+MANUAL SETUP (if you prefer):
+
+Add one line to your shell config:
+
+Bash (~/.bashrc):
+  eval "$(wt init bash)"
+
+Fish (~/.config/fish/config.fish):
+  wt init fish | source
+
+Zsh (~/.zshrc):
+  eval "$(wt init zsh)"
+
+Nushell (~/.config/nushell/env.nu):
+  wt init nushell | save -f ~/.cache/wt-init.nu
+
+Then add to ~/.config/nushell/config.nu:
+  source ~/.cache/wt-init.nu
+
+PowerShell (profile):
+  wt init powershell | Out-String | Invoke-Expression
+
+Elvish (~/.config/elvish/rc.elv):
+  eval (wt init elvish | slurp)
+
+Xonsh (~/.xonshrc):
+  execx($(wt init xonsh))
+
+Oil Shell (~/.config/oil/oshrc):
+  eval "$(wt init oil)""#)]
     Shell {
         /// Specific shell to configure (default: all shells with existing config files)
         #[arg(long, value_enum)]
@@ -274,7 +312,14 @@ Create and run command:
   wt switch --create docs --execute "code ."
 
 Skip hooks during creation:
-  wt switch --create temp --no-verify"#)]
+  wt switch --create temp --no-verify
+
+SHORTCUTS:
+
+Use '@' to refer to your current HEAD (following git's convention):
+  wt switch @                              # Switch to current branch's worktree
+  wt switch --create new-feature --base=@  # Branch from current HEAD
+  wt remove @                              # Remove current worktree"#)]
     Switch {
         /// Branch name, worktree path, '@' for current HEAD, or '-' for previous branch
         branch: String,

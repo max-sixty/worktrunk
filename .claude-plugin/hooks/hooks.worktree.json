@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config extensions.worktreeConfig true 2>/dev/null; git config --worktree worktrunk.status 🤖 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git config --worktree --unset worktrunk.status 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

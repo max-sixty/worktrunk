@@ -555,7 +555,7 @@ fn test_list_with_user_status() {
     // Set user status (emoji only, branch-keyed)
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.clean-with-status", "⏸️"])
+    cmd.args(["config", "worktrunk.status.clean-with-status", "💬"])
         .current_dir(repo.root_path())
         .output()
         .expect("Failed to set user status");

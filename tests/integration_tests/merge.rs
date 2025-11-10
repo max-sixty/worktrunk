@@ -1,13 +1,23 @@
 use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 /// Helper to create snapshot with normalized paths
-fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
+fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(repo, "merge", args, cwd);
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+/// Helper to snapshot switch command
+fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -1615,24 +1625,28 @@ fn test_merge_no_remote() {
 /// This demonstrates the basic "What It Does" flow - create worktree, make changes, merge back.
 ///
 /// Output is used in README.md "What It Does" section.
-/// Source: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap
+/// Merge output: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap
+/// Switch output: tests/snapshots/integration__integration_tests__merge__readme_example_simple_switch.snap
 #[test]
 fn test_readme_example_simple() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
     repo.setup_remote("main");
 
-    // Create a worktree for main
-    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .expect("Failed to add worktree");
+    // Snapshot the switch --create command (runs from bare repo)
+    snapshot_switch(
+        "readme_example_simple_switch",
+        &repo,
+        &["--create", "fix-auth"],
+        None,
+    );
 
-    // Create a fix-auth worktree and make a commit
-    let feature_wt = repo.add_worktree("fix-auth", "fix-auth");
+    // Get the created worktree path and make a commit
+    let feature_wt = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("test-repo.fix-auth");
     let auth_rs = r#"// JWT validation utilities
 pub struct JwtClaims {
     pub sub: String,
@@ -1663,7 +1677,7 @@ pub fn refresh(refresh_token: &str) -> String {
         .output()
         .expect("Failed to commit");
 
-    // Merge fix-auth into main
+    // Snapshot the merge command
     snapshot_merge("readme_example_simple", &repo, &["main"], Some(&feature_wt));
 }
 
