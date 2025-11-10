@@ -876,35 +876,8 @@ impl WorktreeInfo {
         };
 
         // Use tree equality check instead of expensive diff for "matches main"
-        let working_tree_diff_with_main = if let Some(base) = base_branch {
-            // Get tree hashes for HEAD and base branch
-            let head_tree = wt_repo
-                .run_command(&["rev-parse", "HEAD^{tree}"])?
-                .trim()
-                .to_string();
-            let base_tree = wt_repo
-                .run_command(&["rev-parse", &format!("{}^{{tree}}", base)])?
-                .trim()
-                .to_string();
-
-            if head_tree == base_tree {
-                // Trees are identical - check if working tree is also clean
-                if status_info.is_dirty {
-                    // Rare case: trees match but working tree has uncommitted changes
-                    // Need to compute actual diff to get accurate line counts
-                    Some(wt_repo.working_tree_diff_vs_ref(base)?)
-                } else {
-                    // Trees match and working tree is clean → matches main exactly
-                    Some(LineDiff::default())
-                }
-            } else {
-                // Trees differ - skip the expensive scan
-                // Return None to indicate "not computed" (optimization)
-                None
-            }
-        } else {
-            Some(LineDiff::default()) // Primary worktree always matches itself
-        };
+        let working_tree_diff_with_main =
+            wt_repo.working_tree_diff_with_base(base_branch, status_info.is_dirty)?;
         let branch_diff = BranchDiffTotals::compute(&wt_repo, base_branch, &wt.head)?;
 
         // Get worktree state (merge/rebase/etc)

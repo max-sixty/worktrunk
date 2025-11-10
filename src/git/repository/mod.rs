@@ -576,6 +576,32 @@ impl Repository {
         LineDiff::from_numstat(&stdout)
     }
 
+    /// Return the working tree diff versus a base branch when their trees match.
+    ///
+    /// When `base_branch` is `None` (primary worktree), this always returns `Some(LineDiff::default())`.
+    /// If the base branch tree matches HEAD and the working tree is dirty, the precise diff is
+    /// computed; otherwise we return zero to indicate the trees (and working tree) match.
+    /// When the trees differ, we return `None` so callers can skip expensive comparisons.
+    pub fn working_tree_diff_with_base(
+        &self,
+        base_branch: Option<&str>,
+        working_tree_dirty: bool,
+    ) -> Result<Option<LineDiff>, GitError> {
+        let Some(branch) = base_branch else {
+            return Ok(Some(LineDiff::default()));
+        };
+
+        if !self.branch_tree_matches_head(branch)? {
+            return Ok(None);
+        }
+
+        if working_tree_dirty {
+            self.working_tree_diff_vs_ref(branch).map(Some)
+        } else {
+            Ok(Some(LineDiff::default()))
+        }
+    }
+
     /// Get line diff statistics between two refs (using three-dot diff for merge base).
     ///
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> Result<LineDiff, GitError> {
@@ -725,6 +751,17 @@ impl Repository {
         let branch = self.query_remote_default_branch(&remote)?;
         self.cache_default_branch(&remote, &branch)?;
         Ok(branch)
+    }
+
+    fn branch_tree_matches_head(&self, branch: &str) -> Result<bool, GitError> {
+        let head_tree = self.rev_parse_tree("HEAD^{tree}")?;
+        let branch_tree = self.rev_parse_tree(&format!("{branch}^{{tree}}"))?;
+        Ok(head_tree == branch_tree)
+    }
+
+    fn rev_parse_tree(&self, spec: &str) -> Result<String, GitError> {
+        self.run_command(&["rev-parse", spec])
+            .map(|output| output.trim().to_string())
     }
 
     // Private helper methods for default_branch()

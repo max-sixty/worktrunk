@@ -64,6 +64,14 @@ struct SummaryMetrics {
 }
 
 impl SummaryMetrics {
+    fn from_items(items: &[ListItem]) -> Self {
+        let mut metrics = Self::default();
+        for item in items {
+            metrics.update(item);
+        }
+        metrics
+    }
+
     fn update(&mut self, item: &ListItem) {
         if let Some(info) = item.worktree_info() {
             self.worktrees += 1;
@@ -79,6 +87,39 @@ impl SummaryMetrics {
             self.ahead_items += 1;
         }
     }
+
+    fn summary_parts(&self, include_branches: bool, hidden_columns: usize) -> Vec<String> {
+        let mut parts = Vec::new();
+
+        if include_branches {
+            parts.push(format!("{} worktrees", self.worktrees));
+            if self.branches > 0 {
+                parts.push(format!("{} branches", self.branches));
+            }
+        } else {
+            let plural = if self.worktrees == 1 { "" } else { "s" };
+            parts.push(format!("{} worktree{}", self.worktrees, plural));
+        }
+
+        if self.dirty_worktrees > 0 {
+            parts.push(format!("{} with changes", self.dirty_worktrees));
+        }
+
+        if self.ahead_items > 0 {
+            parts.push(format!("{} ahead", self.ahead_items));
+        }
+
+        if hidden_columns > 0 {
+            let plural = if hidden_columns == 1 {
+                "column"
+            } else {
+                "columns"
+            };
+            parts.push(format!("{} {} hidden", hidden_columns, plural));
+        }
+
+        parts
+    }
 }
 
 impl LayoutConfig {
@@ -93,44 +134,14 @@ impl LayoutConfig {
             return;
         }
 
-        let mut metrics = SummaryMetrics::default();
-        for item in items {
-            metrics.update(item);
-        }
+        let metrics = SummaryMetrics::from_items(items);
 
         println!();
         let dim = Style::new().dimmed();
 
-        let mut parts = Vec::new();
-
-        if include_branches {
-            parts.push(format!("{} worktrees", metrics.worktrees));
-            if metrics.branches > 0 {
-                parts.push(format!("{} branches", metrics.branches));
-            }
-        } else {
-            let plural = if metrics.worktrees == 1 { "" } else { "s" };
-            parts.push(format!("{} worktree{}", metrics.worktrees, plural));
-        }
-
-        if metrics.dirty_worktrees > 0 {
-            parts.push(format!("{} with changes", metrics.dirty_worktrees));
-        }
-
-        if metrics.ahead_items > 0 {
-            parts.push(format!("{} ahead", metrics.ahead_items));
-        }
-
-        if self.hidden_nonempty_count > 0 {
-            let plural = if self.hidden_nonempty_count == 1 {
-                "column"
-            } else {
-                "columns"
-            };
-            parts.push(format!("{} {} hidden", self.hidden_nonempty_count, plural));
-        }
-
-        let summary = parts.join(", ");
+        let summary = metrics
+            .summary_parts(include_branches, self.hidden_nonempty_count)
+            .join(", ");
         println!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}");
     }
 }

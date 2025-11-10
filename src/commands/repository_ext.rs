@@ -81,22 +81,7 @@ impl RepositoryCliExt for Repository {
         let status = self
             .run_command(&["status", "--porcelain"])
             .git_context("Failed to get status")?;
-        let untracked = get_untracked_files(&status);
-
-        if untracked.is_empty() {
-            return Ok(());
-        }
-
-        let count = untracked.len();
-        let file_word = if count == 1 { "file" } else { "files" };
-        crate::output::warning(format!(
-            "{WARNING}Auto-staging {count} untracked {file_word}:{WARNING:#}"
-        ))?;
-
-        let joined_files = untracked.join("\n");
-        crate::output::gutter(format_with_gutter(&joined_files, "", None))?;
-
-        Ok(())
+        AutoStageWarning::from_status(&status).emit()
     }
 
     fn gather_list_data(
@@ -358,12 +343,37 @@ fn load_project_config_at(repo_root: &Path) -> Result<Option<ProjectConfig>, Git
     ProjectConfig::load(repo_root).git_context("Failed to load project config")
 }
 
-fn get_untracked_files(status_output: &str) -> Vec<String> {
-    status_output
-        .lines()
-        .filter_map(|line| line.strip_prefix("?? "))
-        .map(|filename| filename.to_string())
-        .collect()
+struct AutoStageWarning {
+    files: Vec<String>,
+}
+
+impl AutoStageWarning {
+    fn from_status(status_output: &str) -> Self {
+        let files = status_output
+            .lines()
+            .filter_map(|line| line.strip_prefix("?? "))
+            .map(|filename| filename.to_string())
+            .collect();
+
+        Self { files }
+    }
+
+    fn emit(&self) -> Result<(), GitError> {
+        if self.files.is_empty() {
+            return Ok(());
+        }
+
+        let count = self.files.len();
+        let file_word = if count == 1 { "file" } else { "files" };
+        crate::output::warning(format!(
+            "{WARNING}Auto-staging {count} untracked {file_word}:{WARNING:#}"
+        ))?;
+
+        let joined_files = self.files.join("\n");
+        crate::output::gutter(format_with_gutter(&joined_files, "", None))?;
+
+        Ok(())
+    }
 }
 
 pub(crate) struct TargetWorktreeStash {
