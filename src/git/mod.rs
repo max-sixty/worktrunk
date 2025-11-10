@@ -12,14 +12,12 @@ mod repository;
 mod test;
 
 // Re-exports from submodules
-pub use diff::{DiffStats, parse_diff_shortstat};
+pub use diff::{DiffStats, LineDiff};
 pub use error::GitError;
 pub use repository::{GitResultExt, Repository};
 
-// Re-export parsing functions for internal use
-pub(crate) use parse::{
-    parse_local_default_branch, parse_numstat, parse_remote_default_branch, parse_worktree_list,
-};
+// Re-export parsing helpers for internal use
+pub(crate) use parse::DefaultBranchName;
 
 // Note: HookType, Worktree, and WorktreeList are defined in this module and are already public.
 // They're accessible as git::HookType, git::Worktree, and git::WorktreeList without needing re-export.

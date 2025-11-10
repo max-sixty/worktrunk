@@ -547,18 +547,19 @@ pub fn calculate_column_widths(items: &[ListItem], fetch_ci: bool) -> LayoutMeta
 
         // Working tree diff (worktrees only) - track digits separately
         if let Some(info) = worktree_info
-            && (info.working_tree_diff.0 > 0 || info.working_tree_diff.1 > 0)
+            && !info.working_tree_diff.is_empty()
         {
             max_wt_added_digits =
-                max_wt_added_digits.max(info.working_tree_diff.0.to_string().len());
+                max_wt_added_digits.max(info.working_tree_diff.added.to_string().len());
             max_wt_deleted_digits =
-                max_wt_deleted_digits.max(info.working_tree_diff.1.to_string().len());
+                max_wt_deleted_digits.max(info.working_tree_diff.deleted.to_string().len());
         }
 
         // Branch diff (only for non-primary items) - track digits separately
-        if !item.is_primary() && (branch_diff.0 > 0 || branch_diff.1 > 0) {
-            max_br_added_digits = max_br_added_digits.max(branch_diff.0.to_string().len());
-            max_br_deleted_digits = max_br_deleted_digits.max(branch_diff.1.to_string().len());
+        if !item.is_primary() && !branch_diff.is_empty() {
+            max_br_added_digits = max_br_added_digits.max(branch_diff.added.to_string().len());
+            max_br_deleted_digits =
+                max_br_deleted_digits.max(branch_diff.deleted.to_string().len());
         }
 
         // Upstream tracking - track digits only (not remote name yet)
@@ -833,6 +834,7 @@ mod tests {
     use super::*;
     use crate::commands::list::columns::ColumnKind;
     use std::path::PathBuf;
+    use worktrunk::git::LineDiff;
 
     #[test]
     fn test_column_width_calculation_with_unicode() {
@@ -859,9 +861,11 @@ mod tests {
                 ahead: 3,
                 behind: 2,
             },
-            working_tree_diff: (100, 50),
-            working_tree_diff_with_main: Some((0, 0)),
-            branch_diff: BranchDiffTotals { diff: (200, 30) },
+            working_tree_diff: LineDiff::from((100, 50)),
+            working_tree_diff_with_main: Some(LineDiff::default()),
+            branch_diff: BranchDiffTotals {
+                diff: LineDiff::from((200, 30)),
+            },
             is_primary: false,
             upstream: UpstreamStatus::from_parts(Some("origin".to_string()), 4, 0),
             worktree_state: None,
@@ -935,9 +939,11 @@ mod tests {
                 ahead: 5,
                 behind: 10,
             },
-            working_tree_diff: (100, 50),
-            working_tree_diff_with_main: Some((0, 0)),
-            branch_diff: BranchDiffTotals { diff: (200, 30) },
+            working_tree_diff: LineDiff::from((100, 50)),
+            working_tree_diff_with_main: Some(LineDiff::default()),
+            branch_diff: BranchDiffTotals {
+                diff: LineDiff::from((200, 30)),
+            },
             is_primary: false,
             upstream: UpstreamStatus::from_parts(Some("origin".to_string()), 4, 2),
             worktree_state: None,
@@ -1010,9 +1016,11 @@ mod tests {
                 ahead: 0,
                 behind: 0,
             },
-            working_tree_diff: (0, 0),
-            working_tree_diff_with_main: Some((0, 0)),
-            branch_diff: BranchDiffTotals { diff: (0, 0) },
+            working_tree_diff: LineDiff::default(),
+            working_tree_diff_with_main: Some(LineDiff::default()),
+            branch_diff: BranchDiffTotals {
+                diff: LineDiff::default(),
+            },
             is_primary: true, // Primary worktree: no ahead/behind shown
             upstream: UpstreamStatus::default(),
             worktree_state: None,
@@ -1076,12 +1084,14 @@ mod tests {
                 ahead: 0,
                 behind: 0,
             },
-            working_tree_diff: (0, 0), // Empty: no dirty changes
-            working_tree_diff_with_main: Some((0, 0)),
-            branch_diff: BranchDiffTotals { diff: (0, 0) }, // Empty: no diff
-            is_primary: true,                               // Empty: no ahead/behind for primary
-            upstream: UpstreamStatus::default(),            // Empty: no upstream
-            worktree_state: None,                           // Empty: no state
+            working_tree_diff: LineDiff::default(), // Empty: no dirty changes
+            working_tree_diff_with_main: Some(LineDiff::default()),
+            branch_diff: BranchDiffTotals {
+                diff: LineDiff::default(),
+            }, // Empty: no diff
+            is_primary: true, // Empty: no ahead/behind for primary
+            upstream: UpstreamStatus::default(), // Empty: no upstream
+            worktree_state: None, // Empty: no state
             pr_status: None,
             has_conflicts: false,
             status_symbols: StatusSymbols::default(),

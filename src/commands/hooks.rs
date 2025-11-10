@@ -1,5 +1,5 @@
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, CommandPhase};
+use worktrunk::config::{CommandConfig, CommandPhase, ProjectConfig};
 use worktrunk::git::GitError;
 use worktrunk::styling::{CYAN, WARNING, WARNING_BOLD, format_bash_with_gutter};
 
@@ -125,5 +125,32 @@ impl<'a> HookPipeline<'a> {
 
         crate::output::flush()?;
         Ok(())
+    }
+
+    pub fn run_pre_commit(
+        &self,
+        project_config: &ProjectConfig,
+        target_branch: Option<&str>,
+        auto_trust: bool,
+    ) -> Result<(), GitError> {
+        let Some(pre_commit_config) = &project_config.pre_commit_command else {
+            return Ok(());
+        };
+
+        let extra_vars: Vec<(&str, &str)> = target_branch
+            .into_iter()
+            .map(|target| ("target", target))
+            .collect();
+
+        self.run_sequential(
+            pre_commit_config,
+            CommandPhase::PreCommit,
+            auto_trust,
+            &extra_vars,
+            "pre-commit",
+            HookFailureStrategy::FailFast {
+                hook_type: HookType::PreCommit,
+            },
+        )
     }
 }

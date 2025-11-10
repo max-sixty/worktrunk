@@ -1,7 +1,8 @@
 use std::path::PathBuf;
-use worktrunk::git::{GitError, Repository};
+use worktrunk::git::{GitError, LineDiff, Repository};
 
 use super::ci_status::PrStatus;
+use super::columns::ColumnKind;
 
 /// Display fields shared between WorktreeInfo and BranchInfo
 /// These contain formatted strings with ANSI colors for json-pretty output
@@ -19,6 +20,38 @@ pub struct DisplayFields {
     pub status_display: Option<String>,
 }
 
+impl DisplayFields {
+    pub(crate) fn from_common_fields(
+        counts: &AheadBehind,
+        branch_diff: &BranchDiffTotals,
+        upstream: &UpstreamStatus,
+        pr_status: &Option<PrStatus>,
+    ) -> Self {
+        let commits_display =
+            ColumnKind::AheadBehind.format_diff_plain(counts.ahead, counts.behind);
+
+        let branch_diff_display = ColumnKind::BranchDiff
+            .format_diff_plain(branch_diff.diff.added, branch_diff.diff.deleted);
+
+        let upstream_display =
+            upstream
+                .active()
+                .and_then(|(_, upstream_ahead, upstream_behind)| {
+                    ColumnKind::Upstream.format_diff_plain(upstream_ahead, upstream_behind)
+                });
+
+        let ci_status_display = pr_status.as_ref().map(PrStatus::format_plain);
+
+        Self {
+            commits_display,
+            branch_diff_display,
+            upstream_display,
+            ci_status_display,
+            status_display: None,
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 pub struct WorktreeInfo {
     pub worktree: worktrunk::git::Worktree,
@@ -26,13 +59,13 @@ pub struct WorktreeInfo {
     pub commit: CommitDetails,
     #[serde(flatten)]
     pub counts: AheadBehind,
-    pub working_tree_diff: (usize, usize),
+    pub working_tree_diff: LineDiff,
     /// Diff between working tree and main branch.
     /// `None` means "not computed" (optimization: skipped when trees differ).
     /// `Some((0, 0))` means working tree matches main exactly.
     /// `Some((a, d))` means a lines added, d deleted vs main.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub working_tree_diff_with_main: Option<(usize, usize)>,
+    pub working_tree_diff_with_main: Option<LineDiff>,
     #[serde(flatten)]
     pub branch_diff: BranchDiffTotals,
     pub is_primary: bool,
@@ -112,7 +145,7 @@ impl AheadBehind {
 #[derive(serde::Serialize, Default, Clone)]
 pub struct BranchDiffTotals {
     #[serde(rename = "branch_diff")]
-    pub diff: (usize, usize),
+    pub diff: LineDiff,
 }
 
 impl BranchDiffTotals {
@@ -271,8 +304,10 @@ impl ListItem {
         let counts = self.counts();
 
         if let Some(info) = self.worktree_info() {
-            let no_commits_and_clean = counts.ahead == 0 && info.working_tree_diff == (0, 0);
-            let matches_main = info.working_tree_diff_with_main == Some((0, 0));
+            let no_commits_and_clean = counts.ahead == 0 && info.working_tree_diff.is_empty();
+            let matches_main = info
+                .working_tree_diff_with_main
+                .is_some_and(|diff| diff.is_empty());
             no_commits_and_clean || matches_main
         } else {
             counts.ahead == 0
@@ -837,7 +872,7 @@ impl WorktreeInfo {
         let working_tree_diff = if status_info.is_dirty {
             wt_repo.working_tree_diff_stats()?
         } else {
-            (0, 0) // Clean working tree
+            LineDiff::default() // Clean working tree
         };
 
         // Use tree equality check instead of expensive diff for "matches main"
@@ -860,7 +895,7 @@ impl WorktreeInfo {
                     Some(wt_repo.working_tree_diff_vs_ref(base)?)
                 } else {
                     // Trees match and working tree is clean → matches main exactly
-                    Some((0, 0))
+                    Some(LineDiff::default())
                 }
             } else {
                 // Trees differ - skip the expensive scan
@@ -868,7 +903,7 @@ impl WorktreeInfo {
                 None
             }
         } else {
-            Some((0, 0)) // Primary worktree always matches itself
+            Some(LineDiff::default()) // Primary worktree always matches itself
         };
         let branch_diff = BranchDiffTotals::compute(&wt_repo, base_branch, &wt.head)?;
 
@@ -906,9 +941,9 @@ impl WorktreeInfo {
 
         // Branch state: ≡ matches main, ∅ no commits (mutually exclusive)
         if !is_primary {
-            if working_tree_diff_with_main == Some((0, 0)) {
+            if working_tree_diff_with_main.is_some_and(|diff| diff.is_empty()) {
                 symbols.branch_state = BranchState::MatchesMain;
-            } else if counts.ahead == 0 && working_tree_diff == (0, 0) {
+            } else if counts.ahead == 0 && working_tree_diff.is_empty() {
                 symbols.branch_state = BranchState::NoCommits;
             }
         }

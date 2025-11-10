@@ -5,7 +5,7 @@ use worktrunk::styling::{CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, GREEN_BOLD, HINT, 
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
-use super::commit::{CommitOptions, commit_changes};
+use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline};
 use super::project_config::collect_commands_for_hooks;
@@ -119,7 +119,7 @@ pub fn handle_merge(
             options.warn_about_untracked = !tracked_only;
             options.show_no_squash_note = true;
 
-            commit_changes(options)?;
+            options.commit()?;
             true // Committed directly
         }
     } else {

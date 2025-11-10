@@ -4,11 +4,9 @@ use worktrunk::styling::{
     AnstyleStyle, CYAN, CYAN_BOLD, GREEN_BOLD, HINT, HINT_EMOJI, eprintln, format_with_gutter,
 };
 
-use super::commit::{
-    CommitOptions, commit_changes, commit_staged_changes, format_commit_message_for_display,
-    run_pre_commit_commands, show_llm_config_hint_if_needed,
-};
+use super::commit::{CommitGenerator, CommitOptions};
 use super::context::CommandEnv;
+use super::hooks::HookPipeline;
 use super::merge::{execute_post_merge_commands, run_pre_merge_commands};
 use super::project_config::collect_commands_for_hooks;
 use super::repository_ext::RepositoryCliExt;
@@ -40,12 +38,7 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> Result<()
             check_hook_configured(&project_config.pre_commit_command, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             let target_branch = repo.default_branch().ok();
-            run_pre_commit_commands(
-                &project_config,
-                &ctx,
-                target_branch.as_deref(),
-                false, // auto_trust: standalone command, needs approval
-            )
+            HookPipeline::new(ctx).run_pre_commit(&project_config, target_branch.as_deref(), false)
         }
         HookType::PreMerge => {
             check_hook_configured(&project_config.pre_merge_command, hook_type)?;
@@ -81,7 +74,7 @@ pub fn handle_standalone_commit(force: bool, no_verify: bool) -> Result<(), GitE
     options.auto_trust = false;
     options.show_no_squash_note = false;
 
-    commit_changes(options)
+    options.commit()
 }
 
 /// Handle shared squash workflow (used by `wt beta squash` and `wt merge`)
@@ -104,6 +97,7 @@ pub fn handle_squash(
     let repo = &env.repo;
     let current_branch = env.branch.clone();
     let ctx = env.context(force);
+    let generator = CommitGenerator::new(&env.config.commit_generation);
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
@@ -123,7 +117,7 @@ pub fn handle_squash(
 
     // Run pre-commit hook unless explicitly skipped
     if !skip_pre_commit && let Some(project_config) = repo.load_project_config()? {
-        run_pre_commit_commands(&project_config, &ctx, Some(&target_branch), auto_trust)?;
+        HookPipeline::new(ctx).run_pre_commit(&project_config, Some(&target_branch), auto_trust)?;
     }
 
     // Get merge base with target branch
@@ -143,7 +137,7 @@ pub fn handle_squash(
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
-        commit_staged_changes(&env.config.commit_generation, true)?;
+        generator.commit_staged_changes(true)?;
         return Ok(true);
     }
 
@@ -184,7 +178,7 @@ pub fn handle_squash(
     // Generate squash commit message
     crate::output::progress(format!("{CYAN}Generating squash commit message...{CYAN:#}"))?;
 
-    show_llm_config_hint_if_needed(&env.config.commit_generation)?;
+    generator.emit_hint_if_needed()?;
 
     // Get current branch and repo name for template variables
     let repo_root = repo.worktree_root()?;
@@ -203,7 +197,7 @@ pub fn handle_squash(
     .git_context("Failed to generate commit message")?;
 
     // Display the generated commit message
-    let formatted_message = format_commit_message_for_display(&commit_message);
+    let formatted_message = generator.format_message_for_display(&commit_message);
     crate::output::gutter(format_with_gutter(&formatted_message, "", None))?;
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)

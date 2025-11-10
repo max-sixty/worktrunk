@@ -11,47 +11,46 @@ use super::layout::{
 use super::model::{
     AheadBehind, CommitDetails, ListItem, PositionMask, UpstreamStatus, WorktreeInfo,
 };
+use worktrunk::git::LineDiff;
 
-fn format_plain_diff_from_config(
-    positive: usize,
-    negative: usize,
-    config: DiffDisplayConfig,
-) -> Option<String> {
-    if !config.always_show_zeros && positive == 0 && negative == 0 {
-        return None;
-    }
+impl DiffDisplayConfig {
+    fn format_plain(&self, positive: usize, negative: usize) -> Option<String> {
+        if !self.always_show_zeros && positive == 0 && negative == 0 {
+            return None;
+        }
 
-    let (positive_symbol, negative_symbol) = match config.variant {
-        DiffVariant::Signs => ("+", "-"),
-        DiffVariant::Arrows => ("↑", "↓"),
-    };
+        let (positive_symbol, negative_symbol) = match self.variant {
+            DiffVariant::Signs => ("+", "-"),
+            DiffVariant::Arrows => ("↑", "↓"),
+        };
 
-    let mut parts = Vec::with_capacity(2);
+        let mut parts = Vec::with_capacity(2);
 
-    if positive > 0 || config.always_show_zeros {
-        parts.push(format!(
-            "{}{}{}{}",
-            config.positive_style,
-            positive_symbol,
-            positive,
-            config.positive_style.render_reset()
-        ));
-    }
+        if positive > 0 || self.always_show_zeros {
+            parts.push(format!(
+                "{}{}{}{}",
+                self.positive_style,
+                positive_symbol,
+                positive,
+                self.positive_style.render_reset()
+            ));
+        }
 
-    if negative > 0 || config.always_show_zeros {
-        parts.push(format!(
-            "{}{}{}{}",
-            config.negative_style,
-            negative_symbol,
-            negative,
-            config.negative_style.render_reset()
-        ));
-    }
+        if negative > 0 || self.always_show_zeros {
+            parts.push(format!(
+                "{}{}{}{}",
+                self.negative_style,
+                negative_symbol,
+                negative,
+                self.negative_style.render_reset()
+            ));
+        }
 
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" "))
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
     }
 }
 
@@ -60,7 +59,7 @@ impl ColumnKind {
     pub(crate) fn format_diff_plain(self, positive: usize, negative: usize) -> Option<String> {
         let config = self.diff_display_config()?;
 
-        format_plain_diff_from_config(positive, negative, config)
+        config.format_plain(positive, negative)
     }
 }
 
@@ -117,76 +116,76 @@ struct DiffRenderConfig {
     align: ValueAlign,
 }
 
-fn diff_render_config(variant: DiffVariant) -> DiffRenderConfig {
-    match variant {
-        DiffVariant::Signs => DiffRenderConfig {
-            positive_symbol: "+",
-            negative_symbol: "-",
-            align: ValueAlign::Right,
-        },
-        DiffVariant::Arrows => DiffRenderConfig {
-            positive_symbol: "↑",
-            negative_symbol: "↓",
-            align: ValueAlign::Left,
-        },
+impl DiffVariant {
+    fn render_config(self) -> DiffRenderConfig {
+        match self {
+            DiffVariant::Signs => DiffRenderConfig {
+                positive_symbol: "+",
+                negative_symbol: "-",
+                align: ValueAlign::Right,
+            },
+            DiffVariant::Arrows => DiffRenderConfig {
+                positive_symbol: "↑",
+                negative_symbol: "↓",
+                align: ValueAlign::Left,
+            },
+        }
     }
 }
 
-fn format_diff_like_column(
-    positive: usize,
-    negative: usize,
-    config: DiffColumnConfig,
-) -> StyledLine {
-    let render_config = diff_render_config(config.display.variant);
-    let mut segment = StyledLine::new();
+impl DiffColumnConfig {
+    fn render_segment(&self, positive: usize, negative: usize) -> StyledLine {
+        let render_config = self.display.variant.render_config();
+        let mut segment = StyledLine::new();
 
-    if positive == 0 && negative == 0 && !config.display.always_show_zeros {
-        segment.push_raw(" ".repeat(config.total_width));
-        return segment;
+        if positive == 0 && negative == 0 && !self.display.always_show_zeros {
+            segment.push_raw(" ".repeat(self.total_width));
+            return segment;
+        }
+
+        let positive_width = 1 + self.digits.added;
+        let negative_width = 1 + self.digits.deleted;
+        let content_width = positive_width + 1 + negative_width;
+        let extra_padding = self.total_width.saturating_sub(content_width);
+
+        if matches!(render_config.align, ValueAlign::Right) && extra_padding > 0 {
+            segment.push_raw(" ".repeat(extra_padding));
+        }
+
+        if positive > 0 || (positive == 0 && self.display.always_show_zeros) {
+            let value = format!("{}{}", render_config.positive_symbol, positive);
+            let formatted = match render_config.align {
+                ValueAlign::Right => format!("{:>width$}", value, width = positive_width),
+                ValueAlign::Left => format!("{:<width$}", value, width = positive_width),
+            };
+            segment.push_styled(formatted, self.display.positive_style);
+        } else {
+            segment.push_raw(" ".repeat(positive_width));
+        }
+
+        segment.push_raw(" ");
+
+        if negative > 0 || (negative == 0 && self.display.always_show_zeros) {
+            let value = format!("{}{}", render_config.negative_symbol, negative);
+            let formatted = match render_config.align {
+                ValueAlign::Right => format!("{:>width$}", value, width = negative_width),
+                ValueAlign::Left => format!("{:<width$}", value, width = negative_width),
+            };
+            segment.push_styled(formatted, self.display.negative_style);
+        } else {
+            segment.push_raw(" ".repeat(negative_width));
+        }
+
+        if matches!(render_config.align, ValueAlign::Left) && extra_padding > 0 {
+            segment.pad_to(segment.width() + extra_padding);
+        }
+
+        if segment.width() < self.total_width {
+            segment.pad_to(self.total_width);
+        }
+
+        segment
     }
-
-    let positive_width = 1 + config.digits.added;
-    let negative_width = 1 + config.digits.deleted;
-    let content_width = positive_width + 1 + negative_width;
-    let extra_padding = config.total_width.saturating_sub(content_width);
-
-    if matches!(render_config.align, ValueAlign::Right) && extra_padding > 0 {
-        segment.push_raw(" ".repeat(extra_padding));
-    }
-
-    if positive > 0 || (positive == 0 && config.display.always_show_zeros) {
-        let value = format!("{}{}", render_config.positive_symbol, positive);
-        let formatted = match render_config.align {
-            ValueAlign::Right => format!("{:>width$}", value, width = positive_width),
-            ValueAlign::Left => format!("{:<width$}", value, width = positive_width),
-        };
-        segment.push_styled(formatted, config.display.positive_style);
-    } else {
-        segment.push_raw(" ".repeat(positive_width));
-    }
-
-    segment.push_raw(" ");
-
-    if negative > 0 || (negative == 0 && config.display.always_show_zeros) {
-        let value = format!("{}{}", render_config.negative_symbol, negative);
-        let formatted = match render_config.align {
-            ValueAlign::Right => format!("{:>width$}", value, width = negative_width),
-            ValueAlign::Left => format!("{:<width$}", value, width = negative_width),
-        };
-        segment.push_styled(formatted, config.display.negative_style);
-    } else {
-        segment.push_raw(" ".repeat(negative_width));
-    }
-
-    if matches!(render_config.align, ValueAlign::Left) && extra_padding > 0 {
-        segment.pad_to(segment.width() + extra_padding);
-    }
-
-    if segment.width() < config.total_width {
-        segment.pad_to(config.total_width);
-    }
-
-    segment
 }
 
 impl LayoutConfig {
@@ -250,7 +249,7 @@ struct ListRowContext<'a> {
     item: &'a ListItem,
     worktree_info: Option<&'a WorktreeInfo>,
     counts: &'a AheadBehind,
-    branch_diff: (usize, usize),
+    branch_diff: LineDiff,
     upstream: &'a UpstreamStatus,
     commit: &'a CommitDetails,
     head: &'a str,
@@ -316,7 +315,7 @@ impl ColumnLayout {
 
         debug_assert_eq!(config.total_width, self.width);
 
-        format_diff_like_column(positive, negative, config)
+        config.render_segment(positive, negative)
     }
 
     fn render_cell(
@@ -360,11 +359,10 @@ impl ColumnLayout {
                 cell
             }
             ColumnKind::WorkingDiff => {
-                let Some((added, deleted)) = ctx.worktree_info.map(|info| info.working_tree_diff)
-                else {
+                let Some(diff) = ctx.worktree_info.map(|info| info.working_tree_diff) else {
                     return StyledLine::new();
                 };
-                self.render_diff_cell(added, deleted)
+                self.render_diff_cell(diff.added, diff.deleted)
             }
             ColumnKind::AheadBehind => {
                 if ctx.item.is_primary() {
@@ -381,7 +379,7 @@ impl ColumnLayout {
                 if ctx.item.is_primary() {
                     return StyledLine::new();
                 }
-                self.render_diff_cell(ctx.branch_diff.0, ctx.branch_diff.1)
+                self.render_diff_cell(ctx.branch_diff.added, ctx.branch_diff.deleted)
             }
             ColumnKind::Path => {
                 let Some(info) = ctx.worktree_info else {
@@ -434,6 +432,14 @@ mod tests {
     use super::*;
     use crate::commands::list::layout::{DiffDigits, DiffDisplayConfig};
     use worktrunk::styling::{ADDITION, DELETION, StyledLine};
+
+    fn format_diff_like_column(
+        positive: usize,
+        negative: usize,
+        config: DiffColumnConfig,
+    ) -> StyledLine {
+        config.render_segment(positive, negative)
+    }
 
     #[test]
     fn test_format_diff_column_pads_to_total_width() {

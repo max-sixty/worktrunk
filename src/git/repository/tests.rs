@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use super::super::{
-    Worktree, finalize_worktree, parse_local_default_branch, parse_remote_default_branch,
-    parse_worktree_list,
-};
+use super::super::{DefaultBranchName, Worktree, finalize_worktree};
 use super::*;
 
 #[test]
@@ -18,7 +15,7 @@ branch refs/heads/feature
 
 ";
 
-    let worktrees = parse_worktree_list(output).unwrap();
+    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 2);
 
     assert_eq!(worktrees[0].path, PathBuf::from("/path/to/main"));
@@ -40,7 +37,7 @@ detached
 
 ";
 
-    let worktrees = parse_worktree_list(output).unwrap();
+    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert!(worktrees[0].detached);
     assert_eq!(worktrees[0].branch, None);
@@ -111,7 +108,7 @@ locked reason for lock
 
 ";
 
-    let worktrees = parse_worktree_list(output).unwrap();
+    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert_eq!(worktrees[0].locked, Some("reason for lock".to_string()));
 }
@@ -124,7 +121,7 @@ bare
 
 ";
 
-    let worktrees = parse_worktree_list(output).unwrap();
+    let worktrees = Worktree::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert!(worktrees[0].bare);
 }
@@ -132,42 +129,53 @@ bare
 #[test]
 fn test_parse_local_default_branch_with_prefix() {
     let output = "origin/main\n";
-    let branch = parse_local_default_branch(output, "origin").unwrap();
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "main");
 }
 
 #[test]
 fn test_parse_local_default_branch_without_prefix() {
     let output = "main\n";
-    let branch = parse_local_default_branch(output, "origin").unwrap();
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "main");
 }
 
 #[test]
 fn test_parse_local_default_branch_master() {
     let output = "origin/master\n";
-    let branch = parse_local_default_branch(output, "origin").unwrap();
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "master");
 }
 
 #[test]
 fn test_parse_local_default_branch_custom_name() {
     let output = "origin/develop\n";
-    let branch = parse_local_default_branch(output, "origin").unwrap();
+    let branch = DefaultBranchName::from_local("origin", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "develop");
 }
 
 #[test]
 fn test_parse_local_default_branch_custom_remote() {
     let output = "upstream/main\n";
-    let branch = parse_local_default_branch(output, "upstream").unwrap();
+    let branch = DefaultBranchName::from_local("upstream", output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "main");
 }
 
 #[test]
 fn test_parse_local_default_branch_empty() {
     let output = "";
-    let result = parse_local_default_branch(output, "origin");
+    let result =
+        DefaultBranchName::from_local("origin", output).map(DefaultBranchName::into_string);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), GitError::ParseError(_)));
 }
@@ -175,7 +183,8 @@ fn test_parse_local_default_branch_empty() {
 #[test]
 fn test_parse_local_default_branch_whitespace_only() {
     let output = "  \n  ";
-    let result = parse_local_default_branch(output, "origin");
+    let result =
+        DefaultBranchName::from_local("origin", output).map(DefaultBranchName::into_string);
     assert!(result.is_err());
 }
 
@@ -184,7 +193,9 @@ fn test_parse_remote_default_branch_main() {
     let output = "ref: refs/heads/main\tHEAD
 85a1ce7c7182540f9c02453441cb3e8bf0ced214\tHEAD
 ";
-    let branch = parse_remote_default_branch(output).unwrap();
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "main");
 }
 
@@ -193,7 +204,9 @@ fn test_parse_remote_default_branch_master() {
     let output = "ref: refs/heads/master\tHEAD
 abcd1234567890abcd1234567890abcd12345678\tHEAD
 ";
-    let branch = parse_remote_default_branch(output).unwrap();
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "master");
 }
 
@@ -202,21 +215,25 @@ fn test_parse_remote_default_branch_custom() {
     let output = "ref: refs/heads/develop\tHEAD
 1234567890abcdef1234567890abcdef12345678\tHEAD
 ";
-    let branch = parse_remote_default_branch(output).unwrap();
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "develop");
 }
 
 #[test]
 fn test_parse_remote_default_branch_only_symref_line() {
     let output = "ref: refs/heads/main\tHEAD\n";
-    let branch = parse_remote_default_branch(output).unwrap();
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "main");
 }
 
 #[test]
 fn test_parse_remote_default_branch_missing_symref() {
     let output = "85a1ce7c7182540f9c02453441cb3e8bf0ced214\tHEAD\n";
-    let result = parse_remote_default_branch(output);
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), GitError::ParseError(_)));
 }
@@ -224,7 +241,7 @@ fn test_parse_remote_default_branch_missing_symref() {
 #[test]
 fn test_parse_remote_default_branch_empty() {
     let output = "";
-    let result = parse_remote_default_branch(output);
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
     assert!(result.is_err());
 }
 
@@ -232,7 +249,7 @@ fn test_parse_remote_default_branch_empty() {
 fn test_parse_remote_default_branch_malformed_ref() {
     // Missing refs/heads/ prefix
     let output = "ref: main\tHEAD\n";
-    let result = parse_remote_default_branch(output);
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
     assert!(result.is_err());
 }
 
@@ -240,7 +257,7 @@ fn test_parse_remote_default_branch_malformed_ref() {
 fn test_parse_remote_default_branch_with_spaces() {
     // Space instead of tab - should be rejected as malformed input
     let output = "ref: refs/heads/main HEAD\n";
-    let result = parse_remote_default_branch(output);
+    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
     // Using split_once correctly rejects malformed input with spaces instead of tabs
     assert!(result.is_err());
 }
@@ -248,6 +265,8 @@ fn test_parse_remote_default_branch_with_spaces() {
 #[test]
 fn test_parse_remote_default_branch_branch_with_slash() {
     let output = "ref: refs/heads/feature/new-ui\tHEAD\n";
-    let branch = parse_remote_default_branch(output).unwrap();
+    let branch = DefaultBranchName::from_remote(output)
+        .map(DefaultBranchName::into_string)
+        .unwrap();
     assert_eq!(branch, "feature/new-ui");
 }

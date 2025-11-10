@@ -4,10 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 // Import types and functions from parent module (mod.rs)
-use super::{
-    GitError, WorktreeList, parse_local_default_branch, parse_numstat, parse_remote_default_branch,
-    parse_worktree_list,
-};
+use super::{DefaultBranchName, DiffStats, GitError, LineDiff, Worktree, WorktreeList};
 
 /// Extension trait for Result types to simplify GitError conversions
 ///
@@ -534,11 +531,9 @@ impl Repository {
     }
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
-    ///
-    /// Returns (added_lines, deleted_lines).
-    pub fn working_tree_diff_stats(&self) -> Result<(usize, usize), GitError> {
+    pub fn working_tree_diff_stats(&self) -> Result<LineDiff, GitError> {
         let stdout = self.run_command(&["diff", "--numstat", "HEAD"])?;
-        parse_numstat(&stdout)
+        LineDiff::from_numstat(&stdout)
     }
 
     /// Get line diff statistics between working tree and a specific ref.
@@ -546,19 +541,17 @@ impl Repository {
     /// This compares the current working tree contents (including uncommitted changes)
     /// against the specified ref, regardless of what HEAD points to.
     ///
-    /// Returns (added_lines, deleted_lines).
-    pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> Result<(usize, usize), GitError> {
+    pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> Result<LineDiff, GitError> {
         let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
-        parse_numstat(&stdout)
+        LineDiff::from_numstat(&stdout)
     }
 
     /// Get line diff statistics between two refs (using three-dot diff for merge base).
     ///
-    /// Returns (added_lines, deleted_lines).
-    pub fn branch_diff_stats(&self, base: &str, head: &str) -> Result<(usize, usize), GitError> {
+    pub fn branch_diff_stats(&self, base: &str, head: &str) -> Result<LineDiff, GitError> {
         let range = format!("{}...{}", base, head);
         let stdout = self.run_command(&["diff", "--numstat", &range])?;
-        parse_numstat(&stdout)
+        LineDiff::from_numstat(&stdout)
     }
 
     /// Get formatted diff stats summary for display.
@@ -570,10 +563,7 @@ impl Repository {
     pub fn diff_stats_summary(&self, args: &[&str]) -> Vec<String> {
         self.run_command(args)
             .ok()
-            .map(|output| {
-                use crate::git::parse_diff_shortstat;
-                parse_diff_shortstat(&output).format_summary()
-            })
+            .map(|output| DiffStats::from_shortstat(&output).format_summary())
             .unwrap_or_default()
     }
 
@@ -635,7 +625,7 @@ impl Repository {
     /// and provides access to the primary worktree.
     pub fn list_worktrees(&self) -> Result<WorktreeList, GitError> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
-        let raw_worktrees = parse_worktree_list(&stdout)?;
+        let raw_worktrees = Worktree::parse_porcelain_list(&stdout)?;
         WorktreeList::from_raw(raw_worktrees)
     }
 
@@ -712,12 +702,12 @@ impl Repository {
     fn get_local_default_branch(&self, remote: &str) -> Result<String, GitError> {
         let stdout =
             self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
-        parse_local_default_branch(&stdout, remote)
+        DefaultBranchName::from_local(remote, &stdout).map(DefaultBranchName::into_string)
     }
 
     fn query_remote_default_branch(&self, remote: &str) -> Result<String, GitError> {
         let stdout = self.run_command(&["ls-remote", "--symref", remote, "HEAD"])?;
-        parse_remote_default_branch(&stdout)
+        DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
     }
 
     fn cache_default_branch(&self, remote: &str, branch: &str) -> Result<(), GitError> {

@@ -1,10 +1,9 @@
-use worktrunk::HookType;
-use worktrunk::config::{CommandPhase, CommitGenerationConfig, ProjectConfig};
+use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
 use worktrunk::styling::{AnstyleStyle, CYAN, GREEN, HINT, format_with_gutter};
 
 use super::command_executor::CommandContext;
-use super::hooks::{HookFailureStrategy, HookPipeline};
+use super::hooks::HookPipeline;
 use super::repository_ext::RepositoryCliExt;
 
 /// Options for committing current changes.
@@ -33,155 +32,121 @@ impl<'a> CommitOptions<'a> {
     }
 }
 
-/// Format a commit message with the first line in bold, ready for gutter display.
-pub fn format_commit_message_for_display(message: &str) -> String {
-    let bold = AnstyleStyle::new().bold();
-    let lines: Vec<&str> = message.lines().collect();
+pub(crate) struct CommitGenerator<'a> {
+    config: &'a CommitGenerationConfig,
+}
 
-    if lines.is_empty() {
-        return String::new();
+impl<'a> CommitGenerator<'a> {
+    pub fn new(config: &'a CommitGenerationConfig) -> Self {
+        Self { config }
     }
 
-    let mut result = format!("{bold}{}{bold:#}", lines[0]);
+    pub fn format_message_for_display(&self, message: &str) -> String {
+        let bold = AnstyleStyle::new().bold();
+        let lines: Vec<&str> = message.lines().collect();
 
-    if lines.len() > 1 {
-        for line in &lines[1..] {
-            result.push('\n');
-            result.push_str(line);
+        if lines.is_empty() {
+            return String::new();
         }
+
+        let mut result = format!("{bold}{}{bold:#}", lines[0]);
+
+        if lines.len() > 1 {
+            for line in &lines[1..] {
+                result.push('\n');
+                result.push_str(line);
+            }
+        }
+
+        result
     }
 
-    result
-}
+    pub fn emit_hint_if_needed(&self) -> Result<(), GitError> {
+        if !self.config.is_configured() {
+            crate::output::hint(format!(
+                "{HINT}Using fallback commit message. Run 'wt config help' to configure LLM-generated messages{HINT:#}"
+            ))?;
+        }
+        Ok(())
+    }
 
-/// Show hint if no LLM command is configured.
-pub fn show_llm_config_hint_if_needed(
-    commit_generation_config: &CommitGenerationConfig,
-) -> Result<(), GitError> {
-    if !commit_generation_config.is_configured() {
-        crate::output::hint(format!(
-            "{HINT}Using fallback commit message. Run 'wt config help' to configure LLM-generated messages{HINT:#}"
+    pub fn commit_staged_changes(&self, show_no_squash_note: bool) -> Result<(), GitError> {
+        let repo = Repository::current();
+
+        let stats_parts = repo.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
+
+        let action = if self.config.is_configured() {
+            "Generating commit message and committing..."
+        } else {
+            "Committing with default message..."
+        };
+
+        let mut parts = vec![];
+        if !stats_parts.is_empty() {
+            parts.extend(stats_parts);
+        }
+        if show_no_squash_note {
+            parts.push("no squashing needed".to_string());
+        }
+
+        let full_progress_msg = if parts.is_empty() {
+            format!("{CYAN}{action}{CYAN:#}")
+        } else {
+            format!("{CYAN}{action}{CYAN:#} ({})", parts.join(", "))
+        };
+
+        crate::output::progress(full_progress_msg)?;
+
+        self.emit_hint_if_needed()?;
+        let commit_message = crate::llm::generate_commit_message(self.config)?;
+
+        let formatted_message = self.format_message_for_display(&commit_message);
+        crate::output::gutter(format_with_gutter(&formatted_message, "", None))?;
+
+        repo.run_command(&["commit", "-m", &commit_message])
+            .git_context("Failed to commit")?;
+
+        let commit_hash = repo
+            .run_command(&["rev-parse", "--short", "HEAD"])?
+            .trim()
+            .to_string();
+
+        let green_dim = GREEN.dimmed();
+        crate::output::success(format!(
+            "{GREEN}Committed changes @ {green_dim}{commit_hash}{green_dim:#}{GREEN:#}"
         ))?;
+
+        Ok(())
     }
-    Ok(())
-}
-
-/// Commit already-staged changes with LLM-generated or fallback message.
-pub fn commit_staged_changes(
-    commit_generation_config: &CommitGenerationConfig,
-    show_no_squash_note: bool,
-) -> Result<(), GitError> {
-    let repo = Repository::current();
-
-    let stats_parts = repo.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
-
-    let action = if commit_generation_config.is_configured() {
-        "Generating commit message and committing..."
-    } else {
-        "Committing with default message..."
-    };
-
-    let mut parts = vec![];
-    if !stats_parts.is_empty() {
-        parts.extend(stats_parts);
-    }
-    if show_no_squash_note {
-        parts.push("no squashing needed".to_string());
-    }
-
-    let full_progress_msg = if parts.is_empty() {
-        format!("{CYAN}{action}{CYAN:#}")
-    } else {
-        format!("{CYAN}{action}{CYAN:#} ({})", parts.join(", "))
-    };
-
-    crate::output::progress(full_progress_msg)?;
-
-    show_llm_config_hint_if_needed(commit_generation_config)?;
-    let commit_message = crate::llm::generate_commit_message(commit_generation_config)?;
-
-    let formatted_message = format_commit_message_for_display(&commit_message);
-    crate::output::gutter(format_with_gutter(&formatted_message, "", None))?;
-
-    repo.run_command(&["commit", "-m", &commit_message])
-        .git_context("Failed to commit")?;
-
-    let commit_hash = repo
-        .run_command(&["rev-parse", "--short", "HEAD"])?
-        .trim()
-        .to_string();
-
-    let green_dim = GREEN.dimmed();
-    crate::output::success(format!(
-        "{GREEN}Committed changes @ {green_dim}{commit_hash}{green_dim:#}{GREEN:#}"
-    ))?;
-
-    Ok(())
 }
 
 /// Commit uncommitted changes with the shared commit pipeline.
-pub fn commit_changes(options: CommitOptions<'_>) -> Result<(), GitError> {
-    if !options.no_verify
-        && let Some(project_config) = options.ctx.repo.load_project_config()?
-    {
-        run_pre_commit_commands(
-            &project_config,
-            options.ctx,
-            options.target_branch,
-            options.auto_trust,
-        )?;
+impl CommitOptions<'_> {
+    pub fn commit(self) -> Result<(), GitError> {
+        if !self.no_verify
+            && let Some(project_config) = self.ctx.repo.load_project_config()?
+        {
+            let pipeline = HookPipeline::new(*self.ctx);
+            pipeline.run_pre_commit(&project_config, self.target_branch, self.auto_trust)?;
+        }
+
+        if self.warn_about_untracked && !self.tracked_only {
+            self.ctx.repo.warn_if_auto_staging_untracked()?;
+        }
+
+        if self.tracked_only {
+            self.ctx
+                .repo
+                .run_command(&["add", "-u"])
+                .git_context("Failed to stage tracked changes")?;
+        } else {
+            self.ctx
+                .repo
+                .run_command(&["add", "-A"])
+                .git_context("Failed to stage changes")?;
+        }
+
+        CommitGenerator::new(&self.ctx.config.commit_generation)
+            .commit_staged_changes(self.show_no_squash_note)
     }
-
-    if options.warn_about_untracked && !options.tracked_only {
-        options.ctx.repo.warn_if_auto_staging_untracked()?;
-    }
-
-    if options.tracked_only {
-        options
-            .ctx
-            .repo
-            .run_command(&["add", "-u"])
-            .git_context("Failed to stage tracked changes")?;
-    } else {
-        options
-            .ctx
-            .repo
-            .run_command(&["add", "-A"])
-            .git_context("Failed to stage changes")?;
-    }
-
-    commit_staged_changes(
-        &options.ctx.config.commit_generation,
-        options.show_no_squash_note,
-    )
-}
-
-/// Run pre-commit commands sequentially (blocking, fail-fast).
-pub fn run_pre_commit_commands(
-    project_config: &ProjectConfig,
-    ctx: &CommandContext,
-    target_branch: Option<&str>,
-    auto_trust: bool,
-) -> Result<(), GitError> {
-    let Some(pre_commit_config) = &project_config.pre_commit_command else {
-        return Ok(());
-    };
-
-    let pipeline = HookPipeline::new(*ctx);
-
-    let extra_vars: Vec<(&str, &str)> = target_branch
-        .into_iter()
-        .map(|target| ("target", target))
-        .collect();
-
-    pipeline.run_sequential(
-        pre_commit_config,
-        CommandPhase::PreCommit,
-        auto_trust,
-        &extra_vars,
-        "pre-commit",
-        HookFailureStrategy::FailFast {
-            hook_type: HookType::PreCommit,
-        },
-    )
 }
