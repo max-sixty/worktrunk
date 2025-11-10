@@ -75,6 +75,7 @@ impl DirectiveOutput {
         io::stdout().flush()
     }
 
+    #[cfg(unix)]
     pub fn blank_line(&mut self) -> io::Result<()> {
         // Blank lines are only meaningful in interactive mode; no-op here to avoid empty directives
         Ok(())

@@ -125,6 +125,7 @@ pub fn warning(message: impl Into<String>) -> io::Result<()> {
 }
 
 /// Insert a blank line between UI output and worktrunk messages
+#[cfg(unix)]
 pub fn blank_line() -> io::Result<()> {
     OUTPUT_CONTEXT.with(|ctx| match &mut *ctx.borrow_mut() {
         OutputHandler::Interactive(i) => i.blank_line(),

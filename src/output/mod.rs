@@ -63,9 +63,13 @@ pub mod interactive;
 
 // Re-export the public API
 pub use global::{
-    OutputMode, blank_line, change_directory, execute, flush, gutter, hint, info, initialize,
-    progress, success, terminate_output, warning,
+    OutputMode, change_directory, execute, flush, gutter, hint, info, initialize, progress,
+    success, terminate_output, warning,
 };
+
+// blank_line is only used by select command which is Unix-only
+#[cfg(unix)]
+pub use global::blank_line;
 
 // Re-export output handlers
 pub use handlers::{

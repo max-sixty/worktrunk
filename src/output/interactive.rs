@@ -57,6 +57,7 @@ impl InteractiveOutput {
         Ok(())
     }
 
+    #[cfg(unix)]
     pub fn blank_line(&mut self) -> io::Result<()> {
         // Ensure subsequent output starts on a fresh line after interactive UIs like skim
         println!();
