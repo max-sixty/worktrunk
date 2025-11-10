@@ -653,7 +653,7 @@ watch = "echo 'Watching for file changes'"
         // Pre-approve the commands in user config
         fs::write(
             repo.test_config_path(),
-            r#"worktree-path = "../{main-worktree}.{branch}"
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -732,7 +732,7 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         // Pre-approve commands
         fs::write(
             repo.test_config_path(),
-            r#"worktree-path = "../{main-worktree}.{branch}"
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -813,7 +813,7 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         // Pre-approve the commands
         fs::write(
             repo.test_config_path(),
-            r#"worktree-path = "../{main-worktree}.{branch}"
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -902,7 +902,7 @@ check2 = "{} check2 3"
         fs::write(
             repo.test_config_path(),
             format!(
-                r#"worktree-path = "../{{main-worktree}}.{{branch}}"
+                r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -957,7 +957,7 @@ approved-commands = [
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"worktree-path = "../{main-worktree}.{branch}"
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'test command executed'"]
@@ -1059,7 +1059,7 @@ approved-commands = ["echo 'test command executed'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"worktree-path = "../{main-worktree}.{branch}"
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'background task'"]
@@ -1128,7 +1128,7 @@ approved-commands = ["echo 'background task'"]
         // Pre-approve the command in user config
         fs::write(
             repo.test_config_path(),
-            r#"worktree-path = "../{main-worktree}.{branch}"
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'fish background task'"]

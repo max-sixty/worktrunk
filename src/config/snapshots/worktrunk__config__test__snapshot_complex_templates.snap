@@ -3,14 +3,14 @@ source: src/config/test.rs
 expression: results
 ---
 - - cd_and_merge
-  - "cd {worktree} && git merge {target}"
+  - "cd {{ worktree }} && git merge {{ target }}"
   - feature branch
   - "cd '/path with spaces/wt' && git merge 'main; rm -rf /'"
 - - npm_install
-  - "cd {main-worktree}/{branch} && npm install"
+  - "cd {{ main_worktree }}/{{ branch }} && npm install"
   - feature/new-ui
   - cd /repo/path/feature-new-ui && npm install
 - - echo_vars
-  - "echo 'Branch: {branch}' 'Worktree: {worktree}'"
+  - "echo 'Branch: {{ branch }}' 'Worktree: {{ worktree }}'"
   - test$injection
   - "echo 'Branch: 'test$injection'' 'Worktree: '/path with spaces/wt''"

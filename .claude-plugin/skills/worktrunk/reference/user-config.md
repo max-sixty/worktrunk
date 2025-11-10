@@ -107,19 +107,19 @@ Users may want different worktree organization patterns.
 
 Default (parent siblings):
 ```toml
-worktree-path = "../{main-worktree}.{branch}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
 ```
 Result: `~/code/myproject` → `~/code/myproject.feature-auth`
 
 Inside repo:
 ```toml
-worktree-path = ".worktrees/{branch}"
+worktree-path = ".worktrees/{{ branch }}"
 ```
 Result: `~/code/myproject/.worktrees/feature-auth`
 
 Shared directory:
 ```toml
-worktree-path = "../worktrees/{main-worktree}/{branch}"
+worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 ```
 Result: `~/code/worktrees/myproject/feature-auth`
 
@@ -135,8 +135,8 @@ Result: `~/code/worktrees/myproject/feature-auth`
 
 ### Available Variables
 
-- `{main-worktree}` - Main worktree directory name
-- `{branch}` - Branch name (slashes replaced with dashes)
+- `{{ main_worktree }}` - Main worktree directory name
+- `{{ branch }}` - Branch name (slashes replaced with dashes)
 
 ### Validation Rules
 
@@ -206,7 +206,7 @@ Complete reference:
 
 ```toml
 # Worktree Path Template
-worktree-path = "../{main-worktree}.{branch}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 # LLM Commit Generation (Optional)
 [commit-generation]

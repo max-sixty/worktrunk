@@ -274,7 +274,7 @@ Switching to Existing Worktree:
 
 Creating New Worktree (--create):
   1. Creates new branch (defaults to current default branch as base)
-  2. Creates worktree in configured location (default: ../{main-worktree}.{branch})
+  2. Creates worktree in configured location (default: ../{{ main_worktree }}.{{ branch }})
   3. Runs post-create hooks sequentially (blocking)
   4. Shows success message
   5. Spawns post-start hooks in background (non-blocking)
@@ -427,7 +427,7 @@ The merge operation follows a strict order designed for fail-fast execution:
 
 5. Run pre-merge commands
    Runs commands from project config's [pre-merge-command] after rebase completes.
-   These receive {target} placeholder for the target branch. Commands run sequentially
+   These receive {{ target }} placeholder for the target branch. Commands run sequentially
    and any failure aborts the merge immediately. Skip with --no-verify.
 
 6. Push to target

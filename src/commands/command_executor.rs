@@ -82,7 +82,13 @@ fn expand_commands(
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        let expanded_str = expand_template(&cmd.template, repo_name, ctx.branch, &extras_ref);
+        let expanded_str = expand_template(&cmd.template, repo_name, ctx.branch, &extras_ref)
+            .map_err(|e| {
+                GitError::message(format!(
+                    "Failed to expand command template '{}': {}",
+                    cmd.template, e
+                ))
+            })?;
         expanded_commands.push(Command::with_expansion(
             cmd.name.clone(),
             cmd.template.clone(),

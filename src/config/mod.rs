@@ -58,14 +58,14 @@ mod tests {
         let config = WorktrunkConfig::default();
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("worktree-path"));
-        assert!(toml.contains("../{main-worktree}.{branch}"));
+        assert!(toml.contains("../{{ main_worktree }}.{{ branch }}"));
         assert!(toml.contains("commit-generation"));
     }
 
     #[test]
     fn test_default_config() {
         let config = WorktrunkConfig::default();
-        assert_eq!(config.worktree_path, "../{main-worktree}.{branch}");
+        assert_eq!(config.worktree_path, "../{{ main_worktree }}.{{ branch }}");
         assert_eq!(config.commit_generation.command, None);
         assert!(config.projects.is_empty());
     }
@@ -73,12 +73,12 @@ mod tests {
     #[test]
     fn test_format_worktree_path() {
         let config = WorktrunkConfig {
-            worktree_path: "{main-worktree}.{branch}".to_string(),
+            worktree_path: "{{ main_worktree }}.{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x"),
+            config.format_path("myproject", "feature-x").unwrap(),
             "myproject.feature-x"
         );
     }
@@ -86,12 +86,12 @@ mod tests {
     #[test]
     fn test_format_worktree_path_custom_template() {
         let config = WorktrunkConfig {
-            worktree_path: "{main-worktree}-{branch}".to_string(),
+            worktree_path: "{{ main_worktree }}-{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x"),
+            config.format_path("myproject", "feature-x").unwrap(),
             "myproject-feature-x"
         );
     }
@@ -99,12 +99,12 @@ mod tests {
     #[test]
     fn test_format_worktree_path_only_branch() {
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{main-worktree}/{branch}".to_string(),
+            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
-            config.format_path("myproject", "feature-x"),
+            config.format_path("myproject", "feature-x").unwrap(),
             ".worktrees/myproject/feature-x"
         );
     }
@@ -113,12 +113,12 @@ mod tests {
     fn test_format_worktree_path_with_slashes() {
         // Slashes should be replaced with dashes to prevent directory traversal
         let config = WorktrunkConfig {
-            worktree_path: "{main-worktree}.{branch}".to_string(),
+            worktree_path: "{{ main_worktree }}.{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
-            config.format_path("myproject", "feature/foo"),
+            config.format_path("myproject", "feature/foo").unwrap(),
             "myproject.feature-foo"
         );
     }
@@ -126,12 +126,12 @@ mod tests {
     #[test]
     fn test_format_worktree_path_with_multiple_slashes() {
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{main-worktree}/{branch}".to_string(),
+            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
-            config.format_path("myproject", "feature/sub/task"),
+            config.format_path("myproject", "feature/sub/task").unwrap(),
             ".worktrees/myproject/feature-sub-task"
         );
     }
@@ -140,12 +140,12 @@ mod tests {
     fn test_format_worktree_path_with_backslashes() {
         // Windows-style path separators should also be sanitized
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{main-worktree}/{branch}".to_string(),
+            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         };
         assert_eq!(
-            config.format_path("myproject", "feature\\foo"),
+            config.format_path("myproject", "feature\\foo").unwrap(),
             ".worktrees/myproject/feature-foo"
         );
     }
@@ -607,11 +607,12 @@ task2 = "echo 'Task 2 running' > task2.txt"
         use std::collections::HashMap;
 
         let result = expand_template(
-            "../{main-worktree}.{branch}",
+            "../{{ main_worktree }}.{{ branch }}",
             "myrepo",
             "feature-x",
             &HashMap::new(),
-        );
+        )
+        .unwrap();
         assert_eq!(result, "../myrepo.feature-x");
     }
 
@@ -620,19 +621,21 @@ task2 = "echo 'Task 2 running' > task2.txt"
         use std::collections::HashMap;
 
         let result = expand_template(
-            "{main-worktree}/{branch}",
+            "{{ main_worktree }}/{{ branch }}",
             "myrepo",
             "feature/foo",
             &HashMap::new(),
-        );
+        )
+        .unwrap();
         assert_eq!(result, "myrepo/feature-foo");
 
         let result = expand_template(
-            ".worktrees/{main-worktree}/{branch}",
+            ".worktrees/{{ main_worktree }}/{{ branch }}",
             "myrepo",
             "feat\\bar",
             &HashMap::new(),
-        );
+        )
+        .unwrap();
         assert_eq!(result, ".worktrees/myrepo/feat-bar");
     }
 
@@ -645,11 +648,12 @@ task2 = "echo 'Task 2 running' > task2.txt"
         extra.insert("repo_root", "/path/to/repo");
 
         let result = expand_template(
-            "{repo_root}/target -> {worktree}/target",
+            "{{ repo_root }}/target -> {{ worktree }}/target",
             "myrepo",
             "main",
             &extra,
-        );
+        )
+        .unwrap();
         assert_eq!(result, "/path/to/repo/target -> /path/to/worktree/target");
     }
 
@@ -657,7 +661,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_commit_generation_config_mutually_exclusive_validation() {
         // Test that deserialization rejects both template and template-file
         let toml_content = r#"
-worktree-path = "../{main-worktree}.{branch}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [commit-generation]
 command = "llm"
@@ -685,7 +689,7 @@ template-file = "~/file.txt"
     fn test_squash_template_mutually_exclusive_validation() {
         // Test that deserialization rejects both squash-template and squash-template-file
         let toml_content = r#"
-worktree-path = "../{main-worktree}.{branch}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [commit-generation]
 command = "llm"

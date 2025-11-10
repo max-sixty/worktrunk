@@ -18,20 +18,20 @@ use super::expansion::expand_template;
 ///
 /// The `worktree-path` template is relative to the repository root.
 /// Supported variables:
-/// - `{main-worktree}` - Main worktree directory name
-/// - `{branch}` - Branch name (slashes replaced with dashes)
+/// - `{{ main_worktree }}` - Main worktree directory name
+/// - `{{ branch }}` - Branch name (slashes replaced with dashes)
 ///
 /// # Examples
 ///
 /// ```toml
 /// # Default - parent directory siblings
-/// worktree-path = "../{main-worktree}.{branch}"
+/// worktree-path = "../{{ main_worktree }}.{{ branch }}"
 ///
 /// # Inside repo (clean, no redundant directory)
-/// worktree-path = ".worktrees/{branch}"
+/// worktree-path = ".worktrees/{{ branch }}"
 ///
 /// # Repository-namespaced (useful for shared directories with multiple repos)
-/// worktree-path = "../worktrees/{main-worktree}/{branch}"
+/// worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 ///
 /// # Commit generation configuration
 /// [commit-generation]
@@ -135,7 +135,7 @@ pub struct UserProjectConfig {
 impl Default for WorktrunkConfig {
     fn default() -> Self {
         Self {
-            worktree_path: "../{main-worktree}.{branch}".to_string(),
+            worktree_path: "../{{ main_worktree }}.{{ branch }}".to_string(),
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
         }
@@ -205,18 +205,18 @@ impl WorktrunkConfig {
     /// Format a worktree path using this configuration's template.
     ///
     /// # Arguments
-    /// * `main_worktree` - Main worktree directory name (replaces {main-worktree} in template)
-    /// * `branch` - Branch name (replaces {branch} in template, slashes sanitized to dashes)
+    /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
+    /// * `branch` - Branch name (replaces {{ branch }} in template, slashes sanitized to dashes)
     ///
     /// # Examples
     /// ```
     /// use worktrunk::config::WorktrunkConfig;
     ///
     /// let config = WorktrunkConfig::default();
-    /// let path = config.format_path("myproject", "feature/foo");
+    /// let path = config.format_path("myproject", "feature/foo").unwrap();
     /// assert_eq!(path, "../myproject.feature-foo");
     /// ```
-    pub fn format_path(&self, main_worktree: &str, branch: &str) -> String {
+    pub fn format_path(&self, main_worktree: &str, branch: &str) -> Result<String, String> {
         expand_template(
             &self.worktree_path,
             main_worktree,

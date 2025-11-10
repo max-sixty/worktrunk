@@ -54,7 +54,7 @@ fn test_post_create_single_command() {
 
     // Pre-approve the command by writing to the isolated test config
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'Setup complete'"]
@@ -81,7 +81,7 @@ fn test_post_create_multiple_commands_array() {
 
     // Pre-approve both commands in temp HOME
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -116,7 +116,7 @@ setup = "echo 'Running setup'"
 
     // Pre-approve both commands in temp HOME
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -146,7 +146,7 @@ fn test_post_create_failing_command() {
 
     // Pre-approve the command in temp HOME
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["exit 1"]
@@ -169,10 +169,10 @@ fn test_post_create_template_expansion() {
     // Create project config with template variables
     repo.write_project_config(
         r#"post-create-command = [
-    "echo 'Repo: {main-worktree}' > info.txt",
-    "echo 'Branch: {branch}' >> info.txt",
-    "echo 'Worktree: {worktree}' >> info.txt",
-    "echo 'Root: {repo_root}' >> info.txt"
+    "echo 'Repo: {{ main_worktree }}' > info.txt",
+    "echo 'Branch: {{ branch }}' >> info.txt",
+    "echo 'Worktree: {{ worktree }}' >> info.txt",
+    "echo 'Root: {{ repo_root }}' >> info.txt"
 ]"#,
     );
 
@@ -181,14 +181,14 @@ fn test_post_create_template_expansion() {
     // Pre-approve all commands in isolated test config
     let repo_name = "test-repo";
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
-    "echo 'Repo: {main-worktree}' > info.txt",
-    "echo 'Branch: {branch}' >> info.txt",
-    "echo 'Worktree: {worktree}' >> info.txt",
-    "echo 'Root: {repo_root}' >> info.txt",
+    "echo 'Repo: {{ main_worktree }}' > info.txt",
+    "echo 'Branch: {{ branch }}' >> info.txt",
+    "echo 'Worktree: {{ worktree }}' >> info.txt",
+    "echo 'Root: {{ repo_root }}' >> info.txt",
 ]
 "#,
     );
@@ -246,7 +246,7 @@ fn test_post_start_single_background_command() {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"]
@@ -294,7 +294,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     // Pre-approve both commands
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -338,7 +338,7 @@ server = "sleep 0.05 && echo 'Server running' > server.txt"
 
     // Pre-approve all commands
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -400,7 +400,7 @@ fn test_post_start_log_file_captures_output() {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
@@ -458,7 +458,7 @@ fn test_post_start_invalid_command_handling() {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'unclosed quote"]
@@ -498,7 +498,7 @@ task3 = "echo 'TASK3_OUTPUT'"
 
     // Pre-approve all commands
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = [
@@ -579,7 +579,7 @@ fn test_execute_flag_with_post_start_commands() {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'Background task' > background.txt"]
@@ -630,7 +630,7 @@ fn test_post_start_complex_shell_commands() {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
@@ -677,7 +677,7 @@ echo 'second line' >> multiline.txt
 echo 'third line' >> multiline.txt
 ";
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{main-worktree}}.{{branch}}"
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
 
 [projects."test-repo"]
 approved-commands = ["""
@@ -738,7 +738,7 @@ else
 fi
 ";
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{main-worktree}}.{{branch}}"
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
 
 [projects."test-repo"]
 approved-commands = ["""
@@ -787,7 +787,7 @@ fn test_post_start_skipped_on_existing_worktree() {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [projects."test-repo"]
 approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]

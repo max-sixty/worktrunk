@@ -6,16 +6,16 @@
 # Generate with: wt config init
 
 # Worktree Path Template
-# Variables: {main-worktree} = main worktree directory name, {branch} = branch name
+# Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name
 # Branch slashes are replaced with dashes (feature/auth → feature-auth)
 # Paths are relative to the main worktree root (original repository directory)
-worktree-path = "../{main-worktree}.{branch}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 # Alternative: Inside repo (useful for bare repos)
-# worktree-path = ".worktrees/{branch}"
+# worktree-path = ".worktrees/{{ branch }}"
 
 # Alternative: Shared directory for multiple repos
-# worktree-path = "../worktrees/{main-worktree}/{branch}"
+# worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 
 # Commit Message Generation (Optional)
 # For generating commit messages during merge operations (wt merge)

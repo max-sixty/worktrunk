@@ -186,15 +186,15 @@ All hooks support template variables for dynamic behavior.
 ### Basic Variables (All Hooks)
 
 Available in all hook types:
-- `{repo}` - Repository name (e.g., "my-project")
-- `{branch}` - Branch name (e.g., "feature-auth")
-- `{worktree}` - Absolute path to worktree
-- `{repo_root}` - Absolute path to repository root
+- `{{ repo }}` - Repository name (e.g., "my-project")
+- `{{ branch }}` - Branch name (e.g., "feature-auth")
+- `{{ worktree }}` - Absolute path to worktree
+- `{{ repo_root }}` - Absolute path to repository root
 
 <example type="basic-variables">
 
 ```toml
-post-create-command = "echo 'Working on {branch} in {repo}'"
+post-create-command = "echo 'Working on {{ branch }} in {{ repo }}'"
 ```
 
 </example>
@@ -204,14 +204,14 @@ post-create-command = "echo 'Working on {branch} in {repo}'"
 Available in: `pre-commit-command`, `pre-merge-command`, `post-merge-command`
 
 Additional variable:
-- `{target}` - Target branch for merge (e.g., "main")
+- `{{ target }}` - Target branch for merge (e.g., "main")
 
 <example type="conditional-with-variables">
 
 Run different tests based on target branch:
 ```toml
 pre-merge-command = """
-if [ "{target}" = "main" ]; then
+if [ "{{ target }}" = "main" ]; then
     npm run test:full
 else
     npm run test:quick

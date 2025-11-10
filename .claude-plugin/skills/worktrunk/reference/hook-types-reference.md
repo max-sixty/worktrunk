@@ -12,8 +12,8 @@ Detailed behavior and use cases for all five Worktrunk hook types.
 | `pre-merge-command` | Before merging to target | Yes | Yes | Basic + Merge | Sequential |
 | `post-merge-command` | After successful merge | Yes | No | Basic + Merge | Sequential |
 
-**Basic variables**: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`
-**Merge variables**: Basic + `{target}`
+**Basic variables**: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`
+**Merge variables**: Basic + `{{ target }}`
 
 ## Detailed Behavior
 
@@ -206,25 +206,25 @@ Behavior same as array format, but with descriptive names.
 ### Basic Variables (All Hooks)
 
 ```toml
-post-create-command = "echo 'Working on {branch} in {repo}'"
+post-create-command = "echo 'Working on {{ branch }} in {{ repo }}'"
 ```
 
 Available:
-- `{repo}` - Repository name (e.g., "my-project")
-- `{branch}` - Branch name (e.g., "feature-auth")
-- `{worktree}` - Absolute path to worktree
-- `{repo_root}` - Absolute path to repository root
+- `{{ repo }}` - Repository name (e.g., "my-project")
+- `{{ branch }}` - Branch name (e.g., "feature-auth")
+- `{{ worktree }}` - Absolute path to worktree
+- `{{ repo_root }}` - Absolute path to repository root
 
 ### Merge Variables (Merge Hooks Only)
 
 ```toml
-pre-merge-command = "echo 'Merging {branch} into {target}'"
+pre-merge-command = "echo 'Merging {{ branch }} into {{ target }}'"
 ```
 
 Available in: `pre-commit-command`, `pre-merge-command`, `post-merge-command`
 
 Additional variable:
-- `{target}` - Target branch for merge (e.g., "main")
+- `{{ target }}` - Target branch for merge (e.g., "main")
 
 ### Conditional Logic
 
@@ -232,9 +232,9 @@ Use shell conditionals with variables:
 
 ```toml
 pre-merge-command = """
-if [ "{target}" = "main" ]; then
+if [ "{{ target }}" = "main" ]; then
     npm run test:full
-elif [ "{target}" = "staging" ]; then
+elif [ "{{ target }}" = "staging" ]; then
     npm run test:integration
 else
     npm run test:unit
@@ -265,9 +265,9 @@ pre-merge-command = ["npm test", "npm run build"]
 ### Target-Specific Behavior
 ```toml
 post-merge-command = """
-if [ "{target}" = "main" ]; then
+if [ "{{ target }}" = "main" ]; then
     npm run deploy:production
-elif [ "{target}" = "staging" ]; then
+elif [ "{{ target }}" = "staging" ]; then
     npm run deploy:staging
 fi
 """

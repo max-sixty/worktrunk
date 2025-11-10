@@ -47,7 +47,7 @@ fn test_approval_single_command() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    repo.write_project_config(r#"post-create-command = "echo 'Worktree path: {worktree}'""#);
+    repo.write_project_config(r#"post-create-command = "echo 'Worktree path: {{ worktree }}'""#);
 
     repo.commit("Add config");
 
@@ -66,10 +66,10 @@ fn test_approval_multiple_commands() {
 
     repo.write_project_config(
         r#"post-create-command = [
-    "echo 'Branch: {branch}'",
-    "echo 'Worktree: {worktree}'",
-    "echo 'Repo: {main-worktree}'",
-    "cd {worktree} && pwd"
+    "echo 'Branch: {{ branch }}'",
+    "echo 'Worktree: {{ worktree }}'",
+    "echo 'Repo: {{ main_worktree }}'",
+    "cd {{ worktree }} && pwd"
 ]"#,
     );
 

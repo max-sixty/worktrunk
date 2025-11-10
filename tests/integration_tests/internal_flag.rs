@@ -51,7 +51,7 @@ fn test_config_list_with_internal_flag() {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#,
     )
     .unwrap();

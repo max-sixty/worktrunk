@@ -2,24 +2,24 @@
 # These run after creating a new worktree
 #
 # Available template variables:
-#   {repo}      - Repository name (e.g., "worktrunk.project-config")
-#   {branch}    - Branch name with slashes replaced by dashes
-#   {worktree}  - Path to the new worktree
-#   {repo_root} - Path to the main repository root
+#   {{ repo }}      - Repository name (e.g., "worktrunk.project-config")
+#   {{ branch }}    - Branch name with slashes replaced by dashes
+#   {{ worktree }}  - Path to the new worktree
+#   {{ repo_root }} - Path to the main repository root
 # Seed target/ from base worktree using CoW (copy-on-write)
 # Each worktree gets its own target/ (avoids incremental build corruption)
 # but seeded from base to warm-start builds (low disk usage)
 # macOS: uses cp -c (clonefile on APFS)
 # Linux: would need cp --reflink=auto (GNU coreutils) or rsync 3.2.3+ with --reflink
 post-start-command = """
-[ -d {repo_root}/target ] &&
-[ ! -e {worktree}/target ] &&
-cp -cR {repo_root}/target/. {worktree}/target/
+[ -d {{ repo_root }}/target ] &&
+[ ! -e {{ worktree }}/target ] &&
+cp -cR {{ repo_root }}/target/. {{ worktree }}/target/
 """
 
 # Post-merge commands
 # These run in the main worktree after successful merge and push
-# Available template variables: {repo}, {branch}, {worktree}, {repo_root}, {target}
+# Available template variables: {{ repo }}, {{ branch }}, {{ worktree }}, {{ repo_root }}, {{ target }}
 post-merge-command = "cargo install --path ."
 
 # Pre-commit commands

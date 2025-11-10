@@ -207,7 +207,7 @@ fn test_bare_repo_switch_creates_worktree() {
 
     // Create worktrunk config to use worktree naming pattern suitable for bare repos
     let config = r#"
-worktree-path = "{branch}"
+worktree-path = "{{ branch }}"
 "#;
     fs::write(test.config_path(), config).expect("Failed to write config");
 
@@ -245,7 +245,7 @@ worktree-path = "{branch}"
     );
 
     // Verify the new worktree was created
-    // With template "{branch}", it creates as sibling: bare-repo-name.feature
+    // With template "{{ branch }}", it creates as sibling: bare-repo-name.feature
     let bare_name = test.bare_repo_path().file_name().unwrap().to_str().unwrap();
     let expected_path = test.temp_path().join(format!("{}.feature", bare_name));
     assert!(
@@ -282,7 +282,7 @@ fn test_bare_repo_switch_with_default_naming() {
     test.commit_in_worktree(&main_worktree, "Initial commit");
 
     // Use default naming pattern (should still work with bare repos)
-    // Default is "../{main-worktree}.{branch}" which becomes "test-repo.git.feature"
+    // Default is "../{{ main_worktree }}.{{ branch }}" which becomes "test-repo.git.feature"
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
     cmd.args(["switch", "--create", "feature", "--internal"])
@@ -379,7 +379,7 @@ fn test_bare_repo_worktree_base_used_for_paths() {
 
     // Configure to use simple branch naming
     let config = r#"
-worktree-path = "{branch}"
+worktree-path = "{{ branch }}"
 "#;
     fs::write(test.config_path(), config).expect("Failed to write config");
 
@@ -424,7 +424,7 @@ fn test_bare_repo_equivalent_to_normal_repo() {
 
     // Configure both with same worktree path pattern
     let config = r#"
-worktree-path = "{branch}"
+worktree-path = "{{ branch }}"
 "#;
     fs::write(bare_test.config_path(), config).expect("Failed to write bare config");
     fs::write(normal_test.test_config_path(), config).expect("Failed to write normal config");

@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_toml_formatting() {
-        let toml_content = r#"worktree-path = "../{repo}.{branch}"
+        let toml_content = r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [llm]
 args = []

@@ -15,7 +15,7 @@ pub type CommandPhase = HookType;
 pub struct Command {
     /// Optional name for the command (e.g., "build", "test", or auto-numbered "1", "2")
     pub name: Option<String>,
-    /// Template string that may contain variables like {branch}, {worktree}
+    /// Template string that may contain variables like {{ branch }}, {{ worktree }}
     pub template: String,
     /// Expanded command with variables substituted (same as template if not expanded yet)
     pub expanded: String,

@@ -16,26 +16,26 @@ use super::commands::CommandConfig;
 /// # Template Variables
 ///
 /// All commands support these template variables:
-/// - `{repo}` - Repository name (e.g., "my-project")
-/// - `{branch}` - Branch name (e.g., "feature-foo")
-/// - `{worktree}` - Absolute path to the worktree
-/// - `{repo_root}` - Absolute path to the repository root
+/// - `{{ repo }}` - Repository name (e.g., "my-project")
+/// - `{{ branch }}` - Branch name (e.g., "feature-foo")
+/// - `{{ worktree }}` - Absolute path to the worktree
+/// - `{{ repo_root }}` - Absolute path to the repository root
 ///
 /// Merge-related commands (`pre-commit-command`, `pre-merge-command`, `post-merge-command`) also support:
-/// - `{target}` - Target branch for the merge (e.g., "main")
+/// - `{{ target }}` - Target branch for the merge (e.g., "main")
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ProjectConfig {
     /// Commands to execute sequentially before worktree is ready (blocking)
     /// Supports string (single command), array (sequential), or table (named, sequential)
     ///
-    /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`
     #[serde(default, rename = "post-create-command")]
     pub post_create_command: Option<CommandConfig>,
 
     /// Commands to execute in parallel as background processes (non-blocking)
     /// Supports string (single), array (parallel), or table (named, parallel)
     ///
-    /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`
     #[serde(default, rename = "post-start-command")]
     pub post_start_command: Option<CommandConfig>,
 
@@ -44,7 +44,7 @@ pub struct ProjectConfig {
     /// All commands must exit with code 0 for commit to proceed
     /// Runs before any commit operation during `wt merge` (both squash and no-squash modes)
     ///
-    /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`, `{{ target }}`
     #[serde(default, rename = "pre-commit-command")]
     pub pre_commit_command: Option<CommandConfig>,
 
@@ -52,7 +52,7 @@ pub struct ProjectConfig {
     /// Supports string (single command), array (sequential), or table (named, sequential)
     /// All commands must exit with code 0 for merge to proceed
     ///
-    /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`, `{{ target }}`
     #[serde(default, rename = "pre-merge-command")]
     pub pre_merge_command: Option<CommandConfig>,
 
@@ -60,7 +60,7 @@ pub struct ProjectConfig {
     /// Supports string (single command), array (sequential), or table (named, sequential)
     /// Runs after push succeeds but before cleanup
     ///
-    /// Available template variables: `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`, `{{ target }}`
     #[serde(default, rename = "post-merge-command")]
     pub post_merge_command: Option<CommandConfig>,
 }

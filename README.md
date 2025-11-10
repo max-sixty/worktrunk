@@ -303,7 +303,7 @@ $ wt merge
 | **pre-merge-command**   | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast               | Terminates merge immediately                    |
 | **post-merge-command**  | After successful merge and push to target branch, before cleanup               | Sequential, blocking                          | Logs warning, continues with remaining commands |
 
-**Template variables:** `{repo}`, `{branch}`, `{worktree}`, `{repo_root}`, `{target}`
+**Template variables:** `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`, `{{ target }}`
 
 **Skipping hooks:** `wt switch --no-verify` or `wt merge --no-verify`
 
@@ -403,7 +403,7 @@ wt config help  # Show LLM setup guide
 Global config at `~/.config/worktrunk/config.toml`:
 
 ```toml
-worktree-path = "../{main-worktree}.{branch}"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [commit-generation]
 command = "llm"
@@ -412,7 +412,7 @@ args = ["-m", "claude-haiku-4-5-20251001"]
 
 Project config at `.config/wt.toml` in the repository root (see Project Hooks above).
 
-Worktree path defaults: `../repo.branch/` (siblings to main repo). Variables: `{main-worktree}`, `{branch}`, `{repo}`.
+Worktree path defaults: `../repo.branch/` (siblings to main repo). Variables: `{{ main_worktree }}`, `{{ branch }}`, `{{ repo }}`.
 
 </details>
 
@@ -526,10 +526,10 @@ Customize the pattern in `~/.config/worktrunk/config.toml`:
 
 ```toml
 # Inside the repo (keeps everything contained)
-worktree-path = ".worktrees/{branch}"
+worktree-path = ".worktrees/{{ branch }}"
 
 # Shared directory with multiple repos
-worktree-path = "../worktrees/{main-worktree}/{branch}"
+worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 ```
 
 ### Shell Integration

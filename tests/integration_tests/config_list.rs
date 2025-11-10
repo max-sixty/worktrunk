@@ -15,7 +15,7 @@ fn test_config_list_with_project_config() {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [[approved-commands]]
 project = "test-project"
@@ -57,7 +57,7 @@ server = "npm run dev"
         exit_code: 0
         ----- stdout -----
         ⚪ Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
-        [40m [0m  worktree-path = [32m"../{main-worktree}.{branch}"[0m
+        [40m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
         [40m [0m  
         [40m [0m  [1m[36m[[approved-commands]][0m
         [40m [0m  project = [32m"test-project"[0m
@@ -85,7 +85,7 @@ fn test_config_list_no_project_config() {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -109,7 +109,7 @@ fn test_config_list_no_project_config() {
         exit_code: 0
         ----- stdout -----
         ⚪ Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
-        [40m [0m  worktree-path = [32m"../{main-worktree}.{branch}"[0m
+        [40m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
 
         ⚪ Project Config: [1m[REPO]/.config/wt.toml[0m
         💡 [2mNot found[0m
@@ -130,7 +130,7 @@ fn test_config_list_outside_git_repo() {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{main-worktree}.{branch}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -152,7 +152,7 @@ fn test_config_list_outside_git_repo() {
         exit_code: 0
         ----- stdout -----
         ⚪ Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
-        [40m [0m  worktree-path = [32m"../{main-worktree}.{branch}"[0m
+        [40m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
 
         ⚪ [2mProject Config: Not in a git repository[0m
 

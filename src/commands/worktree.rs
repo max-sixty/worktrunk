@@ -231,7 +231,11 @@ pub fn handle_switch(
         .to_str()
         .ok_or_else(|| GitError::message("Invalid UTF-8 in path"))?;
 
-    let worktree_path = repo_root.join(config.format_path(repo_name, &resolved_branch));
+    let worktree_path = repo_root.join(
+        config
+            .format_path(repo_name, &resolved_branch)
+            .map_err(|e| GitError::message(format!("Failed to format worktree path: {}", e)))?,
+    );
 
     // Create the worktree
     // Build git worktree add command

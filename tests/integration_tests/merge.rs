@@ -1167,7 +1167,7 @@ fn test_merge_post_merge_command_success() {
     fs::create_dir_all(&config_dir).expect("Failed to create config dir");
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-merge-command = "echo 'merged {branch} to {target}' > post-merge-ran.txt""#,
+        r#"post-merge-command = "echo 'merged {{ branch }} to {{ target }}' > post-merge-ran.txt""#,
     )
     .expect("Failed to write config");
 
@@ -1233,7 +1233,7 @@ fn test_merge_post_merge_command_skipped_with_no_verify() {
     fs::create_dir_all(&config_dir).expect("Failed to create config dir");
     fs::write(
         config_dir.join("wt.toml"),
-        r#"post-merge-command = "echo 'merged {branch} to {target}' > post-merge-ran.txt""#,
+        r#"post-merge-command = "echo 'merged {{ branch }} to {{ target }}' > post-merge-ran.txt""#,
     )
     .expect("Failed to write config");
 
@@ -1348,8 +1348,8 @@ fn test_merge_post_merge_command_named() {
         config_dir.join("wt.toml"),
         r#"
 [post-merge-command]
-notify = "echo 'Merge to {target} complete' > notify.txt"
-deploy = "echo 'Deploying branch {branch}' > deploy.txt"
+notify = "echo 'Merge to {{ target }} complete' > notify.txt"
+deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
 "#,
     )
     .expect("Failed to write config");
