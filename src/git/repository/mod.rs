@@ -251,7 +251,13 @@ impl Repository {
                             "No previous branch found in reflog. Use 'wt list' to see available worktrees."
                         )
                     })?;
-                Ok(output.trim().to_string())
+                let trimmed = output.trim();
+                if trimmed.is_empty() {
+                    return Err(GitError::message(
+                        "No previous branch found in reflog. Use 'wt list' to see available worktrees.",
+                    ));
+                }
+                Ok(trimmed.to_string())
             }
             _ => Ok(name.to_string()),
         }
