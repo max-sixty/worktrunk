@@ -222,39 +222,69 @@ impl Repository {
         branch.and_then(|branch| self.branch_keyed_status(branch))
     }
 
+    /// Record branch history in worktrunk.history for `wt switch -` support.
+    ///
+    /// Stores "current,previous" to enable ping-pong switching.
+    /// This enables `wt switch -` to work after `wt switch` operations,
+    /// which don't create git reflog entries.
+    pub fn record_switch_history(
+        &self,
+        current: &str,
+        previous: Option<&str>,
+    ) -> Result<(), GitError> {
+        let value = if let Some(prev) = previous {
+            format!("{},{}", current, prev)
+        } else {
+            current.to_string()
+        };
+        self.run_command(&["config", "worktrunk.history", &value])?;
+        Ok(())
+    }
+
+    /// Get the previous branch from worktrunk.history.
+    ///
+    /// Returns (current, previous) if history is recorded.
+    /// For single-value history (legacy), returns (value, None).
+    pub fn get_switch_history(&self) -> Option<(String, Option<String>)> {
+        self.run_command(&["config", "--get", "worktrunk.history"])
+            .ok()
+            .and_then(|output| {
+                let trimmed = output.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let parts: Vec<&str> = trimmed.splitn(2, ',').collect();
+                Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string())))
+            })
+    }
+
     /// Resolve a worktree name, expanding "@" to the current branch and "-" to the previous branch.
     ///
     /// # Arguments
     /// * `name` - The worktree name to resolve:
     ///   - "@" for current HEAD
-    ///   - "-" for previous branch (via git reflog @{-1})
+    ///   - "-" for previous branch (via worktrunk.history)
     ///   - any other string is returned as-is
     ///
     /// # Returns
     /// - `Ok(name)` if not "@" or "-"
     /// - `Ok(current_branch)` if "@" and on a branch
-    /// - `Ok(previous_branch)` if "-" and reflog has a previous checkout
+    /// - `Ok(previous_branch)` if "-" and worktrunk.history has a previous branch
     /// - `Err(DetachedHead)` if "@" and in detached HEAD state
-    /// - `Err` if "-" but no previous branch in reflog
+    /// - `Err` if "-" but no previous branch in history
     pub fn resolve_worktree_name(&self, name: &str) -> Result<String, GitError> {
         match name {
             "@" => self.current_branch()?.ok_or(GitError::DetachedHead),
             "-" => {
-                // Use git's reflog to get the previous branch
-                let output = self
-                    .run_command(&["rev-parse", "--abbrev-ref", "@{-1}"])
-                    .map_err(|_| {
+                // Read from worktrunk.history (recorded by wt switch operations)
+                // History stores (current, previous), we want previous
+                self.get_switch_history()
+                    .and_then(|(_, prev)| prev)
+                    .ok_or_else(|| {
                         GitError::message(
-                            "No previous branch found in reflog. Use 'wt list' to see available worktrees."
+                            "No previous branch found in history. Use 'wt list' to see available worktrees.",
                         )
-                    })?;
-                let trimmed = output.trim();
-                if trimmed.is_empty() {
-                    return Err(GitError::message(
-                        "No previous branch found in reflog. Use 'wt list' to see available worktrees.",
-                    ));
-                }
-                Ok(trimmed.to_string())
+                    })
             }
             _ => Ok(name.to_string()),
         }

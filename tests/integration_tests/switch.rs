@@ -425,7 +425,7 @@ fn test_switch_previous_branch() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    // Create two branches and establish checkout history in git's reflog
+    // Create two branches
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["branch", "feature-a"])
@@ -440,21 +440,11 @@ fn test_switch_previous_branch() {
         .output()
         .expect("Failed to create feature-b");
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "feature-a"])
-        .current_dir(repo.root_path())
-        .output()
-        .expect("Failed to switch to feature-a");
+    // Use wt switch to establish worktrunk.history
+    snapshot_switch("switch_previous_branch_first", &repo, &["feature-a"]);
+    snapshot_switch("switch_previous_branch_second", &repo, &["feature-b"]);
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "feature-b"])
-        .current_dir(repo.root_path())
-        .output()
-        .expect("Failed to switch to feature-b");
-
-    // Now wt switch - should resolve to feature-a (the previous branch)
+    // Now wt switch - should resolve to feature-b (the previous wt switch)
     snapshot_switch("switch_previous_branch", &repo, &["-"]);
 }
 
@@ -465,4 +455,48 @@ fn test_switch_previous_branch_no_history() {
 
     // No checkout history, so wt switch - should fail with helpful error
     snapshot_switch("switch_previous_branch_no_history", &repo, &["-"]);
+}
+
+#[test]
+fn test_switch_previous_branch_with_worktrunk_history() {
+    use std::process::Command;
+
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create two branches
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "feature-x"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to create feature-x");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "feature-y"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to create feature-y");
+
+    // Use wt switch to switch to feature-x (this records history)
+    snapshot_switch(
+        "switch_previous_branch_with_worktrunk_history_first",
+        &repo,
+        &["feature-x"],
+    );
+
+    // Switch to feature-y (this records feature-x in history)
+    snapshot_switch(
+        "switch_previous_branch_with_worktrunk_history_second",
+        &repo,
+        &["feature-y"],
+    );
+
+    // Now wt switch - should resolve to feature-x (from worktrunk.history)
+    snapshot_switch(
+        "switch_previous_branch_with_worktrunk_history_back",
+        &repo,
+        &["-"],
+    );
 }

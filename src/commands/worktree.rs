@@ -155,8 +155,30 @@ pub fn handle_switch(
 ) -> Result<(SwitchResult, String), GitError> {
     let repo = Repository::current();
 
+    // Get current history (current, previous) before resolving
+    let history_before = repo.get_switch_history();
+
     // Resolve special branch names ("@" for current, "-" for previous)
     let resolved_branch = repo.resolve_worktree_name(branch)?;
+
+    // Calculate what to record in history after the switch
+    // History stores (current_location, previous_location) for ping-pong behavior
+    let (new_current, new_previous) = if branch == "-" {
+        // Switching back: swap current and previous
+        // history_before contains (A, B), we're switching from A to B
+        // After switch, record (B, A) so we can switch back to A
+        if let Some((current, _previous)) = history_before {
+            (resolved_branch.clone(), Some(current))
+        } else {
+            // No history - shouldn't happen since "-" requires history
+            // But handle gracefully: just record where we're going
+            (resolved_branch.clone(), None)
+        }
+    } else {
+        // Normal switch: record new location as current, old current as previous
+        let previous = history_before.map(|(current, _)| current);
+        (resolved_branch.clone(), previous)
+    };
 
     // Resolve base if provided
     let resolved_base = if let Some(base_str) = base {
@@ -182,6 +204,9 @@ pub fn handle_switch(
     // Check if worktree already exists for this branch
     match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
+            // Record successful switch in history for `wt switch -` support
+            let _ = repo.record_switch_history(&new_current, new_previous.as_deref());
+
             // Canonicalize the path for cleaner display
             let canonical_existing_path = existing_path.canonicalize().unwrap_or(existing_path);
             return Ok((
@@ -296,6 +321,9 @@ pub fn handle_switch(
 
     // Note: post-start commands are spawned AFTER success message is shown
     // (see main.rs switch handler for temporal locality)
+
+    // Record successful switch in history for `wt switch -` support
+    let _ = repo.record_switch_history(&new_current, new_previous.as_deref());
 
     Ok((
         SwitchResult::CreatedWorktree {

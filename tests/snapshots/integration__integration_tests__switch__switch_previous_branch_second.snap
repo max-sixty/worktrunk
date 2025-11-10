@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - switch
-    - "-"
+    - feature-b
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -16,11 +16,12 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpIz3CvP/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpLJYTq7/test-config.toml
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
+✅ [32mSwitched to worktree for [1m[32mfeature-b[0m[32m at [1m[32m[REPO].feature-b[0m[0m
+💡 [2mTo enable automatic cd, run: wt config shell[0m
 
 ----- stderr -----
-❌ [31mNo previous branch found in history. Use 'wt list' to see available worktrees.[0m
