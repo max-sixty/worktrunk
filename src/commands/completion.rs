@@ -201,8 +201,13 @@ fn clap_fallback(args: &[String]) -> Vec<Item> {
     }
 
     // Use the last two args to determine what we're completing
-    // This works for both positionals and flag values
-    let last = args.last().map(String::as_str).unwrap_or("");
+    // If we consumed all args as subcommands, we're completing a positional (empty prefix)
+    // Otherwise, the last arg is the partial completion text
+    let last = if i >= args.len() {
+        ""
+    } else {
+        args.last().map(String::as_str).unwrap_or("")
+    };
     let prev = args.iter().rev().nth(1).map(|s| s.as_str());
 
     // 1) If we are completing a value for an option (prev was a flag), use that option's possible values
