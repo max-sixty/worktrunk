@@ -677,6 +677,7 @@ approved-commands = [
 
     /// Test merge with successful pre-merge-command validation
     /// Note: fish disabled due to flaky PTY buffering race conditions
+    /// TODO: bash variant occasionally fails on Ubuntu CI with snapshot mismatches due to PTY timing
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
