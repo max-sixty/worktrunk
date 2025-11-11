@@ -2,16 +2,31 @@
 
 ## Skills Directory Location
 
-**Current approach**: Testing whether `source: "./.claude-plugin"` allows skills to remain in `.claude-plugin/skills/`
+**Working solution**: Using `source: "./.claude-plugin"` in `marketplace.json` allows skills to remain in `.claude-plugin/skills/` ✅
 
-Configuration:
-- `source: "./.claude-plugin"`
-- `skills: ["./skills/worktrunk"]`
-- Combined path: `./.claude-plugin/skills/worktrunk`
-- Actual location: `.claude-plugin/skills/worktrunk/` ✅
+Configuration in `marketplace.json`:
+```json
+{
+  "source": "./.claude-plugin",
+  "skills": ["./skills/worktrunk"]
+}
+```
 
-This approach keeps skills organized with hooks in `.claude-plugin/` and avoids root directory clutter.
+Configuration in `plugin.json`:
+```json
+{
+  "hooks": "./hooks/hooks.json",
+  "skills": ["./skills/worktrunk"]
+}
+```
 
-**Alternative**: If this doesn't work, Claude Code documentation suggests skills must be at plugin root: "All other directories (commands/, agents/, skills/, hooks/) must be at the plugin root, not inside `.claude-plugin/`"
+**Path resolution**:
+- Source base: `./.claude-plugin`
+- Skills: `./.claude-plugin + ./skills/worktrunk = ./.claude-plugin/skills/worktrunk` ✅
+- Hooks: `./.claude-plugin + ./hooks/hooks.json = ./.claude-plugin/hooks/hooks.json` ✅
 
-See ../ISSUE.md for full investigation details.
+This approach keeps all Claude Code components organized together in `.claude-plugin/` and avoids root directory clutter.
+
+**Note**: The official Claude Code documentation states "All other directories (commands/, agents/, skills/, hooks/) must be at the plugin root" but using the `source` field to point to `./.claude-plugin` makes paths relative to that directory, allowing this organizational structure.
+
+**Why this works**: The `source` field in `marketplace.json` changes the base directory for path resolution. When `source: "./"` (the default), skills paths are resolved from the plugin root. When `source: "./.claude-plugin"`, skills paths are resolved from `.claude-plugin/`, allowing the entire plugin to be self-contained in one directory.
