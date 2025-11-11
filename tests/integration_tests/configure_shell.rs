@@ -32,7 +32,7 @@ fn test_configure_shell_with_yes() {
         exit_code: 0
         ----- stdout -----
         ✅ Added [1mzsh[0m [TEMP_HOME]/.zshrc
-        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mwt[0m init zsh)"[0m; [1m[35mfi[0m[0m
+        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mcommand[0m wt init zsh)"[0m; [1m[35mfi[0m[0m
 
         ✅ [32mConfigured 1 shell[0m
 
@@ -44,7 +44,7 @@ fn test_configure_shell_with_yes() {
 
     // Verify the file was modified
     let content = fs::read_to_string(&zshrc_path).unwrap();
-    assert!(content.contains("eval \"$(wt init zsh)\""));
+    assert!(content.contains("eval \"$(command wt init zsh)\""));
 }
 
 /// Test configure-shell with specific shell
@@ -77,7 +77,7 @@ fn test_configure_shell_specific_shell() {
         exit_code: 0
         ----- stdout -----
         ✅ Added [1mzsh[0m [TEMP_HOME]/.zshrc
-        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mwt[0m init zsh)"[0m; [1m[35mfi[0m[0m
+        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mcommand[0m wt init zsh)"[0m; [1m[35mfi[0m[0m
 
         ✅ [32mConfigured 1 shell[0m
 
@@ -89,7 +89,7 @@ fn test_configure_shell_specific_shell() {
 
     // Verify the file was modified
     let content = fs::read_to_string(&zshrc_path).unwrap();
-    assert!(content.contains("eval \"$(wt init zsh)\""));
+    assert!(content.contains("eval \"$(command wt init zsh)\""));
 }
 
 /// Test configure-shell when line already exists
@@ -102,7 +102,7 @@ fn test_configure_shell_already_exists() {
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
         &zshrc_path,
-        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(wt init zsh)\"; fi\n",
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt init zsh)\"; fi\n",
     )
     .unwrap();
 
@@ -163,7 +163,7 @@ fn test_configure_shell_fish() {
         exit_code: 0
         ----- stdout -----
         ✅ Created [1mfish[0m [TEMP_HOME]/.config/fish/conf.d/wt.fish
-        [40m [0m  [1m[35mif[0m [1m[34mtype[0m [36m-q[0m wt; [1m[34mwt[0m init fish [36m|[0m [1m[34msource[0m; end[0m
+        [40m [0m  [1m[35mif[0m [1m[34mtype[0m [36m-q[0m wt; [1m[34mcommand[0m wt init fish [36m|[0m [1m[34msource[0m; end[0m
 
         ✅ [32mConfigured 1 shell[0m
 
@@ -179,7 +179,7 @@ fn test_configure_shell_fish() {
 
     let content = fs::read_to_string(&fish_config).unwrap();
     assert!(
-        content.trim() == "if type -q wt; wt init fish | source; end",
+        content.trim() == "if type -q wt; command wt init fish | source; end",
         "Should contain conditional wrapper: {}",
         content
     );
@@ -251,9 +251,9 @@ fn test_configure_shell_multiple_configs() {
         exit_code: 0
         ----- stdout -----
         ✅ Added [1mbash[0m [TEMP_HOME]/.bash_profile
-        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mwt[0m init bash)"[0m; [1m[35mfi[0m[0m
+        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mcommand[0m wt init bash)"[0m; [1m[35mfi[0m[0m
         ✅ Added [1mzsh[0m [TEMP_HOME]/.zshrc
-        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mwt[0m init zsh)"[0m; [1m[35mfi[0m[0m
+        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mcommand[0m wt init zsh)"[0m; [1m[35mfi[0m[0m
 
         ✅ [32mConfigured 2 shells[0m
 
@@ -266,13 +266,13 @@ fn test_configure_shell_multiple_configs() {
     // Verify both files were modified
     let bash_content = fs::read_to_string(&bash_config_path).unwrap();
     assert!(
-        bash_content.contains("eval \"$(wt init bash)\""),
+        bash_content.contains("eval \"$(command wt init bash)\""),
         "Bash config should be updated"
     );
 
     let zsh_content = fs::read_to_string(&zshrc_path).unwrap();
     assert!(
-        zsh_content.contains("eval \"$(wt init zsh)\""),
+        zsh_content.contains("eval \"$(command wt init zsh)\""),
         "Zsh config should be updated"
     );
 }
@@ -287,7 +287,7 @@ fn test_configure_shell_mixed_states() {
     let bash_config_path = temp_home.path().join(".bash_profile");
     fs::write(
         &bash_config_path,
-        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(wt init bash)\"; fi\n",
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt init bash)\"; fi\n",
     )
     .unwrap();
 
@@ -313,9 +313,9 @@ fn test_configure_shell_mixed_states() {
         exit_code: 0
         ----- stdout -----
         ⚪ Already configured [1mbash[0m [TEMP_HOME]/.bash_profile
-        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mwt[0m init bash)"[0m; [1m[35mfi[0m[0m
+        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mcommand[0m wt init bash)"[0m; [1m[35mfi[0m[0m
         ✅ Added [1mzsh[0m [TEMP_HOME]/.zshrc
-        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mwt[0m init zsh)"[0m; [1m[35mfi[0m[0m
+        [40m [0m  [1m[35mif[0m [1m[34mcommand[0m [36m-v[0m wt [36m>[0m/dev/null [33m2[0m>&1; [1m[35mthen[0m [1m[34meval[0m [32m"$([1m[34mcommand[0m wt init zsh)"[0m; [1m[35mfi[0m[0m
 
         ✅ [32mConfigured 1 shell[0m
 
@@ -336,7 +336,7 @@ fn test_configure_shell_mixed_states() {
     // Verify zsh was modified
     let zsh_content = fs::read_to_string(&zshrc_path).unwrap();
     assert!(
-        zsh_content.contains("eval \"$(wt init zsh)\""),
+        zsh_content.contains("eval \"$(command wt init zsh)\""),
         "Zsh config should be updated"
     );
 }
