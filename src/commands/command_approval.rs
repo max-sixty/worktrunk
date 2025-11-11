@@ -83,6 +83,11 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> std::io
     let count = commands.len();
     let plural = if count == 1 { "" } else { "s" };
 
+    // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
+    // In directive mode, emits NUL to flush shell wrapper's read buffer
+    // In interactive mode, just flushes normally
+    crate::output::flush_for_stderr_prompt()?;
+
     eprintln!();
     eprintln!(
         "{WARNING_EMOJI} {WARNING}{WARNING_BOLD}{project_name}{WARNING_BOLD:#}{WARNING} wants to execute {WARNING_BOLD}{count}{WARNING_BOLD:#}{WARNING} command{plural}:{WARNING:#}"

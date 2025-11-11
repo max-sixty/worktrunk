@@ -32,7 +32,8 @@ _wt_exec() {
         elif [[ "$chunk" == __WORKTRUNK_EXEC__* ]]; then
             exec_cmd="${chunk#__WORKTRUNK_EXEC__}"
         else
-            printf '%s\n' "$chunk"
+            # Regular output - print it with newline (ignore empty chunks)
+            [[ -n "$chunk" ]] && printf '%s\n' "$chunk"
         fi
     done <"$fifo_path"
 

@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpiqC07O/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpGSj2lQ/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -63,7 +63,8 @@ _wt_exec() {
         elif [[ "$chunk" == __WORKTRUNK_EXEC__* ]]; then
             exec_cmd="${chunk#__WORKTRUNK_EXEC__}"
         else
-            printf '%s\n' "$chunk"
+            # Regular output - print it with newline (ignore empty chunks)
+            [[ -n "$chunk" ]] && printf '%s\n' "$chunk"
         fi
     done <"$fifo_path"
 

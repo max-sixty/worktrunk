@@ -105,6 +105,11 @@ impl InteractiveOutput {
         Ok(())
     }
 
+    pub fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
+        // In interactive mode, just flush normally - no NUL needed
+        stdout().flush()
+    }
+
     pub fn terminate_output(&mut self) -> io::Result<()> {
         // No-op in interactive mode - no NUL terminators needed
         Ok(())

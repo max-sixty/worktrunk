@@ -101,6 +101,13 @@ impl DirectiveOutput {
         io::stdout().flush()
     }
 
+    pub fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
+        // In directive mode, emit NUL to flush buffered stdout through shell's read loop
+        // The shell wrapper uses `while read -d '' chunk` which buffers until NUL arrives
+        write!(io::stdout(), "\0")?;
+        io::stdout().flush()
+    }
+
     pub fn terminate_output(&mut self) -> io::Result<()> {
         // Write NUL terminator to separate command output from subsequent directives
         write!(io::stdout(), "\0")?;

@@ -345,7 +345,13 @@ fn configure_fish_file(
 
 fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> {
     use anstyle::Style;
+    use std::io::Write;
     use worktrunk::styling::{HINT_EMOJI, eprint, eprintln};
+
+    // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
+    // In directive mode, emits NUL to flush shell wrapper's read buffer
+    // In interactive mode, just flushes normally
+    crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
 
     // Interactive prompts go to stderr so they appear even when stdout is redirected
     eprintln!();
