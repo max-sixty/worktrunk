@@ -116,6 +116,13 @@ This provides consistent visual separation and hierarchy:
 // ✅ GOOD - standalone message with emoji
 println!("{SUCCESS_EMOJI} {GREEN}Created worktree{GREEN:#}");
 
+// ✅ GOOD - message with path on same line
+let green_bold = GREEN.bold();
+println!(
+    "{SUCCESS_EMOJI} {GREEN}Created config file: {green_bold}{}{green_bold:#}",
+    path.display()
+);
+
 // ✅ GOOD - info message for primary status (NOT dimmed - answers user's question)
 output::info("All commands already approved")?;
 output::info("Commands declined")?;
@@ -140,6 +147,10 @@ println!("{dim}Operation declined{dim:#}");
 
 // ❌ BAD - section header without emoji
 println!("Config: {bold}{}{bold:#}", path);  // Should have INFO_EMOJI
+
+// ❌ BAD - path on separate line without emoji
+println!("{SUCCESS_EMOJI} {GREEN}Created config file{GREEN:#}");
+println!("{dim}{}{dim:#}", path.display());  // Should be on same line as success message
 
 // ❌ BAD - dimming primary status that answers user's question
 output::info(format!("{dim}Commands declined{dim:#}"))?;  // Should NOT be dim

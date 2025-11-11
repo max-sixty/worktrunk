@@ -19,7 +19,7 @@ pub fn handle_config_init() -> Result<(), GitError> {
     if config_path.exists() {
         let bold = AnstyleStyle::new().bold();
         println!(
-            "Global config already exists: {bold}{}{bold:#}",
+            "{INFO_EMOJI} Global config already exists: {bold}{}{bold:#}",
             config_path.display()
         );
         println!();
@@ -38,9 +38,11 @@ pub fn handle_config_init() -> Result<(), GitError> {
     std::fs::write(&config_path, CONFIG_EXAMPLE).git_context("Failed to write config file")?;
 
     // Success message
-    let bold = AnstyleStyle::new().bold();
-    println!("{SUCCESS_EMOJI} {GREEN}Created config file{GREEN:#}");
-    println!("{bold}{}{bold:#}", config_path.display());
+    let green_bold = GREEN.bold();
+    println!(
+        "{SUCCESS_EMOJI} {GREEN}Created config file: {green_bold}{}{green_bold:#}",
+        config_path.display()
+    );
     println!();
     println!(
         "{HINT_EMOJI} {HINT}Edit this file to customize worktree paths and LLM settings{HINT:#}"

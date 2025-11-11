@@ -136,10 +136,7 @@ impl RepositoryCliExt for Repository {
                     Ok(info) => items.push(ListItem::Branch(info)),
                     Err(e) => {
                         println!(
-                            "{WARNING_EMOJI} {WARNING}Failed to enrich branch {WARNING_BOLD}{branch}{WARNING_BOLD:#}: {e}{WARNING:#}"
-                        );
-                        println!(
-                            "{HINT_EMOJI} {HINT}This branch will be shown with limited information{HINT:#}"
+                            "{WARNING_EMOJI} {WARNING}Failed to enrich branch {WARNING_BOLD}{branch}{WARNING_BOLD:#}: {e}{WARNING:#} (will show with limited information)"
                         );
                     }
                 }
