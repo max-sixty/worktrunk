@@ -1,6 +1,8 @@
 use askama::Template;
 use std::path::PathBuf;
 
+const POSIX_DIRECTIVE_SHIM: &str = include_str!("../templates/posix_directives.sh");
+
 /// Supported shells
 #[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
@@ -301,12 +303,14 @@ impl ShellInit {
                 let template = BashTemplate {
                     shell_name: self.shell.to_string(),
                     cmd_prefix: &self.cmd_prefix,
+                    posix_shim: POSIX_DIRECTIVE_SHIM,
                 };
                 template.render()
             }
             Shell::Zsh => {
                 let template = ZshTemplate {
                     cmd_prefix: &self.cmd_prefix,
+                    posix_shim: POSIX_DIRECTIVE_SHIM,
                 };
                 template.render()
             }
@@ -353,6 +357,7 @@ impl ShellInit {
 struct BashTemplate<'a> {
     shell_name: String,
     cmd_prefix: &'a str,
+    posix_shim: &'a str,
 }
 
 /// Zsh shell template
@@ -360,6 +365,7 @@ struct BashTemplate<'a> {
 #[template(path = "zsh.zsh", escape = "none")]
 struct ZshTemplate<'a> {
     cmd_prefix: &'a str,
+    posix_shim: &'a str,
 }
 
 /// Fish shell template

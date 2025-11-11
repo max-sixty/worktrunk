@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpIZkO2j/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpPLmErG/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -29,54 +29,64 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/wt
     _WORKTRUNK_CMD="${WORKTRUNK_BIN:-wt}"
 
-    # Helper function to parse wt output and handle directives
-    # Directives are NUL-terminated to support multi-line commands
-    _wt_exec() {
-        local exec_cmd="" chunk exit_code
-        local exit_code_file stdout_file
-        exit_code_file=$(mktemp) || { echo "Failed to create temp file" >&2; return 1; }
-        stdout_file=$(mktemp) || { /bin/rm -f "$exit_code_file" 2>/dev/null; echo "Failed to create temp file" >&2; return 1; }
+# Shared directive parser for POSIX shells (bash, zsh, oil).
+# Reads worktrunk's NUL-delimited output in real-time via a FIFO so progress
+# and hint messages stream immediately while keeping stderr attached to the TTY.
+_wt_exec() {
+    local exec_cmd="" chunk="" exit_code=0 tmp_dir="" exit_file="" fifo_path="" runner_pid=""
 
-        # Run command and capture output to file to avoid process substitution issues
-        # Process substitution in zsh can hang in non-interactive mode
-        # Let stderr pass through to terminal (preserves TTY for color detection)
-        command "$_WORKTRUNK_CMD" "$@" > "$stdout_file"
-        echo "$?" > "$exit_code_file"
-
-        # Parse stdout for directives (NUL-delimited)
-        # The || [[ -n "$chunk" ]] handles non-NUL-terminated output (e.g., error messages)
-        while IFS= read -r -d '' chunk || [[ -n "$chunk" ]]; do
-            if [[ "$chunk" == __WORKTRUNK_CD__* ]]; then
-                # CD directive - extract path and change directory
-                local path="${chunk#__WORKTRUNK_CD__}"
-                \cd "$path"
-            elif [[ "$chunk" == __WORKTRUNK_EXEC__* ]]; then
-                # EXEC directive - extract command (may contain newlines)
-                exec_cmd="${chunk#__WORKTRUNK_EXEC__}"
-            else
-                # Regular output - print it with newline
-                printf '%s\n' "$chunk"
-            fi
-        done < "$stdout_file"
-
-        # Read exit code from temp file
-        exit_code=$(cat "$exit_code_file" 2>/dev/null || echo 0)
-
-        # Cleanup temp files (use absolute path for --no-rcs compatibility)
-        /bin/rm -f "$exit_code_file" "$stdout_file" 2>/dev/null || true
-
-        # Execute command if one was specified
-        # Security: Command is user-provided from -x flag; eval is intentional.
-        # NUL-termination allows multi-line commands.
-        # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
-        # If wt succeeds but command fails, returns the command's exit code.
-        if [[ -n "$exec_cmd" ]]; then
-            eval "$exec_cmd"
-            exit_code=$?
-        fi
-
-        return $exit_code
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/wt.XXXXXX") || {
+        echo "Failed to create temp directory for worktrunk shim" >&2
+        return 1
     }
+
+    exit_file="$tmp_dir/exit-code"
+    fifo_path="$tmp_dir/stdout.fifo"
+
+    if ! mkfifo "$fifo_path"; then
+        echo "Failed to create FIFO for worktrunk shim" >&2
+        /bin/rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    (
+        command "$_WORKTRUNK_CMD" "$@"
+        printf '%s' "$?" >"$exit_file"
+    ) >"$fifo_path" &
+    runner_pid=$!
+
+    # Read directives as they arrive; keep looping even if the final chunk isn't NUL-terminated.
+    while IFS= read -r -d '' chunk || [[ -n "$chunk" ]]; do
+        if [[ "$chunk" == __WORKTRUNK_CD__* ]]; then
+            local path="${chunk#__WORKTRUNK_CD__}"
+            \cd "$path"
+        elif [[ "$chunk" == __WORKTRUNK_EXEC__* ]]; then
+            exec_cmd="${chunk#__WORKTRUNK_EXEC__}"
+        else
+            printf '%s\n' "$chunk"
+        fi
+    done <"$fifo_path"
+
+    # Ensure the background runner has exited before reading artifacts.
+    if [[ -n "$runner_pid" ]]; then
+        wait "$runner_pid" >/dev/null 2>&1 || true
+    fi
+
+    if [[ -f "$exit_file" ]]; then
+        read -r exit_code < "$exit_file"
+    fi
+
+    /bin/rm -f "$exit_file" "$fifo_path"
+    /bin/rmdir "$tmp_dir" 2>/dev/null || true
+
+    if [[ -n "$exec_cmd" ]]; then
+        eval "$exec_cmd"
+        exit_code=$?
+    fi
+
+    return "$exit_code"
+}
+
 
     # Override wt command to add --internal flag
     wt() {
