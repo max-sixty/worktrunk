@@ -10,30 +10,27 @@
 <!-- [![Downloads](https://img.shields.io/crates/d/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk) -->
 <!-- [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers) -->
 
-Worktrunk is a CLI tool to make working with git worktrees much much easier.
-It's designed for those running concurrent AI coding agents.
+Worktrunk is a CLI tool which makes working with git worktrees much much easier.
+It's designed for those running many concurrent AI coding agents.
 
-Git worktrees let multiple agents work on one repo without colliding; each agent
+Git worktrees let multiple agents work on a single repo without colliding; each agent
 gets a separate directory. But creating worktrees, tracking paths, and cleaning
 up afterward is manual. Worktrunk automates that lifecycle.
 
 ## Quick Start
 
-Worktrunk automates the full worktree lifecycle: create worktree, work, merge back, remove worktree.
-
-<!-- Output generated from:
-  Switch: tests/snapshots/integration__integration_tests__merge__readme_example_simple_switch.snap
-  Merge: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap
-  (snapshot output includes [SHA]/[REPO]; replace with representative values when copying into README) -->
-
 **Create a worktree:**
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_simple_switch.snap -->
 
 ```bash
 $ wt switch --create fix-auth
 ✅ Created new worktree for fix-auth from main at ../repo.fix-auth/
 ```
 
-**Work on your changes, then merge back:**
+**Work, make changes, then merge back:**
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap -->
 
 ```bash
 $ wt merge
@@ -50,6 +47,8 @@ $ wt merge
 
 **See all active worktrees:**
 
+<!-- Output from: tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap -->
+
 ```bash
 $ wt list
 Branch     Status  HEAD±    main↕  Path
@@ -63,38 +62,6 @@ bugfix-y   ↑       +0 -0    ↑1     ./myapp.bugfix-y/
 ```bash
 cargo install worktrunk
 wt config shell  # Sets up shell integration
-```
-
-## Tips
-
-**Create an alias for your favorite agent** - Shell aliases streamline common workflows. For example, to create a worktree and immediately start Claude:
-
-```bash
-alias wsl='wt switch --create --execute=claude'
-```
-
-Now `wsl new-feature` creates a branch, sets up the worktree, runs initialization hooks, and launches Claude in that directory.
-
-**Automatic branch status in Claude Code** - The Claude Code integration shows which branches have active AI sessions. When Claude starts working, the branch shows `🤖` in `wt list`. When waiting for input, it shows `💬`. Setup instructions: [Custom Worktree Status](#custom-worktree-status).
-
-**Auto-generated commit messages** - Simon Willison's [llm](https://llm.datasette.io/) tool integrates seamlessly with worktrunk's commit generation. Install it, configure the command, and `wt merge` will automatically generate contextual commit messages. Setup guide: [LLM-Powered Commit Messages](#llm-powered-commit-messages).
-
-**Environment setup with hooks** - Each worktree is a separate directory. Use `post-create-command` to ensure consistent environments:
-
-```toml
-# In .config/wt.toml
-[post-create-command]
-"setup" = "uv sync && nvm install"
-```
-
-**Delegate to task runners** - Reference existing Justfile/Makefile commands instead of duplicating logic:
-
-```toml
-[post-create-command]
-"setup" = "just install"
-
-[pre-merge-command]
-"validate" = "just test lint"
 ```
 
 ## Automation Features
@@ -130,7 +97,7 @@ $ wt merge
 ✅ Squashed @ a1b2c3d
 ```
 
-Set up LLM integration: `wt config help` shows the setup guide, `wt config init` creates example config.
+Set up LLM integration: run `wt config help` to see the setup guide, or `wt config init` to create an example config file.
 
 <details>
 <summary><b>Advanced: Custom Prompt Templates</b></summary>
@@ -330,6 +297,38 @@ Worktrunk is opinionated! It's not designed to be all things to all people. The 
 - Maximum automation
 
 Standard `git worktree` commands continue working fine — adopting Worktrunk for a portion of a workflow doesn't require adopting it for everything.
+
+## Tips
+
+**Create an alias for your favorite agent** - Shell aliases streamline common workflows. For example, to create a worktree and immediately start Claude:
+
+```bash
+alias wsl='wt switch --create --execute=claude'
+```
+
+Now `wsl new-feature` creates a branch, sets up the worktree, runs initialization hooks, and launches Claude in that directory.
+
+**Automatic branch status in Claude Code** - The Claude Code integration shows which branches have active AI sessions. When Claude starts working, the branch shows `🤖` in `wt list`. When waiting for input, it shows `💬`. Setup instructions: [Custom Worktree Status](#custom-worktree-status).
+
+**Auto-generated commit messages** - Simon Willison's [llm](https://llm.datasette.io/) tool integrates seamlessly with worktrunk's commit generation. Install it, configure the command, and `wt merge` will automatically generate contextual commit messages. Setup guide: [LLM-Powered Commit Messages](#llm-powered-commit-messages).
+
+**Environment setup with hooks** - Each worktree is a separate directory. Use `post-create-command` to ensure consistent environments:
+
+```toml
+# In .config/wt.toml
+[post-create-command]
+"setup" = "uv sync && nvm install"
+```
+
+**Delegate to task runners** - Reference existing Justfile/Makefile commands instead of duplicating logic:
+
+```toml
+[post-create-command]
+"setup" = "just install"
+
+[pre-merge-command]
+"validate" = "just test lint"
+```
 
 ## All Commands
 
@@ -578,6 +577,27 @@ Run without `--execute` to preview changes first.
 </details>
 
 ## FAQ
+
+### Does Worktrunk execute arbitrary commands on my machine?
+
+Worktrunk executes commands in three contexts:
+
+1. **Project hooks** (`.config/wt.toml`) - Automation for worktree lifecycle
+2. **LLM commands** (`~/.config/worktrunk/config.toml`) - Commit message generation
+3. **--execute flag** - Commands you provide explicitly
+
+Commands from project hooks and LLM configuration require approval on first run. Approved commands are saved to `~/.config/worktrunk/approved.toml`. If a command changes, worktrunk requires new approval.
+
+**Example approval prompt:**
+
+```
+💡 Permission required: post-create install
+  uv sync
+
+💡 Allow and remember? [y/N]
+```
+
+Use `--force` to bypass prompts (useful for CI/automation).
 
 ### Installation fails with C compilation errors
 

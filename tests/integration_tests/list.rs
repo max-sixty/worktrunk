@@ -675,3 +675,68 @@ fn test_list_user_status_with_special_characters() {
 
     snapshot_list("user_status_special_chars", &repo);
 }
+
+/// Generate README example: Simple list output showing multiple worktrees
+/// This demonstrates the basic list output format used in the Quick Start section.
+/// Output: tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap
+#[test]
+fn test_readme_example_simple_list() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create worktrees with various states
+    let feature_x = repo.add_worktree("feature-x", "feature-x");
+    let bugfix_y = repo.add_worktree("bugfix-y", "bugfix-y");
+
+    // feature-x: ahead with uncommitted changes
+    // Make 3 commits
+    for i in 1..=3 {
+        std::fs::write(
+            feature_x.join(format!("file{}.txt", i)),
+            format!("content {}", i),
+        )
+        .expect("Failed to write file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["add", &format!("file{}.txt", i)])
+            .current_dir(&feature_x)
+            .output()
+            .expect("Failed to add");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["commit", "-m", &format!("Add file {}", i)])
+            .current_dir(&feature_x)
+            .output()
+            .expect("Failed to commit");
+    }
+    // Add unstaged changes (+5 -2 lines)
+    std::fs::write(
+        feature_x.join("modified.txt"),
+        "line1\nline2\nline3\nline4\nline5\n",
+    )
+    .expect("Failed to write");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "modified.txt"])
+        .current_dir(&feature_x)
+        .output()
+        .expect("Failed to add");
+
+    // bugfix-y: 1 commit ahead, clean tree
+    std::fs::write(bugfix_y.join("bugfix.txt"), "fix content").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "bugfix.txt"])
+        .current_dir(&bugfix_y)
+        .output()
+        .expect("Failed to add");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Fix bug"])
+        .current_dir(&bugfix_y)
+        .output()
+        .expect("Failed to commit");
+
+    snapshot_list("readme_example_simple_list", &repo);
+}
