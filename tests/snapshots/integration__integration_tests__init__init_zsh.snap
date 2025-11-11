@@ -536,7 +536,7 @@ _wt__switch_commands() {
 if [ "$funcstack[1]" = "_wt" ]; then
     _wt "$@"
 else
-    compdef _wt wt
+    if (( $+functions[compdef] )); then compdef _wt wt; fi
 fi
 
 ----- stderr -----

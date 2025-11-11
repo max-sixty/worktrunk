@@ -2,6 +2,13 @@ use super::{TestRepo, wt_command};
 use insta_cmd::get_cargo_bin;
 use std::process::Command;
 
+/// Get the path to the dev-detach helper binary.
+/// This binary calls setsid() before exec'ing the shell, detaching it from
+/// any controlling terminal and preventing PTY-related hangs.
+fn get_dev_detach_bin() -> std::path::PathBuf {
+    get_cargo_bin("dev-detach")
+}
+
 /// Map shell display names to actual binaries.
 pub fn get_shell_binary(shell: &str) -> &str {
     match shell {
@@ -14,8 +21,11 @@ pub fn get_shell_binary(shell: &str) -> &str {
 
 /// Execute a script in the given shell with the repo's isolated environment.
 pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
-    let binary = get_shell_binary(shell);
-    let mut cmd = Command::new(binary);
+    // Use dev-detach wrapper to fully isolate shell from controlling terminals.
+    // The dev-detach binary calls setsid() before exec'ing the shell, preventing
+    // PTY-related hangs in nextest environments (unbuffer, script, terminal emulators).
+    let detach = get_dev_detach_bin();
+    let mut cmd = Command::new(detach);
     repo.clean_cli_env(&mut cmd);
 
     // Prevent user shell config from leaking into tests.
@@ -25,7 +35,18 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
     cmd.env_remove("XONSHRC");
     cmd.env_remove("XDG_CONFIG_HOME");
 
+    // Build argument list: dev-detach <shell> [shell-flags...] -c <script>
+    let binary = get_shell_binary(shell);
+    cmd.arg(binary);
+
+    // Add shell-specific no-config flags
     match shell {
+        "bash" => {
+            cmd.arg("--noprofile").arg("--norc");
+        }
+        "zsh" => {
+            cmd.arg("--no-globalrcs").arg("-f");
+        }
         "fish" => {
             cmd.arg("--no-config");
         }
@@ -41,18 +62,36 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
         _ => {}
     }
 
+    cmd.arg("-c").arg(script);
+
+    // Null stdin, piped stdout/stderr for full TTY isolation.
+    // Combined with setsid() from dev-detach, this guarantees no controlling terminal.
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
     let output = cmd
-        .arg("-c")
-        .arg(script)
         .current_dir(repo.root_path())
         .output()
         .unwrap_or_else(|e| panic!("Failed to execute {} script: {}", shell, e));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() {
         panic!(
             "Shell script failed:\nstdout: {}\nstderr: {}",
             String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            stderr
+        );
+    }
+
+    // Check for shell errors in stderr (command not found, syntax errors, etc.)
+    // These indicate problems with our shell integration code
+    if stderr.contains("command not found") || stderr.contains("not defined") {
+        panic!(
+            "Shell integration error detected:\nstderr: {}\nstdout: {}",
+            stderr,
+            String::from_utf8_lossy(&output.stdout)
         );
     }
 
@@ -71,11 +110,18 @@ pub fn generate_init_code(repo: &TestRepo, shell: &str) -> String {
         .expect("Failed to generate init code");
 
     let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code");
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() && stdout.trim().is_empty() {
+        panic!("Failed to generate init code:\nstderr: {}", stderr);
+    }
+
+    // Check for shell errors in the generated init code when it's evaluated
+    // This catches issues like missing compdef guards
+    if stderr.contains("command not found") || stderr.contains("not defined") {
         panic!(
-            "Failed to generate init code:\nstderr: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "Init code contains errors:\nstderr: {}\nGenerated code:\n{}",
+            stderr, stdout
         );
     }
 

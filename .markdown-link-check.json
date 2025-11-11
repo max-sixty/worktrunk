@@ -2,6 +2,21 @@
   "ignorePatterns": [
     {
       "pattern": "^https://crates\\.io/crates/worktrunk$"
+    },
+    {
+      "pattern": "^https://github\\.com/crate-ci/cargo-release$"
+    },
+    {
+      "pattern": "^https://opensource\\.org/"
+    },
+    {
+      "pattern": "^https://llm\\.datasette\\.io/"
+    },
+    {
+      "pattern": "^https://docs\\.rs/"
+    },
+    {
+      "pattern": "^https://img\\.shields\\.io/"
     }
   ]
 }

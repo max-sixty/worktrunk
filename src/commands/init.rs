@@ -82,6 +82,15 @@ pub fn handle_init(shell: shell::Shell, cli_cmd: &mut Command) -> Result<(), Str
             line
         };
 
+        // For Zsh: Guard the final compdef call to avoid errors when completion system isn't loaded
+        // Not all users have compinit in their .zshrc, and --no-rcs mode never loads it
+        let line = if matches!(shell, shell::Shell::Zsh) && line.trim() == "compdef _wt wt" {
+            // Replace with guarded version that checks if compdef exists
+            "    if (( $+functions[compdef] )); then compdef _wt wt; fi".to_string()
+        } else {
+            line
+        };
+
         println!("{}", line);
     }
 

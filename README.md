@@ -560,7 +560,7 @@ Worktrunk is in active development. The core features are stable and ready for u
 
 ### Releases
 
-Use `cargo-release` to publish new versions:
+Use [cargo-release](https://github.com/crate-ci/cargo-release) to publish new versions:
 
 ```bash
 cargo install cargo-release

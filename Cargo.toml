@@ -28,6 +28,14 @@ path = "src/lib.rs"
 name = "wt"
 path = "src/main.rs"
 
+# Helper binary for TTY isolation in tests.
+# This binary uses setsid() to detach child processes from controlling terminals,
+# preventing PTY-related hangs in nextest. Built with `cargo build` but not installed
+# by `cargo install` (binaries in subdirectories are excluded from installation).
+[[bin]]
+name = "dev-detach"
+path = "tests/bin/dev-detach.rs"
+
 [dependencies]
 anstream = "0.6"
 anstyle = "1.0"
@@ -64,6 +72,9 @@ unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
+# nix crate used by dev-detach helper binary for TTY isolation in tests.
+# This is only compiled when running tests (dev-detach is not included in release builds).
+nix = { version = "0.29", default-features = false, features = ["process", "signal"] }
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.8", features = ["build"] }
@@ -88,6 +99,9 @@ name = "list"
 harness = false
 
 [lints.rust]
+# No unsafe code in the main codebase or tests.
+# TTY isolation for shell integration tests is handled by the dev-detach helper binary,
+# which uses the nix crate's safe wrappers for Unix syscalls (setsid, execvp).
 unsafe_code = "forbid"
 
 # The profile that 'dist' will build with
