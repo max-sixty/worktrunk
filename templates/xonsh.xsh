@@ -12,36 +12,72 @@ if shutil.which("wt") is not None or os.environ.get('WORKTRUNK_BIN'):
     def _wt_exec(args, cmd=None):
         """Helper function to parse wt output and handle directives
         Directives are NUL-terminated to support multi-line commands"""
+        import subprocess
+
         # Use provided command or default to _WORKTRUNK_CMD
         command = cmd if cmd is not None else _WORKTRUNK_CMD
-        # Capture full output including return code
-        result = ![@(command) @(args)]
+
+        # Start process with stdout redirection for real-time streaming
+        # stderr passes through to terminal for TTY detection
+        proc = subprocess.Popen(
+            [command] + args,
+            stdout=subprocess.PIPE,
+            stderr=None,  # Let stderr pass through
+            text=True,
+            bufsize=0  # Unbuffered for real-time streaming
+        )
+
+        # Read stdout character by character for real-time processing
+        buffer = ""
         exec_cmd = ""
 
-        # Split output on NUL bytes, process each chunk
-        if result.out:
-            for chunk in result.out.split("\0"):
-                if chunk.startswith("__WORKTRUNK_CD__"):
-                    # CD directive - extract path and change directory
-                    path = chunk.replace("__WORKTRUNK_CD__", "", 1)
-                    cd @(path)
-                elif chunk.startswith("__WORKTRUNK_EXEC__"):
-                    # EXEC directive - extract command (may contain newlines)
-                    exec_cmd = chunk.replace("__WORKTRUNK_EXEC__", "", 1)
-                elif chunk:
-                    # Regular output - print it with newline
-                    print(chunk)
+        # Read and process output as it arrives
+        try:
+            while True:
+                char = proc.stdout.read(1)
+                if not char:
+                    break
+
+                if char == '\0':
+                    # NUL byte - process the buffered chunk immediately
+                    if buffer.startswith("__WORKTRUNK_CD__"):
+                        # CD directive - extract path and change directory
+                        path = buffer.replace("__WORKTRUNK_CD__", "", 1)
+                        if os.path.isdir(path):
+                            cd @(path)
+                        else:
+                            print(f"Error: Not a directory: {path}", file=sys.stderr)
+                    elif buffer.startswith("__WORKTRUNK_EXEC__"):
+                        # EXEC directive - extract command (may contain newlines)
+                        exec_cmd = buffer.replace("__WORKTRUNK_EXEC__", "", 1)
+                    elif buffer:
+                        # Regular output - print it immediately
+                        print(buffer)
+
+                    buffer = ""
+                else:
+                    buffer += char
+        except IOError as e:
+            print(f"Error reading command output: {e}", file=sys.stderr)
+
+        # Process any remaining buffer (shouldn't happen with NUL-terminated protocol)
+        if buffer:
+            print(buffer)
+
+        # Wait for process and get actual exit code
+        exit_code = proc.wait()
 
         # Execute command if one was specified
         # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
         # If wt succeeds but command fails, returns the command's exit code.
         if exec_cmd:
+            # Security: Command comes from wt --internal output; eval is intentional
             execx(exec_cmd)
             # execx() sets __xonsh__.env['LASTRETURNCODE'] to the exit code
             return __xonsh__.env.get('LASTRETURNCODE', 0)
 
-        # Return the exit code, defaulting to 0 if the subprocess did not set one
-        return result.returncode if result.returncode is not None else 0
+        # Return the actual exit code from the command
+        return exit_code
 
     def _{{ cmd_prefix }}_wrapper(args):
         """Override {{ cmd_prefix }} command to add --internal flag"""

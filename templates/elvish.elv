@@ -11,6 +11,9 @@ if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
 
     # Helper function to parse wt output and handle directives
     # Directives are NUL-terminated to support multi-line commands
+    # NOTE: Uses 'slurp' which buffers output. Elvish's I/O model doesn't provide
+    # good primitives for byte-level streaming of process output while also capturing
+    # it for directive processing. Exit codes are now captured correctly.
     fn _wt_exec {|@args|
         var exit-code = 0
         var output = ""
@@ -18,12 +21,18 @@ if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
 
         # Capture stdout for directives, let stderr pass through to terminal
         # This preserves TTY for color detection
-        # TODO: Capture actual exit code from wt command, not just success/failure
         try {
             set output = (e:$_WORKTRUNK_CMD $@args | slurp)
         } catch e {
+            # Extract exit code, defaulting to 1 if unavailable
             set exit-code = 1
-            set output = $e[reason][content]
+            if (has-key $e[reason] exit-status) {
+                set exit-code = $e[reason][exit-status]
+            }
+            # Capture any error content
+            if (has-key $e[reason] content) {
+                set output = $e[reason][content]
+            }
         }
 
         # Split output on NUL bytes, process each chunk
@@ -32,7 +41,11 @@ if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
             if (str:has-prefix $chunk "__WORKTRUNK_CD__") {
                 # CD directive - extract path and change directory
                 var path = (str:trim-prefix $chunk "__WORKTRUNK_CD__")
-                cd $path
+                if (path:is-dir $path) {
+                    cd $path
+                } else {
+                    echo "Error: Not a directory: "$path >&2
+                }
             } elif (str:has-prefix $chunk "__WORKTRUNK_EXEC__") {
                 # EXEC directive - extract command (may contain newlines)
                 set exec-cmd = (str:trim-prefix $chunk "__WORKTRUNK_EXEC__")
@@ -47,11 +60,15 @@ if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
         # If wt succeeds but command fails, returns the command's exit code.
         if (!=s $exec-cmd "") {
             try {
+                # Security: Command comes from wt --internal output; eval is intentional
                 eval $exec-cmd
                 set exit-code = 0
             } catch e {
-                # Command failed - set exit code to 1 (elvish exceptions don't always preserve exit codes)
+                # Extract exit code, defaulting to 1 if unavailable
                 set exit-code = 1
+                if (has-key $e[reason] exit-status) {
+                    set exit-code = $e[reason][exit-status]
+                }
             }
         }
 

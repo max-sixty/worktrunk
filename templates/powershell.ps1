@@ -18,31 +18,75 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         # Use provided command or default to _WORKTRUNK_CMD
         $cmd = if ($Command) { $Command } else { $script:_WORKTRUNK_CMD }
 
-        # Capture stdout for directives, let stderr pass through to terminal
-        # This preserves TTY for color detection
-        $output = & $cmd @Arguments | Out-String
-        $exitCode = $LASTEXITCODE
+        # Set up process with stdout redirection for real-time streaming
+        # stderr passes through to terminal for TTY detection
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $cmd
+        $psi.Arguments = ($Arguments | ForEach-Object {
+            if ($_ -match '\s') { "`"$_`"" } else { $_ }
+        }) -join ' '
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $false
+        $psi.UseShellExecute = $false
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+        $process.Start() | Out-Null
+
+        # Read stdout character by character for real-time processing
+        $reader = $process.StandardOutput
+        $buffer = New-Object System.Text.StringBuilder
         $execCmd = ""
 
-        # Split output on NUL bytes, process each chunk
-        foreach ($chunk in ($output -split "`0")) {
-            if ($chunk -match '^__WORKTRUNK_CD__') {
-                # CD directive - extract path and change directory
-                $path = $chunk -replace '^__WORKTRUNK_CD__', ''
-                Set-Location $path
-            } elseif ($chunk -match '^__WORKTRUNK_EXEC__') {
-                # EXEC directive - extract command (may contain newlines)
-                $execCmd = $chunk -replace '^__WORKTRUNK_EXEC__', ''
-            } elseif ($chunk) {
-                # Regular output - write it with newline
+        # Read and process output as it arrives
+        while (-not $reader.EndOfStream) {
+            $charCode = $reader.Read()
+            if ($charCode -eq -1) { break }  # Explicit EOF check
+            $char = [char]$charCode
+
+            if ($char -eq "`0") {
+                # NUL byte - process the buffered chunk immediately
+                $chunk = $buffer.ToString()
+
+                if ($chunk -match '^__WORKTRUNK_CD__') {
+                    # CD directive - extract path and change directory
+                    $path = $chunk -replace '^__WORKTRUNK_CD__', ''
+                    if (Test-Path -Path $path -PathType Container) {
+                        Set-Location $path
+                    } else {
+                        Write-Error "Error: Not a directory: $path"
+                    }
+                } elseif ($chunk -match '^__WORKTRUNK_EXEC__') {
+                    # EXEC directive - extract command (may contain newlines)
+                    $execCmd = $chunk -replace '^__WORKTRUNK_EXEC__', ''
+                } elseif ($chunk) {
+                    # Regular output - write it immediately
+                    Write-Output $chunk
+                }
+
+                $buffer.Clear()
+            } else {
+                $buffer.Append($char) | Out-Null
+            }
+        }
+
+        # Process any remaining buffer (shouldn't happen with NUL-terminated protocol)
+        if ($buffer.Length -gt 0) {
+            $chunk = $buffer.ToString()
+            if ($chunk) {
                 Write-Output $chunk
             }
         }
+
+        # Wait for process and get actual exit code
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
 
         # Execute command if one was specified
         # Exit code semantics: If wt fails, returns wt's exit code (command never executes).
         # If wt succeeds but command fails, returns the command's exit code.
         if ($execCmd) {
+            # Security: Command comes from wt --internal output; eval is intentional
             Invoke-Expression $execCmd
             $exitCode = $LASTEXITCODE
         }
