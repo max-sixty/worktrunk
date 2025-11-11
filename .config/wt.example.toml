@@ -16,7 +16,6 @@
 
 # Post-Create Commands
 # Runs SEQUENTIALLY and BLOCKS until complete
-# Use for: npm install, bundle install, build, essential setup
 # The worktree switch won't complete until these finish
 # Commands run one after another in the worktree directory
 #
@@ -34,7 +33,8 @@
 
 # Post-Start Commands
 # Runs in BACKGROUND as detached processes (parallel)
-# Use for: dev servers, file watchers, long-running tasks
+# Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,
+# long-running tasks
 # The worktree switch completes immediately, these run in parallel
 # Output is logged to ~/.cache/worktrunk/logs/{repo}/{branch}/{command}.log
 #
