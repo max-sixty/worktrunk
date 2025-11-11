@@ -2,7 +2,7 @@
   "name": "worktrunk",
   "owner": {
     "name": "Worktrunk",
-    "email": "support@worktrunk.com"
+    "email": "m@maxroos.com"
   },
   "metadata": {
     "description": "Configuration guidance skills for Worktrunk git worktree workflow tool",
@@ -12,10 +12,10 @@
     {
       "name": "worktrunk-config",
       "description": "Complete Worktrunk integration for Claude Code. Provides: (1) configuration skill for setting up LLM integration, project hooks, and worktree automation, (2) automatic hooks that track AI activity per branch (🤖💬 indicators in wt list). Use when configuring Worktrunk, setting up hooks, or wanting visibility into which branches have active Claude sessions.",
-      "source": "./",
+      "source": "./.claude-plugin",
       "strict": false,
       "skills": [
-        "./.claude-plugin/skills/worktrunk"
+        "./skills/worktrunk"
       ]
     }
   ]
