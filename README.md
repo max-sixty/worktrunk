@@ -1,7 +1,14 @@
 # Worktrunk
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Crates.io](https://img.shields.io/crates/v/worktrunk.svg)](https://crates.io/crates/worktrunk)
+<!-- User badges -->
+
+[![Crates.io](https://img.shields.io/crates/v/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk)
+[![License: MIT](https://img.shields.io/badge/LICENSE-MIT-blue?style=for-the-badge)](https://opensource.org/licenses/MIT)
+
+<!-- Dev badges (uncomment when repo is public and has traction) -->
+<!-- [![GitHub CI Status](https://img.shields.io/github/actions/workflow/status/max-sixty/worktrunk/ci.yml?event=push&branch=main&logo=github&style=for-the-badge)](https://github.com/max-sixty/worktrunk/actions?query=branch%3Amain+workflow%3Aci) -->
+<!-- [![Downloads](https://img.shields.io/crates/d/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk) -->
+<!-- [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers) -->
 
 Worktrunk is a CLI tool to make working with git worktrees much much easier.
 It's designed for those running concurrent AI coding agents.
@@ -553,7 +560,7 @@ Worktrunk is in active development. The core features are stable and ready for u
 
 ### Releases
 
-Use [cargo-release](https://github.com/crate-ci/cargo-release) to publish new versions:
+Use `cargo-release` to publish new versions:
 
 ```bash
 cargo install cargo-release
