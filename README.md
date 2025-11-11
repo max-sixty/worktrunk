@@ -102,88 +102,9 @@ Set up LLM integration: run `wt config help` to see the setup guide, or `wt conf
 <details>
 <summary><b>Advanced: Custom Prompt Templates</b></summary>
 
-Worktrunk uses [minijinja templates](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for commit message prompts, giving you full control over what the LLM sees.
+Worktrunk uses [minijinja templates](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for commit message prompts. Customize the prompts by setting `template` (inline) or `template-file` (external file) in the `[commit-generation]` section. Use `squash-template` / `squash-template-file` for squash commits.
 
-**Inline template for normal commits:**
-
-```toml
-[commit-generation]
-command = "llm"
-args = ["-s"]
-template = """
-Generate a commit message for {{ repo | upper }}.
-
-Branch: {{ branch }}
-{%- if recent_commits %}
-
-Recent commit style ({{ recent_commits | length }} commits):
-{%- for commit in recent_commits %}
-  {{ loop.index }}. {{ commit }}
-{%- endfor %}
-{%- endif %}
-
-Changes to commit:
-```
-
-{{ git_diff }}
-
-```
-
-Requirements:
-- Follow the style of recent commits above
-- First line under 50 chars
-- Focus on WHY, not HOW
-"""
-```
-
-**Inline template for squash commits:**
-
-```toml
-[commit-generation]
-command = "llm"
-squash-template = """
-Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}.
-
-{% if commits | length > 1 -%}
-Commits being combined:
-{%- for c in commits %}
-  {{ loop.index }}/{{ loop.length }}: {{ c }}
-{%- endfor %}
-{%- else -%}
-Single commit: {{ commits[0] }}
-{%- endif %}
-
-Generate one cohesive commit message that captures the overall change.
-Use conventional commit format (feat/fix/docs/refactor).
-"""
-```
-
-**External template files:**
-
-```toml
-[commit-generation]
-command = "claude"
-template-file = "~/.config/worktrunk/commit-template.jinja"
-squash-template-file = "~/.config/worktrunk/squash-template.jinja"
-```
-
-**Available template variables:**
-
-Normal commits:
-
-- `{{ git_diff }}` - Staged changes
-- `{{ branch }}` - Current branch name
-- `{{ recent_commits }}` - Array of recent commit messages (for style matching)
-- `{{ repo }}` - Repository name
-
-Squash commits:
-
-- `{{ commits }}` - Array of commit messages being squashed
-- `{{ target_branch }}` - Branch being merged into (e.g., "main")
-- `{{ branch }}` - Current branch name
-- `{{ repo }}` - Repository name
-
-See the [minijinja template documentation](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for complete syntax reference (filters, conditionals, loops, whitespace control, etc.).
+See [`config.example.toml`](config.example.toml) for complete template examples with all available variables (`git_diff`, `branch`, `recent_commits`, `commits`, `target_branch`, `repo`).
 
 </details>
 

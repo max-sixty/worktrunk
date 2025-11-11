@@ -13,6 +13,9 @@ struct PromptContext<'a> {
 }
 
 /// Default template for commit message prompts
+///
+/// TODO: Generate config.example.toml dynamically to keep templates in sync.
+/// Currently this constant must be manually copied to config.example.toml (lines 41-76).
 const DEFAULT_TEMPLATE: &str = r#"Format
 - First line: <50 chars, present tense, describes WHAT and WHY (not HOW).
 - Blank line after first line.
@@ -50,6 +53,9 @@ The following is the context for your task:
 "#;
 
 /// Default template for squash commit message prompts
+///
+/// TODO: Generate config.example.toml dynamically to keep templates in sync.
+/// Currently this constant must be manually copied to config.example.toml (lines 109-118).
 const DEFAULT_SQUASH_TEMPLATE: &str = r#"Generate a conventional commit message (feat/fix/docs/style/refactor) that combines these changes into one cohesive message. Output only the commit message without any explanation.
 
 Squashing commits on current branch since branching from {{ target_branch }}

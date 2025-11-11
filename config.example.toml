@@ -4,6 +4,12 @@
 #   Windows:       %APPDATA%\worktrunk\config.toml
 #
 # Generate with: wt config init
+#
+# NOTE: This file is the source of truth for default configuration.
+# The commented templates below match src/llm.rs constants:
+# - DEFAULT_TEMPLATE (lines 41-76)
+# - DEFAULT_SQUASH_TEMPLATE (lines 109-118)
+# When changing these constants, update the commented sections here to match.
 
 # Worktree Path Template
 # Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name
@@ -30,7 +36,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 # command = "aichat"
 # args = ["-m", "claude:claude-haiku-4.5"]
 
-# Optional: Custom prompt template (inline) - Uses Jinja2 syntax
+# Optional: Custom prompt template (inline) - Uses minijinja syntax
 # Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
 # If not specified, uses the default template shown below:
 # template = """
@@ -69,12 +75,36 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 # {% endif %}
 # </git-info>
 # """
+#
+# Example alternative template with different style:
+# template = """
+# Generate a commit message for {{ repo | upper }}.
+#
+# Branch: {{ branch }}
+# {%- if recent_commits %}
+#
+# Recent commit style ({{ recent_commits | length }} commits):
+# {%- for commit in recent_commits %}
+#   {{ loop.index }}. {{ commit }}
+# {%- endfor %}
+# {%- endif %}
+#
+# Changes to commit:
+# ```
+# {{ git_diff }}
+# ```
+#
+# Requirements:
+# - Follow the style of recent commits above
+# - First line under 50 chars
+# - Focus on WHY, not HOW
+# """
 
 # Optional: Load template from file (mutually exclusive with 'template')
 # Supports ~ expansion: ~/.config/worktrunk/commit-template.txt
 # template-file = "~/.config/worktrunk/commit-template.txt"
 
-# Optional: Custom squash commit message template (inline) - Uses Jinja2 syntax
+# Optional: Custom squash commit message template (inline) - Uses minijinja syntax
 # Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}
 # If not specified, uses the default template:
 # squash-template = """
@@ -86,6 +116,23 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 # {% for commit in commits %}
 # - {{ commit }}
 # {% endfor %}
+# """
+#
+# Example alternative template:
+# squash-template = """
+# Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}.
+#
+# {% if commits | length > 1 -%}
+# Commits being combined:
+# {%- for c in commits %}
+#   {{ loop.index }}/{{ loop.length }}: {{ c }}
+# {%- endfor %}
+# {%- else -%}
+# Single commit: {{ commits[0] }}
+# {%- endif %}
+#
+# Generate one cohesive commit message that captures the overall change.
+# Use conventional commit format (feat/fix/docs/refactor).
 # """
 
 # Optional: Load squash template from file (mutually exclusive with 'squash-template')

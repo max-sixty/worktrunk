@@ -81,7 +81,8 @@ fn display_global_config() -> Result<(), GitError> {
         println!("{HINT_EMOJI} {HINT}Not found (using defaults){HINT:#}");
         println!("{HINT_EMOJI} {HINT}Run 'wt config init' to create a config file{HINT:#}");
         println!();
-        let default_config = "# Default configuration:\nworktree-path = \"../{{repo}}.{{branch}}\"";
+        let default_config =
+            "# Default configuration:\nworktree-path = \"../{{ main_worktree }}.{{ branch }}\"";
         print!("{}", format_toml(default_config, ""));
         return Ok(());
     }
