@@ -29,6 +29,11 @@ use output::{execute_user_command, handle_remove_output, handle_switch_output};
 use cli::{Cli, Commands, ConfigCommand, StandaloneCommand};
 
 fn main() {
+    // TODO: Enhance error messages to show possible values for missing enum arguments
+    // Currently `wt init` doesn't show available shells, but `wt init invalid` does.
+    // Clap doesn't support this natively yet - see https://github.com/clap-rs/clap/issues/3320
+    // When available, use built-in setting. Until then, could use try_parse() to intercept
+    // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cli = Cli::parse();
 
     // Initialize output context based on --internal flag
