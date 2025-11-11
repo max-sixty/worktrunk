@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/init.rs
+assertion_line: 23
 info:
   program: wt
   args:
@@ -12,10 +13,11 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp58Uw1Q/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpMoxDqw/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -322,6 +324,16 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(clear-approvals)
+_arguments "${_arguments_options[@]}" : \
+'-g[Clear approvals from global config (all projects)]' \
+'--global[Clear approvals from global config (all projects)]' \
+'-v[Enable verbose output (show git commands and debug info)]' \
+'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (select)
 _arguments "${_arguments_options[@]}" : \
 '-v[Enable verbose output (show git commands and debug info)]' \
@@ -427,6 +439,7 @@ _wt__beta_commands() {
 'push:Push changes to target branch' \
 'rebase:Rebase current branch onto target branch' \
 'ask-approvals:Approve commands in the project config (shows unapproved by default)' \
+'clear-approvals:Clear approved commands from config' \
 'select:Interactive worktree selector' \
     )
     _describe -t commands 'wt beta commands' commands "$@"
@@ -435,6 +448,11 @@ _wt__beta_commands() {
 _wt__beta__ask-approvals_commands() {
     local commands; commands=()
     _describe -t commands 'wt beta ask-approvals commands' commands "$@"
+}
+(( $+functions[_wt__beta__clear-approvals_commands] )) ||
+_wt__beta__clear-approvals_commands() {
+    local commands; commands=()
+    _describe -t commands 'wt beta clear-approvals commands' commands "$@"
 }
 (( $+functions[_wt__beta__commit_commands] )) ||
 _wt__beta__commit_commands() {

@@ -21,7 +21,8 @@ use commands::{
     ConfigAction, handle_complete, handle_config_help, handle_config_init, handle_config_list,
     handle_config_refresh_cache, handle_configure_shell, handle_init, handle_list, handle_merge,
     handle_rebase, handle_remove, handle_squash, handle_standalone_ask_approvals,
-    handle_standalone_commit, handle_standalone_run_hook, handle_switch,
+    handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
+    handle_switch,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -175,6 +176,9 @@ fn main() {
             StandaloneCommand::Rebase { target } => handle_rebase(target.as_deref()).map(|_| ()),
             StandaloneCommand::AskApprovals { force, all } => {
                 handle_standalone_ask_approvals(force, all)
+            }
+            StandaloneCommand::ClearApprovals { global } => {
+                handle_standalone_clear_approvals(global)
             }
             #[cfg(unix)]
             StandaloneCommand::Select => handle_select(),

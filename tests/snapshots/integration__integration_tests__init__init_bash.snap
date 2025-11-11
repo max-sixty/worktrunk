@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/init.rs
+assertion_line: 23
 info:
   program: wt
   args:
@@ -16,7 +17,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpi1D9uO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxCeqZT/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -170,6 +171,9 @@ _wt() {
             wt__beta,ask-approvals)
                 cmd="wt__beta__ask__approvals"
                 ;;
+            wt__beta,clear-approvals)
+                cmd="wt__beta__clear__approvals"
+                ;;
             wt__beta,commit)
                 cmd="wt__beta__commit"
                 ;;
@@ -224,7 +228,7 @@ _wt() {
             return 0
             ;;
         wt__beta)
-            opts="-v -h --verbose --help run-hook commit squash push rebase ask-approvals select"
+            opts="-v -h --verbose --help run-hook commit squash push rebase ask-approvals clear-approvals select"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -239,6 +243,20 @@ _wt() {
             ;;
         wt__beta__ask__approvals)
             opts="-f -v -h --force --all --verbose --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        wt__beta__clear__approvals)
+            opts="-g -v -h --global --verbose --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

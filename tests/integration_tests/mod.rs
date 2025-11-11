@@ -5,6 +5,7 @@
 // column_alignment merged into spacing_edge_cases
 pub mod approval_save;
 pub mod approval_ui;
+pub mod approvals;
 pub mod bare_repository;
 pub mod column_alignment_verification;
 pub mod completion;

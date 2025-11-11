@@ -171,6 +171,13 @@ pub enum StandaloneCommand {
         all: bool,
     },
 
+    /// Clear approved commands from config
+    ClearApprovals {
+        /// Clear approvals from global config (all projects)
+        #[arg(short, long)]
+        global: bool,
+    },
+
     /// Interactive worktree selector
     ///
     /// Preview modes (toggle with 1/2/3):

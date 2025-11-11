@@ -372,3 +372,64 @@ pub fn handle_standalone_ask_approvals(force: bool, show_all: bool) -> Result<()
 
     Ok(())
 }
+
+/// Handle `wt beta clear-approvals` command - clear approved commands
+pub fn handle_standalone_clear_approvals(global: bool) -> Result<(), GitError> {
+    use worktrunk::config::WorktrunkConfig;
+
+    let mut config = WorktrunkConfig::load().git_context("Failed to load config")?;
+
+    if global {
+        // Clear all approvals for all projects
+        let project_count = config.projects.len();
+
+        if project_count == 0 {
+            let dim = worktrunk::styling::AnstyleStyle::new().dimmed();
+            crate::output::info(format!("{dim}No approvals to clear{dim:#}"))?;
+            return Ok(());
+        }
+
+        config.projects.clear();
+        config.save().git_context("Failed to save config")?;
+
+        use worktrunk::styling::GREEN;
+        crate::output::success(format!(
+            "{GREEN}Cleared approvals for {project_count} project{}{GREEN:#}",
+            if project_count == 1 { "" } else { "s" }
+        ))?;
+    } else {
+        // Clear approvals for current project (default)
+        let repo = Repository::current();
+        let project_id = repo.project_identifier()?;
+
+        // Check if project has any approvals
+        let had_approvals = config.projects.contains_key(&project_id);
+
+        if !had_approvals {
+            let dim = worktrunk::styling::AnstyleStyle::new().dimmed();
+            crate::output::info(format!(
+                "{dim}No approvals to clear for this project{dim:#}"
+            ))?;
+            return Ok(());
+        }
+
+        // Count approvals before removing
+        let approval_count = config
+            .projects
+            .get(&project_id)
+            .map(|p| p.approved_commands.len())
+            .unwrap_or(0);
+
+        config
+            .revoke_project(&project_id)
+            .git_context("Failed to clear project approvals")?;
+
+        use worktrunk::styling::GREEN;
+        crate::output::success(format!(
+            "{GREEN}Cleared {approval_count} approval{} for this project{GREEN:#}",
+            if approval_count == 1 { "" } else { "s" }
+        ))?;
+    }
+
+    Ok(())
+}

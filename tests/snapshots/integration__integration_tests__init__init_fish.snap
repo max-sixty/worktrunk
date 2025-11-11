@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/init.rs
+assertion_line: 23
 info:
   program: wt
   args:
@@ -12,10 +13,11 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpmJ34gU/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpBzxXJn/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -232,15 +234,16 @@ zsh\t''"
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s f -l force -d 'Skip confirmation prompt'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "run-hook" -d 'Run a project hook for testing'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "commit" -d 'Commit changes with LLM-generated message'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "squash" -d 'Squash commits with LLM-generated message'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "push" -d 'Push changes to target branch'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "rebase" -d 'Rebase current branch onto target branch'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "ask-approvals" -d 'Approve commands in the project config (shows unapproved by default)'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals select" -f -a "select" -d 'Interactive worktree selector'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s h -l help -d 'Print help'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "run-hook" -d 'Run a project hook for testing'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "commit" -d 'Commit changes with LLM-generated message'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "squash" -d 'Squash commits with LLM-generated message'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "push" -d 'Push changes to target branch'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "rebase" -d 'Rebase current branch onto target branch'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "ask-approvals" -d 'Approve commands in the project config (shows unapproved by default)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "clear-approvals" -d 'Clear approved commands from config'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "select" -d 'Interactive worktree selector'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s f -l force -d 'Auto-approve project commands without saving approvals'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s h -l help -d 'Print help'
@@ -261,6 +264,9 @@ complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_f
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -l all -d 'Show all commands including already-approved ones'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s h -l help -d 'Print help'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s g -l global -d 'Clear approvals from global config (all projects)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand list" -l format -d 'Output format' -r -f -a "table\t'Human-readable table format'

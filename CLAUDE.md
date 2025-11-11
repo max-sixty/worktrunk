@@ -529,6 +529,58 @@ print!("{}", format_with_gutter(&command));
 
 The colored space at column 0 provides visual separation from surrounding text. Content starts at column 3 (gutter + 2 spaces) to align with emoji messages where the emoji (2 columns) + space (1 column) also starts content at column 3.
 
+### Snapshot Testing Requirement
+
+**CRITICAL: Every command output MUST have a snapshot test.**
+
+All user-facing command outputs must be covered by `insta` snapshot tests to ensure:
+- Output format remains consistent
+- Changes to messages are intentional and reviewable
+- ANSI codes, colors, and formatting are preserved correctly
+- Regression prevention for edge cases
+
+**Test location:** `tests/integration_tests/` with snapshots in `tests/snapshots/`
+
+**Pattern:**
+```rust
+use crate::common::{make_snapshot_cmd, setup_snapshot_settings, TestRepo};
+use insta_cmd::assert_cmd_snapshot;
+
+fn snapshot_command(test_name: &str, repo: &TestRepo, args: &[&str]) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "beta", &[], None);
+        cmd.arg("command-name").args(args);
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+#[test]
+fn test_command_success() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    snapshot_command("command_success", &repo, &[]);
+}
+
+#[test]
+fn test_command_no_data() {
+    let repo = TestRepo::new();
+    snapshot_command("command_no_data", &repo, &[]);
+}
+```
+
+**Required test cases:**
+- Success state with data
+- Success state with no data
+- Error states
+- Edge cases (empty input, max values, etc.)
+
+**When adding new commands:**
+1. Write snapshot tests BEFORE marking implementation complete
+2. Cover all message variations (success, info, warning, error)
+3. Test both with and without data/approvals/resources
+4. Include flag variations (e.g., `--global` vs default)
+
 ## Output System Architecture
 
 ### Two Output Modes
