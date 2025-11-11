@@ -87,7 +87,7 @@ impl<'a> HookPipeline<'a> {
                     HookFailureStrategy::Warn => {
                         let message = match &prepared.name {
                             Some(name) => format!(
-                                "{WARNING}Command {WARNING_BOLD}{name}{WARNING_BOLD:#} failed: {err_msg}{WARNING:#}"
+                                "{WARNING}Command {WARNING_BOLD}{name}{WARNING_BOLD:#}{WARNING} failed: {err_msg}{WARNING:#}"
                             ),
                             None => format!("{WARNING}Command failed: {err_msg}{WARNING:#}"),
                         };
