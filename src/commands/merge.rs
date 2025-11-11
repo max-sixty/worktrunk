@@ -10,7 +10,7 @@ use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline};
 use super::project_config::collect_commands_for_hooks;
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::{RemoveResult, handle_push};
+use super::worktree::{MergeOperations, RemoveResult, handle_push};
 
 /// Context for collecting merge commands
 struct MergeCommandCollector<'a> {
@@ -159,9 +159,11 @@ pub fn handle_merge(
         Some(&target_branch),
         false,
         "Merged to",
-        Some(committed),
-        Some(squashed),
-        Some(rebased),
+        Some(MergeOperations {
+            committed: Some(committed),
+            squashed: Some(squashed),
+            rebased: Some(rebased),
+        }),
     )?;
 
     // Get primary worktree path before cleanup (while we can still run git commands)

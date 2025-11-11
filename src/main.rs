@@ -171,14 +171,7 @@ fn main() {
             StandaloneCommand::Push {
                 target,
                 allow_merge_commits,
-            } => handle_push(
-                target.as_deref(),
-                allow_merge_commits,
-                "Pushed to",
-                None,
-                None,
-                None,
-            ),
+            } => handle_push(target.as_deref(), allow_merge_commits, "Pushed to", None),
             StandaloneCommand::Rebase { target } => handle_rebase(target.as_deref()).map(|_| ()),
             StandaloneCommand::AskApprovals { force, all } => {
                 handle_standalone_ask_approvals(force, all)

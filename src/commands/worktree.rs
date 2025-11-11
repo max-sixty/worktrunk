@@ -107,6 +107,14 @@ use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
 use super::repository_ext::RepositoryCliExt;
 
+/// Flags indicating which merge operations occurred
+#[derive(Debug, Clone, Copy)]
+pub struct MergeOperations {
+    pub committed: Option<bool>,
+    pub squashed: Option<bool>,
+    pub rebased: Option<bool>,
+}
+
 /// Result of a worktree switch operation
 pub enum SwitchResult {
     /// Switched to existing worktree at the given path
@@ -167,8 +175,8 @@ pub fn handle_switch(
         // Switching back: swap current and previous
         // history_before contains (A, B), we're switching from A to B
         // After switch, record (B, A) so we can switch back to A
-        if let Some((current, _previous)) = history_before {
-            (resolved_branch.clone(), Some(current))
+        if let Some(history) = history_before {
+            (resolved_branch.clone(), Some(history.current))
         } else {
             // No history - shouldn't happen since "-" requires history
             // But handle gracefully: just record where we're going
@@ -176,7 +184,7 @@ pub fn handle_switch(
         }
     } else {
         // Normal switch: record new location as current, old current as previous
-        let previous = history_before.map(|(current, _)| current);
+        let previous = history_before.map(|h| h.current);
         (resolved_branch.clone(), previous)
     };
 
@@ -436,9 +444,8 @@ impl<'a> CommandContext<'a> {
 
 /// Push changes to target branch
 ///
-/// The `committed`, `squashed`, and `rebased` parameters are optional flags indicating
-/// whether those operations occurred in the merge workflow. Pass `None` for standalone
-/// push operations where these concepts don't apply.
+/// The `operations` parameter indicates which merge operations occurred (commit, squash, rebase).
+/// Pass `None` for standalone push operations where these concepts don't apply.
 ///
 /// During the push stage we temporarily `git stash` non-overlapping changes in the
 /// target worktree (if present) so that concurrent edits there do not block the
@@ -448,9 +455,7 @@ pub fn handle_push(
     target: Option<&str>,
     allow_merge_commits: bool,
     verb: &str,
-    committed: Option<bool>,
-    squashed: Option<bool>,
-    rebased: Option<bool>,
+    operations: Option<MergeOperations>,
 ) -> Result<(), GitError> {
     let repo = Repository::current();
 
@@ -540,14 +545,14 @@ pub fn handle_push(
         // Build parenthetical showing which operations didn't happen and flags used
         let mut notes = Vec::new();
 
-        // Skipped operations - only include if we're in merge workflow context (Some values)
-        if committed.is_some() || squashed.is_some() || rebased.is_some() {
+        // Skipped operations - only include if we're in merge workflow context
+        if let Some(ops) = operations {
             let mut skipped_ops = Vec::new();
-            if !committed.unwrap_or(false) && !squashed.unwrap_or(false) {
+            if !ops.committed.unwrap_or(false) && !ops.squashed.unwrap_or(false) {
                 // Neither commit nor squash happened - combine them
                 skipped_ops.push("commit/squash");
             }
-            if !rebased.unwrap_or(false) {
+            if !ops.rebased.unwrap_or(false) {
                 skipped_ops.push("rebase");
             }
             if !skipped_ops.is_empty() {
@@ -633,12 +638,12 @@ pub fn handle_push(
         ))?;
     } else {
         // No commits to push - for merge workflow context, acknowledge operations that didn't happen
-        let note = if committed.is_some() || squashed.is_some() || rebased.is_some() {
+        let note = if let Some(ops) = operations {
             let mut notes = Vec::new();
-            if !committed.unwrap_or(false) && !squashed.unwrap_or(false) {
+            if !ops.committed.unwrap_or(false) && !ops.squashed.unwrap_or(false) {
                 notes.push("no new commits");
             }
-            if !rebased.unwrap_or(false) {
+            if !ops.rebased.unwrap_or(false) {
                 notes.push("no rebase needed");
             }
             if notes.is_empty() {

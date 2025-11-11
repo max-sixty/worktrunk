@@ -33,6 +33,15 @@ pub enum HookType {
     PostMerge,
 }
 
+/// Switch history for ping-pong behavior between branches
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchHistory {
+    /// The branch we switched to
+    pub current: String,
+    /// The branch we came from (for "-" to switch back)
+    pub previous: Option<String>,
+}
+
 /// Worktree information
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Worktree {

@@ -6,6 +6,12 @@ use worktrunk::git::{GitError, Repository};
 
 use minijinja::Environment;
 
+/// Context data for building LLM prompts
+struct PromptContext<'a> {
+    branch: &'a str,
+    repo_name: &'a str,
+}
+
 /// Default template for commit message prompts
 const DEFAULT_TEMPLATE: &str = r#"Format
 - First line: <50 chars, present tense, describes WHAT and WHY (not HOW).
@@ -106,9 +112,8 @@ fn execute_llm_command(
 fn build_commit_prompt(
     config: &CommitGenerationConfig,
     diff: &str,
-    branch: &str,
     recent_commits: Option<&Vec<String>>,
-    repo_name: &str,
+    context: &PromptContext<'_>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Get template source
     let template = match (&config.template, &config.template_file) {
@@ -140,9 +145,9 @@ fn build_commit_prompt(
 
     let rendered = tmpl.render(minijinja::context! {
         git_diff => diff,
-        branch => branch,
+        branch => context.branch,
         recent_commits => recent_commits.unwrap_or(&vec![]),
-        repo => repo_name,
+        repo => context.repo_name,
     })?;
 
     Ok(rendered)
@@ -153,8 +158,7 @@ fn build_squash_prompt(
     config: &CommitGenerationConfig,
     target_branch: &str,
     commits: &[String],
-    current_branch: &str,
-    repo_name: &str,
+    context: &PromptContext<'_>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Get template source
     let template = match (&config.squash_template, &config.squash_template_file) {
@@ -192,8 +196,8 @@ fn build_squash_prompt(
     let rendered = tmpl.render(minijinja::context! {
         target_branch => target_branch,
         commits => commits_reversed,
-        branch => current_branch,
-        repo => repo_name,
+        branch => context.branch,
+        repo => context.repo_name,
     })?;
 
     Ok(rendered)
@@ -281,13 +285,11 @@ fn try_generate_commit_message(
         });
 
     // Build prompt from template
-    let prompt = build_commit_prompt(
-        config,
-        &diff_output,
-        &current_branch,
-        recent_commits.as_ref(),
+    let context = PromptContext {
+        branch: &current_branch,
         repo_name,
-    )?;
+    };
+    let prompt = build_commit_prompt(config, &diff_output, recent_commits.as_ref(), &context)?;
 
     execute_llm_command(command, args, &prompt)
 }
@@ -303,13 +305,12 @@ pub fn generate_squash_message(
     if commit_generation_config.is_configured() {
         let command = commit_generation_config.command.as_ref().unwrap();
         // Commit generation is explicitly configured - fail if it doesn't work
-        let prompt = build_squash_prompt(
-            commit_generation_config,
-            target_branch,
-            subjects,
-            current_branch,
+        let context = PromptContext {
+            branch: current_branch,
             repo_name,
-        )?;
+        };
+        let prompt =
+            build_squash_prompt(commit_generation_config, target_branch, subjects, &context)?;
         return execute_llm_command(command, &commit_generation_config.args, &prompt);
     }
 
@@ -330,7 +331,11 @@ mod tests {
     #[test]
     fn test_build_commit_prompt_with_default_template() {
         let config = CommitGenerationConfig::default();
-        let result = build_commit_prompt(&config, "diff content", "main", None, "myrepo");
+        let context = PromptContext {
+            branch: "main",
+            repo_name: "myrepo",
+        };
+        let result = build_commit_prompt(&config, "diff content", None, &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         assert!(prompt.contains("diff content"));
@@ -342,7 +347,11 @@ mod tests {
     fn test_build_commit_prompt_with_recent_commits() {
         let config = CommitGenerationConfig::default();
         let commits = vec!["feat: add feature".to_string(), "fix: bug".to_string()];
-        let result = build_commit_prompt(&config, "diff", "main", Some(&commits), "repo");
+        let context = PromptContext {
+            branch: "main",
+            repo_name: "repo",
+        };
+        let result = build_commit_prompt(&config, "diff", Some(&commits), &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         assert!(prompt.contains("feat: add feature"));
@@ -354,7 +363,11 @@ mod tests {
     fn test_build_commit_prompt_empty_recent_commits() {
         let config = CommitGenerationConfig::default();
         let commits = vec![];
-        let result = build_commit_prompt(&config, "diff", "main", Some(&commits), "repo");
+        let context = PromptContext {
+            branch: "main",
+            repo_name: "repo",
+        };
+        let result = build_commit_prompt(&config, "diff", Some(&commits), &context);
         assert!(result.is_ok());
         // Should not render the recent commits section if empty
         let prompt = result.unwrap();
@@ -371,7 +384,11 @@ mod tests {
             squash_template: None,
             squash_template_file: None,
         };
-        let result = build_commit_prompt(&config, "my diff", "feature", None, "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_commit_prompt(&config, "my diff", None, &context);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Branch: feature\nDiff: my diff");
     }
@@ -386,7 +403,11 @@ mod tests {
             squash_template: None,
             squash_template_file: None,
         };
-        let result = build_commit_prompt(&config, "diff", "main", None, "repo");
+        let context = PromptContext {
+            branch: "main",
+            repo_name: "repo",
+        };
+        let result = build_commit_prompt(&config, "diff", None, &context);
         assert!(result.is_err());
     }
 
@@ -400,7 +421,11 @@ mod tests {
             squash_template: None,
             squash_template_file: None,
         };
-        let result = build_commit_prompt(&config, "diff", "main", None, "repo");
+        let context = PromptContext {
+            branch: "main",
+            repo_name: "repo",
+        };
+        let result = build_commit_prompt(&config, "diff", None, &context);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().to_string(), "Template is empty");
     }
@@ -419,7 +444,11 @@ mod tests {
             squash_template_file: None,
         };
         let commits = vec!["commit1".to_string(), "commit2".to_string()];
-        let result = build_commit_prompt(&config, "my diff", "feature", Some(&commits), "myrepo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "myrepo",
+        };
+        let result = build_commit_prompt(&config, "my diff", Some(&commits), &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         assert_eq!(
@@ -432,7 +461,11 @@ mod tests {
     fn test_build_squash_prompt_with_default_template() {
         let config = CommitGenerationConfig::default();
         let commits = vec!["feat: A".to_string(), "fix: B".to_string()];
-        let result = build_squash_prompt(&config, "main", &commits, "feature", "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_squash_prompt(&config, "main", &commits, &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         // Commits should be reversed (chronological order: B first, then A)
@@ -455,7 +488,11 @@ mod tests {
             squash_template_file: None,
         };
         let commits = vec!["A".to_string(), "B".to_string()];
-        let result = build_squash_prompt(&config, "main", &commits, "feature", "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_squash_prompt(&config, "main", &commits, &context);
         assert!(result.is_ok());
         // Commits are reversed, so chronological order is B, A
         assert_eq!(result.unwrap(), "Target: main\nB\nA\n");
@@ -465,7 +502,11 @@ mod tests {
     fn test_build_squash_prompt_empty_commits() {
         let config = CommitGenerationConfig::default();
         let commits = vec![];
-        let result = build_squash_prompt(&config, "main", &commits, "feature", "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_squash_prompt(&config, "main", &commits, &context);
         assert!(result.is_ok());
     }
 
@@ -479,7 +520,11 @@ mod tests {
             squash_template: Some("{% for x in commits %}{{ x }".to_string()),
             squash_template_file: None,
         };
-        let result = build_squash_prompt(&config, "main", &[], "feature", "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_squash_prompt(&config, "main", &[], &context);
         assert!(result.is_err());
     }
 
@@ -493,7 +538,11 @@ mod tests {
             squash_template: Some("  \n  ".to_string()),
             squash_template_file: None,
         };
-        let result = build_squash_prompt(&config, "main", &[], "feature", "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_squash_prompt(&config, "main", &[], &context);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().to_string(), "Squash template is empty");
     }
@@ -512,7 +561,11 @@ mod tests {
             squash_template_file: None,
         };
         let commits = vec!["A".to_string(), "B".to_string()];
-        let result = build_squash_prompt(&config, "main", &commits, "feature", "myrepo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "myrepo",
+        };
+        let result = build_squash_prompt(&config, "main", &commits, &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
         assert_eq!(
@@ -552,13 +605,11 @@ Diff follows:
             "fix: bug".to_string(),
             "docs: update".to_string(),
         ];
-        let result = build_commit_prompt(
-            &config,
-            "my diff content",
-            "feature-x",
-            Some(&commits),
-            "myapp",
-        );
+        let context = PromptContext {
+            branch: "feature-x",
+            repo_name: "myapp",
+        };
+        let result = build_commit_prompt(&config, "my diff content", Some(&commits), &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
 
@@ -599,7 +650,11 @@ No recent commits
             squash_template: None,
             squash_template_file: None,
         };
-        let result = build_commit_prompt(&config, "diff", "main", None, "test");
+        let context = PromptContext {
+            branch: "main",
+            repo_name: "test",
+        };
+        let result = build_commit_prompt(&config, "diff", None, &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
 
@@ -637,7 +692,11 @@ Single commit: {{ commits[0] }}
             "commit B".to_string(),
             "commit C".to_string(),
         ];
-        let result = build_squash_prompt(&config, "main", &commits, "feature", "repo");
+        let context = PromptContext {
+            branch: "feature",
+            repo_name: "repo",
+        };
+        let result = build_squash_prompt(&config, "main", &commits, &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
 
@@ -650,7 +709,7 @@ Single commit: {{ commits[0] }}
 
         // Test with single commit
         let single_commit = vec!["solo commit".to_string()];
-        let result = build_squash_prompt(&config, "main", &single_commit, "feature", "repo");
+        let result = build_squash_prompt(&config, "main", &single_commit, &context);
         assert!(result.is_ok());
         let prompt = result.unwrap();
 

@@ -4,7 +4,9 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 // Import types and functions from parent module (mod.rs)
-use super::{DefaultBranchName, DiffStats, GitError, LineDiff, Worktree, WorktreeList};
+use super::{
+    DefaultBranchName, DiffStats, GitError, LineDiff, SwitchHistory, Worktree, WorktreeList,
+};
 
 /// Extension trait for Result types to simplify GitError conversions
 ///
@@ -243,9 +245,9 @@ impl Repository {
 
     /// Get the previous branch from worktrunk.history.
     ///
-    /// Returns (current, previous) if history is recorded.
-    /// For single-value history (legacy), returns (value, None).
-    pub fn get_switch_history(&self) -> Option<(String, Option<String>)> {
+    /// Returns history if recorded, where `current` is the branch we switched to
+    /// and `previous` is where we came from (for ping-pong "-" behavior).
+    pub fn get_switch_history(&self) -> Option<SwitchHistory> {
         self.run_command(&["config", "--get", "worktrunk.history"])
             .ok()
             .and_then(|output| {
@@ -254,7 +256,10 @@ impl Repository {
                     return None;
                 }
                 let parts: Vec<&str> = trimmed.splitn(2, ',').collect();
-                Some((parts[0].to_string(), parts.get(1).map(|s| s.to_string())))
+                Some(SwitchHistory {
+                    current: parts[0].to_string(),
+                    previous: parts.get(1).map(|s| s.to_string()),
+                })
             })
     }
 
@@ -279,7 +284,7 @@ impl Repository {
                 // Read from worktrunk.history (recorded by wt switch operations)
                 // History stores (current, previous), we want previous
                 self.get_switch_history()
-                    .and_then(|(_, prev)| prev)
+                    .and_then(|h| h.previous)
                     .ok_or_else(|| {
                         GitError::message(
                             "No previous branch found in history. Use 'wt list' to see available worktrees.",
