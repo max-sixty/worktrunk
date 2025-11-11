@@ -6,6 +6,7 @@ build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 description = "A Git worktree manager for trunk-based development"
 license = "MIT OR Apache-2.0"
+default-run = "wt"
 
 [package.metadata.release]
 # Allow releases from any branch (GitHub Actions uses detached HEAD)
