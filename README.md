@@ -70,8 +70,6 @@ wt config shell  # Sets up shell integration
 
 During merge operations, worktrunk can invoke a binary, such as [llm](https://llm.datasette.io/), to generate commit messages based on the diff and a configurable prompt.
 
-<!-- Config and output from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap (uses mock llm) -->
-
 Add to `~/.config/worktrunk/config.toml`:
 
 ```toml
@@ -81,6 +79,8 @@ args = ["-m", "claude-haiku-4-5-20251001"]
 ```
 
 Then `wt merge` will generate commit messages automatically:
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap -->
 
 ```bash
 $ wt merge
@@ -129,6 +129,8 @@ Automate common tasks by creating `.config/wt.toml` in your repository root. Run
 
 **Example: Creating a worktree with hooks:**
 
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap -->
+
 ```bash
 $ wt switch --create feature-x
 🔄 Creating worktree for feature-x...
@@ -146,6 +148,8 @@ $ wt switch --create feature-x
 ```
 
 **Example: Merging with pre-merge hooks:**
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap -->
 
 ```bash
 $ wt merge
@@ -391,7 +395,7 @@ Now when you use Claude:
 
 **Status from other terminal:**
 
-<!-- from tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
+<!-- Output from: tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
 
 ```bash
 $ wt list

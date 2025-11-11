@@ -1,0 +1,37 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - switch
+    - "--create"
+    - feature-x
+    - "--force"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    PATH: "/private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpnTVEDc/test-repo/.bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpnTVEDc/test-config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+🔄 [36mRunning post-create [1minstall[0m:[0m
+[40m [0m  [1m[34muv[0m sync[0m
+✅ [32mCreated new worktree for [1m[32mfeature-x[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature-x[0m[0m
+💡 [2mTo enable automatic cd, run: wt config shell[0m
+🔄 [36mRunning post-start [1mdev[0m:[0m
+[40m [0m  [1m[34muv[0m run dev[0m
+
+----- stderr -----
+[0m
+  Resolved 24 packages in 145ms
+  Installed 24 packages in 1.2s

@@ -1,0 +1,109 @@
+# Testing Guidelines
+
+## README Examples and Snapshot Testing
+
+### Problem: Separated stdout/stderr in Standard Snapshots
+
+README examples need to show output as users see it in their terminal - with stdout and stderr interleaved in the order they appear. However, the standard `insta_cmd` snapshot testing (used in most integration tests) separates stdout and stderr into different sections:
+
+```yaml
+----- stdout -----
+🔄 Running pre-merge test:
+  uv run pytest
+
+----- stderr -----
+============================= test session starts ==============================
+collected 18 items
+...
+```
+
+This makes snapshots **not directly copyable** into README.md because:
+1. The output is split into two sections
+2. We lose the temporal ordering (which output appeared first)
+3. Users never see this separation - their terminal shows combined output
+
+### Solution: Use PTY-based Testing for README Examples
+
+For tests that generate README examples, use the PTY-based execution pattern from `tests/integration_tests/shell_wrapper.rs`:
+
+**Key function:** `exec_in_pty()` (line 235)
+- Uses `portable_pty` to execute commands in a pseudo-terminal
+- Returns combined stdout+stderr as a single `String`
+- Captures output exactly as users see it in their terminal
+- Includes ANSI color codes and proper temporal ordering
+
+**Pattern to use:**
+
+```rust
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
+fn exec_in_pty(
+    shell: &str,
+    script: &str,
+    working_dir: &Path,
+    env_vars: &[(String, String)],
+) -> (String, i32) {
+    // Execute command in PTY
+    // Returns (combined_output, exit_code)
+}
+
+// In your test:
+let (combined_output, exit_code) = exec_in_pty("bash", "wt merge", &repo_path, &env_vars);
+assert_snapshot!("readme_example_name", combined_output);
+```
+
+**Benefits:**
+- Output is directly copyable to README.md
+- Shows actual user experience (interleaved stdout/stderr)
+- Preserves temporal ordering of output
+- No manual merging of stdout/stderr needed
+
+**Example:** See `tests/integration_tests/shell_wrapper.rs`:
+- Line 65-66: `ShellOutput` struct with `combined: String`
+- Line 235-323: `exec_in_pty()` implementation using `portable_pty`
+- Line 397+: Usage pattern in tests
+
+### When to Use Each Approach
+
+**Use `insta_cmd` (standard snapshots):**
+- Unit and integration tests focused on correctness
+- Tests that need to verify stdout/stderr separately
+- Tests checking exit codes and specific error messages
+- Most tests in the codebase
+
+**Use `exec_in_pty` (PTY-based snapshots):**
+- Tests generating output for README.md examples
+- Tests verifying shell integration (`wt` function, directives)
+- Tests needing to verify complete user experience
+- Any test where temporal ordering of stdout/stderr matters
+
+### Current Status
+
+**README examples using PTY-based approach:**
+- Shell wrapper tests (all of `tests/integration_tests/shell_wrapper.rs`)
+
+**README examples using standard snapshots (working, but require manual editing):**
+- `test_readme_example_simple()` - Quick start merge example
+- `test_readme_example_complex()` - LLM-powered commit example
+- `test_readme_example_hooks_post_create()` - Post-create hooks
+- `test_readme_example_hooks_pre_merge()` - Pre-merge hooks
+
+**Current workflow:** These tests work correctly and generate accurate snapshots. However, the snapshots separate stdout and stderr into different sections, which means they cannot be directly copied into README.md. Instead, the README examples are manually edited versions that merge stdout/stderr in the correct temporal order and remove ANSI codes.
+
+**Future improvement:** Migrate README example tests to use PTY execution so snapshots are directly copyable into README.md without manual editing. This is an enhancement for developer convenience, not a bug fix.
+
+### Migration Checklist
+
+When converting a README example test from `insta_cmd` to PTY-based:
+
+1. ✅ Import `portable_pty` dependencies
+2. ✅ Extract or create `exec_in_pty()` helper (can reuse from shell_wrapper.rs)
+3. ✅ Replace `make_snapshot_cmd()` + `assert_cmd_snapshot!()` with `exec_in_pty()` + `assert_snapshot!()`
+4. ✅ Ensure environment variables include `CLICOLOR_FORCE=1` for ANSI codes
+5. ✅ Update snapshot file format (file snapshot, not inline)
+6. ✅ Verify output matches expected README format
+7. ✅ Update README.md to reference new snapshot location
+
+### Implementation Note
+
+The PTY approach is specifically for **user-facing output documentation**. It's not a replacement for standard integration tests - both approaches serve different purposes and should coexist in the test suite.
