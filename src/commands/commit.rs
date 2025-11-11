@@ -64,7 +64,7 @@ impl<'a> CommitGenerator<'a> {
     pub fn emit_hint_if_needed(&self) -> Result<(), GitError> {
         if !self.config.is_configured() {
             crate::output::hint(format!(
-                "{HINT}Using fallback commit message. Run 'wt config help' to configure LLM-generated messages{HINT:#}"
+                "{HINT}Using fallback commit message. Run 'wt config --help' for LLM setup guide{HINT:#}"
             ))?;
         }
         Ok(())

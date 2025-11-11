@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/init.rs
-assertion_line: 23
 info:
   program: wt
   args:
@@ -17,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxCeqZT/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpGhsyJ7/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -192,9 +191,6 @@ _wt() {
             wt__beta,squash)
                 cmd="wt__beta__squash"
                 ;;
-            wt__config,help)
-                cmd="wt__config__help"
-                ;;
             wt__config,init)
                 cmd="wt__config__init"
                 ;;
@@ -368,22 +364,8 @@ _wt() {
             return 0
             ;;
         wt__config)
-            opts="-v -h --verbose --help init list help refresh-cache shell"
+            opts="-v -h --verbose --help init list refresh-cache shell"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
-                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-                return 0
-            fi
-            case "${prev}" in
-                *)
-                    COMPREPLY=()
-                    ;;
-            esac
-            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-            return 0
-            ;;
-        wt__config__help)
-            opts="-v -h --verbose --help"
-            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi

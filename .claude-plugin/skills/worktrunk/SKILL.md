@@ -171,7 +171,7 @@ wt config list
 wt config init
 
 # LLM setup guide
-wt config help
+wt config --help
 ```
 
 ## When to Load Reference Files

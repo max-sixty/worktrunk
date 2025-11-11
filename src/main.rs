@@ -18,7 +18,7 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, handle_complete, handle_config_help, handle_config_init, handle_config_list,
+    ConfigAction, handle_complete, handle_config_init, handle_config_list,
     handle_config_refresh_cache, handle_configure_shell, handle_init, handle_list, handle_merge,
     handle_rebase, handle_remove, handle_squash, handle_standalone_ask_approvals,
     handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
@@ -103,7 +103,6 @@ fn main() {
         Commands::Config { action } => match action {
             ConfigCommand::Init => handle_config_init(),
             ConfigCommand::List => handle_config_list(),
-            ConfigCommand::Help => handle_config_help(),
             ConfigCommand::RefreshCache => handle_config_refresh_cache(),
             ConfigCommand::Shell { shell, force } => {
                 handle_configure_shell(shell, force)

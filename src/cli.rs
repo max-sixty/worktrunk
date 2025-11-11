@@ -50,8 +50,6 @@ pub enum ConfigCommand {
     Init,
     /// List all configuration files and their locations
     List,
-    /// Show setup guide for AI-generated commit messages
-    Help,
     /// Refresh the cached default branch by querying the remote
     RefreshCache,
     /// Configure shell by writing to config files
@@ -199,6 +197,43 @@ pub enum Commands {
     },
 
     /// Manage configuration
+    #[command(
+        about = "Manage configuration. For AI commit setup, run: `wt config --help` (see 'LLM SETUP GUIDE').",
+        after_long_help = r#"LLM SETUP GUIDE:
+Enable AI-generated commit messages
+
+1. Install an LLM tool (llm, aichat)
+
+   uv tool install -U llm
+
+2. Configure a model
+
+For Claude:
+   llm install llm-anthropic
+   llm keys set anthropic
+   # Paste your API key from: https://console.anthropic.com/settings/keys
+   llm models default claude-3.5-sonnet
+
+For OpenAI:
+   llm keys set openai
+   # Paste your API key from: https://platform.openai.com/api-keys
+
+3. Test it works
+
+   llm "say hello"
+
+4. Configure worktrunk
+
+Add to ~/.config/worktrunk/config.toml:
+
+   [commit-generation]
+   command = "llm"
+
+Use 'wt config init' to create the config file if it doesn't exist
+Use 'wt config list' to view your current configuration
+Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
+"#
+    )]
     Config {
         #[command(subcommand)]
         action: ConfigCommand,

@@ -18,9 +18,7 @@ pub mod standalone;
 pub mod worktree;
 
 pub use completion::handle_complete;
-pub use config::{
-    handle_config_help, handle_config_init, handle_config_list, handle_config_refresh_cache,
-};
+pub use config::{handle_config_init, handle_config_list, handle_config_refresh_cache};
 pub use configure_shell::{ConfigAction, handle_configure_shell};
 pub use init::handle_init;
 pub use list::handle_list;

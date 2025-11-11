@@ -12,10 +12,11 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpumaJpl/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpOTMGKu/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -23,7 +24,7 @@ exit_code: 0
 🟡 [33mAuto-staging 1 untracked file:[0m
 [40m [0m  dirty.txt
 🔄 [36mCommitting with default message...[0m (1 file, [32m+1[0m, no squashing needed)
-💡 [2mUsing fallback commit message. Run 'wt config help' to configure LLM-generated messages[0m
+💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m
 [40m [0m  [1mChanges to dirty.txt[0m
 ✅ [32mCommitted changes @ [2m[SHA][0m
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)

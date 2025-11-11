@@ -97,7 +97,7 @@ $ wt merge
 ✅ Squashed @ a1b2c3d
 ```
 
-Set up LLM integration: run `wt config help` to see the setup guide, or `wt config init` to create an example config file.
+Set up LLM integration: run `wt config --help` to see the setup guide, or `wt config init` to create an example config file.
 
 <details>
 <summary><b>Advanced: Custom Prompt Templates</b></summary>
@@ -323,9 +323,9 @@ Symbols combine to show complete state (e.g., `≡↓!` means matches main, behi
 ## Configuration
 
 ```bash
-wt config list  # Show all config files and locations
-wt config init  # Create global config with examples
-wt config help  # Show LLM setup guide
+wt config list    # Show all config files and locations
+wt config init    # Create global config with examples
+wt config --help  # Show LLM setup guide
 ```
 
 <details>

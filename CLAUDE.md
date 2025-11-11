@@ -665,7 +665,7 @@ The output module (`src/output/global.rs`) provides these functions:
 - `progress()` - Operations in progress (e.g., "🔄 Squashing commits...")
 - `info()` - Neutral status/metadata (e.g., "⚪ No changes detected")
 - `warning()` - Non-blocking issues (e.g., "🟡 Uncommitted changes detected")
-- `hint()` - Actionable suggestions for users (e.g., "💡 Run 'wt config help'")
+- `hint()` - Actionable suggestions for users (e.g., "💡 Run 'wt config --help'")
 
 For the complete API, see `src/output/global.rs`.
 

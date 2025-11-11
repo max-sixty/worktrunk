@@ -1,6 +1,5 @@
 ---
 source: tests/git_error_display.rs
-assertion_line: 12
 expression: err.to_string()
 ---
 ❌ [31mFailed to remove worktree for [1m[31mfeature-x[0m[31m at [1m[31m/tmp/repo.feature-x[0m[0m

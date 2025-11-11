@@ -260,7 +260,7 @@ command = "npm install"
 ```bash
 wt config list        # View current config
 wt config init        # Create initial config file
-wt config help        # Show LLM setup guide
+wt config --help      # Show LLM setup guide
 ```
 
 ## Config File Location

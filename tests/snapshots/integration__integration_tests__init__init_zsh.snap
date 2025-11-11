@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/init.rs
-assertion_line: 23
 info:
   program: wt
   args:
@@ -17,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpMoxDqw/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpKY05V9/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -185,8 +184,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
-'-h[Print help]' \
-'--help[Print help]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 ":: :_wt__config_commands" \
 "*::: :->config" \
 && ret=0
@@ -206,14 +205,6 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (list)
-_arguments "${_arguments_options[@]}" : \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(help)
 _arguments "${_arguments_options[@]}" : \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
@@ -420,7 +411,7 @@ esac
 _wt_commands() {
     local commands; commands=(
 'init:Generate shell integration code' \
-'config:Manage configuration' \
+'config:Manage configuration. For AI commit setup, run\: \`wt config --help\` (see '\''LLM SETUP GUIDE'\'').' \
 'beta:Development and testing utilities' \
 'list:List worktrees and optionally branches' \
 'switch:Switch to a worktree' \
@@ -494,16 +485,10 @@ _wt__config_commands() {
     local commands; commands=(
 'init:Initialize global configuration file with examples' \
 'list:List all configuration files and their locations' \
-'help:Show setup guide for AI-generated commit messages' \
 'refresh-cache:Refresh the cached default branch by querying the remote' \
 'shell:Configure shell by writing to config files' \
     )
     _describe -t commands 'wt config commands' commands "$@"
-}
-(( $+functions[_wt__config__help_commands] )) ||
-_wt__config__help_commands() {
-    local commands; commands=()
-    _describe -t commands 'wt config help commands' commands "$@"
 }
 (( $+functions[_wt__config__init_commands] )) ||
 _wt__config__init_commands() {
