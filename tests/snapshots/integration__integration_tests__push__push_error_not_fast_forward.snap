@@ -17,16 +17,16 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpDCJJm2/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpW8hg8S/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-
------ stderr -----
 ❌ [31mCan't push to local [1m[31mmain[0m branch: it has newer commits[0m
 
 * [SHA][33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m Main commit
  main-file.txt | 1 [32m+[m
  1 file changed, 1 insertion(+)
 💡 [2mUse 'wt merge' to rebase your changes onto main[0m
+
+----- stderr -----

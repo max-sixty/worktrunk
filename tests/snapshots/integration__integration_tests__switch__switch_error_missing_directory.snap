@@ -16,13 +16,13 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpnDs2OV/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpsdITfr/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-
------ stderr -----
 ❌ [31mWorktree directory missing for [1m[31mmissing-wt[0m[0m
 
 💡 [2mRun 'git worktree prune' to clean up[0m
+
+----- stderr -----

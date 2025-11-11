@@ -131,7 +131,7 @@ impl std::fmt::Display for GitError {
 
                 write!(
                     f,
-                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed{name_suffix}{ERROR:#}\n\n{error}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
+                    "{ERROR_EMOJI} {ERROR}{hook_type} command failed{name_suffix}: {error}{ERROR:#}\n\n{HINT_EMOJI} {HINT}Use --no-verify to skip {hook_type} commands{HINT:#}"
                 )
             }
 
@@ -232,9 +232,9 @@ impl std::fmt::Display for GitError {
             }
 
             // Child process exited with non-zero code
-            // Just display the message - main.rs will use the exit code
+            // Display with error emoji - main.rs will use the exit code
             GitError::ChildProcessExited { code: _, message } => {
-                write!(f, "{}", message)
+                write!(f, "{ERROR_EMOJI} {ERROR}{message}{ERROR:#}")
             }
 
             // Push failed

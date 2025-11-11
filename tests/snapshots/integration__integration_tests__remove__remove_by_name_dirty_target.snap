@@ -16,14 +16,14 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp7eJKXK/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpoL2sq2/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
 🔄 [36mRemoving worktree for [1m[36mfeature-dirty[0m...[0m
-
------ stderr -----
 ❌ [31mWorking tree has uncommitted changes[0m
 
 💡 [2mCommit or stash them first[0m
+
+----- stderr -----

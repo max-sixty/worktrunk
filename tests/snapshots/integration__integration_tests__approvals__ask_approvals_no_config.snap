@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/approvals.rs
-assertion_line: 12
 info:
   program: wt
   args:
@@ -13,17 +12,16 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpU3OaGe/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp540aeR/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
+No project configuration found
 
 ----- stderr -----
 ❌ [31mNo project configuration found[0m
 💡 [2mCreate a config file at: [1m[2m[REPO]/.config/wt.toml[0m[0m
-No project configuration found

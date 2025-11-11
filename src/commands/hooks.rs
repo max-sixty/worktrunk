@@ -9,9 +9,10 @@ use crate::output::execute_command_in_worktree;
 
 /// Controls how hook execution should respond to failures.
 pub enum HookFailureStrategy {
-    /// Stop on first failure and surface a `HookCommandFailed` error with the provided hook type.
-    FailFast { hook_type: HookType },
+    /// Stop on first failure and surface a `HookCommandFailed` error.
+    FailFast,
     /// Log warnings and continue executing remaining commands.
+    /// For PostMerge hooks, propagates exit code after all commands complete.
     Warn,
 }
 
@@ -36,6 +37,7 @@ impl<'a> HookPipeline<'a> {
     }
 
     /// Run hook commands sequentially, using the provided failure strategy.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_sequential(
         &self,
         command_config: &CommandConfig,
@@ -43,12 +45,16 @@ impl<'a> HookPipeline<'a> {
         auto_trust: bool,
         extra_vars: &[(&str, &str)],
         label_prefix: &str,
+        hook_type: HookType,
         failure_strategy: HookFailureStrategy,
     ) -> Result<(), GitError> {
         let commands = self.prepare_commands(command_config, phase, auto_trust, extra_vars)?;
         if commands.is_empty() {
             return Ok(());
         }
+
+        // Track first failure for Warn strategy (to propagate exit code after all commands run)
+        let mut first_failure: Option<(String, Option<String>, i32)> = None;
 
         for prepared in commands {
             let label =
@@ -59,15 +65,20 @@ impl<'a> HookPipeline<'a> {
             if let Err(err) =
                 execute_command_in_worktree(self.ctx.worktree_path, &prepared.expanded)
             {
-                let err_msg = err.to_string();
+                // Extract raw message for embedding (without formatting from Display impl)
+                let err_msg = match &err {
+                    GitError::ChildProcessExited { message, .. } => message.clone(),
+                    other => other.to_string(),
+                };
+                let exit_code = match &err {
+                    GitError::ChildProcessExited { code, .. } => Some(*code),
+                    _ => None,
+                };
+
                 match &failure_strategy {
-                    HookFailureStrategy::FailFast { hook_type } => {
-                        let exit_code = match &err {
-                            GitError::ChildProcessExited { code, .. } => Some(*code),
-                            _ => None,
-                        };
+                    HookFailureStrategy::FailFast => {
                         return Err(GitError::HookCommandFailed {
-                            hook_type: *hook_type,
+                            hook_type,
                             command_name: prepared.name.clone(),
                             error: err_msg,
                             exit_code,
@@ -81,12 +92,30 @@ impl<'a> HookPipeline<'a> {
                             None => format!("{WARNING}Command failed: {err_msg}{WARNING:#}"),
                         };
                         crate::output::warning(message)?;
+
+                        // Track first failure to propagate exit code later (only for PostMerge)
+                        if first_failure.is_none() && hook_type == HookType::PostMerge {
+                            first_failure =
+                                Some((err_msg, prepared.name.clone(), exit_code.unwrap_or(1)));
+                        }
                     }
                 }
             }
         }
 
         crate::output::flush()?;
+
+        // For Warn strategy with PostMerge: if any command failed, propagate the exit code
+        // This matches git's behavior: post-hooks can't stop the operation but affect exit status
+        if let Some((error, command_name, exit_code)) = first_failure {
+            return Err(GitError::HookCommandFailed {
+                hook_type,
+                command_name,
+                error,
+                exit_code: Some(exit_code),
+            });
+        }
+
         Ok(())
     }
 
@@ -148,9 +177,8 @@ impl<'a> HookPipeline<'a> {
             auto_trust,
             &extra_vars,
             "pre-commit",
-            HookFailureStrategy::FailFast {
-                hook_type: HookType::PreCommit,
-            },
+            HookType::PreCommit,
+            HookFailureStrategy::FailFast,
         )
     }
 }

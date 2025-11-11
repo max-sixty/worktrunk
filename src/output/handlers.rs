@@ -252,8 +252,8 @@ pub(crate) fn execute_streaming(
         // Get the exit code if available (None means terminated by signal on some platforms)
         let code = status.code().unwrap_or(1);
         return Err(io::Error::other(format!(
-            "CHILD_EXIT_CODE:{} Command failed with exit code: {}",
-            code, status
+            "CHILD_EXIT_CODE:{} exit status: {}",
+            code, code
         )));
     }
 

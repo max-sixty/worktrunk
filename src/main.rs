@@ -314,7 +314,8 @@ fn main() {
 
     if let Err(e) = result {
         // Error messages are already formatted with emoji and colors
-        eprintln!("{}", e);
+        // Per CLAUDE.md: worktrunk output (including errors) goes to stdout
+        println!("{}", e);
 
         // Preserve exit code from child processes (especially for signals like SIGINT)
         let exit_code = match &e {

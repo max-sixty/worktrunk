@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/push.rs
-assertion_line: 13
 info:
   program: wt
   args:
@@ -14,18 +13,19 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpLjwqDc/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp4HfSRW/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-
------ stderr -----
 ❌ [31mCannot push: conflicting uncommitted changes in:[0m
 
 [40m [0m  conflict.txt
 
 💡 [2mCommit or stash these changes in [REPO] first[0m
+
+----- stderr -----

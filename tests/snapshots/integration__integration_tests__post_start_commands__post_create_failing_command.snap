@@ -17,14 +17,14 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpDUcUbD/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpzwr3Mq/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mRunning post-create:[0m
 [40m [0m  [1m[34mexit[0m 1[0m
-🟡 [33mCommand failed: Command failed with exit code: exit status: 1[0m
+🟡 [33mCommand failed: exit status: 1[0m
 ✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
 💡 [2mTo enable automatic cd, run: wt config shell[0m
 

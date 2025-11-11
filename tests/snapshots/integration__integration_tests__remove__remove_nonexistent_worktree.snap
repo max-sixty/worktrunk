@@ -16,12 +16,12 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpzi7ZBp/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpD8gbZi/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
 🔄 [36mRemoving worktree for [1m[36mnonexistent[0m...[0m
+❌ [31mNo worktree found for branch [1m[31mnonexistent[0m[0m
 
 ----- stderr -----
-❌ [31mNo worktree found for branch [1m[31mnonexistent[0m[0m

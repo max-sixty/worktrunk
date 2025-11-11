@@ -275,9 +275,8 @@ pub fn run_pre_merge_commands(
         true, // auto_trust: commands already approved in batch
         &[("target", target_branch)],
         "pre-merge",
-        HookFailureStrategy::FailFast {
-            hook_type: HookType::PreMerge,
-        },
+        HookType::PreMerge,
+        HookFailureStrategy::FailFast,
     )
 }
 
@@ -304,6 +303,7 @@ pub fn execute_post_merge_commands(
         true, // auto_trust: commands already approved in batch
         &[("target", target_branch)],
         "post-merge",
+        HookType::PostMerge,
         HookFailureStrategy::Warn,
     )
 }

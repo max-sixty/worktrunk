@@ -2363,11 +2363,11 @@ fn test_merge_no_commit_with_dirty_tree() {
         success: false
         exit_code: 1
         ----- stdout -----
-
-        ----- stderr -----
         ❌ [31mWorking tree has uncommitted changes[0m
 
         💡 [2mCommit or stash them first[0m
+
+        ----- stderr -----
         ");
     });
 }

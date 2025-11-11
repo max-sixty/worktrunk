@@ -17,13 +17,13 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpSjJ2Qr/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpQeCSMi/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-
------ stderr -----
 ❌ [31mFound merge commits in push range[0m
 
 💡 [2mUse --allow-merge-commits to push non-linear history[0m
+
+----- stderr -----
