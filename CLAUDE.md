@@ -100,7 +100,9 @@ Six canonical message patterns with their emojis:
 3. **Errors**: ❌ + red text (failures, invalid states)
 4. **Warnings**: 🟡 + yellow text (non-blocking issues)
 5. **Hints**: 💡 + dimmed text (actionable suggestions, tips for user)
-6. **Info**: ⚪ + dimmed text (neutral status, system feedback, metadata)
+6. **Info**: ⚪ + text (neutral status, system feedback, metadata)
+   - **NOT dimmed**: Primary status messages that answer the user's question
+   - **Dimmed**: Supplementary metadata and contextual information
 
 **Core Principle: Every user-facing message must have EITHER an emoji OR a gutter.**
 
@@ -114,8 +116,13 @@ This provides consistent visual separation and hierarchy:
 // ✅ GOOD - standalone message with emoji
 println!("{SUCCESS_EMOJI} {GREEN}Created worktree{GREEN:#}");
 
-// ✅ GOOD - info message for neutral status
-println!("{INFO_EMOJI} {dim}post-create declined{dim:#}");
+// ✅ GOOD - info message for primary status (NOT dimmed - answers user's question)
+output::info("All commands already approved")?;
+output::info("Commands declined")?;
+
+// ✅ GOOD - info message for supplementary metadata (dimmed)
+let dim = AnstyleStyle::new().dimmed();
+println!("{INFO_EMOJI} {dim}Showing 5 worktrees, 2 with changes...{dim:#}");
 
 // ✅ GOOD - quoted content with gutter
 print!("{}", format_with_gutter(&command));
@@ -133,6 +140,9 @@ println!("{dim}Operation declined{dim:#}");
 
 // ❌ BAD - section header without emoji
 println!("Config: {bold}{}{bold:#}", path);  // Should have INFO_EMOJI
+
+// ❌ BAD - dimming primary status that answers user's question
+output::info(format!("{dim}Commands declined{dim:#}"))?;  // Should NOT be dim
 ```
 
 ### stdout vs stderr: Separation by Source

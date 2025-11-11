@@ -76,5 +76,7 @@ pub const WARNING_EMOJI: &str = "🟡";
 /// Hint emoji - use with HINT style: `println!("{HINT_EMOJI} {HINT}message{HINT:#}");`
 pub const HINT_EMOJI: &str = "💡";
 
-/// Info emoji - use with dimmed style: `println!("{INFO_EMOJI} {dim}message{dim:#}");`
+/// Info emoji - use for neutral status (primary status NOT dimmed, metadata may be dimmed)
+/// Primary status: `output::info("All commands already approved")?;`
+/// Metadata: `println!("{INFO_EMOJI} {dim}Showing 5 worktrees...{dim:#}");`
 pub const INFO_EMOJI: &str = "⚪";

@@ -324,8 +324,7 @@ pub fn handle_standalone_ask_approvals(force: bool, show_all: bool) -> Result<()
     let commands = collect_commands_for_hooks(&project_config, &all_hooks);
 
     if commands.is_empty() {
-        let dim = worktrunk::styling::AnstyleStyle::new().dimmed();
-        crate::output::info(format!("{dim}No commands configured in project{dim:#}"))?;
+        crate::output::info("No commands configured in project")?;
         return Ok(());
     }
 
@@ -337,8 +336,7 @@ pub fn handle_standalone_ask_approvals(force: bool, show_all: bool) -> Result<()
             .collect();
 
         if unapproved.is_empty() {
-            let dim = worktrunk::styling::AnstyleStyle::new().dimmed();
-            crate::output::info(format!("{dim}All commands already approved{dim:#}"))?;
+            crate::output::info("All commands already approved")?;
             return Ok(());
         }
 
@@ -369,8 +367,7 @@ pub fn handle_standalone_ask_approvals(force: bool, show_all: bool) -> Result<()
             ))?;
         }
     } else {
-        let dim = worktrunk::styling::AnstyleStyle::new().dimmed();
-        crate::output::info(format!("{dim}Commands declined{dim:#}"))?;
+        crate::output::info("Commands declined")?;
     }
 
     Ok(())

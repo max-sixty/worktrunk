@@ -46,7 +46,6 @@ pub fn approve_command_batch(
     };
 
     if !approved {
-        let dim = AnstyleStyle::new().dimmed();
         // Derive phase from commands - if all same phase, show it; otherwise show generic message
         let phase_str = if commands.len() == 1 {
             commands[0].phase.to_string()
@@ -58,7 +57,7 @@ pub fn approve_command_batch(
                 "commands".to_string()
             }
         };
-        println!("{INFO_EMOJI} {dim}{phase_str} declined{dim:#}");
+        println!("{INFO_EMOJI} {phase_str} declined");
         return Ok(false);
     }
 
