@@ -1,10 +1,10 @@
 # worktrunk shell integration for PowerShell
 
-# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
-if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
-    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
-    # This allows testing development builds: $env:WORKTRUNK_BIN = "./target/debug/wt"
-    $script:_WORKTRUNK_CMD = if ($env:WORKTRUNK_BIN) { $env:WORKTRUNK_BIN } else { "wt" }
+# Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
+if ((Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
+    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # This allows testing development builds: $env:WORKTRUNK_BIN = "./target/debug/{{ cmd_prefix }}"
+    $script:_WORKTRUNK_CMD = if ($env:WORKTRUNK_BIN) { $env:WORKTRUNK_BIN } else { "{{ cmd_prefix }}" }
 
     # Helper function to parse wt output and handle directives
     # Directives are NUL-terminated to support multi-line commands
@@ -122,7 +122,7 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
                 Write-Error "Error: cargo build failed"
                 return 1
             }
-            $cmd = "./target/debug/wt"
+            $cmd = "./target/debug/{{ cmd_prefix }}"
         } else {
             $cmd = $script:_WORKTRUNK_CMD
         }

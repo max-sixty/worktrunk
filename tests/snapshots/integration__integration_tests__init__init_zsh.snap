@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpKY05V9/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpIZkO2j/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -173,6 +173,7 @@ _wt() {
         case $line[1] in
             (init)
 _arguments "${_arguments_options[@]}" : \
+'--command-name=[Command name to use (defaults to '\''wt'\'')]:COMMAND_NAME:_default' \
 '-v[Enable verbose output (show git commands and debug info)]' \
 '--verbose[Enable verbose output (show git commands and debug info)]' \
 '-h[Print help]' \
@@ -223,6 +224,7 @@ _arguments "${_arguments_options[@]}" : \
 (shell)
 _arguments "${_arguments_options[@]}" : \
 '--shell=[Specific shell to configure (default\: all shells with existing config files)]:SHELL:(bash elvish fish nushell oil powershell xonsh zsh)' \
+'--command-name=[Command name to use (defaults to '\''wt'\'')]:COMMAND_NAME:_default' \
 '-f[Skip confirmation prompt]' \
 '--force[Skip confirmation prompt]' \
 '-v[Enable verbose output (show git commands and debug info)]' \

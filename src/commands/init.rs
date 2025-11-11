@@ -3,8 +3,12 @@ use clap_complete::{Shell as CompletionShell, generate};
 use worktrunk::shell;
 use worktrunk::styling::{ERROR, ERROR_EMOJI, println};
 
-pub fn handle_init(shell: shell::Shell, cli_cmd: &mut Command) -> Result<(), String> {
-    let init = shell::ShellInit::new(shell, "wt".to_string());
+pub fn handle_init(
+    shell: shell::Shell,
+    command_name: String,
+    cli_cmd: &mut Command,
+) -> Result<(), String> {
+    let init = shell::ShellInit::new(shell, command_name.clone());
 
     // Generate shell integration code
     let integration_output = init
@@ -33,7 +37,12 @@ pub fn handle_init(shell: shell::Shell, cli_cmd: &mut Command) -> Result<(), Str
             "supports_completion() check above ensures we only reach this for supported shells"
         ),
     };
-    generate(completion_shell, cli_cmd, "wt", &mut completion_output);
+    generate(
+        completion_shell,
+        cli_cmd,
+        &command_name,
+        &mut completion_output,
+    );
 
     // Filter out lines for hidden commands (completion, complete) and hidden flags (--internal)
     let completion_str = String::from_utf8_lossy(&completion_output);
@@ -84,9 +93,14 @@ pub fn handle_init(shell: shell::Shell, cli_cmd: &mut Command) -> Result<(), Str
 
         // For Zsh: Guard the final compdef call to avoid errors when completion system isn't loaded
         // Not all users have compinit in their .zshrc, and --no-rcs mode never loads it
-        let line = if matches!(shell, shell::Shell::Zsh) && line.trim() == "compdef _wt wt" {
+        let line = if matches!(shell, shell::Shell::Zsh)
+            && line.trim() == format!("compdef _{} {}", command_name, command_name)
+        {
             // Replace with guarded version that checks if compdef exists
-            "    if (( $+functions[compdef] )); then compdef _wt wt; fi".to_string()
+            format!(
+                "    if (( $+functions[compdef] )); then compdef _{} {}; fi",
+                command_name, command_name
+            )
         } else {
             line
         };

@@ -1,13 +1,13 @@
 # worktrunk shell integration for xonsh
 
-# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
+# Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
 import shutil
 import os
 import sys
-if shutil.which("wt") is not None or os.environ.get('WORKTRUNK_BIN'):
-    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
-    # This allows testing development builds: $WORKTRUNK_BIN = ./target/debug/wt
-    _WORKTRUNK_CMD = os.environ.get('WORKTRUNK_BIN', 'wt')
+if shutil.which("{{ cmd_prefix }}") is not None or os.environ.get('WORKTRUNK_BIN'):
+    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # This allows testing development builds: $WORKTRUNK_BIN = ./target/debug/{{ cmd_prefix }}
+    _WORKTRUNK_CMD = os.environ.get('WORKTRUNK_BIN', '{{ cmd_prefix }}')
 
     def _wt_exec(args, cmd=None):
         """Helper function to parse wt output and handle directives
@@ -98,7 +98,7 @@ if shutil.which("wt") is not None or os.environ.get('WORKTRUNK_BIN'):
             if build_result.returncode != 0:
                 print("Error: cargo build failed", file=sys.stderr)
                 return 1
-            cmd = "./target/debug/wt"
+            cmd = "./target/debug/{{ cmd_prefix }}"
         else:
             cmd = _WORKTRUNK_CMD
 

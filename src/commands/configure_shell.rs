@@ -46,9 +46,10 @@ impl ConfigAction {
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    command_name: String,
 ) -> Result<Vec<ConfigureResult>, String> {
     // First, do a dry-run to see what would be changed
-    let preview_results = scan_shell_configs(shell_filter, true)?;
+    let preview_results = scan_shell_configs(shell_filter, true, &command_name)?;
 
     // If nothing to do, return early
     if preview_results.is_empty() {
@@ -71,12 +72,13 @@ pub fn handle_configure_shell(
     }
 
     // User confirmed (or --force flag was used), now actually apply the changes
-    scan_shell_configs(shell_filter, false)
+    scan_shell_configs(shell_filter, false, &command_name)
 }
 
 fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
+    command_name: &str,
 ) -> Result<Vec<ConfigureResult>, String> {
     let shells = if let Some(shell) = shell_filter {
         vec![shell]
@@ -98,7 +100,7 @@ fn scan_shell_configs(
     let mut checked_paths = Vec::new();
 
     for shell in shells {
-        let paths = shell.config_paths("wt");
+        let paths = shell.config_paths(command_name);
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
@@ -125,7 +127,13 @@ fn scan_shell_configs(
         if should_configure {
             let path = target_path.or_else(|| paths.first());
             if let Some(path) = path {
-                match configure_shell_file(shell, path, dry_run, shell_filter.is_some()) {
+                match configure_shell_file(
+                    shell,
+                    path,
+                    dry_run,
+                    shell_filter.is_some(),
+                    command_name,
+                ) {
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
@@ -160,16 +168,24 @@ fn configure_shell_file(
     path: &Path,
     dry_run: bool,
     explicit_shell: bool,
+    command_name: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // Get a summary of the shell integration for display
-    let integration_summary = shell.integration_summary("wt");
+    let integration_summary = shell.integration_summary(command_name);
 
     // The actual line we write to the config file
-    let config_content = shell.config_line("wt");
+    let config_content = shell.config_line(command_name);
 
     // For Fish, we write to a separate conf.d/ file
     if matches!(shell, Shell::Fish) {
-        return configure_fish_file(shell, path, &config_content, dry_run, explicit_shell);
+        return configure_fish_file(
+            shell,
+            path,
+            &config_content,
+            dry_run,
+            explicit_shell,
+            &integration_summary,
+        );
     }
 
     // For other shells, check if file exists
@@ -264,10 +280,8 @@ fn configure_fish_file(
     content: &str,
     dry_run: bool,
     explicit_shell: bool,
+    integration_summary: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // Get a summary of the shell integration for display
-    let integration_summary = shell.integration_summary("wt");
-
     // For Fish, we write to conf.d/{cmd_prefix}.fish (separate file)
 
     // Check if it already exists and has our integration
@@ -281,7 +295,7 @@ fn configure_fish_file(
                 shell,
                 path: path.to_path_buf(),
                 action: ConfigAction::AlreadyExists,
-                config_line: integration_summary.clone(),
+                config_line: integration_summary.to_string(),
             }));
         }
     }
@@ -307,7 +321,7 @@ fn configure_fish_file(
             } else {
                 ConfigAction::WouldCreate
             },
-            config_line: integration_summary.clone(),
+            config_line: integration_summary.to_string(),
         }));
     }
 
@@ -325,7 +339,7 @@ fn configure_fish_file(
         shell,
         path: path.to_path_buf(),
         action: ConfigAction::Created,
-        config_line: integration_summary.clone(),
+        config_line: integration_summary.to_string(),
     }))
 }
 

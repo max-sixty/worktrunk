@@ -101,16 +101,23 @@ fn main() {
     .init();
 
     let result = match cli.command {
-        Commands::Init { shell } => {
+        Commands::Init {
+            shell,
+            command_name,
+        } => {
             let mut cli_cmd = Cli::command();
-            handle_init(shell, &mut cli_cmd).git_err()
+            handle_init(shell, command_name, &mut cli_cmd).git_err()
         }
         Commands::Config { action } => match action {
             ConfigCommand::Init => handle_config_init(),
             ConfigCommand::List => handle_config_list(),
             ConfigCommand::RefreshCache => handle_config_refresh_cache(),
-            ConfigCommand::Shell { shell, force } => {
-                handle_configure_shell(shell, force)
+            ConfigCommand::Shell {
+                shell,
+                force,
+                command_name,
+            } => {
+                handle_configure_shell(shell, force, command_name)
                     .map(|results| {
                         use anstyle::{AnsiColor, Color};
 

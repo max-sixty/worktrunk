@@ -1,10 +1,10 @@
 # worktrunk shell integration for elvish
 
-# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
-if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
-    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
-    # This allows testing development builds: set E:WORKTRUNK_BIN = ./target/debug/wt
-    var _WORKTRUNK_CMD = wt
+# Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
+if (or (has-external {{ cmd_prefix }}) (has-env WORKTRUNK_BIN)) {
+    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # This allows testing development builds: set E:WORKTRUNK_BIN = ./target/debug/{{ cmd_prefix }}
+    var _WORKTRUNK_CMD = {{ cmd_prefix }}
     if (has-env WORKTRUNK_BIN) {
         set _WORKTRUNK_CMD = $E:WORKTRUNK_BIN
     }
@@ -101,7 +101,7 @@ if (or (has-external wt) (has-env WORKTRUNK_BIN)) {
                 echo "Error: cargo build failed" >&2
                 fail "cargo build failed"
             }
-            set _WORKTRUNK_CMD = ./target/debug/wt
+            set _WORKTRUNK_CMD = ./target/debug/{{ cmd_prefix }}
         }
 
         # Force colors if wrapper's stdout is a TTY (respects NO_COLOR and explicit CLICOLOR_FORCE)

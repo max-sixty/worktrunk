@@ -1,10 +1,10 @@
 # worktrunk shell integration for {{ shell_name }}
 
-# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
-if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
-    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
-    # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/wt
-    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-wt}"
+# Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
+if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
+    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/{{ cmd_prefix }}
+    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-{{ cmd_prefix }}}"
 
     # Helper function to parse wt output and handle directives
     # Directives are NUL-terminated to support multi-line commands
@@ -71,7 +71,7 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
                 _WORKTRUNK_CMD="$saved_cmd"
                 return 1
             fi
-            _WORKTRUNK_CMD="./target/debug/wt"
+            _WORKTRUNK_CMD="./target/debug/{{ cmd_prefix }}"
         fi
 
         # Force colors if wrapper's stdout is a TTY (respects NO_COLOR and explicit CLICOLOR_FORCE)

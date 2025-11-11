@@ -1,10 +1,10 @@
 # worktrunk shell integration for nushell
 
-# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
-if (which wt | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empty) {
-    # Use WORKTRUNK_BIN if set, otherwise default to 'wt'
-    # This allows testing development builds: $env.WORKTRUNK_BIN = ./target/debug/wt
-    let _WORKTRUNK_CMD = (if ($env.WORKTRUNK_BIN? | is-not-empty) { $env.WORKTRUNK_BIN } else { "wt" })
+# Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
+if (which {{ cmd_prefix }} | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empty) {
+    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # This allows testing development builds: $env.WORKTRUNK_BIN = ./target/debug/{{ cmd_prefix }}
+    let _WORKTRUNK_CMD = (if ($env.WORKTRUNK_BIN? | is-not-empty) { $env.WORKTRUNK_BIN } else { "{{ cmd_prefix }}" })
 
     # Helper function to parse wt output and handle directives
     # Directives are NUL-terminated to support multi-line commands
@@ -73,7 +73,7 @@ if (which wt | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empty) {
                 print "Error: cargo build failed"
                 return 1
             }
-            "./target/debug/wt"
+            "./target/debug/{{ cmd_prefix }}"
         } else {
             $_WORKTRUNK_CMD
         }

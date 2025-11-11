@@ -4,6 +4,9 @@ use worktrunk::HookType;
 
 use crate::commands::Shell;
 
+/// Default command name for worktrunk
+const DEFAULT_COMMAND_NAME: &str = "wt";
+
 fn version_str() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
@@ -99,6 +102,10 @@ Oil Shell (~/.config/oil/oshrc):
         /// Skip confirmation prompt
         #[arg(short, long)]
         force: bool,
+
+        /// Command name to use (defaults to 'wt')
+        #[arg(long, default_value = DEFAULT_COMMAND_NAME)]
+        command_name: String,
     },
 }
 
@@ -194,6 +201,10 @@ pub enum Commands {
     Init {
         /// Shell to generate code for
         shell: Shell,
+
+        /// Command name to use (defaults to 'wt')
+        #[arg(long, default_value = DEFAULT_COMMAND_NAME)]
+        command_name: String,
     },
 
     /// Manage configuration

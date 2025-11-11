@@ -3,7 +3,7 @@
 # Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
 if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
     # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
-    # This allows testing development builds: set -x WORKTRUNK_BIN ./target/debug/wt
+    # This allows testing development builds: set -x WORKTRUNK_BIN ./target/debug/{{ cmd_prefix }}
     if set -q WORKTRUNK_BIN
         set -g _WORKTRUNK_CMD $WORKTRUNK_BIN
     else
@@ -107,7 +107,7 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
                 set _WORKTRUNK_CMD $saved_cmd
                 return 1
             end
-            set _WORKTRUNK_CMD ./target/debug/wt
+            set _WORKTRUNK_CMD ./target/debug/{{ cmd_prefix }}
         end
 
         # Force colors if wrapper's stdout is a TTY (respects NO_COLOR and explicit CLICOLOR_FORCE)

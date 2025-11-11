@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp9iNHoU/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmprUHMIQ/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -205,6 +205,7 @@ complete -c wt -n "__fish_wt_needs_command" -f -a "list" -d 'List worktrees and 
 complete -c wt -n "__fish_wt_needs_command" -f -a "switch" -d 'Switch to a worktree'
 complete -c wt -n "__fish_wt_needs_command" -f -a "remove" -d 'Finish current worktree, returning to primary if current'
 complete -c wt -n "__fish_wt_needs_command" -f -a "merge" -d 'Merge worktree into target branch'
+complete -c wt -n "__fish_wt_using_subcommand init" -l command-name -d 'Command name to use (defaults to \'wt\')' -r
 complete -c wt -n "__fish_wt_using_subcommand init" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand init" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
@@ -227,6 +228,7 @@ oil\t''
 powershell\t''
 xonsh\t''
 zsh\t''"
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -l command-name -d 'Command name to use (defaults to \'wt\')' -r
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s f -l force -d 'Skip confirmation prompt'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s h -l help -d 'Print help (see more with \'--help\')'
