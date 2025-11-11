@@ -118,10 +118,12 @@ pub struct MergeOperations {
 
 /// Result of a worktree switch operation
 pub enum SwitchResult {
+    /// Already at the target worktree (no action taken)
+    AlreadyAt(PathBuf),
     /// Switched to existing worktree at the given path
-    ExistingWorktree(PathBuf),
+    Existing(PathBuf),
     /// Created new worktree at the given path
-    CreatedWorktree {
+    Created {
         path: PathBuf,
         created_branch: bool,
         base_branch: Option<String>,
@@ -132,8 +134,9 @@ impl SwitchResult {
     /// Get the worktree path
     pub fn path(&self) -> &PathBuf {
         match self {
-            SwitchResult::ExistingWorktree(path) => path,
-            SwitchResult::CreatedWorktree { path, .. } => path,
+            SwitchResult::AlreadyAt(path) => path,
+            SwitchResult::Existing(path) => path,
+            SwitchResult::Created { path, .. } => path,
         }
     }
 }
@@ -218,8 +221,23 @@ pub fn handle_switch(
 
             // Canonicalize the path for cleaner display
             let canonical_existing_path = existing_path.canonicalize().unwrap_or(existing_path);
+
+            // Check if we're already at this worktree
+            let current_dir = std::env::current_dir()
+                .ok()
+                .and_then(|p| p.canonicalize().ok());
+
+            let already_at_worktree = current_dir
+                .as_ref()
+                .map(|cur| cur == &canonical_existing_path)
+                .unwrap_or(false);
+
             return Ok((
-                SwitchResult::ExistingWorktree(canonical_existing_path),
+                if already_at_worktree {
+                    SwitchResult::AlreadyAt(canonical_existing_path)
+                } else {
+                    SwitchResult::Existing(canonical_existing_path)
+                },
                 resolved_branch,
             ));
         }
@@ -341,7 +359,7 @@ pub fn handle_switch(
     let _ = repo.record_switch_history(&new_current, new_previous.as_deref());
 
     Ok((
-        SwitchResult::CreatedWorktree {
+        SwitchResult::Created {
             path: worktree_path,
             created_branch: create,
             base_branch: base_for_creation,

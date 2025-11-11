@@ -6,19 +6,33 @@ use worktrunk::git::GitError;
 use worktrunk::styling::{GREEN, GREEN_BOLD, WARNING, WARNING_BOLD, format_with_gutter};
 
 /// Format message for switch operation (mode-specific via output system)
-fn format_switch_message(result: &SwitchResult, branch: &str) -> String {
+fn format_switch_message(result: &SwitchResult, branch: &str) -> (String, bool) {
     match result {
-        SwitchResult::ExistingWorktree(path) => {
-            // created_branch=false means we switched to existing worktree
-            format_switch_success(branch, path, false, None)
+        SwitchResult::AlreadyAt(path) => {
+            // Note: output::info() adds the INFO_EMOJI automatically
+            let bold = worktrunk::styling::AnstyleStyle::new().bold();
+            (
+                format!(
+                    "Already on worktree for {bold}{branch}{bold:#} at {bold}{}{bold:#}",
+                    path.display()
+                ),
+                true, // is_info
+            )
         }
-        SwitchResult::CreatedWorktree {
+        SwitchResult::Existing(path) => {
+            // created_branch=false means we switched to existing worktree
+            (format_switch_success(branch, path, false, None), false)
+        }
+        SwitchResult::Created {
             path,
             created_branch,
             base_branch,
         } => {
             // Pass through whether we created a new branch and the base branch
-            format_switch_success(branch, path, *created_branch, base_branch.as_deref())
+            (
+                format_switch_success(branch, path, *created_branch, base_branch.as_deref()),
+                false,
+            )
         }
     }
 }
@@ -91,8 +105,13 @@ pub fn handle_switch_output(
     // Set target directory for command execution
     super::change_directory(result.path())?;
 
-    // Show success message (includes emoji and color)
-    super::success(format_switch_message(result, branch))?;
+    // Show message (success or info based on result)
+    let (message, is_info) = format_switch_message(result, branch);
+    if is_info {
+        super::info(message)?;
+    } else {
+        super::success(message)?;
+    }
 
     // If no execute command provided: show shell integration hint
     // (suppressed in directive mode since user already has integration)

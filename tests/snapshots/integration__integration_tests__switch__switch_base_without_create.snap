@@ -18,13 +18,13 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxg95yO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpBGb1tD/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 🟡 [33m--base flag is only used with --create, ignoring[0m
-✅ [32mSwitched to worktree for [1m[32mmain[0m[32m at [1m[32m[REPO][0m[0m
+⚪ Already on worktree for [1mmain[0m at [1m[REPO][0m
 💡 [2mTo enable automatic cd, run: wt config shell[0m
 
 ----- stderr -----

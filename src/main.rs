@@ -219,7 +219,7 @@ fn main() {
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing
                 // Note: If user declines post-start commands, continue anyway - they're optional
-                if !no_verify && let SwitchResult::CreatedWorktree { path, .. } = &result {
+                if !no_verify && let SwitchResult::Created { path, .. } = &result {
                     let repo = Repository::current();
                     let repo_root = repo.worktree_base()?;
                     let ctx = CommandContext::new(
