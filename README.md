@@ -68,7 +68,7 @@ wt config shell  # Sets up shell integration
 
 ### LLM-Powered Commit Messages
 
-During merge operations, worktrunk can generate commit messages using an LLM. The LLM analyzes the staged diff and recent commit history to write messages matching the project's style.
+During merge operations, worktrunk can invoke a binary, such as [llm](https://llm.datasette.io/), to generate commit messages based on the diff and a configurable prompt.
 
 <!-- Config and output from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap (uses mock llm) -->
 
