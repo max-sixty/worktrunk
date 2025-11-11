@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/approvals.rs
-assertion_line: 13
 info:
   program: wt
   args:
@@ -18,12 +17,11 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpRy2MnB/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpn5sywa/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-⚪ post-create declined
 ⚪ Commands declined
 
 ----- stderr -----

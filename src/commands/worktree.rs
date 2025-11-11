@@ -326,7 +326,9 @@ pub fn handle_switch(
         if let Err(e) = ctx.execute_post_create_commands() {
             // Only treat CommandNotApproved as non-fatal (user declined)
             // Other errors should still fail
-            if !matches!(e, GitError::CommandNotApproved) {
+            if matches!(e, GitError::CommandNotApproved) {
+                crate::output::info("Commands declined, continuing worktree creation")?;
+            } else {
                 return Err(e);
             }
         }

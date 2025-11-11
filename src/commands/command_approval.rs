@@ -5,8 +5,8 @@
 use worktrunk::config::{Command, WorktrunkConfig};
 use worktrunk::git::{GitError, GitResultExt};
 use worktrunk::styling::{
-    AnstyleStyle, HINT, HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, WARNING, WARNING_BOLD,
-    WARNING_EMOJI, eprint, eprintln, format_bash_with_gutter, println, stderr,
+    AnstyleStyle, HINT, HINT_EMOJI, PROGRESS_EMOJI, WARNING, WARNING_BOLD, WARNING_EMOJI, eprint,
+    eprintln, format_bash_with_gutter, println, stderr,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -46,18 +46,6 @@ pub fn approve_command_batch(
     };
 
     if !approved {
-        // Derive phase from commands - if all same phase, show it; otherwise show generic message
-        let phase_str = if commands.len() == 1 {
-            commands[0].phase.to_string()
-        } else {
-            let first_phase = commands[0].phase;
-            if commands.iter().all(|cmd| cmd.phase == first_phase) {
-                first_phase.to_string()
-            } else {
-                "commands".to_string()
-            }
-        };
-        println!("{INFO_EMOJI} {phase_str} declined");
         return Ok(false);
     }
 

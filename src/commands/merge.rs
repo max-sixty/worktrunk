@@ -103,7 +103,12 @@ pub fn handle_merge(
 
     // Approve all commands in a single batch
     // Commands collected here are not yet expanded - expansion happens later in prepare_project_commands
-    approve_command_batch(&all_commands, &project_id, config, force, false)?;
+    let approved = approve_command_batch(&all_commands, &project_id, config, force, false)?;
+
+    // If commands were declined, show message explaining that merge continues anyway
+    if !approved {
+        crate::output::info("Commands declined, continuing merge")?;
+    }
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
     let committed = if !no_commit && repo.is_dirty()? {
