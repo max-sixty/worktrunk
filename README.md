@@ -331,7 +331,20 @@ wt config --help  # Show LLM setup guide
 <details>
 <summary>Configuration details</summary>
 
-Global config at `~/.config/worktrunk/config.toml`:
+**Global config** (`~/.config/worktrunk/config.toml`):
+- `worktree-path` - Path template for new worktrees
+- `[commit-generation]` - LLM command and prompt templates
+
+**Project config** (`.config/wt.toml` in repository root):
+- `[post-create-command]` - Commands after worktree creation
+- `[post-start-command]` - Background commands after creation
+- `[pre-commit-command]` - Validation before committing
+- `[pre-merge-command]` - Validation before merge
+- `[post-merge-command]` - Cleanup after merge
+
+---
+
+**Example global config** (`~/.config/worktrunk/config.toml`):
 
 ```toml
 worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -341,9 +354,9 @@ command = "llm"
 args = ["-m", "claude-haiku-4-5-20251001"]
 ```
 
-Project config at `.config/wt.toml` in the repository root (see Project Hooks above).
+**Example project config** (`.config/wt.toml`): See Project Hooks section above.
 
-Worktree path defaults: `../repo.branch/` (siblings to main repo). Variables: `{{ main_worktree }}`, `{{ branch }}`, `{{ repo }}`.
+**Path template defaults:** `../repo.branch/` (siblings to main repo). Available variables: `{{ main_worktree }}`, `{{ branch }}`, `{{ repo }}`.
 
 </details>
 
