@@ -51,10 +51,9 @@
 //! ## Output Modes
 //!
 //! - **Interactive**: Colors, emojis, shell hints, direct command execution
-//! - **Directive**: Plain text with NUL-terminated directives for shell integration
-//!   - `__WORKTRUNK_CD__<path>\0` - Change directory
-//!   - `__WORKTRUNK_EXEC__<cmd>\0` - Execute command
-//!   - `<message>\0` - Success message
+//! - **Directive**: Machine-readable directives on stdout, user messages on stderr
+//!   - stdout (parsed by shell): `__WORKTRUNK_CD__<path>\0`, `__WORKTRUNK_EXEC__<cmd>\0`
+//!   - stderr (streams to terminal): Success messages, progress updates, warnings
 
 pub mod directive;
 pub mod global;

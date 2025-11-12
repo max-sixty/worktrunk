@@ -111,24 +111,28 @@ println!("{INFO_EMOJI} Global Config: {bold}{}{bold:#}", path.display());
 println!("{dim}Operation declined{dim:#}");
 ```
 
-### stdout vs stderr: Separation by Source
+### stdout vs stderr: Separation by Mode
 
-**Core Principle: Separate output by who generates it.**
+**Core Principle: Different separation in interactive vs directive mode.**
 
-- **stdout**: All worktrunk output (messages, directives, errors, warnings, progress)
-- **stderr**: All child process output (git, npm, user commands)
-- **Exception**: Interactive prompts use stderr to bypass shell wrapper's NUL-delimited parsing
+**Interactive mode:**
+- **stdout**: All worktrunk output (messages, errors, warnings, progress)
+- **stderr**: Child process output (git, npm, user commands) + interactive prompts
+
+**Directive mode (--internal flag for shell integration):**
+- **stdout**: Only directives (`__WORKTRUNK_CD__`, `__WORKTRUNK_EXEC__`) - NUL-terminated
+- **stderr**: All user-facing messages + child process output - streams in real-time
+
+Use the output system (`output::success()`, `output::progress()`, etc.) to handle both modes automatically. Never write directly to stdout/stderr in command code.
 
 ```rust
-// ALL our output goes to stdout (including errors)
-println!("{ERROR_EMOJI} {ERROR}Branch already exists{ERROR:#}");
+// ✅ GOOD - use output system (handles both modes)
+output::success("Branch created")?;
+output::change_directory(&path)?;
 
-// Interactive prompts go to stderr to bypass shell wrapper buffering
-eprint!("{HINT_EMOJI} Allow and remember? [y/N] ");
-
-// Redirect child processes to stderr
-let wrapped = format!("{{ {}; }} 1>&2", command);
-Command::new("sh").arg("-c").arg(&wrapped).status()?;
+// ❌ BAD - direct writes bypass output system
+println!("Branch created");
+writeln!(io::stderr(), "Progress...")?;
 ```
 
 **Interactive prompts:** Flush stderr before blocking on stdin to prevent interleaving:
@@ -136,6 +140,12 @@ Command::new("sh").arg("-c").arg(&wrapped).status()?;
 eprint!("💡 Allow and remember? [y/N] ");
 stderr().flush()?;  // Ensures prompt is visible before blocking
 io::stdin().read_line(&mut response)?;
+```
+
+**Child processes:** Redirect stdout to stderr for deterministic ordering:
+```rust
+let wrapped = format!("{{ {}; }} 1>&2", command);
+Command::new("sh").arg("-c").arg(&wrapped).status()?;
 ```
 
 ### Temporal Locality: Output Should Be Close to Operations

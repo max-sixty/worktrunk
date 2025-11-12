@@ -106,8 +106,9 @@ impl InteractiveOutput {
     }
 
     pub fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
-        // In interactive mode, just flush normally - no NUL needed
-        stdout().flush()
+        // In interactive mode, flush both streams before stderr prompt
+        stdout().flush()?;
+        stderr().flush()
     }
 
     pub fn terminate_output(&mut self) -> io::Result<()> {

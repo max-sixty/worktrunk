@@ -349,8 +349,8 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
     use worktrunk::styling::{HINT_EMOJI, eprint, eprintln};
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
-    // In directive mode, emits NUL to flush shell wrapper's read buffer
-    // In interactive mode, just flushes normally
+    // In directive mode, flushes both stdout (directives) and stderr (messages)
+    // In interactive mode, flushes both stdout and stderr
     crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
 
     // Interactive prompts go to stderr so they appear even when stdout is redirected

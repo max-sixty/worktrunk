@@ -10,16 +10,22 @@
 //!
 //! Running `wt switch --internal my-branch` outputs:
 //!
+//! **stdout** (parsed by shell wrapper):
 //! ```text
 //! __WORKTRUNK_CD__/path/to/worktree\0
-//! Switched to worktree: my-branch\0
 //! ```
 //!
-//! The shell wrapper parses this output:
+//! **stderr** (streams directly to terminal):
+//! ```text
+//! ✅ Switched to worktree: my-branch
+//! ```
+//!
+//! The shell wrapper parses stdout:
 //! - Lines starting with `__WORKTRUNK_CD__` trigger directory changes
 //! - Lines starting with `__WORKTRUNK_EXEC__` trigger command execution
-//! - Other lines print normally to the user
-//! - All messages are NUL-terminated for reliable parsing
+//! - Directives are NUL-terminated for reliable parsing
+//!
+//! User-facing messages go to stderr for real-time streaming without buffering.
 //!
 //! This separation keeps the Rust binary focused on git logic while the shell
 //! handles environment changes (cd, exec).
@@ -46,15 +52,15 @@ impl DirectiveOutput {
     }
 
     pub fn success(&mut self, message: String) -> io::Result<()> {
-        // Success messages automatically include the ✅ emoji
-        write!(io::stdout(), "{SUCCESS_EMOJI} {message}\0")?;
-        io::stdout().flush()
+        // Success messages go to stderr for real-time streaming (not buffered by shell wrapper)
+        writeln!(io::stderr(), "{SUCCESS_EMOJI} {message}")?;
+        io::stderr().flush()
     }
 
     pub fn progress(&mut self, message: String) -> io::Result<()> {
-        // Progress messages automatically include the 🔄 emoji
-        write!(io::stdout(), "{PROGRESS_EMOJI} {message}\0")?;
-        io::stdout().flush()
+        // Progress messages go to stderr for real-time streaming (not buffered by shell wrapper)
+        writeln!(io::stderr(), "{PROGRESS_EMOJI} {message}")?;
+        io::stderr().flush()
     }
 
     pub fn hint(&mut self, _message: String) -> io::Result<()> {
@@ -64,15 +70,15 @@ impl DirectiveOutput {
     }
 
     pub fn info(&mut self, message: String) -> io::Result<()> {
-        // Info messages automatically include the ⚪ emoji
-        write!(io::stdout(), "{INFO_EMOJI} {message}\0")?;
-        io::stdout().flush()
+        // Info messages go to stderr for real-time streaming (not buffered by shell wrapper)
+        writeln!(io::stderr(), "{INFO_EMOJI} {message}")?;
+        io::stderr().flush()
     }
 
     pub fn warning(&mut self, message: String) -> io::Result<()> {
-        // Warning messages automatically include the 🟡 emoji
-        write!(io::stdout(), "{WARNING_EMOJI} {message}\0")?;
-        io::stdout().flush()
+        // Warning messages go to stderr for real-time streaming (not buffered by shell wrapper)
+        writeln!(io::stderr(), "{WARNING_EMOJI} {message}")?;
+        io::stderr().flush()
     }
 
     #[cfg(unix)]
@@ -82,9 +88,9 @@ impl DirectiveOutput {
     }
 
     pub fn gutter(&mut self, content: String) -> io::Result<()> {
-        // Gutter content has its own visual structure - print with NUL terminator
-        write!(io::stdout(), "{content}\0")?;
-        io::stdout().flush()
+        // Gutter content goes to stderr for real-time streaming (not buffered by shell wrapper)
+        write!(io::stderr(), "{content}")?;
+        io::stderr().flush()
     }
 
     pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
@@ -98,14 +104,15 @@ impl DirectiveOutput {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
-        io::stdout().flush()
+        io::stdout().flush()?;
+        io::stderr().flush()
     }
 
     pub fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
-        // In directive mode, emit NUL to flush buffered stdout through shell's read loop
-        // The shell wrapper uses `while read -d '' chunk` which buffers until NUL arrives
-        write!(io::stdout(), "\0")?;
-        io::stdout().flush()
+        // In directive mode, flush both streams before showing stderr prompt
+        // Since messages now go to stderr, no NUL needed - just ensure everything is flushed
+        io::stdout().flush()?;
+        io::stderr().flush()
     }
 
     pub fn terminate_output(&mut self) -> io::Result<()> {

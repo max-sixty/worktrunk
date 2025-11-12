@@ -84,8 +84,8 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> std::io
     let plural = if count == 1 { "" } else { "s" };
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
-    // In directive mode, emits NUL to flush shell wrapper's read buffer
-    // In interactive mode, just flushes normally
+    // In directive mode, flushes both stdout (directives) and stderr (messages)
+    // In interactive mode, flushes both stdout and stderr
     crate::output::flush_for_stderr_prompt()?;
 
     eprintln!();

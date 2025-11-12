@@ -177,16 +177,15 @@ pub fn flush() -> io::Result<()> {
     })
 }
 
-/// Flush stdout before showing stderr prompt
+/// Flush streams before showing stderr prompt
 ///
-/// This is a special-purpose function for approval prompts that write to stderr.
-/// In directive mode, emits a NUL terminator to flush buffered stdout through the
-/// shell wrapper's `read -d ''` loop. In interactive mode, just flushes normally.
+/// This prevents stream interleaving. Interactive prompts write to stderr, so we must
+/// ensure all previous output is flushed first:
+/// - In directive mode: Flushes both stdout (directives) and stderr (messages)
+/// - In interactive mode: Flushes both stdout and stderr
 ///
-/// Context: The shell wrapper (templates/bash.sh) uses `while read -d '' chunk` to parse
-/// stdout. This buffers stdout until a NUL byte arrives. Without this NUL, previous
-/// stdout messages (like success) stay buffered while stderr (prompts) passes through,
-/// causing incorrect ordering.
+/// Note: With stderr separation (messages on stderr in directive mode), prompts
+/// naturally appear after messages without needing NUL terminators for synchronization.
 pub fn flush_for_stderr_prompt() -> io::Result<()> {
     OUTPUT_CONTEXT.with(|ctx| match &mut *ctx.borrow_mut() {
         OutputHandler::Interactive(i) => i.flush_for_stderr_prompt(),
