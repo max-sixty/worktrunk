@@ -76,6 +76,8 @@ pub struct TestRepo {
     remote: Option<PathBuf>, // Path to bare remote repo if created
     /// Isolated config file for this test (prevents pollution of user's config)
     test_config_path: PathBuf,
+    /// Path to mock bin directory for gh/glab commands
+    mock_bin_path: Option<PathBuf>,
 }
 
 impl TestRepo {
@@ -99,6 +101,7 @@ impl TestRepo {
             worktrees: HashMap::new(),
             remote: None,
             test_config_path,
+            mock_bin_path: None,
         };
 
         // Initialize git repo with isolated environment
@@ -500,6 +503,88 @@ impl TestRepo {
             .output()
             .expect("Failed to get current branch");
         String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Setup mock `gh` and `glab` commands that return immediately without network calls
+    ///
+    /// Creates a mock bin directory with fake gh/glab scripts. After calling this,
+    /// use `configure_mock_commands()` to add the mock bin to PATH for your commands.
+    ///
+    /// The mock gh returns:
+    /// - `gh auth status`: exits successfully (0)
+    /// - `gh pr view`: exits with error (no PR found) - fails fast
+    /// - `gh run list`: exits with error (no runs found) - fails fast
+    ///
+    /// This prevents CI detection from blocking tests with network calls.
+    pub fn setup_mock_gh(&mut self) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir(&mock_bin).expect("Failed to create mock bin directory");
+
+        // Create mock gh script
+        let gh_script = mock_bin.join("gh");
+        std::fs::write(
+            &gh_script,
+            r#"#!/bin/sh
+# Mock gh command that fails fast without network calls
+
+case "$1" in
+    auth)
+        # gh auth status - succeed immediately
+        exit 0
+        ;;
+    pr|run)
+        # gh pr view / gh run list - fail fast (no PR/runs found)
+        exit 1
+        ;;
+    *)
+        # Unknown command - fail
+        exit 1
+        ;;
+esac
+"#,
+        )
+        .expect("Failed to write mock gh script");
+
+        // Make executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755))
+                .expect("Failed to make gh script executable");
+        }
+
+        // Create mock glab script (fails immediately)
+        let glab_script = mock_bin.join("glab");
+        std::fs::write(
+            &glab_script,
+            r#"#!/bin/sh
+# Mock glab command that fails fast
+exit 1
+"#,
+        )
+        .expect("Failed to write mock glab script");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755))
+                .expect("Failed to make glab script executable");
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Configure a command to use mock gh/glab commands
+    ///
+    /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
+    /// so gh/glab commands are intercepted.
+    pub fn configure_mock_commands(&self, cmd: &mut Command) {
+        if let Some(mock_bin) = &self.mock_bin_path {
+            // Prepend mock bin to PATH
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let new_path = format!("{}:{}", mock_bin.display(), current_path);
+            cmd.env("PATH", new_path);
+        }
     }
 }
 

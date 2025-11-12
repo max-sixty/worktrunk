@@ -379,6 +379,9 @@ fn test_list_with_upstream_tracking() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit on main");
 
+    // Setup mock gh/glab to avoid network calls
+    repo.setup_mock_gh();
+
     // Set up remote - this already pushes main
     repo.setup_remote("main");
 
@@ -521,6 +524,7 @@ fn test_list_with_upstream_tracking() {
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
         cmd.arg("list")
             .arg("--branches")
             .arg("--full")
