@@ -192,6 +192,11 @@ fn clap_fallback(args: &[String]) -> Vec<Item> {
     let mut cur: &Command = &cmd;
     while i < args.len() {
         let tok = &args[i];
+        // Skip global flags (same as find_subcommand_index)
+        if tok == "--source" || tok == "--internal" || tok == "-v" || tok == "--verbose" {
+            i += 1;
+            continue;
+        }
         if let Some(sc) = cur.find_subcommand(tok) {
             cur = sc;
             i += 1;

@@ -810,7 +810,30 @@ fn test_complete_init_partial() {
     assert!(shells.contains(&"fish"));
     // Should NOT contain shells that don't match the prefix
     assert!(!shells.contains(&"bash"));
-    assert!(!shells.contains(&"zsh"));
+}
+
+#[test]
+fn test_complete_init_with_source_flag() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion with --source flag: wt --source init <tab>
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "--source", "init", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells: Vec<&str> = stdout.lines().collect();
+
+    // Should show all shell types, same as without --source
+    assert!(shells.contains(&"bash"));
+    assert!(shells.contains(&"fish"));
+    assert!(shells.contains(&"zsh"));
 }
 
 #[test]
@@ -835,6 +858,32 @@ fn test_complete_config_shell_flag() {
     assert!(shells.contains(&"zsh"));
     assert!(!shells.contains(&"bash"));
     assert!(!shells.contains(&"fish"));
+}
+
+#[test]
+fn test_complete_config_shell_flag_with_source() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion for config shell --shell flag with --source
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args([
+            "complete", "wt", "--source", "config", "shell", "--shell", "",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells: Vec<&str> = stdout.lines().collect();
+
+    // Should show all shell types, same as without --source
+    assert!(shells.contains(&"bash"));
+    assert!(shells.contains(&"fish"));
+    assert!(shells.contains(&"zsh"));
 }
 
 #[test]
