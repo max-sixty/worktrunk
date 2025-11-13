@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpuSx06y/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpl6vlQ1/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -93,6 +93,11 @@ wt_exec() {
 
     # Override wt command to add --internal flag
     wt() {
+        # Initialize _WORKTRUNK_CMD if not set (e.g., after shell snapshot restore)
+        if [[ -z "$_WORKTRUNK_CMD" ]]; then
+            _WORKTRUNK_CMD="${WORKTRUNK_BIN:-wt}"
+        fi
+
         local use_source=false
         local args=()
         local saved_cmd="$_WORKTRUNK_CMD"

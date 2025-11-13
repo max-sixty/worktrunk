@@ -10,6 +10,11 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
 
     # Override {{ cmd_prefix }} command to add --internal flag
     {{ cmd_prefix }}() {
+        # Initialize _WORKTRUNK_CMD if not set (e.g., after shell snapshot restore)
+        if [[ -z "$_WORKTRUNK_CMD" ]]; then
+            _WORKTRUNK_CMD="${WORKTRUNK_BIN:-{{ cmd_prefix }}}"
+        fi
+
         local use_source=false
         local args=()
         local saved_cmd="$_WORKTRUNK_CMD"
