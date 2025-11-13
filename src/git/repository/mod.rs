@@ -458,8 +458,12 @@ impl Repository {
 
     /// Count commits between base and head.
     pub fn count_commits(&self, base: &str, head: &str) -> Result<usize, GitError> {
+        // Limit concurrent rev-list operations to reduce mmap thrash on commit-graph
+        let _guard = super::HEAVY_OPS_SEMAPHORE.acquire();
+
         let range = format!("{}..{}", base, head);
         let stdout = self.run_command(&["rev-list", "--count", &range])?;
+
         stdout
             .trim()
             .parse()
@@ -560,13 +564,32 @@ impl Repository {
     /// Returns (ahead, behind) where ahead is commits in head not in base,
     /// and behind is commits in base not in head.
     pub fn ahead_behind(&self, base: &str, head: &str) -> Result<(usize, usize), GitError> {
-        let ahead = self.count_commits(base, head)?;
-        let behind = self.count_commits(head, base)?;
+        // Acquire permit once for both rev-list operations to avoid nested acquisition
+        let _guard = super::HEAVY_OPS_SEMAPHORE.acquire();
+
+        let range_ahead = format!("{}..{}", base, head);
+        let range_behind = format!("{}..{}", head, base);
+
+        let stdout_ahead = self.run_command(&["rev-list", "--count", &range_ahead])?;
+        let stdout_behind = self.run_command(&["rev-list", "--count", &range_behind])?;
+
+        let ahead = stdout_ahead
+            .trim()
+            .parse()
+            .map_err(|e| GitError::ParseError(format!("Failed to parse ahead count: {}", e)))?;
+        let behind = stdout_behind
+            .trim()
+            .parse()
+            .map_err(|e| GitError::ParseError(format!("Failed to parse behind count: {}", e)))?;
+
         Ok((ahead, behind))
     }
 
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> Result<LineDiff, GitError> {
+        // Limit concurrent diff operations to reduce mmap thrash on pack files
+        let _guard = super::HEAVY_OPS_SEMAPHORE.acquire();
+
         let stdout = self.run_command(&["diff", "--numstat", "HEAD"])?;
         LineDiff::from_numstat(&stdout)
     }
@@ -577,6 +600,9 @@ impl Repository {
     /// against the specified ref, regardless of what HEAD points to.
     ///
     pub fn working_tree_diff_vs_ref(&self, ref_name: &str) -> Result<LineDiff, GitError> {
+        // Limit concurrent diff operations to reduce mmap thrash on pack files
+        let _guard = super::HEAVY_OPS_SEMAPHORE.acquire();
+
         let stdout = self.run_command(&["diff", "--numstat", ref_name])?;
         LineDiff::from_numstat(&stdout)
     }
@@ -610,6 +636,9 @@ impl Repository {
     /// Get line diff statistics between two refs (using three-dot diff for merge base).
     ///
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> Result<LineDiff, GitError> {
+        // Limit concurrent diff operations to reduce mmap thrash on pack files
+        let _guard = super::HEAVY_OPS_SEMAPHORE.acquire();
+
         let range = format!("{}...{}", base, head);
         let stdout = self.run_command(&["diff", "--numstat", &range])?;
         LineDiff::from_numstat(&stdout)
@@ -864,14 +893,17 @@ impl Repository {
     /// # Ok::<(), worktrunk::git::GitError>(())
     /// ```
     pub fn run_command(&self, args: &[&str]) -> Result<String, GitError> {
+        use std::time::Instant;
+
         let mut cmd = Command::new("git");
         cmd.args(args);
         cmd.current_dir(&self.path);
 
         // Log: $ git <args> [worktree]
         // TODO: Guard with log::log_enabled! if args.join() overhead becomes measurable
-        if self.path.to_str() == Some(".") {
+        let worktree_name = if self.path.to_str() == Some(".") {
             log::debug!("$ git {}", args.join(" "));
+            ".".to_string()
         } else {
             let worktree = self
                 .path
@@ -879,11 +911,22 @@ impl Repository {
                 .and_then(|n| n.to_str())
                 .unwrap_or("?");
             log::debug!("$ git {} [{}]", args.join(" "), worktree);
-        }
+            worktree.to_string()
+        };
 
+        let t0 = Instant::now();
         let output = cmd
             .output()
             .map_err(|e| GitError::CommandFailed(e.to_string()))?;
+        let duration = t0.elapsed();
+
+        // Performance tracing at debug level (enable with RUST_LOG=debug)
+        log::debug!(
+            "[wt-trace] worktree={} cmd=\"git {}\" dur={:.1}ms",
+            worktree_name,
+            args.join(" "),
+            duration.as_secs_f64() * 1e3
+        );
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

@@ -3,22 +3,42 @@
 // This suite measures raw performance and scaling characteristics:
 //
 // 1. Synthetic benchmarks (fast, deterministic):
-//    - bench_list_by_worktree_count: Measures scaling with worktree count (1-8)
-//    - bench_list_by_repo_profile: Measures scaling with repo size (minimal/typical/large)
-//    - bench_sequential_vs_parallel: Light comparison of sequential vs parallel (3 data points)
+//    - bench_list_by_worktree_count: Measures scaling with worktree count (1-8), warm caches
+//    - bench_list_by_repo_profile: Measures scaling with repo size (minimal/typical/large), warm caches
+//    - bench_sequential_vs_parallel: Light comparison of sequential vs parallel (3 data points), warm caches
+//    - bench_list_cold_cache: Measures performance with all git caches invalidated (1, 4, 8 worktrees)
+//      Invalidates: index, commit-graph, packed-refs
 //
 // 2. Real repository benchmarks (slower, more realistic):
-//    - bench_list_real_repo: Uses rust-lang/rust repo (cloned to target/bench-repos/)
+//    - bench_list_real_repo: Uses rust-lang/rust repo (cloned to target/bench-repos/), warm caches
+//    - bench_list_real_repo_cold_cache: Same as above but with all caches invalidated (1, 4, 8 worktrees)
 //
 // Run all benchmarks:
 //   cargo bench --bench list
 //
 // Run specific benchmark:
 //   cargo bench --bench list bench_list_by_worktree_count
+//   cargo bench --bench list bench_list_cold_cache
 //   cargo bench --bench list bench_list_real_repo
+//   cargo bench --bench list bench_list_real_repo_cold_cache
+//
+// Skip slow benchmarks:
+//   cargo bench --bench list -- --skip cold --skip real
+//
+// Compare warm vs cold on real repo:
+//   cargo bench --bench list -- real_repo
 //
 // Note: Real repo benchmarks will clone rust-lang/rust on first run (~2-5 minutes).
 // The clone is cached in target/bench-repos/ and reused across runs.
+//
+// Cold cache benchmarks remove all git caches before each iteration to measure performance
+// without any git caching. This simulates first-run performance. Caches invalidated:
+// - Index (.git/index) - speeds up `git status` by ~10x
+// - Commit graph (.git/objects/info/commit-graph) - speeds up `git rev-list --count`
+// - Packed refs (.git/packed-refs) - speeds up ref resolution
+//
+// Note: Filesystem cache (OS-level) and pack files are not invalidated. Pack files are
+// part of git's object storage, not a cache, so they remain for all benchmarks.
 //
 // CI benchmarks are not included because:
 // - The expensive operations (GitHub/GitLab API calls) are network-dependent
@@ -276,6 +296,108 @@ fn bench_list_by_worktree_count(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_list_cold_cache(c: &mut Criterion) {
+    let mut group = c.benchmark_group("list_cold_cache");
+
+    let binary = get_release_binary();
+
+    // Use "typical" profile for this benchmark
+    let profile = &PROFILES[1];
+
+    // Test with fewer data points since cold cache benchmarks are slower
+    for num_worktrees in [1, 4, 8] {
+        let temp = create_realistic_repo(profile.commits, profile.files);
+        let repo_path = temp.path().join("main");
+
+        // Add worktrees with divergence
+        for i in 1..num_worktrees {
+            add_worktree_with_divergence(
+                &temp,
+                &repo_path,
+                i,
+                profile.commits_ahead,
+                profile.commits_behind,
+                profile.uncommitted_files,
+            );
+        }
+
+        let git_dir = repo_path.join(".git");
+
+        // Collect paths to all git caches
+        // 1. Index files (main repo + worktrees)
+        let mut index_paths = vec![git_dir.join("index")];
+        for i in 1..num_worktrees {
+            let wt_index = git_dir
+                .join("worktrees")
+                .join(format!("wt-{}", i))
+                .join("index");
+            index_paths.push(wt_index);
+        }
+
+        // 2. Commit graph cache
+        let commit_graph_dir = git_dir.join("objects").join("info");
+        let commit_graph = commit_graph_dir.join("commit-graph");
+        let commit_graphs_dir = commit_graph_dir.join("commit-graphs");
+
+        // 3. Packed refs cache
+        let packed_refs = git_dir.join("packed-refs");
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_worktrees),
+            &num_worktrees,
+            |b, _| {
+                b.iter_batched(
+                    || {
+                        // Setup phase - remove all git caches (not measured)
+
+                        // Remove index files
+                        for index_path in &index_paths {
+                            if index_path.exists() {
+                                std::fs::remove_file(index_path).unwrap_or_else(|_| {
+                                    panic!("Failed to remove index: {}", index_path.display())
+                                });
+                            }
+                        }
+
+                        // Remove commit graph
+                        if commit_graph.exists() {
+                            std::fs::remove_file(&commit_graph).unwrap_or_else(|_| {
+                                panic!("Failed to remove commit-graph: {}", commit_graph.display())
+                            });
+                        }
+                        if commit_graphs_dir.exists() {
+                            std::fs::remove_dir_all(&commit_graphs_dir).unwrap_or_else(|_| {
+                                panic!(
+                                    "Failed to remove commit-graphs: {}",
+                                    commit_graphs_dir.display()
+                                )
+                            });
+                        }
+
+                        // Remove packed refs
+                        if packed_refs.exists() {
+                            std::fs::remove_file(&packed_refs).unwrap_or_else(|_| {
+                                panic!("Failed to remove packed-refs: {}", packed_refs.display())
+                            });
+                        }
+                    },
+                    |_| {
+                        // Measured phase - only wt list execution
+                        Command::new(&binary)
+                            .arg("list")
+                            .current_dir(&repo_path)
+                            .output()
+                            .unwrap();
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn bench_list_by_repo_profile(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_by_profile");
 
@@ -398,14 +520,16 @@ fn get_or_clone_rust_repo() -> PathBuf {
                 println!("Using cached rust repo at {}", rust_repo.display());
                 return rust_repo;
             }
-            Ok(out) => {
-                panic!(
-                    "Git rev-parse failed in cached repo: {}",
-                    String::from_utf8_lossy(&out.stderr)
+            Ok(_) | Err(_) => {
+                // Corrupted or incomplete clone - remove and re-clone
+                println!(
+                    "Cached rust repo at {} is corrupted, removing and re-cloning...",
+                    rust_repo.display()
                 );
-            }
-            Err(e) => {
-                panic!("Failed to execute git command: {}", e);
+                std::fs::remove_dir_all(&rust_repo).unwrap_or_else(|e| {
+                    panic!("Failed to remove corrupted rust repo: {}", e);
+                });
+                // Fall through to clone
             }
         }
     }
@@ -505,12 +629,127 @@ fn bench_list_real_repo(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_list_real_repo_cold_cache(c: &mut Criterion) {
+    let mut group = c.benchmark_group("list_real_repo_cold_cache");
+
+    let binary = get_release_binary();
+
+    // Get or clone the rust repo (cached across runs)
+    let rust_repo = get_or_clone_rust_repo();
+
+    // Test with fewer data points since cold cache + large repo is slower
+    for num_worktrees in [1, 4, 8] {
+        // Create a temporary workspace for this benchmark run
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_main = temp.path().join("main");
+
+        // Copy the rust repo to the temp location (git worktree needs the original)
+        // Use git clone --local for fast copy with shared objects
+        let clone_output = Command::new("git")
+            .args([
+                "clone",
+                "--local",
+                rust_repo.to_str().unwrap(),
+                workspace_main.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            clone_output.status.success(),
+            "Failed to clone rust repo to workspace: {}",
+            String::from_utf8_lossy(&clone_output.stderr)
+        );
+
+        run_git(&workspace_main, &["config", "user.name", "Benchmark"]);
+        run_git(&workspace_main, &["config", "user.email", "bench@test.com"]);
+
+        // Add worktrees with realistic changes
+        for i in 1..num_worktrees {
+            add_worktree_with_divergence(
+                &temp,
+                &workspace_main,
+                i,
+                10, // commits ahead
+                0,  // commits behind (skip for now)
+                3,  // uncommitted files
+            );
+        }
+
+        let git_dir = workspace_main.join(".git");
+
+        // Collect paths to all git caches
+        let mut index_paths = vec![git_dir.join("index")];
+        for i in 1..num_worktrees {
+            let wt_index = git_dir
+                .join("worktrees")
+                .join(format!("wt-{}", i))
+                .join("index");
+            index_paths.push(wt_index);
+        }
+
+        let commit_graph_dir = git_dir.join("objects").join("info");
+        let commit_graph = commit_graph_dir.join("commit-graph");
+        let commit_graphs_dir = commit_graph_dir.join("commit-graphs");
+        let packed_refs = git_dir.join("packed-refs");
+
+        group.bench_with_input(
+            BenchmarkId::new("rust_repo_cold", num_worktrees),
+            &num_worktrees,
+            |b, _| {
+                b.iter_batched(
+                    || {
+                        // Setup phase - remove all git caches (not measured)
+                        for index_path in &index_paths {
+                            if index_path.exists() {
+                                std::fs::remove_file(index_path).unwrap_or_else(|_| {
+                                    panic!("Failed to remove index: {}", index_path.display())
+                                });
+                            }
+                        }
+
+                        if commit_graph.exists() {
+                            std::fs::remove_file(&commit_graph).unwrap_or_else(|_| {
+                                panic!("Failed to remove commit-graph: {}", commit_graph.display())
+                            });
+                        }
+                        if commit_graphs_dir.exists() {
+                            std::fs::remove_dir_all(&commit_graphs_dir).unwrap_or_else(|_| {
+                                panic!(
+                                    "Failed to remove commit-graphs: {}",
+                                    commit_graphs_dir.display()
+                                )
+                            });
+                        }
+
+                        if packed_refs.exists() {
+                            std::fs::remove_file(&packed_refs).unwrap_or_else(|_| {
+                                panic!("Failed to remove packed-refs: {}", packed_refs.display())
+                            });
+                        }
+                    },
+                    |_| {
+                        // Measured phase - only wt list execution
+                        Command::new(&binary)
+                            .arg("list")
+                            .current_dir(&workspace_main)
+                            .output()
+                            .unwrap();
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_list_by_worktree_count, bench_list_by_repo_profile, bench_sequential_vs_parallel, bench_list_real_repo
+    targets = bench_list_by_worktree_count, bench_list_by_repo_profile, bench_sequential_vs_parallel, bench_list_cold_cache, bench_list_real_repo, bench_list_real_repo_cold_cache
 }
 criterion_main!(benches);
