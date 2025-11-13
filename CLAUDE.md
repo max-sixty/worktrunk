@@ -536,3 +536,20 @@ cargo bench --bench completion
 ```
 
 `bench_list_real_repo` clones rust-lang/rust (~2-5 min first run). Skip during normal development.
+
+## JSON Output Format
+
+Use `wt list --format=json --full` for structured data access. Objects have:
+
+**Core fields:**
+- `type`: "worktree" | "not_worktree"
+- `worktree.path`, `worktree.branch`, `worktree.head`
+- `timestamp`, `commit_message`, `is_primary`
+
+**Diff stats:** `ahead`/`behind`, `working_tree_diff`, `branch_diff`, `working_tree_diff_with_main` (each: `{added, deleted}`)
+
+**Remote tracking:** `upstream_remote`, `upstream_ahead`, `upstream_behind`
+
+**State:** `has_conflicts`, `worktree_state` (null | "bisect" | "rebase" | etc.), `pr_status`, `ci_status`, `is_stale`
+
+Query: `jq '.[] | select(.worktree.branch == "main") | {path: .worktree.path, ahead, behind}'`
