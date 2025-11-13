@@ -7,7 +7,6 @@ exit_code: 1
 
 
 ----- stderr -----
-
 🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m1[0m[33m command:[0m
 
 🔄 pre-merge:

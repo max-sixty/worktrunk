@@ -17,7 +17,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpn5sywa/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpfCfS8A/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -25,7 +25,6 @@ exit_code: 0
 ⚪ Commands declined
 
 ----- stderr -----
-
 🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m1[0m[33m command:[0m
 
 🔄 post-create:

@@ -88,7 +88,6 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> std::io
     // In interactive mode, flushes both stdout and stderr
     crate::output::flush_for_stderr_prompt()?;
 
-    eprintln!();
     eprintln!(
         "{WARNING_EMOJI} {WARNING}{WARNING_BOLD}{project_name}{WARNING_BOLD:#}{WARNING} wants to execute {WARNING_BOLD}{count}{WARNING_BOLD:#}{WARNING} command{plural}:{WARNING:#}"
     );

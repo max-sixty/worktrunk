@@ -9,7 +9,6 @@ exit_code: 0
 💡 [2mTo enable automatic cd, run: wt config shell[0m
 
 ----- stderr -----
-
 🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m4[0m[33m commands:[0m
 
 🔄 post-create:
