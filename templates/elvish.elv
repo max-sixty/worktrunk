@@ -14,7 +14,7 @@ if (or (has-external {{ cmd_prefix }}) (has-env WORKTRUNK_BIN)) {
     # NOTE: Uses 'slurp' which buffers output. Elvish's I/O model doesn't provide
     # good primitives for byte-level streaming of process output while also capturing
     # it for directive processing. Exit codes are now captured correctly.
-    fn _wt_exec {|@args|
+    fn wt_exec {|@args|
         var exit-code = 0
         var output = ""
         var exec-cmd = ""
@@ -112,7 +112,7 @@ if (or (has-external {{ cmd_prefix }}) (has-env WORKTRUNK_BIN)) {
         }
 
         # Always use --internal mode for directive support
-        _wt_exec --internal $@filtered-args
+        wt_exec --internal $@filtered-args
 
         # Restore original command
         set _WORKTRUNK_CMD = $saved-cmd

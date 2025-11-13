@@ -9,7 +9,7 @@ if shutil.which("{{ cmd_prefix }}") is not None or os.environ.get('WORKTRUNK_BIN
     # This allows testing development builds: $WORKTRUNK_BIN = ./target/debug/{{ cmd_prefix }}
     _WORKTRUNK_CMD = os.environ.get('WORKTRUNK_BIN', '{{ cmd_prefix }}')
 
-    def _wt_exec(args, cmd=None):
+    def wt_exec(args, cmd=None):
         """Helper function to parse wt output and handle directives
         Directives are NUL-terminated to support multi-line commands"""
         import subprocess
@@ -108,7 +108,7 @@ if shutil.which("{{ cmd_prefix }}") is not None or os.environ.get('WORKTRUNK_BIN
                 os.environ['CLICOLOR_FORCE'] = '1'
 
         # Always use --internal mode for directive support
-        return _wt_exec(["--internal"] + filtered_args, cmd=cmd)
+        return wt_exec(["--internal"] + filtered_args, cmd=cmd)
 
     # Register the alias
     aliases['{{ cmd_prefix }}'] = _{{ cmd_prefix }}_wrapper

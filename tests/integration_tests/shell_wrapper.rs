@@ -1,7 +1,7 @@
 //! Shell wrapper integration tests
 //!
 //! Tests that verify the complete shell integration path - commands executed through
-//! the actual shell wrapper (_wt_exec in bash/zsh/fish).
+//! the actual shell wrapper (wt_exec in bash/zsh/fish).
 //!
 //! These tests ensure that:
 //! - Directives are never leaked to users
@@ -331,7 +331,7 @@ fn normalize_newlines(s: &str) -> String {
 ///
 /// This simulates what actually happens when users run `wt switch`, etc. in their shell:
 /// 1. The `wt` function is defined (from shell integration)
-/// 2. It calls `_wt_exec --internal switch ...`
+/// 2. It calls `wt_exec --internal switch ...`
 /// 3. The wrapper parses NUL-delimited output and handles directives
 /// 4. Users see only the final human-friendly output
 ///

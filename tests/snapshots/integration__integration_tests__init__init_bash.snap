@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpGSj2lQ/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpuSx06y/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -32,7 +32,9 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 # Shared directive parser for POSIX shells (bash, zsh, oil).
 # Reads worktrunk's NUL-delimited output in real-time via a FIFO so progress
 # and hint messages stream immediately while keeping stderr attached to the TTY.
-_wt_exec() {
+# Note: Named without leading underscore to avoid being filtered by shell
+# snapshot systems (e.g., Claude Code) that exclude private functions.
+wt_exec() {
     local exec_cmd="" chunk="" exit_code=0 tmp_dir="" exit_file="" fifo_path="" runner_pid=""
 
     tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/wt.XXXXXX") || {
@@ -119,7 +121,7 @@ _wt_exec() {
         fi
 
         # Always use --internal mode for directive support
-        _wt_exec --internal "${args[@]}"
+        wt_exec --internal "${args[@]}"
 
         # Restore original command
         local result=$?

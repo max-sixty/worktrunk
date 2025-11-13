@@ -8,7 +8,7 @@ if ((Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) -or $env:WORKTR
 
     # Helper function to parse wt output and handle directives
     # Directives are NUL-terminated to support multi-line commands
-    function _wt_exec {
+    function wt_exec {
         param(
             [string]$Command,
             [Parameter(ValueFromRemainingArguments=$true)]
@@ -135,7 +135,7 @@ if ((Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) -or $env:WORKTR
         }
 
         # Always use --internal mode for directive support
-        $exitCode = _wt_exec -Command $cmd --internal @filteredArgs
+        $exitCode = wt_exec -Command $cmd --internal @filteredArgs
         return $exitCode
     }
 }

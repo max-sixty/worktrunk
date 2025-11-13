@@ -11,7 +11,7 @@ if (which {{ cmd_prefix }} | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empt
     # NOTE: Uses 'complete' which buffers output. Nushell's streaming model doesn't
     # provide primitives for byte-level reading of process output, so real-time
     # streaming is not currently possible. Exit codes are captured correctly.
-    export def --env _wt_exec [cmd?: string, ...args] {
+    export def --env wt_exec [cmd?: string, ...args] {
         let command = (if ($cmd | is-empty) { $_WORKTRUNK_CMD } else { $cmd })
 
         # Run command and capture result
@@ -87,7 +87,7 @@ if (which {{ cmd_prefix }} | is-not-empty) or ($env.WORKTRUNK_BIN? | is-not-empt
 
         # Always use --internal mode for directive support
         let internal_args = (["--internal"] | append $filtered_args)
-        let exit_code = (_wt_exec $cmd ...$internal_args)
+        let exit_code = (wt_exec $cmd ...$internal_args)
         return $exit_code
     }
 }

@@ -38,7 +38,7 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
         fi
 
         # Always use --internal mode for directive support
-        _wt_exec --internal "${args[@]}"
+        wt_exec --internal "${args[@]}"
 
         # Restore original command
         local result=$?

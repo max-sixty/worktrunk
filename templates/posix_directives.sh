@@ -1,7 +1,9 @@
 # Shared directive parser for POSIX shells (bash, zsh, oil).
 # Reads worktrunk's NUL-delimited output in real-time via a FIFO so progress
 # and hint messages stream immediately while keeping stderr attached to the TTY.
-_wt_exec() {
+# Note: Named without leading underscore to avoid being filtered by shell
+# snapshot systems (e.g., Claude Code) that exclude private functions.
+wt_exec() {
     local exec_cmd="" chunk="" exit_code=0 tmp_dir="" exit_file="" fifo_path="" runner_pid=""
 
     tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/wt.XXXXXX") || {

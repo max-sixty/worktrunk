@@ -18,14 +18,14 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
     # would serialize the pipeline (RHS wouldn't run until LHS finishes).
     # By keeping the LHS as a plain external command, the RHS can consume
     # the stream concurrently, preserving temporal ordering.
-    function _wt_exec
+    function wt_exec
         set -l exec_cmd ""
 
         # Debug mode: set WORKTRUNK_DEBUG=1 to see what's happening
         set -l debug_mode 0
         if set -q WORKTRUNK_DEBUG
             set debug_mode 1
-            echo "[DEBUG] Starting _wt_exec with args: $argv" >&2
+            echo "[DEBUG] Starting wt_exec with args: $argv" >&2
         end
 
         # CRITICAL: Do NOT add "2>&1" here!
@@ -118,7 +118,7 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
         end
 
         # Always use --internal mode for directive support
-        _wt_exec --internal $args
+        wt_exec --internal $args
 
         # Restore original command
         set -l result $status
