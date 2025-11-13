@@ -299,3 +299,87 @@ fn test_permission_error_user_output() {
         insta::assert_snapshot!("permission_error_user_output", combined);
     });
 }
+
+/// Helper for run-hook snapshot tests with approval prompt
+fn snapshot_run_hook(test_name: &str, repo: &TestRepo, hook_type: &str, approve: bool) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "beta", &["run-hook", hook_type], None);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().expect("Failed to spawn command");
+
+        // Write approval response
+        {
+            let stdin = child.stdin.as_mut().expect("Failed to get stdin");
+            let response = if approve { b"y\n" } else { b"n\n" };
+            stdin.write_all(response).expect("Failed to write to stdin");
+        }
+
+        let output = child
+            .wait_with_output()
+            .expect("Failed to wait for command");
+
+        // Use insta snapshot for combined output
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!(
+            "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
+            output.status.code().unwrap_or(-1),
+            stdout,
+            stderr
+        );
+
+        insta::assert_snapshot!(test_name, combined);
+    });
+}
+
+/// Test that `wt beta run-hook pre-merge` requires approval (security boundary test)
+///
+/// This verifies the fix for the security issue where run-hook was bypassing approval.
+/// Before the fix, pre-merge hooks ran with auto_trust=true, skipping approval prompts.
+#[test]
+fn test_run_hook_pre_merge_requires_approval() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    repo.write_project_config(
+        r#"pre-merge-command = "echo 'Running pre-merge checks on {{ branch }}'""#,
+    );
+
+    repo.commit("Add pre-merge hook");
+
+    // Decline approval to verify the prompt appears
+    snapshot_run_hook(
+        "run_hook_pre_merge_requires_approval",
+        &repo,
+        "pre-merge",
+        false,
+    );
+}
+
+/// Test that `wt beta run-hook post-merge` requires approval (security boundary test)
+///
+/// This verifies the fix for the security issue where run-hook was bypassing approval.
+/// Before the fix, post-merge hooks ran with auto_trust=true, skipping approval prompts.
+#[test]
+fn test_run_hook_post_merge_requires_approval() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    repo.write_project_config(
+        r#"post-merge-command = "echo 'Post-merge cleanup for {{ branch }}'""#,
+    );
+
+    repo.commit("Add post-merge hook");
+
+    // Decline approval to verify the prompt appears
+    snapshot_run_hook(
+        "run_hook_post_merge_requires_approval",
+        &repo,
+        "post-merge",
+        false,
+    );
+}
