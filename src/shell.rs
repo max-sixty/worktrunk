@@ -1,8 +1,6 @@
 use askama::Template;
 use std::path::PathBuf;
 
-const POSIX_DIRECTIVE_SHIM: &str = include_str!("../templates/posix_directives.sh");
-
 /// Supported shells
 #[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
@@ -300,17 +298,25 @@ impl ShellInit {
     pub fn generate(&self, cli_cmd: &clap::Command) -> Result<String, askama::Error> {
         match self.shell {
             Shell::Bash | Shell::Oil => {
+                let posix_shim = PosixDirectivesTemplate {
+                    cmd_prefix: &self.cmd_prefix,
+                }
+                .render()?;
                 let template = BashTemplate {
                     shell_name: self.shell.to_string(),
                     cmd_prefix: &self.cmd_prefix,
-                    posix_shim: POSIX_DIRECTIVE_SHIM,
+                    posix_shim: &posix_shim,
                 };
                 template.render()
             }
             Shell::Zsh => {
+                let posix_shim = PosixDirectivesTemplate {
+                    cmd_prefix: &self.cmd_prefix,
+                }
+                .render()?;
                 let template = ZshTemplate {
                     cmd_prefix: &self.cmd_prefix,
-                    posix_shim: POSIX_DIRECTIVE_SHIM,
+                    posix_shim: &posix_shim,
                 };
                 template.render()
             }
@@ -349,6 +355,13 @@ impl ShellInit {
             }
         }
     }
+}
+
+/// POSIX directive shim template (shared by bash, zsh, oil)
+#[derive(Template)]
+#[template(path = "posix_directives.sh", escape = "none")]
+struct PosixDirectivesTemplate<'a> {
+    cmd_prefix: &'a str,
 }
 
 /// Bash shell template

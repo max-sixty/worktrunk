@@ -3,6 +3,8 @@
 # and hint messages stream immediately while keeping stderr attached to the TTY.
 # Note: Named without leading underscore to avoid being filtered by shell
 # snapshot systems (e.g., Claude Code) that exclude private functions.
+# Note: Uses ${_WORKTRUNK_CMD:-{{ cmd_prefix }}} fallback because shell snapshot
+# systems may capture functions but not environment variables.
 wt_exec() {
     local exec_cmd="" chunk="" exit_code=0 tmp_dir="" exit_file="" fifo_path="" runner_pid=""
 
@@ -21,7 +23,7 @@ wt_exec() {
     fi
 
     (
-        command "$_WORKTRUNK_CMD" "$@"
+        command "${_WORKTRUNK_CMD:-{{ cmd_prefix }}}" "$@"
         printf '%s' "$?" >"$exit_file"
     ) >"$fifo_path" &
     runner_pid=$!
