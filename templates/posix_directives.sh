@@ -22,11 +22,14 @@ wt_exec() {
         return 1
     fi
 
+    # Run command in background to enable real-time streaming via FIFO.
     (
         command "${_WORKTRUNK_CMD:-{{ cmd_prefix }}}" "$@"
         printf '%s' "$?" >"$exit_file"
     ) >"$fifo_path" &
     runner_pid=$!
+    # Remove job from shell's job table to prevent job control notifications
+    disown "$runner_pid" 2>/dev/null || true
 
     # Read directives as they arrive; keep looping even if the final chunk isn't NUL-terminated.
     while IFS= read -r -d '' chunk || [[ -n "$chunk" ]]; do
