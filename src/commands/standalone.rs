@@ -43,12 +43,12 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> Result<()
         HookType::PreMerge => {
             check_hook_configured(&project_config.pre_merge_command, hook_type)?;
             let target_branch = repo.default_branch().unwrap_or_else(|_| "main".to_string());
-            run_pre_merge_commands(&project_config, &ctx, &target_branch)
+            run_pre_merge_commands(&project_config, &ctx, &target_branch, false)
         }
         HookType::PostMerge => {
             check_hook_configured(&project_config.post_merge_command, hook_type)?;
             let target_branch = repo.default_branch().unwrap_or_else(|_| "main".to_string());
-            execute_post_merge_commands(&ctx, &target_branch)
+            execute_post_merge_commands(&ctx, &target_branch, false)
         }
     }
 }

@@ -156,7 +156,7 @@ pub fn handle_merge(
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if !no_verify && let Some(project_config) = repo.load_project_config()? {
         let ctx = env.context(force);
-        run_pre_merge_commands(&project_config, &ctx, &target_branch)?;
+        run_pre_merge_commands(&project_config, &ctx, &target_branch, true)?;
     }
 
     // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
@@ -229,7 +229,7 @@ pub fn handle_merge(
             &primary_repo_root,
             force,
         );
-        execute_post_merge_commands(&ctx, &target_branch)?;
+        execute_post_merge_commands(&ctx, &target_branch, true)?;
     }
 
     Ok(())
@@ -263,10 +263,15 @@ fn handle_merge_summary_output(primary_path: Option<&std::path::Path>) -> Result
     Ok(())
 }
 /// Run pre-merge commands sequentially (blocking, fail-fast)
+///
+/// # Security Note
+/// `auto_trust`: When true, skip approval prompts (commands already approved in `wt merge`'s batch).
+///              When false, require approval (standalone `wt beta run-hook` execution).
 pub fn run_pre_merge_commands(
     project_config: &ProjectConfig,
     ctx: &CommandContext,
     target_branch: &str,
+    auto_trust: bool,
 ) -> Result<(), GitError> {
     let Some(pre_merge_config) = &project_config.pre_merge_command else {
         return Ok(());
@@ -277,7 +282,7 @@ pub fn run_pre_merge_commands(
     pipeline.run_sequential(
         pre_merge_config,
         CommandPhase::PreMerge,
-        true, // auto_trust: commands already approved in batch
+        auto_trust,
         &[("target", target_branch)],
         "pre-merge",
         HookType::PreMerge,
@@ -286,9 +291,14 @@ pub fn run_pre_merge_commands(
 }
 
 /// Execute post-merge commands sequentially in the main worktree (blocking)
+///
+/// # Security Note
+/// `auto_trust`: When true, skip approval prompts (commands already approved in `wt merge`'s batch).
+///              When false, require approval (standalone `wt beta run-hook` execution).
 pub fn execute_post_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
+    auto_trust: bool,
 ) -> Result<(), GitError> {
     // Load project config from the main worktree path directly
     let project_config = match ctx.repo.load_project_config()? {
@@ -305,7 +315,7 @@ pub fn execute_post_merge_commands(
     pipeline.run_sequential(
         post_merge_config,
         CommandPhase::PostMerge,
-        true, // auto_trust: commands already approved in batch
+        auto_trust,
         &[("target", target_branch)],
         "post-merge",
         HookType::PostMerge,

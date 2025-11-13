@@ -1,0 +1,16 @@
+---
+source: tests/integration_tests/approval_ui.rs
+expression: combined
+---
+exit_code: 1
+----- stdout -----
+
+
+----- stderr -----
+
+🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m1[0m[33m command:[0m
+
+🔄 post-merge:
+[40m [0m  [1m[34mecho[0m [32m'Post-merge cleanup for main'[0m[0m
+
+💡 Allow and remember? [1m[y/N][0m
