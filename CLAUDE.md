@@ -539,17 +539,105 @@ cargo bench --bench completion
 
 ## JSON Output Format
 
-Use `wt list --format=json --full` for structured data access. Objects have:
+Use `wt list --format=json` for structured data access. The output is an array of objects with `type: "worktree" | "branch"`.
 
-**Core fields:**
-- `type`: "worktree" | "not_worktree"
-- `worktree.path`, `worktree.branch`, `worktree.head`
-- `timestamp`, `commit_message`, `is_primary`
+### Common Fields (all objects)
 
-**Diff stats:** `ahead`/`behind`, `working_tree_diff`, `branch_diff`, `working_tree_diff_with_main` (each: `{added, deleted}`)
+- `type`: "worktree" | "branch"
+- `head_sha`: commit SHA
+- `timestamp`: commit timestamp (Unix epoch)
+- `commit_message`: commit message text
+- `ahead`, `behind`: commits ahead/behind main branch
+- `branch_diff`: `{added, deleted}` - line diff vs main
+- `has_conflicts`: boolean - merge conflicts with main
+- `upstream_remote`, `upstream_ahead`, `upstream_behind`: remote tracking status
+- `pr_status`: PR/CI status object (null if not available)
+- `user_status`: user-defined status from `worktrunk.status` config (optional)
 
-**Remote tracking:** `upstream_remote`, `upstream_ahead`, `upstream_behind`
+### Worktree-Specific Fields
 
-**State:** `has_conflicts`, `worktree_state` (null | "bisect" | "rebase" | etc.), `pr_status`, `ci_status`, `is_stale`
+- `path`: absolute path to worktree
+- `branch`: branch name (null if detached)
+- `bare`, `detached`: boolean flags
+- `locked`, `prunable`: reason strings (null if not applicable)
+- `working_tree_diff`: `{added, deleted}` - uncommitted changes
+- `working_tree_diff_with_main`: `{added, deleted}` or null
+  - `null`: not computed (optimization when trees clearly differ)
+  - `{added: 0, deleted: 0}`: working tree matches main exactly
+- `worktree_state`: "rebase" | "merge" | null - git operation in progress
+- `is_primary`: boolean - is main/primary worktree
+- `status_symbols`: structured status object (see below)
 
-Query: `jq '.[] | select(.worktree.branch == "main") | {path: .worktree.path, ahead, behind}'`
+### Branch-Specific Fields
+
+- `name`: branch name
+
+### Status Symbols Structure (worktrees only)
+
+The `status_symbols` object provides structured access to status indicators:
+
+- `has_conflicts`: boolean - merge conflicts detected
+- `branch_state`: "" | "≡" | "∅"
+  - "≡": working tree matches main
+  - "∅": no commits and clean
+- `git_operation`: "" | "↻" | "⋈"
+  - "↻": rebase in progress
+  - "⋈": merge in progress
+- `worktree_attrs`: string - combination of:
+  - "◇": bare worktree
+  - "⊠": locked
+  - "⚠": prunable
+- `main_divergence`: "" | "↑" | "↓" | "↕"
+  - "↑": ahead of main
+  - "↓": behind main
+  - "↕": diverged (both ahead and behind)
+- `upstream_divergence`: "" | "⇡" | "⇣" | "⇅"
+  - "⇡": ahead of remote
+  - "⇣": behind remote
+  - "⇅": diverged from remote
+- `working_tree`: string - combination of:
+  - "?": untracked files
+  - "!": modified files
+  - "+": staged changes
+  - "»": renamed files
+  - "✘": deleted files
+
+### Display Fields (json-pretty format only)
+
+These fields contain ANSI-formatted strings for human-readable output:
+
+- `commits_display` (branches only)
+- `branch_diff_display` (branches only)
+- `upstream_display` (optional)
+- `ci_status_display` (optional)
+- `status_display`:
+  - Worktrees: rendered status symbols + user status
+  - Branches: user status or "·"
+- `working_diff_display` (worktrees only, optional)
+
+**Note**: Display fields are omitted when empty/null.
+
+### Query Examples
+
+```bash
+# Get main worktree info
+jq '.[] | select(.branch == "main") | {path, ahead, behind}'
+
+# Find worktrees with uncommitted changes
+jq '.[] | select(.type == "worktree" and .working_tree_diff.added > 0)'
+
+# Find worktrees with conflicts
+jq '.[] | select(.type == "worktree" and .status_symbols.has_conflicts)'
+
+# Find worktrees in rebase or merge
+jq '.[] | select(.type == "worktree" and .status_symbols.git_operation != "")'
+
+# Get branches ahead of main
+jq '.[] | select(.ahead > 0) | {branch: (.branch // .name), ahead}'
+
+# Find branches without worktrees
+jq '.[] | select(.type == "branch") | .name'
+
+# Get worktrees that match main exactly
+jq '.[] | select(.type == "worktree" and .working_tree_diff_with_main.added == 0 and .working_tree_diff_with_main.deleted == 0)'
+```

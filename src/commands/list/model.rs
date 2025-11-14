@@ -54,11 +54,27 @@ impl DisplayFields {
 
 #[derive(serde::Serialize)]
 pub struct WorktreeInfo {
-    pub worktree: worktrunk::git::Worktree,
+    // Worktree identity fields (flattened from worktrunk::git::Worktree)
+    pub path: PathBuf,
+    #[serde(rename = "head_sha")]
+    pub head: String,
+    pub branch: Option<String>,
+    pub bare: bool,
+    pub detached: bool,
+    pub locked: Option<String>,
+    pub prunable: Option<String>,
+
+    // Commit details
     #[serde(flatten)]
     pub commit: CommitDetails,
+
+    // Divergence from main
     #[serde(flatten)]
     pub counts: AheadBehind,
+    #[serde(flatten)]
+    pub branch_diff: BranchDiffTotals,
+
+    // Working tree state
     pub working_tree_diff: LineDiff,
     /// Diff between working tree and main branch.
     /// `None` means "not computed" (optimization: skipped when trees differ).
@@ -66,14 +82,18 @@ pub struct WorktreeInfo {
     /// `Some((a, d))` means a lines added, d deleted vs main.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff_with_main: Option<LineDiff>,
-    #[serde(flatten)]
-    pub branch_diff: BranchDiffTotals,
+    pub worktree_state: Option<String>,
+    pub has_conflicts: bool,
+
+    // Metadata
     pub is_primary: bool,
+
+    // Remote/upstream
     #[serde(flatten)]
     pub upstream: UpstreamStatus,
-    pub worktree_state: Option<String>,
+
+    // Status
     pub pr_status: Option<PrStatus>,
-    pub has_conflicts: bool,
     /// Git status symbols (=, ↑, ↓, ⇡, ⇣, ?, !, +, », ✘) indicating working tree state
     pub status_symbols: StatusSymbols,
     /// User-defined status from worktrunk.status git config
@@ -90,6 +110,7 @@ pub struct WorktreeInfo {
 #[derive(serde::Serialize)]
 pub struct BranchInfo {
     pub name: String,
+    #[serde(rename = "head_sha")]
     pub head: String,
     #[serde(flatten)]
     pub commit: CommitDetails,
@@ -226,7 +247,7 @@ pub struct ListData {
 impl ListItem {
     pub fn branch_name(&self) -> &str {
         match self {
-            ListItem::Worktree(wt) => wt.worktree.branch.as_deref().unwrap_or("(detached)"),
+            ListItem::Worktree(wt) => wt.branch.as_deref().unwrap_or("(detached)"),
             ListItem::Branch(br) => &br.name,
         }
     }
@@ -244,7 +265,7 @@ impl ListItem {
 
     pub fn head(&self) -> &str {
         match self {
-            ListItem::Worktree(info) => &info.worktree.head,
+            ListItem::Worktree(info) => &info.head,
             ListItem::Branch(info) => &info.head,
         }
     }
@@ -285,7 +306,7 @@ impl ListItem {
     }
 
     pub fn worktree_path(&self) -> Option<&PathBuf> {
-        self.worktree_info().map(|info| &info.worktree.path)
+        self.worktree_info().map(|info| &info.path)
     }
 
     pub fn pr_status(&self) -> Option<&PrStatus> {
@@ -961,17 +982,25 @@ impl WorktreeInfo {
         };
 
         Ok(WorktreeInfo {
-            worktree: wt.clone(),
+            // Flatten worktree fields
+            path: wt.path.clone(),
+            head: wt.head.clone(),
+            branch: wt.branch.clone(),
+            bare: wt.bare,
+            detached: wt.detached,
+            locked: wt.locked.clone(),
+            prunable: wt.prunable.clone(),
+            // Remaining fields
             commit,
             counts,
+            branch_diff,
             working_tree_diff,
             working_tree_diff_with_main,
-            branch_diff,
+            worktree_state,
+            has_conflicts,
             is_primary,
             upstream,
-            worktree_state,
             pr_status,
-            has_conflicts,
             status_symbols: symbols,
             user_status,
             display,

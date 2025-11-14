@@ -844,15 +844,13 @@ mod tests {
         };
 
         let info1 = WorktreeInfo {
-            worktree: worktrunk::git::Worktree {
-                path: PathBuf::from("/test"),
-                head: "abc123".to_string(),
-                branch: Some("main".to_string()),
-                bare: false,
-                detached: false,
-                locked: None,
-                prunable: None,
-            },
+            path: PathBuf::from("/test"),
+            head: "abc123".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
             commit: CommitDetails {
                 timestamp: 0,
                 commit_message: "Test".to_string(),
@@ -922,15 +920,13 @@ mod tests {
 
         // Create test data with specific widths to verify position calculation
         let info = WorktreeInfo {
-            worktree: worktrunk::git::Worktree {
-                path: PathBuf::from("/test/path"),
-                head: "abc12345".to_string(),
-                branch: Some("feature".to_string()),
-                bare: false,
-                detached: false,
-                locked: None,
-                prunable: None,
-            },
+            path: PathBuf::from("/test/path"),
+            head: "abc12345".to_string(),
+            branch: Some("feature".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
             commit: CommitDetails {
                 timestamp: 1234567890,
                 commit_message: "Test commit message".to_string(),
@@ -999,15 +995,13 @@ mod tests {
 
         // Create minimal data - most columns will be empty
         let info = WorktreeInfo {
-            worktree: worktrunk::git::Worktree {
-                path: PathBuf::from("/test"),
-                head: "abc12345".to_string(),
-                branch: Some("main".to_string()),
-                bare: false,
-                detached: false,
-                locked: None,
-                prunable: None,
-            },
+            path: PathBuf::from("/test"),
+            head: "abc12345".to_string(),
+            branch: Some("main".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
             commit: CommitDetails {
                 timestamp: 1234567890,
                 commit_message: "Test".to_string(),
@@ -1067,15 +1061,13 @@ mod tests {
         // visible(branch) → empty(working_diff) → empty(ahead_behind) → empty(branch_diff)
         // → empty(states) → visible(path)
         let info = WorktreeInfo {
-            worktree: worktrunk::git::Worktree {
-                path: PathBuf::from("/test/worktree"),
-                head: "abc12345".to_string(),
-                branch: Some("feature-x".to_string()),
-                bare: false,
-                detached: false,
-                locked: None,
-                prunable: None,
-            },
+            path: PathBuf::from("/test/worktree"),
+            head: "abc12345".to_string(),
+            branch: Some("feature-x".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
             commit: CommitDetails {
                 timestamp: 1234567890,
                 commit_message: "Test commit".to_string(),

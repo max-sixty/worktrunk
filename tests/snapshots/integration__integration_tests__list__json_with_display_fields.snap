@@ -12,10 +12,11 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp2IgNi2/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpLFo230/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -23,19 +24,21 @@ exit_code: 0
 [
   {
     "type": "worktree",
-    "worktree": {
-      "path": "[REPO]",
-      "head": "[SHA]",
-      "branch": "main",
-      "bare": false,
-      "detached": false,
-      "locked": null,
-      "prunable": null
-    },
+    "path": "[REPO]",
+    "head_sha": "a27cd57d20a6211799da676e70edefa5152f99fe",
+    "branch": "main",
+    "bare": false,
+    "detached": false,
+    "locked": null,
+    "prunable": null,
     "timestamp": 0,
     "commit_message": "Main commit 2",
     "ahead": 0,
     "behind": 0,
+    "branch_diff": {
+      "added": 0,
+      "deleted": 0
+    },
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
@@ -44,17 +47,13 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "branch_diff": {
-      "added": 0,
-      "deleted": 0
-    },
+    "worktree_state": null,
+    "has_conflicts": false,
     "is_primary": true,
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,
-    "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
       "has_conflicts": false,
       "branch_state": "",
@@ -67,34 +66,32 @@ exit_code: 0
   },
   {
     "type": "worktree",
-    "worktree": {
-      "path": "[WORKTREE_FEATURE_AHEAD]",
-      "head": "[SHA]",
-      "branch": "feature-ahead",
-      "bare": false,
-      "detached": false,
-      "locked": null,
-      "prunable": null
-    },
+    "path": "[WORKTREE_FEATURE_AHEAD]",
+    "head_sha": "f16cd37915d5ee93903252f5cf877c76c54f3d50",
+    "branch": "feature-ahead",
+    "bare": false,
+    "detached": false,
+    "locked": null,
+    "prunable": null,
     "timestamp": 0,
     "commit_message": "Feature commit 2",
     "ahead": 2,
     "behind": 2,
-    "working_tree_diff": {
-      "added": 1,
-      "deleted": 1
-    },
     "branch_diff": {
       "added": 1,
       "deleted": 0
     },
+    "working_tree_diff": {
+      "added": 1,
+      "deleted": 1
+    },
+    "worktree_state": null,
+    "has_conflicts": false,
     "is_primary": false,
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,
-    "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
       "has_conflicts": false,
       "branch_state": "",
@@ -111,34 +108,32 @@ exit_code: 0
   },
   {
     "type": "worktree",
-    "worktree": {
-      "path": "[WORKTREE_FEATURE_BEHIND]",
-      "head": "[SHA]",
-      "branch": "feature-behind",
-      "bare": false,
-      "detached": false,
-      "locked": null,
-      "prunable": null
-    },
+    "path": "[WORKTREE_FEATURE_BEHIND]",
+    "head_sha": "6c3da84215d400bf6e05a7f9cd1efcfbd825b9e9",
+    "branch": "feature-behind",
+    "bare": false,
+    "detached": false,
+    "locked": null,
+    "prunable": null,
     "timestamp": 0,
     "commit_message": "Initial commit on main",
     "ahead": 0,
     "behind": 2,
-    "working_tree_diff": {
-      "added": 0,
-      "deleted": 0
-    },
     "branch_diff": {
       "added": 0,
       "deleted": 0
     },
+    "working_tree_diff": {
+      "added": 0,
+      "deleted": 0
+    },
+    "worktree_state": null,
+    "has_conflicts": false,
     "is_primary": false,
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,
-    "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
       "has_conflicts": false,
       "branch_state": "∅",

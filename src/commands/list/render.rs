@@ -290,7 +290,7 @@ impl<'a> ListRowContext<'a> {
     ) -> Option<Style> {
         let base_style = self.worktree_info.and_then(|info| {
             let is_current = current_worktree_path
-                .map(|p| p == &info.worktree.path)
+                .map(|p| p == &info.path)
                 .unwrap_or(false);
             match (is_current, info.is_primary) {
                 (true, _) => Some(CURRENT),
@@ -386,7 +386,7 @@ impl ColumnLayout {
                     return StyledLine::new();
                 };
                 let mut cell = StyledLine::new();
-                let path_str = shorten_path(&info.worktree.path, common_prefix);
+                let path_str = shorten_path(&info.path, common_prefix);
                 if let Some(style) = ctx.text_style {
                     cell.push_styled(path_str, style);
                 } else {

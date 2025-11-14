@@ -12,10 +12,11 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpS5lSrA/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpyW6sML/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -23,19 +24,21 @@ exit_code: 0
 [
   {
     "type": "worktree",
-    "worktree": {
-      "path": "[REPO]",
-      "head": "[SHA]",
-      "branch": "main",
-      "bare": false,
-      "detached": false,
-      "locked": null,
-      "prunable": null
-    },
+    "path": "[REPO]",
+    "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
+    "branch": "main",
+    "bare": false,
+    "detached": false,
+    "locked": null,
+    "prunable": null,
     "timestamp": 0,
     "commit_message": "Initial commit",
     "ahead": 0,
     "behind": 0,
+    "branch_diff": {
+      "added": 0,
+      "deleted": 0
+    },
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
@@ -44,17 +47,13 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "branch_diff": {
-      "added": 0,
-      "deleted": 0
-    },
+    "worktree_state": null,
+    "has_conflicts": false,
     "is_primary": true,
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,
-    "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
       "has_conflicts": false,
       "branch_state": "",
@@ -67,19 +66,21 @@ exit_code: 0
   },
   {
     "type": "worktree",
-    "worktree": {
-      "path": "[WORKTREE_FEATURE_DETACHED]",
-      "head": "[SHA]",
-      "branch": "feature-detached",
-      "bare": false,
-      "detached": false,
-      "locked": null,
-      "prunable": null
-    },
+    "path": "[WORKTREE_FEATURE_DETACHED]",
+    "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
+    "branch": "feature-detached",
+    "bare": false,
+    "detached": false,
+    "locked": null,
+    "prunable": null,
     "timestamp": 0,
     "commit_message": "Initial commit",
     "ahead": 0,
     "behind": 0,
+    "branch_diff": {
+      "added": 0,
+      "deleted": 0
+    },
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
@@ -88,17 +89,13 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "branch_diff": {
-      "added": 0,
-      "deleted": 0
-    },
+    "worktree_state": null,
+    "has_conflicts": false,
     "is_primary": false,
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,
-    "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
       "has_conflicts": false,
       "branch_state": "≡",
@@ -112,19 +109,21 @@ exit_code: 0
   },
   {
     "type": "worktree",
-    "worktree": {
-      "path": "[WORKTREE_LOCKED_FEATURE]",
-      "head": "[SHA]",
-      "branch": "locked-feature",
-      "bare": false,
-      "detached": false,
-      "locked": "Testing",
-      "prunable": null
-    },
+    "path": "[WORKTREE_LOCKED_FEATURE]",
+    "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
+    "branch": "locked-feature",
+    "bare": false,
+    "detached": false,
+    "locked": "Testing",
+    "prunable": null,
     "timestamp": 0,
     "commit_message": "Initial commit",
     "ahead": 0,
     "behind": 0,
+    "branch_diff": {
+      "added": 0,
+      "deleted": 0
+    },
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
@@ -133,17 +132,13 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "branch_diff": {
-      "added": 0,
-      "deleted": 0
-    },
+    "worktree_state": null,
+    "has_conflicts": false,
     "is_primary": false,
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,
-    "worktree_state": null,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
       "has_conflicts": false,
       "branch_state": "≡",

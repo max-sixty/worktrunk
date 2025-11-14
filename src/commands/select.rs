@@ -149,7 +149,7 @@ impl WorktreeSkimItem {
             return "No worktree (branch only)\n".to_string();
         };
 
-        let path = wt_info.worktree.path.display().to_string();
+        let path = wt_info.path.display().to_string();
         self.render_diff_preview(&["-C", &path, "diff", "HEAD"], "No uncommitted changes")
     }
 
