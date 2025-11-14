@@ -11,8 +11,21 @@
 // isn't designed for. See the extensive test suite in tests/integration_tests/completion.rs
 
 use clap::{Arg, Command, CommandFactory};
+use std::sync::OnceLock;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::styling::{ERROR, ERROR_EMOJI, println};
+
+/// Cache the built command to avoid repeated construction cost
+static CMD: OnceLock<Command> = OnceLock::new();
+
+/// Get or build the cached command
+fn built_cmd() -> &'static Command {
+    CMD.get_or_init(|| {
+        let mut cmd = crate::cli::Cli::command();
+        cmd.build();
+        cmd
+    })
+}
 
 /// Completion item with optional help text for fish shell descriptions
 #[derive(Debug)]
@@ -44,32 +57,140 @@ fn print_items(items: impl IntoIterator<Item = Item>) {
     }
 }
 
-/// Check if a positional argument should be completed
-/// Returns true if we're still completing the first positional arg
-/// Returns false if the positional arg has been provided and we've moved past it
-fn should_complete_positional_arg(args: &[String], start_index: usize) -> bool {
-    let mut i = start_index;
+/// True if `arg` takes one or more values (vs. boolean/COUNT flags)
+fn takes_value(arg: &Arg) -> bool {
+    arg.get_num_args().is_some_and(|n| n.max_values() > 0)
+}
 
-    while i < args.len() {
-        let arg = &args[i];
+/// Build a fast lookup of options (active subcommand + globals) -> takes_value
+fn build_opt_index<'a>(
+    active: &'a Command,
+    root: &'a Command,
+) -> (
+    std::collections::HashMap<String, bool>,
+    std::collections::HashMap<char, bool>,
+) {
+    use std::collections::HashMap;
 
-        if arg == "--base" || arg == "-b" {
-            // Skip flag and its value
-            i += 2;
-        } else if arg.starts_with("--") || (arg.starts_with('-') && arg.len() > 1) {
-            // Skip other flags
-            i += 1;
-        } else if !arg.is_empty() {
-            // Found a positional argument
-            // Only continue completing if it's at the last position
-            return i >= args.len() - 1;
-        } else {
-            // Empty string (cursor position)
-            i += 1;
+    let mut long_map: HashMap<String, bool> = HashMap::new();
+    let mut short_map: HashMap<char, bool> = HashMap::new();
+
+    // Local opts
+    for opt in active.get_opts() {
+        if let Some(l) = opt.get_long() {
+            long_map.insert(l.to_string(), takes_value(opt));
+        }
+        if let Some(s) = opt.get_short() {
+            short_map.insert(s, takes_value(opt));
         }
     }
 
-    // No positional arg found yet - should complete
+    // Global opts
+    for opt in root.get_opts() {
+        if opt.is_global_set() {
+            if let Some(l) = opt.get_long() {
+                long_map.entry(l.to_string()).or_insert(takes_value(opt));
+            }
+            if let Some(s) = opt.get_short() {
+                short_map.entry(s).or_insert(takes_value(opt));
+            }
+        }
+    }
+
+    (long_map, short_map)
+}
+
+/// Check if a positional argument should be completed using clap introspection
+///
+/// This function uses clap metadata to determine whether we're still completing the first
+/// positional argument. It handles:
+/// - Flags that take values (--flag value, --flag=value, -f value, -fvalue)
+/// - Short flag clusters (-abc where any flag might consume a value)
+/// - POSIX `--` end-of-options terminator
+/// - Global flags (--verbose, --source, --internal)
+///
+/// Returns true if we're still on the first positional argument (should complete branches).
+/// Returns false if a positional has been provided and we've moved past it.
+fn should_complete_positional_arg(
+    args: &[String],
+    start_index: usize,
+    active: &Command,
+    root: &Command,
+) -> bool {
+    let (longs, shorts) = build_opt_index(active, root);
+
+    let mut i = start_index;
+    let mut accept_opts = true;
+
+    'scan: while i < args.len() {
+        let tok = &args[i];
+
+        if tok.is_empty() {
+            // Cursor placeholder; skip and keep scanning
+            i += 1;
+            continue 'scan;
+        }
+
+        if accept_opts && tok == "--" {
+            accept_opts = false;
+            i += 1;
+            continue 'scan;
+        }
+
+        if accept_opts && tok.starts_with("--") {
+            let body = &tok[2..];
+            if let Some(_eq) = body.find('=') {
+                // --long=value
+                i += 1;
+                continue 'scan;
+            } else {
+                // --long [value?]
+                let name = body;
+                if longs.get(name).copied().unwrap_or(false) {
+                    // Value is next arg unless we are currently typing it
+                    if i == args.len() - 1 {
+                        // Completing option value, not a positional
+                        return false;
+                    }
+                    i += 2;
+                    continue 'scan;
+                }
+                i += 1;
+                continue 'scan;
+            }
+        }
+
+        if accept_opts && tok.starts_with('-') && tok.len() > 1 {
+            // Short clusters: -abc (if some short takes a value, the remainder is its value)
+            let mut chars = tok[1..].chars().peekable();
+            while let Some(c) = chars.next() {
+                let takes = shorts.get(&c).copied().unwrap_or(false);
+                if takes {
+                    // If anything remains in-cluster, it's the value: consume token only
+                    if chars.peek().is_some() {
+                        i += 1;
+                        continue 'scan;
+                    } else {
+                        // Value is next token, unless we're currently typing it
+                        if i == args.len() - 1 {
+                            return false;
+                        }
+                        i += 2;
+                        continue 'scan;
+                    }
+                }
+            }
+            // No short in cluster takes a value -> just a bunch of booleans
+            i += 1;
+            continue 'scan;
+        }
+
+        // If we got here, `tok` is positional (or opts are terminated)
+        // Return true iff it's the last token (i.e., we are still completing it)
+        return i >= args.len() - 1;
+    }
+
+    // No positional arg found yet -> still need to complete it
     true
 }
 
@@ -191,12 +312,12 @@ fn detect_completion_target<'a>(args: &[String], cmd: &'a Command) -> Completion
         match subcmd {
             "switch" => {
                 let has_create = args.iter().any(|arg| arg == "--create" || arg == "-c");
-                if !has_create && should_complete_positional_arg(args, i) {
+                if !has_create && should_complete_positional_arg(args, i, cur, cmd) {
                     return CompletionTarget::PositionalBranch(last.to_string());
                 }
             }
             "push" | "merge" | "remove" => {
-                if should_complete_positional_arg(args, i) {
+                if should_complete_positional_arg(args, i, cur, cmd) {
                     return CompletionTarget::PositionalBranch(last.to_string());
                 }
             }
@@ -208,10 +329,9 @@ fn detect_completion_target<'a>(args: &[String], cmd: &'a Command) -> Completion
 }
 
 pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
-    let mut cmd = crate::cli::Cli::command();
-    cmd.build(); // Required for introspection
+    let cmd = built_cmd();
 
-    let target = detect_completion_target(&args, &cmd);
+    let target = detect_completion_target(&args, cmd);
 
     match target {
         CompletionTarget::Option(arg, prefix) => {
@@ -241,7 +361,7 @@ pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
             // Check for positionals with ValueEnum possible_values (e.g., init <Shell>, beta run-hook <HookType>)
             // Walk the command tree to find the active subcommand
             let mut i = 1;
-            let mut cur = &cmd;
+            let mut cur = cmd;
             while i < args.len() {
                 let tok = &args[i];
                 if tok == "--source" || tok == "--internal" || tok == "-v" || tok == "--verbose" {

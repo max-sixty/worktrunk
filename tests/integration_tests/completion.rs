@@ -992,3 +992,197 @@ fn test_complete_list_format_flag() {
     assert!(stdout.contains("table"));
     assert!(stdout.contains("json"));
 }
+
+#[test]
+fn test_complete_switch_with_execute_flag() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "develop"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch --execute "code ." <cursor>
+    // Should complete branches because --execute takes a value
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "--execute", "code .", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("develop")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[test]
+fn test_complete_switch_with_execute_equals_format() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "feature"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch --execute="code ." <cursor>
+    // Should complete branches
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "--execute=code .", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("feature")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[test]
+fn test_complete_switch_short_cluster_with_value() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "bugfix"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch -xcode <cursor>
+    // -x takes value "code" (fused), should complete branches for positional
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "-xcode", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("bugfix")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[test]
+fn test_complete_switch_with_double_dash_terminator() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "feature"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch -- <cursor>
+    // After --, everything is positional, should complete branches
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "--", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("feature")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
+
+#[test]
+fn test_complete_switch_positional_already_provided() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "existing"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch existing <cursor>
+    // Positional already provided, should NOT complete branches
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "existing", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should not suggest branches (stdout should be empty or not contain branches)
+    assert_eq!(stdout.trim(), "");
+}
+
+#[test]
+fn test_complete_switch_completing_execute_value() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "develop"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch --execute <cursor>
+    // Currently typing the value for --execute, should NOT complete branches
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "--execute", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should not suggest branches when completing option value
+    assert_eq!(stdout.trim(), "");
+}
+
+#[test]
+fn test_complete_merge_with_flags() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "hotfix"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt merge --no-remove --force <cursor>
+    // Should complete branches for positional (boolean flags don't consume arguments)
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "merge", "--no-remove", "--force", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+    assert!(branches.iter().any(|b| b.contains("hotfix")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+}
