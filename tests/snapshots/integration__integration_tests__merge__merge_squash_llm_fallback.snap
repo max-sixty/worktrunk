@@ -17,7 +17,7 @@ info:
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: nonexistent-llm-command
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpfNAwi9/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpjsJ0Qf/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -39,6 +39,6 @@ exit_code: 0
 [40m [0m   2 files changed, 2 insertions(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 2 files, [32m+2[0m)
 🔄 [36mRemoving worktree & branch...[0m
-✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, returned to primary at [1m[32m[REPO][0m[0m
+✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, changed directory to [1m[32m[REPO][0m[0m
 
 ----- stderr -----

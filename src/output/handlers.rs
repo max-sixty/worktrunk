@@ -69,12 +69,12 @@ fn format_remove_message(
                 if let Some(b) = branch_display {
                     // Re-establish GREEN after each green_bold reset to prevent color leak
                     format!(
-                        "{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN}, returned to primary at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
+                        "{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
                         primary_path.display()
                     )
                 } else {
                     format!(
-                        "{GREEN}{action}, returned to primary at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
+                        "{GREEN}{action}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
                         primary_path.display()
                     )
                 }
@@ -151,6 +151,7 @@ pub fn handle_remove_output(
         changed_directory,
         branch_name,
         no_delete_branch,
+        target_branch,
     } = result
     {
         // 1. Emit cd directive if needed - shell will execute this immediately
@@ -176,13 +177,33 @@ pub fn handle_remove_output(
         // 3. Delete the branch (unless --no-delete-branch was specified)
         // Returns true if branch was successfully deleted, false otherwise
         if !no_delete_branch {
-            // Create a Repository instance from the primary path to ensure we're running
-            // the command from a valid directory (the worktree we just removed may have
-            // been the current directory)
-            let primary_repo = worktrunk::git::Repository::at(primary_path);
+            let deletion_repo = worktrunk::git::Repository::at(primary_path);
 
-            // Use safe delete (-d) which fails if branch has unmerged commits
-            match primary_repo.run_command(&["branch", "-d", branch_name]) {
+            // Determine what to check against: target branch if specified, otherwise HEAD
+            let check_target = target_branch.as_deref().unwrap_or("HEAD");
+
+            // Use git merge-base --is-ancestor to check if branch is merged to target
+            // This is the same safety check that `git branch -d` does, but we can specify the target
+            let delete_result = match deletion_repo.run_command(&[
+                "merge-base",
+                "--is-ancestor",
+                branch_name,
+                check_target,
+            ]) {
+                Ok(_) => {
+                    // Branch is an ancestor of target (fully merged), safe to delete
+                    deletion_repo.run_command(&["branch", "-D", branch_name])
+                }
+                Err(_) => {
+                    // Branch is not fully merged to target
+                    Err(worktrunk::git::GitError::CommandFailed(format!(
+                        "error: the branch '{}' is not fully merged",
+                        branch_name
+                    )))
+                }
+            };
+
+            match delete_result {
                 Ok(_) => true,
                 Err(e) => {
                     if strict_branch_deletion {

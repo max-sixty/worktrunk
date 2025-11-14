@@ -1,7 +1,7 @@
 use worktrunk::HookType;
 use worktrunk::config::{Command, CommandPhase, ProjectConfig};
 use worktrunk::git::{GitError, Repository};
-use worktrunk::styling::{CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, GREEN_BOLD, HINT, HINT_EMOJI};
+use worktrunk::styling::{CYAN, ERROR, ERROR_EMOJI, GREEN_BOLD, HINT, HINT_EMOJI};
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -175,39 +175,29 @@ pub fn handle_merge(
     let worktrees = repo.list_worktrees()?;
     let primary_worktree_dir = worktrees.worktrees[0].path.clone();
 
+    // Determine destination: target branch's worktree if it exists, otherwise primary worktree
+    let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+    let destination_path = target_worktree_path
+        .as_ref()
+        .unwrap_or(&primary_worktree_dir)
+        .clone();
+
     // Finish worktree unless --no-remove was specified
     if !no_remove_effective {
         // STEP 1: Check for uncommitted changes before attempting cleanup
         // This prevents showing "Cleaning up worktree..." before failing
         repo.ensure_clean_working_tree()?;
 
-        // STEP 2: Switch to target branch in primary worktree (fails safely if there's an issue)
-        let primary_repo = Repository::at(&primary_worktree_dir);
-        let new_branch = primary_repo.current_branch()?;
-        if new_branch.as_deref() != Some(&target_branch) {
-            crate::output::progress(format!(
-                "{CYAN}Switching to {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}{CYAN}...{CYAN:#}"
-            ))?;
-            if let Err(err) = primary_repo.run_command(&["switch", &target_branch]) {
-                return Err(match err {
-                    GitError::CommandFailed(msg) => GitError::SwitchFailed {
-                        branch: target_branch.clone(),
-                        error: msg,
-                    },
-                    other => other,
-                });
-            }
-        }
-
-        // STEP 3: Remove worktree via shared remove output handler so final message matches wt remove
+        // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
         crate::output::progress(format!("{CYAN}Removing worktree & branch...{CYAN:#}"))?;
         let worktree_root = repo.worktree_root()?;
         let remove_result = RemoveResult::RemovedWorktree {
-            primary_path: primary_worktree_dir.clone(),
+            primary_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,
             branch_name: current_branch.clone(),
             no_delete_branch: false,
+            target_branch: Some(target_branch.clone()),
         };
         crate::output::handle_remove_output(&remove_result, Some(&current_branch), true)?;
     } else {
@@ -216,17 +206,17 @@ pub fn handle_merge(
     }
 
     if !no_verify {
-        // Execute post-merge commands in the main worktree
+        // Execute post-merge commands in the destination worktree
         // This runs after cleanup so the context is clear to the user
-        // Create a fresh Repository instance at the primary worktree (the old repo may be invalid)
-        let primary_repo = Repository::at(&primary_worktree_dir);
-        let primary_repo_root = primary_worktree_dir.clone();
+        // Create a fresh Repository instance at the destination (the old repo may be invalid)
+        let destination_repo = Repository::at(&destination_path);
+        let destination_repo_root = destination_path.clone();
         let ctx = CommandContext::new(
-            &primary_repo,
+            &destination_repo,
             config,
             &current_branch,
-            &primary_worktree_dir,
-            &primary_repo_root,
+            &destination_path,
+            &destination_repo_root,
             force,
         );
         execute_post_merge_commands(&ctx, &target_branch, true)?;

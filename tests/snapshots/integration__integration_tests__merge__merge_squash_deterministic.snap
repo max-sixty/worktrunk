@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpdJuHDk/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmphvQWkH/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -40,6 +40,6 @@ exit_code: 0
 [40m [0m   3 files changed, 3 insertions(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 3 files, [32m+3[0m)
 🔄 [36mRemoving worktree & branch...[0m
-✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, returned to primary at [1m[32m[REPO][0m[0m
+✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, changed directory to [1m[32m[REPO][0m[0m
 
 ----- stderr -----

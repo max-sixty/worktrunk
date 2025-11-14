@@ -184,6 +184,7 @@ impl RepositoryCliExt for Repository {
                 changed_directory: true,
                 branch_name: current_branch,
                 no_delete_branch,
+                target_branch: None,
             });
         }
 
@@ -246,6 +247,7 @@ impl RepositoryCliExt for Repository {
             changed_directory,
             branch_name: branch_name.to_string(),
             no_delete_branch,
+            target_branch: None,
         })
     }
 

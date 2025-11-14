@@ -2503,8 +2503,8 @@ fn test_merge_primary_on_different_branch() {
         Some(&feature_wt),
     );
 
-    // Verify primary switched to main after merge
-    assert_eq!(repo.current_branch(), "main");
+    // Verify primary stayed on develop (we don't switch branches, only worktrees)
+    assert_eq!(repo.current_branch(), "develop");
 }
 
 #[test]

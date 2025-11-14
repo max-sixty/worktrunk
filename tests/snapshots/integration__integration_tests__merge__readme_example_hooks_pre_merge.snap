@@ -16,9 +16,9 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    PATH: "/private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpp9hkDo/test-repo/.bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    PATH: "/private/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpUTUBw4/test-repo/.bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpp9hkDo/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpUTUBw4/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -42,7 +42,7 @@ exit_code: 0
 [40m [0m   2 files changed, 45 insertions(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 2 files, [32m+45[0m)
 🔄 [36mRemoving worktree & branch...[0m
-✅ [32mRemoved worktree & branch for [1m[32mfeature-auth[0m[32m, returned to primary at [1m[32m[REPO][0m[0m
+✅ [32mRemoved worktree & branch for [1m[32mfeature-auth[0m[32m, changed directory to [1m[32m[REPO][0m[0m
 
 ----- stderr -----
 [0m

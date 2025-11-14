@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpRUqppL/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp7TLzj2/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -24,8 +24,6 @@ exit_code: 0
 🔄 [36mRemoving worktree for [1m[36mfeature-unmerged[0m...[0m
 🟡 [33mCould not delete branch [1m[33mfeature-unmerged[0m[0m
 [40m [0m  error: the branch 'feature-unmerged' is not fully merged
-[40m [0m  hint: If you are sure you want to delete it, run 'git branch -D feature-unmerged'
-[40m [0m  hint: Disable this message with "git config set advice.forceDeleteBranch false"
 ✅ [32mRemoved worktree for [1m[32mfeature-unmerged[0m[0m
 
 ----- stderr -----

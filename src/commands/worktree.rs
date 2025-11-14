@@ -152,6 +152,7 @@ pub enum RemoveResult {
         changed_directory: bool,
         branch_name: String,
         no_delete_branch: bool,
+        target_branch: Option<String>,
     },
     /// Switched to default branch in main repo
     SwitchedToDefault(String),
