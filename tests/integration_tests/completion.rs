@@ -180,6 +180,90 @@ fn test_complete_base_flag_shows_all_branches() {
 }
 
 #[test]
+fn test_complete_base_flag_with_equals() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create some branches
+    Command::new("git")
+        .args(["branch", "develop"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["branch", "feature/existing"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test completion for --base= format (equals sign, no space)
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args([
+            "complete",
+            "wt",
+            "switch",
+            "--create",
+            "new-branch",
+            "--base=",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+
+    // Should show all branches as potential base
+    assert!(branches.iter().any(|b| b.contains("develop")));
+    assert!(branches.iter().any(|b| b.contains("feature/existing")));
+    assert!(branches.iter().any(|b| b.contains("main")));
+
+    // Test completion for --base=m (equals sign with partial value)
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args([
+            "complete",
+            "wt",
+            "switch",
+            "--create",
+            "new-branch",
+            "--base=m",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+
+    // Should show all branches (filtering happens in shell, not in our code)
+    assert!(branches.iter().any(|b| b.contains("main")));
+
+    // Test completion for -b= format (short form with equals)
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "switch", "--create", "new-branch", "-b="])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = stdout.lines().collect();
+
+    // Should show all branches (short form with equals works too)
+    assert!(branches.iter().any(|b| b.contains("develop")));
+    assert!(branches.iter().any(|b| b.contains("feature/existing")));
+}
+
+#[test]
 fn test_complete_outside_git_repo() {
     let temp = tempfile::tempdir().unwrap();
     let mut settings = Settings::clone_current();
