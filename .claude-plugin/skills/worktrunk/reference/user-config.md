@@ -93,8 +93,8 @@ Read existing config, add the `[commit-generation]` section, preserve existing s
 # Test LLM works
 llm "say hello"
 
-# Test with worktrunk (in a repo with changes)
-wt merge --auto-commit
+# Test with worktrunk (in a repo with uncommitted changes)
+wt merge
 ```
 
 ## Worktree Paths

@@ -81,7 +81,7 @@ Most common request. Follow this sequence:
 6. **Suggest testing**
    ```bash
    llm "say hello"
-   wt merge --auto-commit  # in a repo with changes
+   wt merge  # in a repo with uncommitted changes
    ```
 
 **See `references/user-config.md` for complete details.**
