@@ -17,13 +17,12 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmprBFTsP/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp4vXfy1/test-config.toml
 ---
 success: false
 exit_code: 1
 ----- stdout -----
 ❌ [31mFailed to load project config[0m
-
 [40m [0m  Failed to parse TOML: TOML parse error at line 1, column 39
 [40m [0m    |
 [40m [0m  1 | post-create-command = [invalid syntax

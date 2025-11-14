@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpiUrIVl/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpxaDqD2/test-config.toml
 ---
 success: false
 exit_code: 1
@@ -31,7 +31,6 @@ exit_code: 1
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mSwitching to [1m[36mmain[0m[36m...[0m
 ❌ [31mFailed to switch to [1m[31mmain[0m[0m
-
 [40m [0m  error: Your local changes to the following files would be overwritten by checkout:
 [40m [0m  	file.txt
 [40m [0m  Please commit your changes or stash them before you switch branches.

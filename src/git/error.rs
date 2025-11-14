@@ -331,7 +331,7 @@ fn format_error_block(header: String, error: &str) -> String {
     if trimmed.is_empty() {
         header
     } else {
-        format!("{header}\n\n{}", format_with_gutter(trimmed, "", None))
+        format!("{header}\n{}", format_with_gutter(trimmed, "", None))
     }
 }
 

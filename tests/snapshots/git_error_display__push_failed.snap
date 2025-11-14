@@ -3,7 +3,6 @@ source: tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mPush failed[0m
-
 [40m [0m  To /Users/user/workspace/repo/.git
 [40m [0m   ! [remote rejected] HEAD -> main (Up-to-date check failed)
 [40m [0m  error: failed to push some refs to '/Users/user/workspace/repo/.git'

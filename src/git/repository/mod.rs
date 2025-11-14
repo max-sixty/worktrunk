@@ -43,7 +43,7 @@ impl<T, E: std::fmt::Display> GitResultExt<T> for Result<T, E> {
             let error_str = e.to_string();
             let header = format!("{ERROR_EMOJI} {ERROR}{context}{ERROR:#}");
             // External errors always use gutter formatting (canonical path)
-            let formatted = format!("{}\n\n{}", header, format_with_gutter(&error_str, "", None));
+            let formatted = format!("{}\n{}", header, format_with_gutter(&error_str, "", None));
             GitError::CommandFailed(formatted)
         })
     }

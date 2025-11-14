@@ -28,7 +28,6 @@ fn test_switch_internal_directive() {
         exit_code: 1
         ----- stdout -----
         ❌ [31mFailed to create worktree for [1m[31mmy-feature[0m[0m
-
         [40m [0m  fatal: invalid reference: my-feature
 
 
@@ -58,7 +57,6 @@ fn test_switch_without_internal() {
         exit_code: 1
         ----- stdout -----
         ❌ [31mFailed to create worktree for [1m[31mmy-feature[0m[0m
-
         [40m [0m  fatal: invalid reference: my-feature
 
 

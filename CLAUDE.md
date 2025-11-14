@@ -376,6 +376,16 @@ super::gutter(format_with_gutter(&error.to_string(), "", None))?;  // Adds ❌ e
 print!("{}", format_with_gutter(&command));
 ```
 
+**Linebreaks with gutter content:** Use a single newline (`\n`) between error messages and gutter content, never double newlines (`\n\n`). The gutter's visual structure (background color, indentation) provides sufficient separation - blank lines are redundant.
+
+```rust
+// ✅ GOOD - single newline before gutter
+format!("{header}\n{}", format_with_gutter(error, "", None))
+
+// ❌ BAD - double newline creates unnecessary blank line
+format!("{header}\n\n{}", format_with_gutter(error, "", None))
+```
+
 
 ### Snapshot Testing Requirement
 
