@@ -219,49 +219,6 @@ impl TestRepo {
             .unwrap_or_else(|| panic!("Worktree '{}' not found", name))
     }
 
-    /// Read a file from the repo root
-    #[allow(dead_code)]
-    pub fn read_file(&self, path: &str) -> String {
-        std::fs::read_to_string(self.root.join(path))
-            .unwrap_or_else(|_| panic!("Failed to read {}", path))
-    }
-
-    /// List all files in the repository (excluding .git)
-    #[allow(dead_code)]
-    pub fn file_tree(&self) -> Vec<String> {
-        let mut files = Vec::new();
-        Self::collect_files(&self.root, "", &mut files);
-        files.sort();
-        files
-    }
-
-    #[allow(dead_code)]
-    fn collect_files(dir: &Path, prefix: &str, files: &mut Vec<String>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name();
-
-                // Skip .git directory
-                if name == ".git" {
-                    continue;
-                }
-
-                let display_name = if prefix.is_empty() {
-                    name.to_string_lossy().to_string()
-                } else {
-                    format!("{}/{}", prefix, name.to_string_lossy())
-                };
-
-                if path.is_dir() {
-                    Self::collect_files(&path, &display_name, files);
-                } else {
-                    files.push(display_name);
-                }
-            }
-        }
-    }
-
     /// Create a commit with the given message
     pub fn commit(&self, message: &str) {
         // Create a file to ensure there's something to commit
@@ -458,12 +415,6 @@ impl TestRepo {
             .current_dir(&self.root)
             .output()
             .expect("Failed to clear origin/HEAD");
-    }
-
-    /// Get the path to the remote repository if one was set up
-    #[allow(dead_code)]
-    pub fn remote_path(&self) -> Option<&Path> {
-        self.remote.as_deref()
     }
 
     /// Check if origin/HEAD is set

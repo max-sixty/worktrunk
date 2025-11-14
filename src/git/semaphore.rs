@@ -9,8 +9,6 @@ use std::sync::{Arc, Condvar, Mutex};
 #[derive(Clone)]
 pub struct Semaphore {
     state: Arc<(Mutex<usize>, Condvar)>,
-    #[allow(dead_code)]
-    max_permits: usize,
 }
 
 /// RAII guard that releases a semaphore permit on drop.
@@ -23,7 +21,6 @@ impl Semaphore {
     pub fn new(permits: usize) -> Self {
         Self {
             state: Arc::new((Mutex::new(permits), Condvar::new())),
-            max_permits: permits,
         }
     }
 
@@ -44,24 +41,6 @@ impl Semaphore {
 
         SemaphoreGuard {
             state: Arc::clone(&self.state),
-        }
-    }
-
-    /// Try to acquire a permit without blocking.
-    ///
-    /// Returns Some(guard) if successful, None if no permits available.
-    #[allow(dead_code)]
-    pub fn try_acquire(&self) -> Option<SemaphoreGuard> {
-        let (lock, _) = &*self.state;
-        let mut available = lock.lock().unwrap();
-
-        if *available > 0 {
-            *available -= 1;
-            Some(SemaphoreGuard {
-                state: Arc::clone(&self.state),
-            })
-        } else {
-            None
         }
     }
 }
@@ -120,21 +99,5 @@ mod tests {
 
         // Should never have more than 2 threads running concurrently
         assert!(max_concurrent.load(Ordering::SeqCst) <= 2);
-    }
-
-    #[test]
-    fn test_try_acquire() {
-        let sem = Semaphore::new(1);
-
-        let guard1 = sem.try_acquire();
-        assert!(guard1.is_some());
-
-        let guard2 = sem.try_acquire();
-        assert!(guard2.is_none());
-
-        drop(guard1);
-
-        let guard3 = sem.try_acquire();
-        assert!(guard3.is_some());
     }
 }
