@@ -330,6 +330,29 @@ fn test_complete_unknown_command() {
 }
 
 #[test]
+fn test_complete_beta_commit_no_positionals() {
+    let repo = TestRepo::new();
+    repo.commit("initial");
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.current_dir(repo.root_path())
+            .args(["complete", "wt", "beta", "commit", ""]);
+
+        assert_cmd_snapshot!(cmd, @r"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+
+        ----- stderr -----
+        ");
+    });
+}
+
+#[test]
 fn test_complete_list_command() {
     let repo = TestRepo::new();
     repo.commit("initial");

@@ -222,7 +222,10 @@ impl Shell {
 
 /// Generate dynamic completion registrations for Fish shell by introspecting CLI structure
 ///
-/// This generates completion registrations for all subcommands with positional arguments.
+/// This generates completion registrations for all subcommands:
+/// - Subcommands with positional arguments get dynamic completions via `__wt_complete`
+/// - Subcommands without positional arguments get `-f` to prevent file completion fallback
+///
 /// The actual filtering of what completions to show is handled by the `wt complete` command,
 /// which checks the command context and only returns relevant completions.
 ///
@@ -244,22 +247,22 @@ fn generate_fish_dynamic_completions(cli_cmd: &clap::Command, cmd_prefix: &str) 
             // Check if this subcommand has positional arguments
             let has_positional = subcmd.get_positionals().next().is_some();
 
-            if has_positional {
-                // Generate condition based on command chain
-                let condition = if current_chain.len() == 1 {
-                    // Top-level: just check for the subcommand
-                    format!("__fish_seen_subcommand_from {}", name)
-                } else {
-                    // Nested: check for parent chain in sequence
-                    // e.g., for "dev run-hook": "__fish_seen_subcommand_from dev; and __fish_seen_subcommand_from run-hook"
-                    current_chain
-                        .iter()
-                        .map(|part| format!("__fish_seen_subcommand_from {}", part))
-                        .collect::<Vec<_>>()
-                        .join("; and ")
-                };
+            // Generate condition based on command chain
+            let condition = if current_chain.len() == 1 {
+                // Top-level: just check for the subcommand
+                format!("__fish_seen_subcommand_from {}", name)
+            } else {
+                // Nested: check for parent chain in sequence
+                // e.g., for "beta commit": "__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from commit"
+                current_chain
+                    .iter()
+                    .map(|part| format!("__fish_seen_subcommand_from {}", part))
+                    .collect::<Vec<_>>()
+                    .join("; and ")
+            };
 
-                // Get description from the first positional argument's help text
+            if has_positional {
+                // Subcommand with positional arguments - register dynamic completion
                 let desc = subcmd
                     .get_positionals()
                     .next()
@@ -270,6 +273,12 @@ fn generate_fish_dynamic_completions(cli_cmd: &clap::Command, cmd_prefix: &str) 
                 completions.push(format!(
                     "    complete -c {} -n '{}' -f -a '(__{}_complete)' -d '{}'",
                     cmd_prefix, condition, cmd_prefix, desc
+                ));
+            } else {
+                // Subcommand without positional arguments - prevent file completion fallback
+                completions.push(format!(
+                    "    complete -c {} -n '{}' -f",
+                    cmd_prefix, condition
                 ));
             }
 
