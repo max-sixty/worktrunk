@@ -244,7 +244,7 @@ impl PrStatus {
 
     fn detect_github_workflow(
         branch: &str,
-        _local_head: &str,
+        local_head: &str,
         repo: Option<&str>,
         repo_root: Option<&str>,
     ) -> Option<Self> {
@@ -268,7 +268,7 @@ impl PrStatus {
             "--limit",
             "1",
             "--json",
-            "status,conclusion",
+            "status,conclusion,headSha",
         ]);
 
         // Remove environment variables that force color output even when piped
@@ -296,17 +296,23 @@ impl PrStatus {
         let runs: Vec<GitHubWorkflowRun> = serde_json::from_slice(&output.stdout).ok()?;
         let run = runs.first()?;
 
+        // Check if the workflow run matches our local HEAD commit
+        let is_stale = run
+            .head_sha
+            .as_ref()
+            .map(|run_sha| run_sha != local_head)
+            .unwrap_or(true); // If no SHA, consider it stale
+
         // Analyze workflow run status
         let ci_status = run.ci_status();
 
-        // Workflow runs don't have staleness concept (no PR to compare against)
         Some(PrStatus {
             ci_status,
-            is_stale: false,
+            is_stale,
         })
     }
 
-    fn detect_gitlab_pipeline(branch: &str, _local_head: &str) -> Option<Self> {
+    fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<Self> {
         // Check if glab is available
         if !Command::new("glab")
             .arg("--version")
@@ -317,9 +323,9 @@ impl PrStatus {
             return None;
         }
 
-        // Get most recent pipeline for the branch
+        // Get most recent pipeline for the branch using JSON output
         let output = Command::new("glab")
-            .args(["ci", "list", "--per-page", "1"])
+            .args(["ci", "list", "--per-page", "1", "--output", "json"])
             .env("BRANCH", branch) // glab ci list uses BRANCH env var
             .output()
             .ok()?;
@@ -328,22 +334,22 @@ impl PrStatus {
             return None;
         }
 
-        // Parse glab ci list output (format: "• (<status>) <pipeline-info>")
-        let output_str = String::from_utf8(output.stdout).ok()?;
-        let first_line = output_str.lines().next()?;
+        // Parse JSON output
+        let pipelines: Vec<GitLabPipelineList> = serde_json::from_slice(&output.stdout).ok()?;
+        let pipeline = pipelines.first()?;
 
-        // Extract status from format like "• (running) #12345"
-        let status_start = first_line.find('(')?;
-        let status_end = first_line.find(')')?;
-        let status = first_line[status_start + 1..status_end].to_string();
-        let ci_status = GitLabPipeline {
-            status: Some(status),
-        }
-        .ci_status();
+        // Check if the pipeline matches our local HEAD commit
+        let is_stale = pipeline
+            .sha
+            .as_ref()
+            .map(|pipeline_sha| pipeline_sha != local_head)
+            .unwrap_or(true); // If no SHA, consider it stale
+
+        let ci_status = pipeline.ci_status();
 
         Some(PrStatus {
             ci_status,
-            is_stale: false,
+            is_stale,
         })
     }
 }
@@ -369,6 +375,8 @@ struct GitHubCheck {
 struct GitHubWorkflowRun {
     status: Option<String>,
     conclusion: Option<String>,
+    #[serde(rename = "headSha")]
+    head_sha: Option<String>,
 }
 
 impl GitHubPrInfo {
@@ -445,7 +453,33 @@ struct GitLabPipeline {
     status: Option<String>,
 }
 
+/// GitLab pipeline from `glab ci list --output json`
+#[derive(Debug, Deserialize)]
+struct GitLabPipelineList {
+    status: Option<String>,
+    sha: Option<String>,
+}
+
 impl GitLabPipeline {
+    fn ci_status(&self) -> CiStatus {
+        match self.status.as_deref() {
+            Some(
+                "running"
+                | "pending"
+                | "preparing"
+                | "waiting_for_resource"
+                | "created"
+                | "scheduled",
+            ) => CiStatus::Running,
+            Some("failed" | "canceled" | "manual") => CiStatus::Failed,
+            Some("success") => CiStatus::Passed,
+            Some("skipped") | None => CiStatus::NoCI,
+            _ => CiStatus::NoCI,
+        }
+    }
+}
+
+impl GitLabPipelineList {
     fn ci_status(&self) -> CiStatus {
         match self.status.as_deref() {
             Some(
