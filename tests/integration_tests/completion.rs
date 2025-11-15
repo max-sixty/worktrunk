@@ -867,6 +867,35 @@ fn test_complete_dev_run_hook_with_partial_input() {
 }
 
 #[test]
+fn test_complete_dev_run_hook_without_trailing_empty() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion WITHOUT trailing empty string (what fish actually sends)
+    // Regression test for bug where "wt beta run-hook<tab>" showed nothing
+    // but "wt beta run-hook ""<tab>" showed all hooks
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "beta", "run-hook"]) // No trailing ""
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let hooks: Vec<&str> = stdout.lines().collect();
+
+    // Should include all hook types even without trailing empty string
+    assert!(hooks.contains(&"post-create"), "Missing post-create");
+    assert!(hooks.contains(&"post-start"), "Missing post-start");
+    assert!(hooks.contains(&"pre-commit"), "Missing pre-commit");
+    assert!(hooks.contains(&"pre-merge"), "Missing pre-merge");
+    assert!(hooks.contains(&"post-merge"), "Missing post-merge");
+    assert_eq!(hooks.len(), 5, "Should have exactly 5 hook types");
+}
+
+#[test]
 fn test_complete_init_shows_shells() {
     let temp = TestRepo::new();
     temp.commit("initial");
@@ -893,6 +922,30 @@ fn test_complete_init_shows_shells() {
     assert!(shells.contains(&"oil"));
     assert!(shells.contains(&"powershell"));
     assert!(shells.contains(&"xonsh"));
+}
+
+#[test]
+fn test_complete_init_without_trailing_empty() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test completion WITHOUT trailing empty string (what fish actually sends)
+    let mut cmd = wt_command();
+    temp.clean_cli_env(&mut cmd);
+    let output = cmd
+        .current_dir(temp.root_path())
+        .args(["complete", "wt", "init"]) // No trailing ""
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shells: Vec<&str> = stdout.lines().collect();
+
+    // Should show all shell types even without trailing empty string
+    assert!(shells.contains(&"bash"));
+    assert!(shells.contains(&"fish"));
+    assert!(shells.contains(&"zsh"));
 }
 
 #[test]

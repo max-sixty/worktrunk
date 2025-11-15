@@ -376,14 +376,21 @@ pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
                 }
             }
 
-            let last = args.last().map(String::as_str).unwrap_or("");
+            // Determine the prefix to filter by:
+            // - If we've consumed all args as subcommands (i >= args.len()), use empty prefix
+            // - Otherwise, use the last arg as prefix for filtering
+            let prefix = if i >= args.len() {
+                ""
+            } else {
+                args.last().map(String::as_str).unwrap_or("")
+            };
 
             // Check if there's a positional with possible_values
             if let Some(arg) = cur
                 .get_positionals()
                 .find(|a| !a.get_possible_values().is_empty())
             {
-                let items = items_from_arg(arg, last);
+                let items = items_from_arg(arg, prefix);
                 if !items.is_empty() {
                     print_items(items);
                 }
