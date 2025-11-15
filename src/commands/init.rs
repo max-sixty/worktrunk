@@ -91,6 +91,15 @@ pub fn handle_init(
             line
         };
 
+        // For Fish: Add -f (no file completion) to --base flag
+        // The --base flag should only complete branches, not files
+        let line = if matches!(shell, shell::Shell::Fish) && line.contains("-l base") {
+            // Insert -f before -d (description) to disable file completion
+            line.replace(" -d ", " -f -d ")
+        } else {
+            line
+        };
+
         // For Zsh: Guard the final compdef call to avoid errors when completion system isn't loaded
         // Not all users have compinit in their .zshrc, and --no-rcs mode never loads it
         let line = if matches!(shell, shell::Shell::Zsh)

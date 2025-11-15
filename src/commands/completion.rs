@@ -313,12 +313,16 @@ fn detect_completion_target<'a>(args: &[String], cmd: &'a Command) -> Completion
             "switch" => {
                 let has_create = args.iter().any(|arg| arg == "--create" || arg == "-c");
                 if !has_create && should_complete_positional_arg(args, i, cur, cmd) {
-                    return CompletionTarget::PositionalBranch(last.to_string());
+                    // If last arg is the subcommand itself, prefix is empty
+                    let prefix = if last == subcmd { "" } else { last };
+                    return CompletionTarget::PositionalBranch(prefix.to_string());
                 }
             }
             "push" | "merge" | "remove" => {
                 if should_complete_positional_arg(args, i, cur, cmd) {
-                    return CompletionTarget::PositionalBranch(last.to_string());
+                    // If last arg is the subcommand itself, prefix is empty
+                    let prefix = if last == subcmd { "" } else { last };
+                    return CompletionTarget::PositionalBranch(prefix.to_string());
                 }
             }
             _ => {}
@@ -340,7 +344,9 @@ pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
                 // Complete with all branches (runtime-fetched values)
                 let branches = get_branches_for_completion(|| Repository::current().all_branches());
                 for branch in branches {
-                    println!("{}", branch);
+                    if branch.starts_with(&prefix) {
+                        println!("{}", branch);
+                    }
                 }
             } else {
                 // Use the arg's declared possible_values (ValueEnum types)
@@ -350,11 +356,13 @@ pub fn handle_complete(args: Vec<String>) -> Result<(), GitError> {
                 }
             }
         }
-        CompletionTarget::PositionalBranch(_prefix) => {
+        CompletionTarget::PositionalBranch(prefix) => {
             // Complete with all branches (runtime-fetched values)
             let branches = get_branches_for_completion(|| Repository::current().all_branches());
             for branch in branches {
-                println!("{}", branch);
+                if branch.starts_with(&prefix) {
+                    println!("{}", branch);
+                }
             }
         }
         CompletionTarget::Unknown => {

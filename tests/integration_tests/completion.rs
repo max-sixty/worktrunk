@@ -242,8 +242,10 @@ fn test_complete_base_flag_with_equals() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let branches: Vec<&str> = stdout.lines().collect();
 
-    // Should show all branches (filtering happens in shell, not in our code)
-    assert!(branches.iter().any(|b| b.contains("main")));
+    // Should only show branches that match the prefix "m"
+    assert!(branches.iter().any(|b| b == &"main"));
+    assert!(!branches.iter().any(|b| b.contains("develop")));
+    assert!(!branches.iter().any(|b| b.contains("feature")));
 
     // Test completion for -b= format (short form with equals)
     let mut cmd = wt_command();
@@ -412,8 +414,7 @@ fn test_complete_with_partial_prefix() {
         .output()
         .unwrap();
 
-    // Complete with partial prefix - should return all branches
-    // (shell completion framework handles the prefix filtering)
+    // Complete with partial prefix - should return only branches starting with "feat"
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
@@ -427,8 +428,6 @@ fn test_complete_with_partial_prefix() {
         ----- stdout -----
         feature/one
         feature/two
-        hotfix/bug
-        main
 
         ----- stderr -----
         ");
