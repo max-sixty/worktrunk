@@ -1068,3 +1068,108 @@ fn test_complete_merge_with_flags() {
     assert!(branches.iter().any(|b| b.contains("hotfix")));
     assert!(branches.iter().any(|b| b.contains("main")));
 }
+
+#[test]
+fn test_complete_switch_base_after_execute_equals() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create branches
+    Command::new("git")
+        .args(["branch", "develop"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["branch", "production"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test: wt switch --create --execute=claude --base <cursor>
+    // This is the reported failing case - should complete branches for --base
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "--execute=claude", "--base", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches = value_suggestions(&stdout);
+
+    // Should show all branches as potential base
+    assert!(
+        branches.iter().any(|b| b.contains("develop")),
+        "Should complete develop branch for --base flag, got:\n{stdout}"
+    );
+    assert!(
+        branches.iter().any(|b| b.contains("production")),
+        "Should complete production branch for --base flag, got:\n{stdout}"
+    );
+    assert!(
+        branches.iter().any(|b| b.contains("main")),
+        "Should complete main branch for --base flag, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_complete_switch_flexible_argument_ordering() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    Command::new("git")
+        .args(["branch", "develop"])
+        .current_dir(temp.root_path())
+        .output()
+        .unwrap();
+
+    // Test that .last(true) allows positional before flags
+    // wt switch feature --base <cursor>
+    let output = temp
+        .completion_cmd(&["wt", "switch", "feature", "--base", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let branches = value_suggestions(&stdout);
+
+    // Should complete --base value even when positional comes first
+    assert!(
+        branches.iter().any(|b| b.contains("develop")),
+        "Should complete branches for --base even after positional arg, got:\n{stdout}"
+    );
+    assert!(
+        branches.iter().any(|b| b.contains("main")),
+        "Should complete branches for --base even after positional arg, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_complete_remove_flexible_argument_ordering() {
+    let mut temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Create two worktrees
+    temp.add_worktree("feature-worktree", "feature");
+    temp.add_worktree("bugfix-worktree", "bugfix");
+
+    // Test that .last(true) allows positional before flags
+    // wt remove feature --no-delete-branch <cursor>
+    // Since remove accepts multiple worktrees, should suggest more worktrees
+    let output = temp
+        .completion_cmd(&["wt", "remove", "feature", "--no-delete-branch", ""])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let suggestions = value_suggestions(&stdout);
+
+    // Should suggest additional worktrees (remove accepts Vec<String>)
+    assert!(
+        suggestions.iter().any(|s| s.contains("bugfix")),
+        "Should suggest additional worktrees after positional and flag, got:\n{stdout}"
+    );
+}

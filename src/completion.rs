@@ -102,11 +102,19 @@ fn completion_command() -> Command {
     adjust_completion_command(Cli::command())
 }
 
-// Mark positional target args as `.last(true)` to allow them after all flags.
-// This enables flexible argument ordering: `wt merge --no-squash main` instead of
-// requiring the more restrictive `wt merge main --no-squash`.
+// Mark positional args as `.last(true)` to allow them after all flags.
+// This enables flexible argument ordering like:
+// - `wt switch --create --execute=cmd --base=main feature` instead of `wt switch feature --create --execute=cmd --base=main`
+// - `wt merge --no-squash main` instead of `wt merge main --no-squash`
+// - `wt remove --no-delete-branch feature` instead of `wt remove feature --no-delete-branch`
 fn adjust_completion_command(cmd: Command) -> Command {
-    cmd.mut_subcommand("merge", |merge| {
+    cmd.mut_subcommand("switch", |switch| {
+        switch.mut_arg("branch", |arg| arg.last(true))
+    })
+    .mut_subcommand("remove", |remove| {
+        remove.mut_arg("worktrees", |arg| arg.last(true))
+    })
+    .mut_subcommand("merge", |merge| {
         merge.mut_arg("target", |arg| arg.last(true))
     })
     .mut_subcommand("beta", |beta| {
