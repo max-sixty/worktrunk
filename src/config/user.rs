@@ -48,7 +48,8 @@ use super::expansion::expand_template;
 /// - macOS: `$XDG_CONFIG_HOME/worktrunk/config.toml` or `~/.config/worktrunk/config.toml`
 /// - Windows: `%APPDATA%\worktrunk\config.toml`
 ///
-/// Environment variable: `WORKTRUNK_WORKTREE_PATH`
+/// Environment variables can override config file settings using `WORKTRUNK_` prefix with
+/// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT_GENERATION__COMMAND`).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorktrunkConfig {
     #[serde(rename = "worktree-path")]
@@ -168,7 +169,9 @@ impl WorktrunkConfig {
         }
 
         // Add environment variables with WORKTRUNK prefix
-        builder = builder.add_source(config::Environment::with_prefix("WORKTRUNK").separator("_"));
+        // Uses "__" separator (default) to support field names with underscores
+        // Example: WORKTRUNK_COMMIT_GENERATION__COMMAND maps to commit-generation.command
+        builder = builder.add_source(config::Environment::with_prefix("WORKTRUNK").separator("__"));
 
         let config: Self = builder.build()?.try_deserialize()?;
 
