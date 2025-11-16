@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/init.rs
+assertion_line: 23
 info:
   program: wt
   args:
@@ -12,11 +13,10 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpCLX2oz/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpQyAnKf/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -132,25 +132,11 @@ wt_exec() {
         return $result
     }
 
-    # Dynamic completion function for zsh
-    _wt_complete() {
-        local -a completions
-        local -a words
-
-        # Get current command line as array
-        words=("${(@)words}")
-
-        # Call wt complete with current command line
-        completions=(${(f)"$(command "$_WORKTRUNK_CMD" complete "${words[@]}" 2>/dev/null)"})
-
-        # Add completions
-        compadd -a completions
-    }
-
-    # Register dynamic completion (only if compdef is available)
-    # In non-interactive shells or test environments, the completion system may not be loaded
+    # Register Clap-based completions (auto-updates after wt upgrades)
     if (( $+functions[compdef] )); then
-        compdef _wt_complete wt
+        local completion_script
+        completion_script=$(COMPLETE=zsh "$_WORKTRUNK_CMD" 2>/dev/null)
+        eval "$completion_script"
     fi
 fi
 
@@ -411,15 +397,6 @@ _arguments "${_arguments_options[@]}" : \
 '::target -- Target branch to merge into (defaults to default branch):_default' \
 && ret=0
 ;;
-(complete)
-_arguments "${_arguments_options[@]}" : \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
-'-h[Print help]' \
-'--help[Print help]' \
-'*::args -- Arguments to complete:_default' \
-&& ret=0
-;;
         esac
     ;;
 esac
@@ -435,7 +412,6 @@ _wt_commands() {
 'switch:Switch to a worktree' \
 'remove:Finish current worktree, returning to primary if current' \
 'merge:Merge worktree into target branch' \
-'complete:Internal completion helper (hidden)' \
     )
     _describe -t commands 'wt commands' commands "$@"
 }
@@ -492,11 +468,6 @@ _wt__beta__select_commands() {
 _wt__beta__squash_commands() {
     local commands; commands=()
     _describe -t commands 'wt beta squash commands' commands "$@"
-}
-(( $+functions[_wt__complete_commands] )) ||
-_wt__complete_commands() {
-    local commands; commands=()
-    _describe -t commands 'wt complete commands' commands "$@"
 }
 (( $+functions[_wt__config_commands] )) ||
 _wt__config_commands() {

@@ -1,7 +1,6 @@
 pub mod command_approval;
 pub mod command_executor;
 pub mod commit;
-pub mod completion;
 pub mod config;
 pub mod configure_shell;
 pub mod context;
@@ -17,7 +16,6 @@ pub mod select;
 pub mod standalone;
 pub mod worktree;
 
-pub use completion::handle_complete;
 pub use config::{handle_config_init, handle_config_list, handle_config_refresh_cache};
 pub use configure_shell::{ConfigAction, handle_configure_shell};
 pub use init::handle_init;

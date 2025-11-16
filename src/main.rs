@@ -7,6 +7,7 @@ use worktrunk::styling::{SUCCESS_EMOJI, println};
 
 mod cli;
 mod commands;
+mod completion;
 mod display;
 mod llm;
 mod output;
@@ -18,17 +19,20 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, handle_complete, handle_config_init, handle_config_list,
-    handle_config_refresh_cache, handle_configure_shell, handle_init, handle_list, handle_merge,
-    handle_rebase, handle_remove, handle_squash, handle_standalone_ask_approvals,
-    handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
-    handle_switch,
+    ConfigAction, handle_config_init, handle_config_list, handle_config_refresh_cache,
+    handle_configure_shell, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
+    handle_squash, handle_standalone_ask_approvals, handle_standalone_clear_approvals,
+    handle_standalone_commit, handle_standalone_run_hook, handle_switch,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{Cli, Commands, ConfigCommand, StandaloneCommand};
 
 fn main() {
+    if completion::maybe_handle_env_completion() {
+        return;
+    }
+
     // TODO: Enhance error messages to show possible values for missing enum arguments
     // Currently `wt init` doesn't show available shells, but `wt init invalid` does.
     // Clap doesn't support this natively yet - see https://github.com/clap-rs/clap/issues/3320
@@ -316,7 +320,6 @@ fn main() {
             force,
             tracked_only,
         ),
-        Commands::Complete { args } => handle_complete(args),
     };
 
     if let Err(e) = result {

@@ -41,8 +41,16 @@ use std::sync::LazyLock;
 
 /// Regex for normalizing temporary directory paths in test snapshots
 static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"(/private/var/folders/[^/]+/[^/]+/T/\.tmp[^/]+|/tmp/\.tmp[^/]+)")
-        .expect("Invalid tmpdir regex pattern")
+    regex::Regex::new(
+        r#"(/private/var/folders/[^/]+/[^/]+/T/\.tmp[^\s/'"]+|/tmp/\.(?:tmp|psub)[^\s/'"]+)"#,
+    )
+    .expect("Invalid tmpdir regex pattern")
+});
+
+/// Regex that collapses repeated TMPDIR placeholders (caused by nested mktemp paths)
+/// so `[TMPDIR][TMPDIR]/foo` becomes `[TMPDIR]/foo` and `[TMPDIR]/[TMPDIR]` becomes `[TMPDIR]`
+static TMPDIR_PLACEHOLDER_COLLAPSE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\[TMPDIR](?:/?\[TMPDIR])+").expect("Invalid TMPDIR placeholder regex")
 });
 
 /// Regex for normalizing workspace paths (dynamically built from CARGO_MANIFEST_DIR)
@@ -96,10 +104,14 @@ impl ShellOutput {
         // Normalize commit hashes (7-character hex strings)
         let hash_normalized = COMMIT_HASH_REGEX.replace_all(&workspace_normalized, "[HASH]");
 
+        // Collapse duplicate TMPDIR placeholders that can appear with nested mktemp paths.
+        let tmpdir_collapsed =
+            TMPDIR_PLACEHOLDER_COLLAPSE_REGEX.replace_all(&hash_normalized, "[TMPDIR]");
+
         // Then normalize ANSI codes: remove redundant leading reset codes
         // This handles differences between macOS and Linux PTY ANSI generation
-        let has_trailing_newline = hash_normalized.ends_with('\n');
-        let mut result = hash_normalized
+        let has_trailing_newline = tmpdir_collapsed.ends_with('\n');
+        let mut result = tmpdir_collapsed
             .lines()
             .map(|line| {
                 // Strip leading \x1b[0m reset codes (may appear as ESC[0m in the output)
@@ -1330,21 +1342,25 @@ approved-commands = ["echo 'fish background task'"]
         ];
 
         let (combined, exit_code) = exec_in_pty(shell, &final_script, &worktrunk_source, &env_vars);
+        let output = ShellOutput {
+            combined,
+            exit_code,
+        };
 
         // Shell-agnostic assertions
-        assert_ne!(exit_code, 0, "{}: Command should fail", shell);
+        assert_ne!(output.exit_code, 0, "{}: Command should fail", shell);
 
         // CRITICAL: Should see wt's actual error message about unrecognized subcommand
         assert!(
-            combined.contains("unrecognized subcommand"),
+            output.combined.contains("unrecognized subcommand"),
             "{}: Should show actual wt error message 'unrecognized subcommand'.\nOutput:\n{}",
             shell,
-            combined
+            output.combined
         );
 
         // CRITICAL: Should NOT see the old generic wrapper error message
         assert!(
-            !combined.contains("Error: cargo build failed"),
+            !output.combined.contains("Error: cargo build failed"),
             "{}: Should not contain old generic error message",
             shell
         );
@@ -1352,7 +1368,7 @@ approved-commands = ["echo 'fish background task'"]
         // Consolidated snapshot - output should be identical across shells
         // (wt error messages are deterministic)
         insta::allow_duplicates! {
-            assert_snapshot!("source_flag_error_passthrough", combined);
+            assert_snapshot!("source_flag_error_passthrough", output.normalized());
         }
     }
 }

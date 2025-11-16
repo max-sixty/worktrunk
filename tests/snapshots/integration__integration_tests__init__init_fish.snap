@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpgUNDX9/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp5Ozdm0/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -149,34 +149,11 @@ if type -q wt; or set -q WORKTRUNK_BIN
         return $result
     end
 
-    # Dynamic completion function
-    function __wt_complete
-        # Call wt complete with current command line
-        set -l cmd (commandline -opc)
-        command $_WORKTRUNK_CMD complete $cmd 2>/dev/null
+    # Register Clap-based completions (auto-updates after wt upgrades)
+    set -l _wt_completion_script (COMPLETE=fish $_WORKTRUNK_CMD 2>/dev/null | string collect)
+    if test -n "$_wt_completion_script"
+        eval $_wt_completion_script
     end
-
-    # Register dynamic completions
-    complete -c wt -n '__fish_seen_subcommand_from init' -f -a '(__wt_complete)' -d 'Shell to generate code for'
-    complete -c wt -n '__fish_seen_subcommand_from config' -f
-    complete -c wt -n '__fish_seen_subcommand_from config; and __fish_seen_subcommand_from init' -f
-    complete -c wt -n '__fish_seen_subcommand_from config; and __fish_seen_subcommand_from list' -f
-    complete -c wt -n '__fish_seen_subcommand_from config; and __fish_seen_subcommand_from refresh-cache' -f
-    complete -c wt -n '__fish_seen_subcommand_from config; and __fish_seen_subcommand_from shell' -f
-    complete -c wt -n '__fish_seen_subcommand_from beta' -f
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from run-hook' -f -a '(__wt_complete)' -d 'Hook type to run'
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from commit' -f
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from squash' -f -a '(__wt_complete)' -d 'Target branch to squash against (defaults to default branch)'
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from push' -f -a '(__wt_complete)' -d 'Target branch (defaults to default branch)'
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from rebase' -f -a '(__wt_complete)' -d 'Target branch to rebase onto (defaults to default branch)'
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from ask-approvals' -f
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from clear-approvals' -f
-    complete -c wt -n '__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from select' -f
-    complete -c wt -n '__fish_seen_subcommand_from list' -f
-    complete -c wt -n '__fish_seen_subcommand_from switch' -f -a '(__wt_complete)' -d 'Branch name, worktree path, '@' for current HEAD, or '-' for previous branch'
-    complete -c wt -n '__fish_seen_subcommand_from remove' -f -a '(__wt_complete)' -d 'Worktree names or branches to remove (use '@' for current, defaults to current if none specified)'
-    complete -c wt -n '__fish_seen_subcommand_from merge' -f -a '(__wt_complete)' -d 'Target branch to merge into (defaults to default branch)'
-    complete -c wt -n '__fish_seen_subcommand_from complete' -f -a '(__wt_complete)' -d 'Arguments to complete'
 end
 
 # Static completions (commands and flags)
@@ -302,7 +279,5 @@ complete -c wt -n "__fish_wt_using_subcommand merge" -s f -l force -d 'Auto-appr
 complete -c wt -n "__fish_wt_using_subcommand merge" -l tracked-only -d 'Only stage tracked files (git add -u) instead of all files (git add -A)'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wt -n "__fish_wt_using_subcommand complete" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
-complete -c wt -n "__fish_wt_using_subcommand complete" -s h -l help -d 'Print help'
 
 ----- stderr -----

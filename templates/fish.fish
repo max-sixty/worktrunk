@@ -126,13 +126,9 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
         return $result
     end
 
-    # Dynamic completion function
-    function __{{ cmd_prefix }}_complete
-        # Call {{ cmd_prefix }} complete with current command line
-        set -l cmd (commandline -opc)
-        command $_WORKTRUNK_CMD complete $cmd 2>/dev/null
+    # Register Clap-based completions (auto-updates after wt upgrades)
+    set -l _wt_completion_script (COMPLETE=fish $_WORKTRUNK_CMD 2>/dev/null | string collect)
+    if test -n "$_wt_completion_script"
+        eval $_wt_completion_script
     end
-
-    # Register dynamic completions
-{{ dynamic_completions }}
 end

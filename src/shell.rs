@@ -220,78 +220,6 @@ impl Shell {
     }
 }
 
-/// Generate dynamic completion registrations for Fish shell by introspecting CLI structure
-///
-/// This generates completion registrations for all subcommands:
-/// - Subcommands with positional arguments get dynamic completions via `__wt_complete`
-/// - Subcommands without positional arguments get `-f` to prevent file completion fallback
-///
-/// The actual filtering of what completions to show is handled by the `wt complete` command,
-/// which checks the command context and only returns relevant completions.
-///
-/// This approach ensures that when new commands are added with positional arguments,
-/// they automatically get registered for completion - you only need to update the
-/// completion logic in `src/commands/completion.rs` to define what completions to show.
-fn generate_fish_dynamic_completions(cli_cmd: &clap::Command, cmd_prefix: &str) -> String {
-    fn generate_for_subcommands(
-        cmd: &clap::Command,
-        cmd_prefix: &str,
-        parent_chain: &[&str],
-    ) -> Vec<String> {
-        let mut completions = Vec::new();
-
-        for subcmd in cmd.get_subcommands() {
-            let name = subcmd.get_name();
-            let current_chain: Vec<&str> = parent_chain.iter().copied().chain([name]).collect();
-
-            // Check if this subcommand has positional arguments
-            let has_positional = subcmd.get_positionals().next().is_some();
-
-            // Generate condition based on command chain
-            let condition = if current_chain.len() == 1 {
-                // Top-level: just check for the subcommand
-                format!("__fish_seen_subcommand_from {}", name)
-            } else {
-                // Nested: check for parent chain in sequence
-                // e.g., for "beta commit": "__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from commit"
-                current_chain
-                    .iter()
-                    .map(|part| format!("__fish_seen_subcommand_from {}", part))
-                    .collect::<Vec<_>>()
-                    .join("; and ")
-            };
-
-            if has_positional {
-                // Subcommand with positional arguments - register dynamic completion
-                let desc = subcmd
-                    .get_positionals()
-                    .next()
-                    .and_then(|arg| arg.get_help())
-                    .map(|h| h.to_string())
-                    .unwrap_or_else(|| format!("{} argument", current_chain.join(" ")));
-
-                completions.push(format!(
-                    "    complete -c {} -n '{}' -f -a '(__{}_complete)' -d '{}'",
-                    cmd_prefix, condition, cmd_prefix, desc
-                ));
-            } else {
-                // Subcommand without positional arguments - prevent file completion fallback
-                completions.push(format!(
-                    "    complete -c {} -n '{}' -f",
-                    cmd_prefix, condition
-                ));
-            }
-
-            // Recurse into nested subcommands
-            completions.extend(generate_for_subcommands(subcmd, cmd_prefix, &current_chain));
-        }
-
-        completions
-    }
-
-    generate_for_subcommands(cli_cmd, cmd_prefix, &[]).join("\n")
-}
-
 /// Shell integration configuration
 pub struct ShellInit {
     pub shell: Shell,
@@ -304,7 +232,7 @@ impl ShellInit {
     }
 
     /// Generate shell integration code
-    pub fn generate(&self, cli_cmd: &clap::Command) -> Result<String, askama::Error> {
+    pub fn generate(&self) -> Result<String, askama::Error> {
         match self.shell {
             Shell::Bash | Shell::Oil => {
                 let posix_shim = PosixDirectivesTemplate {
@@ -330,11 +258,8 @@ impl ShellInit {
                 template.render()
             }
             Shell::Fish => {
-                let dynamic_completions =
-                    generate_fish_dynamic_completions(cli_cmd, &self.cmd_prefix);
                 let template = FishTemplate {
                     cmd_prefix: &self.cmd_prefix,
-                    dynamic_completions,
                 };
                 template.render()
             }
@@ -395,7 +320,6 @@ struct ZshTemplate<'a> {
 #[template(path = "fish.fish", escape = "none")]
 struct FishTemplate<'a> {
     cmd_prefix: &'a str,
-    dynamic_completions: String,
 }
 
 /// Nushell shell template
@@ -429,7 +353,6 @@ struct XonshTemplate<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Command;
 
     #[test]
     fn test_shell_from_str() {
@@ -438,52 +361,5 @@ mod tests {
         assert!(matches!("fish".parse::<Shell>(), Ok(Shell::Fish)));
         assert!(matches!("zsh".parse::<Shell>(), Ok(Shell::Zsh)));
         assert!("invalid".parse::<Shell>().is_err());
-    }
-
-    #[test]
-    fn test_fish_dynamic_completions_for_nested_subcommands() {
-        // Test that we generate completions for nested subcommands like "dev run-hook"
-        let cli = Command::new("test")
-            .subcommand(Command::new("parent").subcommand(
-                Command::new("nested").arg(clap::Arg::new("hook_type").help("Hook to run")),
-            ))
-            .subcommand(Command::new("top-level").arg(clap::Arg::new("arg").help("Some arg")));
-
-        let completions = generate_fish_dynamic_completions(&cli, "test");
-
-        // Should include completion for nested command (parent nested)
-        assert!(
-            completions.contains(
-                "__fish_seen_subcommand_from parent; and __fish_seen_subcommand_from nested"
-            ),
-            "Should generate nested completion for parent nested, got: {}",
-            completions
-        );
-
-        // Should include completion for top-level command
-        assert!(
-            completions.contains("__fish_seen_subcommand_from top-level"),
-            "Should generate top-level completion, got: {}",
-            completions
-        );
-    }
-
-    #[test]
-    fn test_fish_dynamic_completions_deeply_nested() {
-        // Test 3-level nesting to verify recursion handles arbitrary depth
-        let cli = Command::new("test").subcommand(
-            Command::new("a").subcommand(
-                Command::new("b")
-                    .subcommand(Command::new("c").arg(clap::Arg::new("arg").help("deep arg"))),
-            ),
-        );
-
-        let completions = generate_fish_dynamic_completions(&cli, "test");
-
-        assert!(
-            completions.contains("__fish_seen_subcommand_from a; and __fish_seen_subcommand_from b; and __fish_seen_subcommand_from c"),
-            "Should handle 3+ level nesting, got: {}",
-            completions
-        );
     }
 }

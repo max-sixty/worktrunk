@@ -12,7 +12,7 @@ pub fn handle_init(
 
     // Generate shell integration code
     let integration_output = init
-        .generate(cli_cmd)
+        .generate()
         .map_err(|e| format!("Failed to generate shell code: {}", e))?;
 
     println!("{}", integration_output);

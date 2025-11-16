@@ -46,6 +46,32 @@ pub fn wt_command() -> Command {
     cmd
 }
 
+/// Create a `wt` invocation configured like shell-driven completions (`COMPLETE=bash`).
+///
+/// `words` should match the shell's `COMP_WORDS` array, e.g. `["wt", "switch", ""]`.
+pub fn wt_completion_command(words: &[&str]) -> Command {
+    assert!(
+        matches!(words.first(), Some(&"wt")),
+        "completion words must include command name as the first element"
+    );
+
+    let mut cmd = wt_command();
+    configure_completion_invocation(&mut cmd, words);
+    cmd
+}
+
+/// Configure an existing command to mimic shell completion environment.
+pub fn configure_completion_invocation(cmd: &mut Command, words: &[&str]) {
+    let index = words.len().saturating_sub(1);
+    cmd.arg("--");
+    cmd.args(words);
+    cmd.env("COMPLETE", "bash");
+    cmd.env("_CLAP_COMPLETE_INDEX", index.to_string());
+    cmd.env("_CLAP_COMPLETE_COMP_TYPE", "9"); // normal completion
+    cmd.env("_CLAP_COMPLETE_SPACE", "true");
+    cmd.env("_CLAP_IFS", "\n");
+}
+
 /// Configure an existing command with the standardized worktrunk CLI environment.
 ///
 /// This helper mirrors the environment preparation performed by `wt_command`
@@ -185,6 +211,14 @@ impl TestRepo {
         // NOTE: We don't set PATH here. Tests inherit PATH from the test runner,
         // which allows them to find git, shells, etc. Since we don't explicitly set it,
         // insta-cmd won't capture it in snapshots, avoiding privacy leaks.
+    }
+
+    /// Prepare a `wt` command configured for shell completions within this repo.
+    pub fn completion_cmd(&self, words: &[&str]) -> Command {
+        let mut cmd = wt_completion_command(words);
+        self.clean_cli_env(&mut cmd);
+        cmd.current_dir(self.root_path());
+        cmd
     }
 
     /// Get the root path of the repository

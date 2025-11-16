@@ -135,6 +135,7 @@ pub enum StandaloneCommand {
     /// Squash commits with LLM-generated message
     Squash {
         /// Target branch to squash against (defaults to default branch)
+        #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
         /// Auto-approve project commands without saving approvals.
@@ -152,6 +153,7 @@ pub enum StandaloneCommand {
     /// the push and restores them afterward so other agents' changes stay intact.
     Push {
         /// Target branch (defaults to default branch)
+        #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
         /// Allow pushing merge commits (non-linear history)
@@ -162,6 +164,7 @@ pub enum StandaloneCommand {
     /// Rebase current branch onto target branch
     Rebase {
         /// Target branch to rebase onto (defaults to default branch)
+        #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
     },
 
@@ -375,6 +378,7 @@ Use '@' to refer to your current HEAD (following git's convention):
   wt remove @                              # Remove current worktree"#)]
     Switch {
         /// Branch name, worktree path, '@' for current HEAD, or '-' for previous branch
+        #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 
         /// Create a new branch
@@ -382,7 +386,7 @@ Use '@' to refer to your current HEAD (following git's convention):
         create: bool,
 
         /// Base branch to create from (only with --create). Use '@' for current HEAD
-        #[arg(short = 'b', long)]
+        #[arg(short = 'b', long, add = crate::completion::branch_value_completer())]
         base: Option<String>,
 
         /// Execute command after switching
@@ -447,6 +451,7 @@ Switch to default in primary:
   wt remove  # (when already in primary worktree)"#)]
     Remove {
         /// Worktree names or branches to remove (use '@' for current, defaults to current if none specified)
+        #[arg(add = crate::completion::worktree_branch_completer())]
         worktrees: Vec<String>,
 
         /// Don't delete the branch after removing the worktree (by default, branches are deleted)
@@ -507,6 +512,7 @@ Skip pre-merge commands:
   wt merge --no-verify"#)]
     Merge {
         /// Target branch to merge into (defaults to default branch)
+        #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
         /// Disable squashing commits (by default, commits are squashed into one before merging)
@@ -532,13 +538,5 @@ Skip pre-merge commands:
         /// Only stage tracked files (git add -u) instead of all files (git add -A)
         #[arg(long)]
         tracked_only: bool,
-    },
-
-    /// Internal completion helper (hidden)
-    #[command(hide = true)]
-    Complete {
-        /// Arguments to complete
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
     },
 }

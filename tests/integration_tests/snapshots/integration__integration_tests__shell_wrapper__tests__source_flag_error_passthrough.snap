@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-expression: combined
+expression: output.normalized()
 ---
 [1m[31merror:[0m unrecognized subcommand '[33mfoo[0m'
 

@@ -1,7 +1,29 @@
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, wt_command, wt_completion_command};
 use insta::Settings;
-use insta_cmd::assert_cmd_snapshot;
 use std::process::Command;
+
+fn only_option_suggestions(stdout: &str) -> bool {
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| line.starts_with('-'))
+}
+
+fn value_suggestions(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            if line.is_empty() {
+                false
+            } else if line.starts_with('-') {
+                line.contains('=')
+            } else {
+                true
+            }
+        })
+        .collect()
+}
 
 #[test]
 fn test_complete_switch_shows_branches() {
@@ -25,20 +47,12 @@ fn test_complete_switch_shows_branches() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "switch", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-        feature/new
-        hotfix/bug
-        main
-
-        ----- stderr -----
-        ");
+        let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("feature/new"));
+        assert!(stdout.contains("hotfix/bug"));
+        assert!(stdout.contains("main"));
     });
 }
 
@@ -61,20 +75,12 @@ fn test_complete_switch_shows_all_branches_including_worktrees() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "switch", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-        feature/new
-        hotfix/bug
-        main
-
-        ----- stderr -----
-        ");
+        let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("feature/new"));
+        assert!(stdout.contains("hotfix/bug"));
+        assert!(stdout.contains("main"));
     });
 }
 
@@ -93,21 +99,23 @@ fn test_complete_push_shows_all_branches() {
         .output()
         .unwrap();
 
-    // Test completion for dev push (should show ALL branches, including those with worktrees)
+    // Test completion for beta push (should show ALL branches, including those with worktrees)
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "dev", "push", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "beta", "push", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let values = value_suggestions(&stdout);
+        assert!(
+            values.contains(&"feature/new"),
+            "values should list feature/new\n{stdout}"
+        );
+        assert!(values.contains(&"hotfix/bug"));
+        assert!(values.contains(&"main"));
     });
 }
 
@@ -130,50 +138,28 @@ fn test_complete_base_flag_shows_all_branches() {
         .unwrap();
 
     // Test completion for --base flag (long form)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args([
-            "complete",
-            "wt",
-            "switch",
-            "--create",
-            "new-branch",
-            "--base",
-            "",
-        ])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "new-branch", "--base", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branches: Vec<&str> = stdout.lines().collect();
+    let branches = value_suggestions(&stdout);
 
     // Should show all branches as potential base
     assert!(branches.iter().any(|b| b.contains("develop")));
     assert!(branches.iter().any(|b| b.contains("feature/existing")));
 
     // Test completion for -b flag (short form)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args([
-            "complete",
-            "wt",
-            "switch",
-            "--create",
-            "new-branch",
-            "-b",
-            "",
-        ])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "new-branch", "-b", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branches: Vec<&str> = stdout.lines().collect();
+    let branches = value_suggestions(&stdout);
 
     // Should show all branches as potential base (short form works too)
     assert!(branches.iter().any(|b| b.contains("develop")));
@@ -198,24 +184,14 @@ fn test_complete_base_flag_with_equals() {
         .unwrap();
 
     // Test completion for --base= format (equals sign, no space)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args([
-            "complete",
-            "wt",
-            "switch",
-            "--create",
-            "new-branch",
-            "--base=",
-        ])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "new-branch", "--base="])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branches: Vec<&str> = stdout.lines().collect();
+    let branches = value_suggestions(&stdout);
 
     // Should show all branches as potential base
     assert!(branches.iter().any(|b| b.contains("develop")));
@@ -223,36 +199,23 @@ fn test_complete_base_flag_with_equals() {
     assert!(branches.iter().any(|b| b.contains("main")));
 
     // Test completion for --base=m (equals sign with partial value)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args([
-            "complete",
-            "wt",
-            "switch",
-            "--create",
-            "new-branch",
-            "--base=m",
-        ])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "new-branch", "--base=m"])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branches: Vec<&str> = stdout.lines().collect();
+    let branches = value_suggestions(&stdout);
 
-    // Should only show branches that match the prefix "m"
-    assert!(branches.iter().any(|b| b == &"main"));
-    assert!(!branches.iter().any(|b| b.contains("develop")));
-    assert!(!branches.iter().any(|b| b.contains("feature")));
+    // Should show all branches (shell handles prefix filtering)
+    assert!(branches.iter().any(|b| b.contains("main")));
+    assert!(branches.iter().any(|b| b.contains("develop")));
+    assert!(branches.iter().any(|b| b.contains("feature")));
 
     // Test completion for -b= format (short form with equals)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "--create", "new-branch", "-b="])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "new-branch", "-b="])
         .output()
         .unwrap();
 
@@ -272,17 +235,19 @@ fn test_complete_outside_git_repo() {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let mut cmd = wt_command();
-        cmd.current_dir(temp.path())
-            .args(["complete", "wt", "switch", ""]);
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = wt_completion_command(&["wt", "switch", ""])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-')),
+            "expected only option suggestions outside git repo, got:\n{stdout}"
+        );
     });
 }
 
@@ -293,18 +258,16 @@ fn test_complete_empty_repo() {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.current_dir(repo.root_path())
-            .args(["complete", "wt", "switch", ""]);
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-')),
+            "expected only option suggestions in empty repo, got:\n{stdout}"
+        );
     });
 }
 
@@ -316,18 +279,18 @@ fn test_complete_unknown_command() {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.current_dir(repo.root_path())
-            .args(["complete", "wt", "unknown-command", ""]);
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = repo
+            .completion_cmd(&["wt", "unknown-command", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let suggestions = value_suggestions(&stdout);
+        assert!(
+            suggestions.contains(&"init"),
+            "should fall back to root completions, got:\n{stdout}"
+        );
+        assert!(suggestions.contains(&"config"));
     });
 }
 
@@ -339,18 +302,19 @@ fn test_complete_beta_commit_no_positionals() {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.current_dir(repo.root_path())
-            .args(["complete", "wt", "beta", "commit", ""]);
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = repo
+            .completion_cmd(&["wt", "beta", "commit", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-')),
+            "beta commit should only suggest flags, got:\n{stdout}"
+        );
     });
 }
 
@@ -362,32 +326,37 @@ fn test_complete_list_command() {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.current_dir(repo.root_path())
-            .args(["complete", "wt", "list", ""]);
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = repo.completion_cmd(&["wt", "list", ""]).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .all(|line| line.starts_with('-')),
+            "wt list should only suggest flags, got:\n{stdout}"
+        );
     });
 }
 
 #[test]
 fn test_init_fish_includes_no_file_flag() {
-    // Test that fish init includes -f flag to disable file completion
+    // Test that fish init wires Clap-based completions into the template
     let mut cmd = wt_command();
     let output = cmd.arg("init").arg("fish").output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Check that completions include -f flag
-    assert!(stdout.contains("-f -a '(__wt_complete)'"));
+    // Ensure we embed the COMPLETE=fish registration snippet
+    assert!(
+        stdout.contains("COMPLETE=fish $_WORKTRUNK_CMD"),
+        "Fish template should call wt with COMPLETE=fish"
+    );
+    assert!(
+        stdout.contains("eval $_wt_completion_script"),
+        "Fish template should eval the Clap completion script"
+    );
 }
 
 #[test]
@@ -414,23 +383,18 @@ fn test_complete_with_partial_prefix() {
         .output()
         .unwrap();
 
-    // Complete with partial prefix - should return only branches starting with "feat"
+    // Complete with partial prefix - shell does prefix filtering, we return all branches
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "switch", "feat"]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-        feature/one
-        feature/two
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "switch", "feat"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("feature/one"));
+        assert!(stdout.contains("feature/two"));
     });
 }
 
@@ -444,13 +408,7 @@ fn test_complete_switch_shows_all_branches_even_with_worktrees() {
     temp.add_worktree("hotfix-worktree", "hotfix/bug");
 
     // From the main worktree, test completion - should show all branches
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", ""])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -515,13 +473,7 @@ fn test_complete_excludes_remote_branches() {
         .unwrap();
 
     // Test completion
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", ""])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -560,13 +512,7 @@ fn test_complete_merge_shows_branches() {
         .unwrap();
 
     // Test completion for merge (should show ALL branches, including those with worktrees)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "merge", ""])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "merge", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -599,21 +545,16 @@ fn test_complete_with_special_characters_in_branch_names() {
     }
 
     // Test completion
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", ""])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let values = value_suggestions(&stdout);
 
     // All branches should be present
     for branch in &branch_names {
         assert!(
-            stdout.contains(branch),
+            values.contains(branch),
             "Branch {} should be in completion output",
             branch
         );
@@ -642,57 +583,48 @@ fn test_complete_stops_after_branch_provided() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "switch", "feature/one", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "switch", "feature/one", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "expected only option suggestions after positional provided, got:\n{stdout}"
+        );
     });
 
-    // Test that dev push stops completing after branch is provided
+    // Test that beta push stops completing after branch is provided
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path()).args([
-            "complete",
-            "wt",
-            "dev",
-            "push",
-            "feature/one",
-            "",
-        ]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "beta", "push", "feature/one", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "expected only option suggestions after positional provided, got:\n{stdout}"
+        );
     });
 
     // Test that merge stops completing after branch is provided
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "merge", "feature/one", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "merge", "feature/one", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "expected only option suggestions after positional provided, got:\n{stdout}"
+        );
     });
 }
 
@@ -711,34 +643,32 @@ fn test_complete_switch_with_create_flag_no_completion() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "switch", "--create", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "switch", "--create", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "should not suggest branches when --create is present, got:\n{stdout}"
+        );
     });
 
     // Test with -c flag (short form)
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let mut cmd = wt_command();
-        temp.clean_cli_env(&mut cmd);
-        cmd.current_dir(temp.root_path())
-            .args(["complete", "wt", "switch", "-c", ""]);
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        ");
+        let output = temp
+            .completion_cmd(&["wt", "switch", "-c", ""])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            only_option_suggestions(&stdout),
+            "should not suggest branches when -c is present, got:\n{stdout}"
+        );
     });
 }
 
@@ -755,19 +685,8 @@ fn test_complete_switch_base_flag_after_branch() {
         .unwrap();
 
     // Test completion for --base even after --create and branch name
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args([
-            "complete",
-            "wt",
-            "switch",
-            "--create",
-            "new-feature",
-            "--base",
-            "",
-        ])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--create", "new-feature", "--base", ""])
         .output()
         .unwrap();
 
@@ -794,13 +713,7 @@ fn test_complete_remove_shows_branches() {
         .unwrap();
 
     // Test completion for remove (should show ALL branches)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "remove", ""])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "remove", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -817,19 +730,15 @@ fn test_complete_dev_run_hook_shows_hook_types() {
     temp.commit("initial");
 
     // Test completion for beta run-hook
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "beta", "run-hook", ""])
+    let output = temp
+        .completion_cmd(&["wt", "beta", "run-hook", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let hooks: Vec<&str> = stdout.lines().collect();
+    let hooks = value_suggestions(&stdout);
 
-    // Should include all hook types
     assert!(hooks.contains(&"post-create"), "Missing post-create");
     assert!(hooks.contains(&"post-start"), "Missing post-start");
     assert!(hooks.contains(&"pre-commit"), "Missing pre-commit");
@@ -844,54 +753,20 @@ fn test_complete_dev_run_hook_with_partial_input() {
     temp.commit("initial");
 
     // Test completion with partial input
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "beta", "run-hook", "po"])
+    let output = temp
+        .completion_cmd(&["wt", "beta", "run-hook", "po"])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let hooks: Vec<&str> = stdout.lines().collect();
+    let hooks = value_suggestions(&stdout);
 
-    // With clap fallback, we filter by prefix
     assert!(hooks.contains(&"post-create"));
     assert!(hooks.contains(&"post-start"));
     assert!(hooks.contains(&"post-merge"));
-    // Should NOT contain hooks that don't match the prefix
     assert!(!hooks.contains(&"pre-commit"));
     assert!(!hooks.contains(&"pre-merge"));
-}
-
-#[test]
-fn test_complete_dev_run_hook_without_trailing_empty() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
-
-    // Test completion WITHOUT trailing empty string (what fish actually sends)
-    // Regression test for bug where "wt beta run-hook<tab>" showed nothing
-    // but "wt beta run-hook ""<tab>" showed all hooks
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "beta", "run-hook"]) // No trailing ""
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let hooks: Vec<&str> = stdout.lines().collect();
-
-    // Should include all hook types even without trailing empty string
-    assert!(hooks.contains(&"post-create"), "Missing post-create");
-    assert!(hooks.contains(&"post-start"), "Missing post-start");
-    assert!(hooks.contains(&"pre-commit"), "Missing pre-commit");
-    assert!(hooks.contains(&"pre-merge"), "Missing pre-merge");
-    assert!(hooks.contains(&"post-merge"), "Missing post-merge");
-    assert_eq!(hooks.len(), 5, "Should have exactly 5 hook types");
 }
 
 #[test]
@@ -900,17 +775,11 @@ fn test_complete_init_shows_shells() {
     temp.commit("initial");
 
     // Test completion for init command with no input
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "init", ""])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "init", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let shells: Vec<&str> = stdout.lines().collect();
+    let shells = value_suggestions(&stdout);
 
     // Should show all shell types
     assert!(shells.contains(&"bash"));
@@ -924,46 +793,16 @@ fn test_complete_init_shows_shells() {
 }
 
 #[test]
-fn test_complete_init_without_trailing_empty() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
-
-    // Test completion WITHOUT trailing empty string (what fish actually sends)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "init"]) // No trailing ""
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let shells: Vec<&str> = stdout.lines().collect();
-
-    // Should show all shell types even without trailing empty string
-    assert!(shells.contains(&"bash"));
-    assert!(shells.contains(&"fish"));
-    assert!(shells.contains(&"zsh"));
-}
-
-#[test]
 fn test_complete_init_partial() {
     let temp = TestRepo::new();
     temp.commit("initial");
 
     // Test completion with partial input "fi"
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "init", "fi"])
-        .output()
-        .unwrap();
+    let output = temp.completion_cmd(&["wt", "init", "fi"]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let shells: Vec<&str> = stdout.lines().collect();
+    let shells = value_suggestions(&stdout);
 
     // With clap fallback, we filter by prefix
     assert!(shells.contains(&"fish"));
@@ -977,17 +816,14 @@ fn test_complete_init_with_source_flag() {
     temp.commit("initial");
 
     // Test completion with --source flag: wt --source init <tab>
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "--source", "init", ""])
+    let output = temp
+        .completion_cmd(&["wt", "--source", "init", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let shells: Vec<&str> = stdout.lines().collect();
+    let shells = value_suggestions(&stdout);
 
     // Should show all shell types, same as without --source
     assert!(shells.contains(&"bash"));
@@ -1001,17 +837,14 @@ fn test_complete_config_shell_flag() {
     temp.commit("initial");
 
     // Test completion for config shell --shell flag
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "config", "shell", "--shell", "z"])
+    let output = temp
+        .completion_cmd(&["wt", "config", "shell", "--shell", "z"])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let shells: Vec<&str> = stdout.lines().collect();
+    let shells = value_suggestions(&stdout);
 
     // Should filter by prefix
     assert!(shells.contains(&"zsh"));
@@ -1025,19 +858,14 @@ fn test_complete_config_shell_flag_with_source() {
     temp.commit("initial");
 
     // Test completion for config shell --shell flag with --source
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args([
-            "complete", "wt", "--source", "config", "shell", "--shell", "",
-        ])
+    let output = temp
+        .completion_cmd(&["wt", "--source", "config", "shell", "--shell", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let shells: Vec<&str> = stdout.lines().collect();
+    let shells = value_suggestions(&stdout);
 
     // Should show all shell types, same as without --source
     assert!(shells.contains(&"bash"));
@@ -1051,11 +879,8 @@ fn test_complete_list_format_flag() {
     temp.commit("initial");
 
     // Test completion for list --format flag
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "list", "--format", ""])
+    let output = temp
+        .completion_cmd(&["wt", "list", "--format", ""])
         .output()
         .unwrap();
 
@@ -1064,8 +889,9 @@ fn test_complete_list_format_flag() {
 
     // Each line is "name\tdescription" (fish format)
     // Just check that both format names appear
-    assert!(stdout.contains("table"));
-    assert!(stdout.contains("json"));
+    let values = value_suggestions(&stdout);
+    assert!(values.contains(&"table"));
+    assert!(values.contains(&"json"));
 }
 
 #[test]
@@ -1081,17 +907,14 @@ fn test_complete_switch_with_execute_flag() {
 
     // Test: wt switch --execute "code ." <cursor>
     // Should complete branches because --execute takes a value
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "--execute", "code .", ""])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--execute", "code .", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branches: Vec<&str> = stdout.lines().collect();
+    let branches = value_suggestions(&stdout);
     assert!(branches.iter().any(|b| b.contains("develop")));
     assert!(branches.iter().any(|b| b.contains("main")));
 }
@@ -1109,17 +932,14 @@ fn test_complete_switch_with_execute_equals_format() {
 
     // Test: wt switch --execute="code ." <cursor>
     // Should complete branches
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "--execute=code .", ""])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--execute=code .", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let branches: Vec<&str> = stdout.lines().collect();
+    let branches = value_suggestions(&stdout);
     assert!(branches.iter().any(|b| b.contains("feature")));
     assert!(branches.iter().any(|b| b.contains("main")));
 }
@@ -1137,11 +957,8 @@ fn test_complete_switch_short_cluster_with_value() {
 
     // Test: wt switch -xcode <cursor>
     // -x takes value "code" (fused), should complete branches for positional
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "-xcode", ""])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "-xcode", ""])
         .output()
         .unwrap();
 
@@ -1165,11 +982,8 @@ fn test_complete_switch_with_double_dash_terminator() {
 
     // Test: wt switch -- <cursor>
     // After --, everything is positional, should complete branches
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "--", ""])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--", ""])
         .output()
         .unwrap();
 
@@ -1193,18 +1007,17 @@ fn test_complete_switch_positional_already_provided() {
 
     // Test: wt switch existing <cursor>
     // Positional already provided, should NOT complete branches
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "existing", ""])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "existing", ""])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Should not suggest branches (stdout should be empty or not contain branches)
-    assert_eq!(stdout.trim(), "");
+    assert!(
+        only_option_suggestions(&stdout),
+        "expected only option suggestions, got:\n{stdout}"
+    );
 }
 
 #[test]
@@ -1220,11 +1033,8 @@ fn test_complete_switch_completing_execute_value() {
 
     // Test: wt switch --execute <cursor>
     // Currently typing the value for --execute, should NOT complete branches
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "switch", "--execute", ""])
+    let output = temp
+        .completion_cmd(&["wt", "switch", "--execute", ""])
         .output()
         .unwrap();
 
@@ -1247,11 +1057,8 @@ fn test_complete_merge_with_flags() {
 
     // Test: wt merge --no-remove --force <cursor>
     // Should complete branches for positional (boolean flags don't consume arguments)
-    let mut cmd = wt_command();
-    temp.clean_cli_env(&mut cmd);
-    let output = cmd
-        .current_dir(temp.root_path())
-        .args(["complete", "wt", "merge", "--no-remove", "--force", ""])
+    let output = temp
+        .completion_cmd(&["wt", "merge", "--no-remove", "--force", ""])
         .output()
         .unwrap();
 

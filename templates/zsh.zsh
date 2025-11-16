@@ -51,24 +51,10 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
         return $result
     }
 
-    # Dynamic completion function for zsh
-    _{{ cmd_prefix }}_complete() {
-        local -a completions
-        local -a words
-
-        # Get current command line as array
-        words=("${(@)words}")
-
-        # Call wt complete with current command line
-        completions=(${(f)"$(command "$_WORKTRUNK_CMD" complete "${words[@]}" 2>/dev/null)"})
-
-        # Add completions
-        compadd -a completions
-    }
-
-    # Register dynamic completion (only if compdef is available)
-    # In non-interactive shells or test environments, the completion system may not be loaded
+    # Register Clap-based completions (auto-updates after wt upgrades)
     if (( $+functions[compdef] )); then
-        compdef _{{ cmd_prefix }}_complete {{ cmd_prefix }}
+        local completion_script
+        completion_script=$(COMPLETE=zsh "$_WORKTRUNK_CMD" 2>/dev/null)
+        eval "$completion_script"
     fi
 fi

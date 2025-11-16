@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/init.rs
+assertion_line: 23
 info:
   program: wt
   args:
@@ -12,11 +13,10 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpcSRq4c/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmps2V6eB/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -132,17 +132,10 @@ wt_exec() {
         return $result
     }
 
-    # Dynamic completion function
-    _wt_complete() {
-        local cur="${COMP_WORDS[COMP_CWORD]}"
-
-        # Call wt complete with current command line
-        local completions=$(command "$_WORKTRUNK_CMD" complete "${COMP_WORDS[@]}" 2>/dev/null)
-        COMPREPLY=($(compgen -W "$completions" -- "$cur"))
-    }
-
-    # Register dynamic completion
-    complete -F _wt_complete wt
+    # Register Clap-based completions (auto-updates after wt upgrades)
+    if completion_script=$(COMPLETE=bash "$_WORKTRUNK_CMD" 2>/dev/null); then
+        eval "$completion_script"
+    fi
 fi
 
 # Static completions (commands and flags)
@@ -166,9 +159,6 @@ _wt() {
                 ;;
             wt,beta)
                 cmd="wt__beta"
-                ;;
-            wt,complete)
-                cmd="wt__complete"
                 ;;
             wt,config)
                 cmd="wt__config"
@@ -231,7 +221,7 @@ _wt() {
 
     case "${cmd}" in
         wt)
-            opts="-v -h -V --verbose --help --version init config beta list switch remove merge complete"
+            opts="-v -h -V --verbose --help --version init config beta list switch remove merge"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -359,20 +349,6 @@ _wt() {
         wt__beta__squash)
             opts="-f -v -h --force --no-verify --verbose --help [TARGET]"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
-                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-                return 0
-            fi
-            case "${prev}" in
-                *)
-                    COMPREPLY=()
-                    ;;
-            esac
-            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-            return 0
-            ;;
-        wt__complete)
-            opts="-v -h --verbose --help [ARGS]..."
-            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi

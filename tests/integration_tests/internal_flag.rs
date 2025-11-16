@@ -75,30 +75,3 @@ fn test_config_list_with_internal_flag() {
         assert_cmd_snapshot!(cmd);
     });
 }
-
-/// Test that `complete` command works with --internal flag
-///
-/// Complete doesn't emit directives, but should work fine with --internal.
-/// This verifies that completion output is properly handled in directive mode.
-#[test]
-fn test_complete_with_internal_flag() {
-    let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
-    // Add a worktree so we have branch names to complete
-    repo.add_worktree("feature", "feature");
-
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("complete")
-            .arg("wt")
-            .arg("switch")
-            .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd);
-    });
-}

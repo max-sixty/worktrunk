@@ -51,15 +51,8 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
         return $result
     }
 
-    # Dynamic completion function
-    _{{ cmd_prefix }}_complete() {
-        local cur="${COMP_WORDS[COMP_CWORD]}"
-
-        # Call wt complete with current command line
-        local completions=$(command "$_WORKTRUNK_CMD" complete "${COMP_WORDS[@]}" 2>/dev/null)
-        COMPREPLY=($(compgen -W "$completions" -- "$cur"))
-    }
-
-    # Register dynamic completion
-    complete -F _{{ cmd_prefix }}_complete {{ cmd_prefix }}
+    # Register Clap-based completions (auto-updates after wt upgrades)
+    if completion_script=$(COMPLETE=bash "$_WORKTRUNK_CMD" 2>/dev/null); then
+        eval "$completion_script"
+    fi
 fi
