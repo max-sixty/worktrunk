@@ -20,6 +20,8 @@ tier-2-integration-tests = []
 # This is optional to avoid C compilation issues on some platforms
 default = ["syntax-highlighting"]
 syntax-highlighting = ["dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-highlight"]
+# Internal feature to build dev-detach helper (Unix-only, not needed for releases)
+_dev_tools = []
 
 [lib]
 name = "worktrunk"
@@ -33,9 +35,11 @@ path = "src/main.rs"
 # This binary uses setsid() to detach child processes from controlling terminals,
 # preventing PTY-related hangs in nextest. Built with `cargo build` but not installed
 # by `cargo install` (binaries in subdirectories are excluded from installation).
+# Excluded from release builds via required-features (Unix-only, uses nix crate).
 [[bin]]
 name = "dev-detach"
 path = "tests/bin/dev-detach.rs"
+required-features = ["_dev_tools"]
 
 [dependencies]
 anstream = "0.6"
