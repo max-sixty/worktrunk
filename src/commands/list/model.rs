@@ -534,42 +534,50 @@ impl serde::Serialize for GitOperation {
 }
 
 /// Tracks which status symbol positions are actually used across all items
+/// and the maximum width needed for each position.
 ///
-/// This allows the Status column to only allocate space for positions that
-/// have data, rather than reserving space for all possible positions.
+/// This allows the Status column to:
+/// 1. Only allocate space for positions that have data
+/// 2. Pad each position to a consistent width for vertical alignment
 ///
-/// Uses a bit array for compact representation (8 positions = 8 bits).
+/// Stores maximum character width for each of 8 positions (including user status).
+/// A width of 0 means the position is unused.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PositionMask {
-    /// Bit array: [0a, 0b, 0c, 0d, 1, 2, 3, 4]
-    positions: [bool; 8],
+    /// Maximum width for each position: [0, 1, 2, 3, 4, 5, 6, 7]
+    /// 0 = position unused, >0 = max characters needed
+    widths: [usize; 8],
 }
 
 impl PositionMask {
-    const POS_0A_CONFLICTS: usize = 0;
-    const POS_0B_BRANCH_STATE: usize = 1;
+    const POS_3_WORKING_TREE: usize = 0;
+    const POS_0A_CONFLICTS: usize = 1;
     const POS_0C_GIT_OPERATION: usize = 2;
-    const POS_0D_WORKTREE_ATTRS: usize = 3;
-    const POS_1_MAIN_DIVERGENCE: usize = 4;
-    const POS_2_UPSTREAM_DIVERGENCE: usize = 5;
-    const POS_3_WORKING_TREE: usize = 6;
+    const POS_1_MAIN_DIVERGENCE: usize = 3;
+    const POS_2_UPSTREAM_DIVERGENCE: usize = 4;
+    const POS_0B_BRANCH_STATE: usize = 5;
+    const POS_0D_WORKTREE_ATTRS: usize = 6;
     const POS_4_USER_STATUS: usize = 7;
 
     /// Full mask with all positions enabled (for JSON output)
-    pub const FULL: Self = Self {
-        positions: [true; 8],
-    };
+    /// Uses width of 1 for each position as a placeholder
+    pub const FULL: Self = Self { widths: [1; 8] };
 
-    /// Merge this mask with another, keeping positions that are used in either
+    /// Merge this mask with another, keeping the maximum width for each position
     pub fn merge(&mut self, other: &Self) {
-        for (i, &other_val) in other.positions.iter().enumerate() {
-            self.positions[i] |= other_val;
+        for (i, &other_width) in other.widths.iter().enumerate() {
+            self.widths[i] = self.widths[i].max(other_width);
         }
     }
 
-    /// Check if a position is included in the mask
+    /// Check if a position is included in the mask (width > 0)
     fn includes(&self, pos: usize) -> bool {
-        self.positions[pos]
+        self.widths[pos] > 0
+    }
+
+    /// Get the width allocated for a position
+    fn width(&self, pos: usize) -> usize {
+        self.widths[pos]
     }
 }
 
@@ -664,21 +672,48 @@ impl StatusSymbols {
         }
 
         // Build list of (position_index, content, has_data) tuples
+        // Ordered by importance/actionability
+        let conflicts_str = if self.has_conflicts {
+            "=".to_string()
+        } else {
+            String::new()
+        };
+        let git_operation_str = self.git_operation.to_string();
+        let main_divergence_str = self.main_divergence.to_string();
+        let upstream_divergence_str = self.upstream_divergence.to_string();
+        let branch_state_str = self.branch_state.to_string();
+        let user_status_str = self.user_status.as_deref().unwrap_or("").to_string();
+
         let positions_data = [
             (
+                PositionMask::POS_3_WORKING_TREE,
+                &self.working_tree,
+                !self.working_tree.is_empty(),
+            ),
+            (
                 PositionMask::POS_0A_CONFLICTS,
-                if self.has_conflicts { "=" } else { "" },
+                &conflicts_str,
                 self.has_conflicts,
             ),
             (
-                PositionMask::POS_0B_BRANCH_STATE,
-                &self.branch_state.to_string(),
-                self.branch_state != BranchState::None,
+                PositionMask::POS_0C_GIT_OPERATION,
+                &git_operation_str,
+                self.git_operation != GitOperation::None,
             ),
             (
-                PositionMask::POS_0C_GIT_OPERATION,
-                &self.git_operation.to_string(),
-                self.git_operation != GitOperation::None,
+                PositionMask::POS_1_MAIN_DIVERGENCE,
+                &main_divergence_str,
+                self.main_divergence != MainDivergence::None,
+            ),
+            (
+                PositionMask::POS_2_UPSTREAM_DIVERGENCE,
+                &upstream_divergence_str,
+                self.upstream_divergence != UpstreamDivergence::None,
+            ),
+            (
+                PositionMask::POS_0B_BRANCH_STATE,
+                &branch_state_str,
+                self.branch_state != BranchState::None,
             ),
             (
                 PositionMask::POS_0D_WORKTREE_ATTRS,
@@ -686,40 +721,37 @@ impl StatusSymbols {
                 !self.worktree_attrs.is_empty(),
             ),
             (
-                PositionMask::POS_1_MAIN_DIVERGENCE,
-                &self.main_divergence.to_string(),
-                self.main_divergence != MainDivergence::None,
-            ),
-            (
-                PositionMask::POS_2_UPSTREAM_DIVERGENCE,
-                &self.upstream_divergence.to_string(),
-                self.upstream_divergence != UpstreamDivergence::None,
-            ),
-            (
-                PositionMask::POS_3_WORKING_TREE,
-                &self.working_tree,
-                !self.working_tree.is_empty(),
-            ),
-            (
                 PositionMask::POS_4_USER_STATUS,
-                self.user_status.as_deref().unwrap_or(""),
+                &user_status_str,
                 self.user_status.is_some(),
             ),
         ];
 
-        // Grid-based rendering: each position in mask gets exactly one column
-        // - If row has content at position: append content (may be multiple chars like "?!+")
-        // - If row has no content at position: append single space
-        // - No trimming: grid fills all columns defined by mask
+        // Grid-based rendering with padding: each position gets a fixed-width column
+        // - If row has content at position: append content, then pad to allocated width
+        // - If row has no content at position: fill with spaces to allocated width
+        use unicode_width::UnicodeWidthStr;
+
         for (pos, content, has_data) in positions_data.iter() {
             if !mask.includes(*pos) {
                 continue; // Skip positions not in mask
             }
 
+            let allocated_width = mask.width(*pos);
+
             if *has_data {
                 result.push_str(content);
+                // Pad to allocated width (use saturating_sub to handle edge cases)
+                let content_width = content.width();
+                let padding = allocated_width.saturating_sub(content_width);
+                for _ in 0..padding {
+                    result.push(' ');
+                }
             } else {
-                result.push(' '); // Fill empty column with space
+                // Fill empty column with spaces
+                for _ in 0..allocated_width {
+                    result.push(' ');
+                }
             }
         }
 
@@ -728,18 +760,22 @@ impl StatusSymbols {
 
     /// Derive a position mask that tracks which symbol slots contain data.
     pub fn position_mask(&self) -> PositionMask {
-        let mut positions = [false; 8];
-        positions[PositionMask::POS_0A_CONFLICTS] = self.has_conflicts;
-        positions[PositionMask::POS_0B_BRANCH_STATE] = self.branch_state != BranchState::None;
-        positions[PositionMask::POS_0C_GIT_OPERATION] = self.git_operation != GitOperation::None;
-        positions[PositionMask::POS_0D_WORKTREE_ATTRS] = !self.worktree_attrs.is_empty();
-        positions[PositionMask::POS_1_MAIN_DIVERGENCE] =
-            self.main_divergence != MainDivergence::None;
-        positions[PositionMask::POS_2_UPSTREAM_DIVERGENCE] =
-            self.upstream_divergence != UpstreamDivergence::None;
-        positions[PositionMask::POS_3_WORKING_TREE] = !self.working_tree.is_empty();
-        positions[PositionMask::POS_4_USER_STATUS] = self.user_status.is_some();
-        PositionMask { positions }
+        use unicode_width::UnicodeWidthStr;
+
+        let mut widths = [0; 8];
+
+        widths[PositionMask::POS_3_WORKING_TREE] = self.working_tree.width();
+        widths[PositionMask::POS_0A_CONFLICTS] = if self.has_conflicts { 1 } else { 0 };
+        widths[PositionMask::POS_0C_GIT_OPERATION] = self.git_operation.to_string().width();
+        widths[PositionMask::POS_1_MAIN_DIVERGENCE] = self.main_divergence.to_string().width();
+        widths[PositionMask::POS_2_UPSTREAM_DIVERGENCE] =
+            self.upstream_divergence.to_string().width();
+        widths[PositionMask::POS_0B_BRANCH_STATE] = self.branch_state.to_string().width();
+        widths[PositionMask::POS_0D_WORKTREE_ATTRS] = self.worktree_attrs.width();
+        widths[PositionMask::POS_4_USER_STATUS] =
+            self.user_status.as_ref().map(|s| s.width()).unwrap_or(0);
+
+        PositionMask { widths }
     }
 
     /// Check if symbols are empty

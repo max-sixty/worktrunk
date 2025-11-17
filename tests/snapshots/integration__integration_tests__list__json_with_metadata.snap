@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmphzLoxx/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpglj0lC/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -107,7 +107,7 @@ exit_code: 0
       "working_tree": "",
       "user_status": null
     },
-    "status_display": " ≡      "
+    "status_display": "     ≡  "
   },
   {
     "type": "worktree",
@@ -151,7 +151,7 @@ exit_code: 0
       "working_tree": "",
       "user_status": null
     },
-    "status_display": " ≡ ⊠    "
+    "status_display": "     ≡⊠ "
   }
 ]
 
