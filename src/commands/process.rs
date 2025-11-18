@@ -70,9 +70,10 @@ fn spawn_detached_unix(
     // - nohup makes the process immune to SIGHUP (continues after parent exits)
     // - sh -c allows complex shell commands with pipes, redirects, etc.
     // - & backgrounds the process immediately
-    // - Parent process doesn't wait, allowing immediate return
+    // - We wait for the outer shell to exit (happens immediately after backgrounding)
+    // - This prevents zombie process accumulation under high concurrency
     // - Output redirected to log file for debugging
-    Command::new("sh")
+    let mut child = Command::new("sh")
         .arg("-c")
         .arg(format!(
             "nohup sh -c {} &",
@@ -86,6 +87,11 @@ fn spawn_detached_unix(
         .stderr(Stdio::from(log_file))
         .spawn()
         .git_context("Failed to spawn detached process")?;
+
+    // Wait for the outer shell to exit (immediate, doesn't block on background command)
+    child
+        .wait()
+        .git_context("Failed to wait for detachment shell")?;
 
     Ok(())
 }
