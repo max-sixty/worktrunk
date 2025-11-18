@@ -17,12 +17,7 @@ When making decisions, prioritize:
 2. **Clean design** over maintaining old patterns
 3. **Modern conventions** over legacy approaches
 
-Examples of acceptable breaking changes:
-- Changing config file locations (e.g., moving from `~/Library/Application Support` to `~/.config`)
-- Renaming commands or flags for clarity
-- Changing output formats
-- Replacing dependencies with better alternatives
-- Restructuring the codebase
+Acceptable breaking changes: config locations, command/flag names, output formats, dependencies, codebase structure.
 
 When the project reaches v1.0 or gains users, we'll adopt stability commitments. Until then, we're free to iterate rapidly.
 
@@ -41,50 +36,30 @@ fn parse_config() { ... }
 
 ### User Message Principles
 
-Output messages should acknowledge user-supplied arguments (flags, options, values) by reflecting those choices in the message text. This confirms the program understood their intent and used their input correctly.
-
-**Examples:**
+Output messages should acknowledge user-supplied arguments (flags, options, values) by reflecting those choices in the message text.
 
 ```rust
 // User runs: wt switch --create feature --base=main
 // ✅ GOOD - acknowledges the base branch
 "Created new worktree for feature from main at /path/to/worktree"
-
 // ❌ BAD - ignores the base argument
 "Created new worktree for feature at /path/to/worktree"
-
-// User runs: wt merge --squash
-// ✅ GOOD - acknowledges squash mode
-"Squashing 3 commits into 1..."
-
-// ❌ BAD - doesn't mention squashing
-"Merging commits..."
 ```
 
-This confirms the program understood user intent and used their input correctly.
-
-**Avoid redundant parenthesized content:**
-
-Parenthesized text should add new information, not restate what's already said. If the parentheses just rephrase the main message in different words, remove them.
+**Avoid redundant parenthesized content:** Parenthesized text should add new information, not restate what's already said.
 
 ```rust
 // ❌ BAD - parentheses restate "no changes"
 "No changes after squashing 3 commits (commits resulted in no net changes)"
-
 // ✅ GOOD - clear and concise
 "No changes after squashing 3 commits"
-
-// ✅ GOOD - parentheses add supplementary info (stats)
+// ✅ GOOD - parentheses add supplementary info
 "Committing with default message... (3 files, +45, -12)"
-
-// ✅ GOOD - parentheses explain why
-"Worktree preserved (--no-remove)"
 ```
 
 ### The anstyle Ecosystem
 
 All styling uses the **anstyle ecosystem** for composable, auto-detecting terminal output:
-
 - **`anstream`**: Auto-detecting I/O streams (println!, eprintln! macros)
 - **`anstyle`**: Core styling with inline pattern `{style}text{style:#}`
 - **Color detection**: Respects NO_COLOR, CLICOLOR_FORCE, TTY detection
@@ -99,34 +74,18 @@ Six canonical message patterns with their emojis:
 4. **Warnings**: 🟡 + yellow text (non-blocking issues)
 5. **Hints**: 💡 + dimmed text (actionable suggestions, tips for user)
 6. **Info**: ⚪ + text (neutral status, system feedback, metadata)
-   - **NOT dimmed**: Primary status messages that answer the user's question
-   - **Dimmed**: Supplementary metadata and contextual information
+   - **NOT dimmed**: Primary status messages
+   - **Dimmed**: Supplementary metadata
 
-Every user-facing message requires either an emoji or a gutter for consistent visual separation.
-
-```rust
-// ✅ GOOD - standalone message with emoji
-println!("{SUCCESS_EMOJI} {GREEN}Created worktree{GREEN:#}");
-
-// ✅ GOOD - quoted content with gutter
-print!("{}", format_with_gutter(&command));
-
-// ✅ GOOD - section header with emoji, followed by gutter content
-println!("{INFO_EMOJI} Global Config: {bold}{}{bold:#}", path.display());
-
-// ❌ BAD - standalone message without emoji or gutter
-println!("{dim}Operation declined{dim:#}");
-```
+**Every user-facing message requires either an emoji or a gutter** for consistent visual separation.
 
 ### stdout vs stderr: Separation by Mode
 
-Output separation differs between interactive and directive modes.
-
-Interactive mode:
+**Interactive mode:**
 - stdout: All worktrunk output (messages, errors, warnings, progress)
 - stderr: Child process output (git, npm, user commands) + interactive prompts
 
-Directive mode (--internal flag for shell integration):
+**Directive mode** (--internal flag for shell integration):
 - stdout: Only directives (`__WORKTRUNK_CD__`, `__WORKTRUNK_EXEC__`) - NUL-terminated
 - stderr: All user-facing messages + child process output - streams in real-time
 
@@ -135,31 +94,21 @@ Use the output system (`output::success()`, `output::progress()`, etc.) to handl
 ```rust
 // ✅ GOOD - use output system (handles both modes)
 output::success("Branch created")?;
-output::change_directory(&path)?;
 
 // ❌ BAD - direct writes bypass output system
 println!("Branch created");
-writeln!(io::stderr(), "Progress...")?;
 ```
 
-Interactive prompts flush stderr before blocking on stdin to prevent interleaving:
+Interactive prompts must flush stderr before blocking on stdin:
 ```rust
 eprint!("💡 Allow and remember? [y/N] ");
-stderr().flush()?;  // Ensures prompt is visible before blocking
+stderr().flush()?;
 io::stdin().read_line(&mut response)?;
-```
-
-Child processes redirect stdout to stderr for deterministic ordering:
-```rust
-let wrapped = format!("{{ {}; }} 1>&2", command);
-Command::new("sh").arg("-c").arg(&wrapped).status()?;
 ```
 
 ### Temporal Locality: Output Should Be Close to Operations
 
-Output should appear immediately adjacent to the operations it describes. Output that appears far from its triggering operation breaks the user's mental model.
-
-Progress messages apply only to slow operations (>400ms): git operations, network requests, builds. Fast operations like file checks or config reads should not show progress.
+Output should appear immediately adjacent to the operations it describes. Progress messages apply only to slow operations (>400ms): git operations, network requests, builds.
 
 Sequential operations should show immediate feedback:
 ```rust
@@ -170,7 +119,7 @@ for item in items {
 }
 ```
 
-Output decoupled from operations creates confusion:
+Bad example (output decoupled from operations):
 ```
 🔄 Removing worktree for feature...
 🔄 Removing worktree for bugfix...
@@ -179,7 +128,7 @@ Removed worktree for feature        ← All output at the end
 Removed worktree for bugfix
 ```
 
-Signs of poor temporal locality: collecting messages in a buffer, single success message for batch operations, no progress before slow operations, progress without matching success.
+Signs of poor temporal locality: collecting messages in a buffer, single success message for batch operations, no progress before slow operations.
 
 ### Information Display: Show Once, Not Twice
 
@@ -190,17 +139,11 @@ Progress messages should include all relevant details (what's being done, counts
 output::progress("🔄 Squashing 3 commits with working tree changes into 1 (5 files, +120, -45)...")?;
 perform_squash()?;
 output::success("✅ Squashed @ a1b2c3d")?;
-
-// ❌ BAD - repeating detail in success message
-output::progress("🔄 Squashing 3 commits into 1...")?;
-perform_squash()?;
-output::success("✅ Squashed 3 commits into 1 @ a1b2c3d")?;  // Redundant
 ```
 
 ### Semantic Style Constants
 
 Style constants defined in `src/styling.rs`:
-
 - `ERROR`: Red (errors, conflicts)
 - `WARNING`: Yellow (warnings)
 - `HINT`: Dimmed (hints, secondary information)
@@ -208,102 +151,47 @@ Style constants defined in `src/styling.rs`:
 - `ADDITION`: Green (diffs, additions)
 - `DELETION`: Red (diffs, deletions)
 
-Emoji constants:
-
-- `ERROR_EMOJI`: ❌ (use with ERROR style)
-- `WARNING_EMOJI`: 🟡 (use with WARNING style)
-- `HINT_EMOJI`: 💡 (use with HINT style)
-- `INFO_EMOJI`: ⚪ (use with dimmed style)
+Emoji constants: `ERROR_EMOJI` (❌), `WARNING_EMOJI` (🟡), `HINT_EMOJI` (💡), `INFO_EMOJI` (⚪)
 
 ### Inline Formatting Pattern
 
 Use anstyle's inline pattern `{style}text{style:#}` where `#` means reset:
 
 ```rust
-use worktrunk::styling::{println, ERROR, ERROR_EMOJI, WARNING, WARNING_EMOJI, HINT, HINT_EMOJI, AnstyleStyle};
+use worktrunk::styling::{println, ERROR, ERROR_EMOJI, WARNING_EMOJI, HINT_EMOJI, AnstyleStyle};
 use anstyle::{AnsiColor, Color};
 
-// Progress
 let cyan = AnstyleStyle::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
 println!("🔄 {cyan}Rebasing onto main...{cyan:#}");
 
-// Success
-let green = AnstyleStyle::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
-println!("✅ {green}Merged to main{green:#}");
-
-// Error - ALL our output goes to stdout
 println!("{ERROR_EMOJI} {ERROR}Working tree has uncommitted changes{ERROR:#}");
-
-// Warning - ALL our output goes to stdout
-println!("{WARNING_EMOJI} {WARNING}Uncommitted changes detected{WARNING:#}");
-
-// Hint
 println!("{HINT_EMOJI} {HINT}Use 'wt list' to see all worktrees{HINT:#}");
 ```
 
 ### Composing Styles
 
-Compose styles using anstyle methods (`.bold()`, `.fg_color()`, etc.). Branch names in messages (not tables) should be bolded:
+Compose styles using anstyle methods (`.bold()`, `.fg_color()`, etc.). Branch names in messages (not tables) should be bolded. Tables (`wt list`) use conditional styling for branch names to indicate worktree state (current/primary/other).
 
-```rust
-use worktrunk::styling::{println, AnstyleStyle, ERROR};
-
-// Error message with bold branch name
-let error_bold = ERROR.bold();
-println!("❌ Branch '{error_bold}{branch}{error_bold:#}' already exists");
-
-// Success message with bold branch name
-let bold = AnstyleStyle::new().bold();
-println!("Switched to worktree: {bold}{branch}{bold:#}");
-```
-
-Tables (`wt list`) use conditional styling for branch names to indicate worktree state (current/primary/other), not bold.
-
-Nested style resets leak color. Compose all attributes into a single style object instead:
+Nested style resets leak color. Compose all attributes into a single style object:
 
 ```rust
 // ❌ BAD - nested reset leaks color
 "{WARNING}Text with {bold}nested{bold:#} styles{WARNING:#}"
-
 // ✅ GOOD - compose styles together
 let warning_bold = WARNING.bold();
 "{WARNING}Text with {warning_bold}composed{warning_bold:#} styles{WARNING:#}"
 ```
 
-Resetting all styles requires `anstyle::Reset`, not `{:#}` on empty `Style`:
-
-```rust
-// ❌ BAD - produces empty string
-output.push_str(&format!("{:#}", Style::new()));
-
-// ✅ GOOD - produces \x1b[0m reset code
-output.push_str(&format!("{}", anstyle::Reset));
-```
-
-### Information Hierarchy & Styling
-
-Bold elements that answer the user's question; dim elements that provide context.
-
-Styled elements must maintain their surrounding color. Compose the color with the style using `.bold()` or `.dimmed()` to avoid leaking color.
+Styled elements must maintain their surrounding color. Compose the color with the style to avoid leaking:
 
 ```rust
 // ❌ WRONG - styled element loses surrounding color
 let bold = AnstyleStyle::new().bold();
 println!("✅ {GREEN}Message {bold}{path}{bold:#}{GREEN:#}");  // Path will be black/white!
-
 // ✅ RIGHT - compose color with style
 let green_bold = GREEN.bold();
-println!("✅ {GREEN}Created worktree, changed directory to {green_bold}{}{green_bold:#}");
-
-// Re-establish outer color after styled elements mid-message
-let green_bold = GREEN.bold();
-println!("✅ {GREEN}Already on {green_bold}{branch}{green_bold:#}{GREEN}, nothing to merge{GREEN:#}");
-//                                                      ^^^^^^^ Re-establish GREEN
+println!("✅ {GREEN}Created worktree at {green_bold}{path}{green_bold:#}{GREEN:#}");
 ```
-
-### Indentation Policy
-
-No manual indentation - styling provides hierarchy. For quoted content, use `format_with_gutter()`.
 
 ### Color Detection
 
@@ -314,7 +202,6 @@ Styled print macros must be imported from `worktrunk::styling`, not stdlib:
 ```rust
 // ❌ BAD - uses standard library macro, bypasses anstream
 eprintln!("{}", styled_text);
-
 // ✅ GOOD - import and use anstream-wrapped version
 use worktrunk::styling::eprintln;
 eprintln!("{}", styled_text);
@@ -322,12 +209,11 @@ eprintln!("{}", styled_text);
 
 ### Design Principles
 
-- **Use the ecosystem, not manual escape codes** - Use `anstyle` for colors, `osc8` for hyperlinks, `strip-ansi-escapes` for stripping. Never manually write ANSI codes (`\x1b[...`) in production code
+- **Use the ecosystem, not manual escape codes** - Use `anstyle` for colors, `osc8` for hyperlinks, `strip-ansi-escapes` for stripping. Never manually write ANSI codes (`\x1b[...`)
 - **Inline over wrappers** - Use `{style}text{style:#}` pattern, not wrapper functions
 - **Composition over special cases** - Use `.bold()`, `.fg_color()`, not `format_X_with_Y()`
 - **Semantic constants** - Use `ERROR`, `WARNING`, not raw colors
 - **YAGNI for presentation** - Most output needs no styling
-- **Minimal output** - Only use formatting where it adds clarity
 - **Unicode-aware** - Width calculations respect emoji and CJK characters (via `StyledLine`)
 - **Graceful degradation** - Must work without color support
 
@@ -340,13 +226,9 @@ use worktrunk::styling::StyledLine;
 use anstyle::{AnsiColor, Color, Style};
 
 let mut line = StyledLine::new();
-let dim = Style::new().dimmed();
-let cyan = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
-
-line.push_styled("Branch", dim);
+line.push_styled("Branch", Style::new().dimmed());
 line.push_raw("  ");
-line.push_styled("main", cyan);
-
+line.push_styled("main", Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))));
 println!("{}", line.render());
 ```
 
@@ -357,43 +239,27 @@ See `src/commands/list/render.rs` for advanced usage.
 Use `format_with_gutter()` for quoted content. Gutter content must be raw external output without our styling additions (emojis, colors).
 
 ```rust
-use worktrunk::styling::format_with_gutter;
-use worktrunk::git::GitError;
-
 // ✅ GOOD - raw git output in gutter
 let raw_error = match &error {
-    GitError::CommandFailed(msg) => msg.as_str(),  // Extract raw string
+    GitError::CommandFailed(msg) => msg.as_str(),
     _ => &error.to_string(),
 };
 super::gutter(format_with_gutter(raw_error, "", None))?;
 
-// ❌ BAD - includes our formatting in gutter
-super::gutter(format_with_gutter(&error.to_string(), "", None))?;  // Adds ❌ emoji
-
-// ✅ GOOD - command output
-print!("{}", format_with_gutter(&command));
+// ❌ BAD - includes our formatting (❌ emoji)
+super::gutter(format_with_gutter(&error.to_string(), "", None))?;
 ```
 
-**Linebreaks with gutter content:** Gutter content requires a single newline before it, never double newlines. The gutter's visual structure (background color, indentation) provides sufficient separation.
-
-Output functions (`progress()`, `success()`, etc.) use `println!()` internally, adding a trailing newline. Messages passed to these functions should not include `\n`, as this creates a blank line.
+**Linebreaks:** Gutter content requires a single newline before it, never double newlines. Output functions (`progress()`, `success()`, etc.) use `println!()` internally, adding a trailing newline. Messages passed to these functions should not include `\n`:
 
 ```rust
-// ✅ GOOD - output function adds newline automatically
-output::progress(format!("{CYAN}Merging commits...{CYAN:#}"))?;
-output::gutter(format_with_gutter(&log_output, "", None))?;
+// ✅ GOOD - no trailing \n
+output::progress(format!("{CYAN}Merging...{CYAN:#}"))?;
+output::gutter(format_with_gutter(&log, "", None))?;
 
-// ❌ BAD - trailing \n creates double newline (blank line)
-output::progress(format!("{CYAN}Merging commits...{CYAN:#}\n"))?;
-output::gutter(format_with_gutter(&log_output, "", None))?;
-
-// ✅ GOOD - single newline in direct format!()
-format!("{header}\n{}", format_with_gutter(error, "", None))
-
-// ❌ BAD - double newline creates blank line
-format!("{header}\n\n{}", format_with_gutter(error, "", None))
+// ❌ BAD - trailing \n creates blank line
+output::progress(format!("{CYAN}Merging...{CYAN:#}\n"))?;
 ```
-
 
 ### Snapshot Testing Requirement
 
@@ -418,12 +284,6 @@ fn test_command_success() {
     repo.commit("Initial commit");
     snapshot_command("command_success", &repo, &[]);
 }
-
-#[test]
-fn test_command_no_data() {
-    let repo = TestRepo::new();
-    snapshot_command("command_no_data", &repo, &[]);
-}
 ```
 
 Cover success/error states, with/without data, and flag variations.
@@ -433,7 +293,6 @@ Cover success/error states, with/without data, and flag variations.
 ### Two Output Modes
 
 Worktrunk supports two output modes, selected once at program startup:
-
 1. **Interactive Mode** - Human-friendly output with colors, emojis, and hints
 2. **Directive Mode** - Machine-readable NUL-terminated directives for shell integration
 
@@ -443,77 +302,45 @@ The mode is determined at initialization in `main()` and never changes during ex
 
 Command code must never check which output mode is active. The output system uses enum dispatch - commands call output functions without knowing the mode.
 
-**Bad - mode conditionals scattered through commands:**
 ```rust
 // ❌ NEVER DO THIS
-use crate::output::OutputMode;
-
-fn some_command(mode: OutputMode) {
-    if mode == OutputMode::Interactive {
-        println!("✅ Success!");
-    } else {
-        println!("Success!\0");
-    }
+if mode == OutputMode::Interactive {
+    println!("✅ Success!");
 }
-```
 
-**Good - use the output system:**
-```rust
 // ✅ ALWAYS DO THIS
-use crate::output;
-
-fn some_command() {
-    output::success("Success!")?;
-    // The output system handles formatting for both modes
-}
+output::success("Success!")?;
 ```
 
-### How It Works
-
-Decide once at the edge (`main()`), initialize globally, trust internally.
+Decide once at the edge (`main()`), initialize globally, trust internally:
 
 ```rust
 // In main.rs - the only place that knows about modes
-let mode = if internal {
-    OutputMode::Directive
-} else {
-    OutputMode::Interactive
-};
-output::initialize(mode);
+output::initialize(if internal { OutputMode::Directive } else { OutputMode::Interactive });
 
 // Everywhere else - just use the output functions
 output::success("Created worktree")?;
 output::change_directory(&path)?;
-output::execute("git pull")?;
 ```
 
 ### Available Output Functions
 
-The output module (`src/output/global.rs`) provides these functions:
+The output module (`src/output/global.rs`) provides:
 
-- `success(message)` - Emit success messages (✅, both modes)
-- `progress(message)` - Emit progress updates (🔄, both modes)
-- `info(message)` - Emit info messages (⚪, both modes)
-- `warning(message)` - Emit warning messages (🟡, both modes)
-- `hint(message)` - Emit hint messages (💡, interactive only, suppressed in directive)
+- `success(message)` - Successful completion (✅, both modes)
+- `progress(message)` - Operations in progress (🔄, both modes)
+- `info(message)` - Neutral status/metadata (⚪, both modes)
+- `warning(message)` - Non-blocking issues (🟡, both modes)
+- `hint(message)` - Actionable suggestions (💡, interactive only, suppressed in directive)
 - `change_directory(path)` - Request directory change (directive) or store for execution (interactive)
 - `execute(command)` - Execute command (interactive) or emit directive (directive mode)
 - `flush()` - Flush output buffers
-
-Function usage:
-- `success()` - Successful completion (e.g., "✅ Committed changes")
-- `progress()` - Operations in progress (e.g., "🔄 Squashing commits...")
-- `info()` - Neutral status/metadata (e.g., "⚪ No changes detected")
-- `warning()` - Non-blocking issues (e.g., "🟡 Uncommitted changes detected")
-- `hint()` - Actionable suggestions for users (e.g., "💡 Run 'wt config --help'")
 
 For the complete API, see `src/output/global.rs`.
 
 ### Adding New Output Functions
 
-Add the function to both handlers, add dispatch in `global.rs`, never add mode parameters.
-
-This maintains one canonical path: commands have ONE code path that works for both modes. Never check the mode in commands.
+Add the function to both handlers, add dispatch in `global.rs`, never add mode parameters. This maintains one canonical path: commands have ONE code path that works for both modes.
 
 ### Architectural Constraint: --internal Commands Must Use Output System
 
@@ -531,7 +358,6 @@ for line in reader.lines() {
     println!("{}", line);
     stdout().flush();
 }
-
 // ❌ BAD - buffering
 let lines: Vec<_> = reader.lines().collect();
 ```
@@ -561,9 +387,7 @@ Use `wt list --format=json` for structured data access. The output is an array o
 ### Common Fields (all objects)
 
 - `type`: "worktree" | "branch"
-- `head_sha`: commit SHA
-- `timestamp`: commit timestamp (Unix epoch)
-- `commit_message`: commit message text
+- `head_sha`, `timestamp`, `commit_message`: commit info
 - `ahead`, `behind`: commits ahead/behind main branch
 - `branch_diff`: `{added, deleted}` - line diff vs main
 - `has_conflicts`: boolean - merge conflicts with main
@@ -578,9 +402,7 @@ Use `wt list --format=json` for structured data access. The output is an array o
 - `bare`, `detached`: boolean flags
 - `locked`, `prunable`: reason strings (null if not applicable)
 - `working_tree_diff`: `{added, deleted}` - uncommitted changes
-- `working_tree_diff_with_main`: `{added, deleted}` or null
-  - `null`: not computed (optimization when trees clearly differ)
-  - `{added: 0, deleted: 0}`: working tree matches main exactly
+- `working_tree_diff_with_main`: `{added, deleted}` or null (null = not computed, `{0,0}` = matches main exactly)
 - `worktree_state`: "rebase" | "merge" | null - git operation in progress
 - `is_primary`: boolean - is main/primary worktree
 - `status_symbols`: structured status object (see below)
@@ -593,53 +415,25 @@ Use `wt list --format=json` for structured data access. The output is an array o
 
 The `status_symbols` object provides structured access to status indicators:
 
-- `has_conflicts`: boolean - merge conflicts detected
-- `branch_state`: "" | "≡" | "∅"
-  - "≡": working tree matches main
-  - "∅": no commits and clean
-- `git_operation`: "" | "↻" | "⋈"
-  - "↻": rebase in progress
-  - "⋈": merge in progress
-- `worktree_attrs`: string - combination of:
-  - "◇": bare worktree
-  - "⊠": locked
-  - "⚠": prunable
-- `main_divergence`: "" | "↑" | "↓" | "↕"
-  - "↑": ahead of main
-  - "↓": behind main
-  - "↕": diverged (both ahead and behind)
-- `upstream_divergence`: "" | "⇡" | "⇣" | "⇅"
-  - "⇡": ahead of remote
-  - "⇣": behind remote
-  - "⇅": diverged from remote
-- `working_tree`: string - combination of:
-  - "?": untracked files
-  - "!": modified files
-  - "+": staged changes
-  - "»": renamed files
-  - "✘": deleted files
+- `has_conflicts`: boolean
+- `branch_state`: "" | "≡" (matches main) | "∅" (no commits and clean)
+- `git_operation`: "" | "↻" (rebase) | "⋈" (merge)
+- `worktree_attrs`: combination of "◇" (bare), "⊠" (locked), "⚠" (prunable)
+- `main_divergence`: "" | "↑" (ahead) | "↓" (behind) | "↕" (diverged)
+- `upstream_divergence`: "" | "⇡" (ahead) | "⇣" (behind) | "⇅" (diverged)
+- `working_tree`: combination of "?" (untracked), "!" (modified), "+" (staged), "»" (renamed), "✘" (deleted)
 
 ### Display Fields (json-pretty format only)
 
-These fields contain ANSI-formatted strings for human-readable output:
-
-- `commits_display` (branches only)
-- `branch_diff_display` (branches only)
-- `upstream_display` (optional)
-- `ci_status_display` (optional)
-- `status_display`:
-  - Worktrees: rendered status symbols + user status
-  - Branches: user status or "·"
+ANSI-formatted strings for human-readable output:
+- `commits_display`, `branch_diff_display` (branches only)
+- `upstream_display`, `ci_status_display` (optional)
+- `status_display`: rendered status symbols + user status
 - `working_diff_display` (worktrees only, optional)
-
-Note: Display fields are omitted when empty/null.
 
 ### Query Examples
 
 ```bash
-# Get main worktree info
-jq '.[] | select(.branch == "main") | {path, ahead, behind}'
-
 # Find worktrees with uncommitted changes
 jq '.[] | select(.type == "worktree" and .working_tree_diff.added > 0)'
 
