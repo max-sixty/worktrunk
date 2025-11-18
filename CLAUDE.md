@@ -26,6 +26,17 @@ Examples of acceptable breaking changes:
 
 When the project reaches v1.0 or gains users, we'll adopt stability commitments. Until then, we're free to iterate rapidly.
 
+## Code Quality
+
+Claude commonly makes the mistake of adding `#[allow(dead_code)]` when writing code that isn't immediately used. Don't suppress the warning—either delete the code or add a TODO comment explaining when it will be used.
+
+Example of escalating instead of suppressing:
+
+```rust
+// TODO(feature-name): Used by upcoming config validation
+fn parse_config() { ... }
+```
+
 ## CLI Output Formatting Standards
 
 ### User Message Principles
