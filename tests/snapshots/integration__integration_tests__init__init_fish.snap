@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp0zq2ID/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpjMnKcX/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -183,8 +183,8 @@ function __fish_wt_using_subcommand
 	contains -- $cmd[1] $argv
 end
 
-complete -c wt -n "__fish_wt_needs_command" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_needs_command" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_needs_command" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_needs_command" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_needs_command" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_needs_command" -s V -l version -d 'Print version'
 complete -c wt -n "__fish_wt_needs_command" -f -a "init" -d 'Generate shell integration code'
@@ -194,36 +194,36 @@ complete -c wt -n "__fish_wt_needs_command" -f -a "list" -d 'List worktrees and 
 complete -c wt -n "__fish_wt_needs_command" -f -a "switch" -d 'Switch to a worktree'
 complete -c wt -n "__fish_wt_needs_command" -f -a "remove" -d 'Finish current worktree, returning to primary if current'
 complete -c wt -n "__fish_wt_needs_command" -f -a "merge" -d 'Merge worktree into target branch'
-complete -c wt -n "__fish_wt_using_subcommand init" -l command-name -d 'Command name to use (defaults to \'wt\')' -r
-complete -c wt -n "__fish_wt_using_subcommand init" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand init" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand init" -l command-name -d 'Command name (default: \'wt\')' -r
+complete -c wt -n "__fish_wt_using_subcommand init" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand init" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand init" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -f -a "init" -d 'Initialize global configuration file with examples'
 complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -f -a "list" -d 'List all configuration files and their locations'
 complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -f -a "refresh-cache" -d 'Refresh the cached default branch by querying the remote'
 complete -c wt -n "__fish_wt_using_subcommand config; and not __fish_seen_subcommand_from init list refresh-cache shell" -f -a "shell" -d 'Configure shell by writing to config files'
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from init" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from init" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from init" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from init" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from init" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from list" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from list" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from list" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from list" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from refresh-cache" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from refresh-cache" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from refresh-cache" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from refresh-cache" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from refresh-cache" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -l shell -d 'Specific shell to configure (default: all shells with existing config files)' -r -f -a "bash\t''
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -l shell -d 'Shell to configure' -r -f -a "bash\t''
 fish\t''
 zsh\t''"
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -l command-name -d 'Command name to use (defaults to \'wt\')' -r
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -l command-name -d 'Command name (default: \'wt\')' -r
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s C -d 'Change working directory' -r -F
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s f -l force -d 'Skip confirmation prompt'
-complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand config; and __fish_seen_subcommand_from shell" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "run-hook" -d 'Run a project hook for testing'
 complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "commit" -d 'Commit changes with LLM-generated message'
@@ -233,66 +233,66 @@ complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcomma
 complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "ask-approvals" -d 'Approve commands in the project config (shows unapproved by default)'
 complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "clear-approvals" -d 'Clear approved commands from config'
 complete -c wt -n "__fish_wt_using_subcommand beta; and not __fish_seen_subcommand_from run-hook commit squash push rebase ask-approvals clear-approvals select" -f -a "select" -d 'Interactive worktree selector'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s f -l force -d 'Auto-approve project commands without saving approvals'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s f -l force -d 'Skip approval prompts'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from run-hook" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s f -l force -d 'Auto-approve project commands without saving approvals'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -l no-verify -d 'Skip pre-commit project hooks'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s f -l force -d 'Skip approval prompts'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -l no-verify -d 'Skip pre-commit hooks'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from commit" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s f -l force -d 'Auto-approve project commands without saving approvals'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -l no-verify -d 'Skip pre-commit project hooks'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s f -l force -d 'Skip approval prompts'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -l no-verify -d 'Skip pre-commit hooks'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from squash" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -l allow-merge-commits -d 'Allow pushing merge commits (non-linear history)'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -l allow-merge-commits -d 'Allow merge commits'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from push" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from rebase" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from rebase" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from rebase" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from rebase" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from rebase" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s f -l force -d 'Auto-approve project commands without saving approvals'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -l all -d 'Show all commands including already-approved ones'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s f -l force -d 'Skip approval prompts'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -l all -d 'Show all commands'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from ask-approvals" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s g -l global -d 'Clear approvals from global config (all projects)'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s g -l global -d 'Clear global approvals'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from clear-approvals" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand beta; and __fish_seen_subcommand_from select" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand list" -l format -d 'Output format' -r -f -a "table\t'Human-readable table format'
 json\t'Machine-readable JSON with display fields (includes styled unicode for rendering)'"
-complete -c wt -n "__fish_wt_using_subcommand list" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand list" -s C -d 'Change working directory' -r -F
 complete -c wt -n "__fish_wt_using_subcommand list" -l branches -d 'Include branches without worktrees'
-complete -c wt -n "__fish_wt_using_subcommand list" -l full -d 'Show CI status, conflict detection, and complete diff statistics'
-complete -c wt -n "__fish_wt_using_subcommand list" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand list" -l full -d 'Show CI, conflicts, and full diffs'
+complete -c wt -n "__fish_wt_using_subcommand list" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand list" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wt -n "__fish_wt_using_subcommand switch" -s b -l base -f -d 'Base branch to create from (only with --create). Use \'@\' for current HEAD' -r
+complete -c wt -n "__fish_wt_using_subcommand switch" -s b -l base -f -d 'Base branch (with --create)' -r
 complete -c wt -n "__fish_wt_using_subcommand switch" -s x -l execute -d 'Execute command after switching' -r
-complete -c wt -n "__fish_wt_using_subcommand switch" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand switch" -s C -d 'Change working directory' -r -F
 complete -c wt -n "__fish_wt_using_subcommand switch" -s c -l create -d 'Create a new branch'
-complete -c wt -n "__fish_wt_using_subcommand switch" -s f -l force -d 'Auto-approve project commands without saving approvals'
-complete -c wt -n "__fish_wt_using_subcommand switch" -l no-verify -d 'Skip all project hooks: post-create and post-start'
-complete -c wt -n "__fish_wt_using_subcommand switch" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand switch" -s f -l force -d 'Skip approval prompts'
+complete -c wt -n "__fish_wt_using_subcommand switch" -l no-verify -d 'Skip project hooks'
+complete -c wt -n "__fish_wt_using_subcommand switch" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand switch" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand remove" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand remove" -l no-delete-branch -d 'Don\'t delete the branch after removing the worktree (by default, branches are deleted)'
-complete -c wt -n "__fish_wt_using_subcommand remove" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand remove" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand remove" -l no-delete-branch -d 'Keep branch after removal'
+complete -c wt -n "__fish_wt_using_subcommand remove" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand remove" -s h -l help -d 'Print help'
-complete -c wt -n "__fish_wt_using_subcommand merge" -s C -d 'Run as if worktrunk was started in <path> instead of the current working directory' -r -F
-complete -c wt -n "__fish_wt_using_subcommand merge" -l no-squash -d 'Disable squashing commits (by default, commits are squashed into one before merging)'
-complete -c wt -n "__fish_wt_using_subcommand merge" -l no-commit -d 'Push commits as-is without transformations (requires clean tree; implies --no-squash, --no-remove, and skips rebase)'
-complete -c wt -n "__fish_wt_using_subcommand merge" -l no-remove -d 'Keep the worktree after merging'
-complete -c wt -n "__fish_wt_using_subcommand merge" -l no-verify -d 'Skip pre-merge project hooks'
-complete -c wt -n "__fish_wt_using_subcommand merge" -s f -l force -d 'Auto-approve project commands without saving approvals'
-complete -c wt -n "__fish_wt_using_subcommand merge" -l tracked-only -d 'Only stage tracked files (git add -u) instead of all files (git add -A)'
-complete -c wt -n "__fish_wt_using_subcommand merge" -s v -l verbose -d 'Enable verbose output (show git commands and debug info)'
+complete -c wt -n "__fish_wt_using_subcommand merge" -s C -d 'Change working directory' -r -F
+complete -c wt -n "__fish_wt_using_subcommand merge" -l no-squash -d 'Don\'t squash commits'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l no-commit -d 'Push without transformations'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l no-remove -d 'Keep worktree after merge'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l no-verify -d 'Skip pre-merge hooks'
+complete -c wt -n "__fish_wt_using_subcommand merge" -s f -l force -d 'Skip approval prompts'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l tracked-only -d 'Stage tracked files only'
+complete -c wt -n "__fish_wt_using_subcommand merge" -s v -l verbose -d 'Show git commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s h -l help -d 'Print help (see more with \'--help\')'
 
 ----- stderr -----

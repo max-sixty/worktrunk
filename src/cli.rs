@@ -35,11 +35,11 @@ pub enum OutputFormat {
 #[command(version = version_str())]
 #[command(disable_help_subcommand = true)]
 pub struct Cli {
-    /// Run as if worktrunk was started in `<path>` instead of the current working directory
+    /// Change working directory
     #[arg(short = 'C', global = true, value_name = "path")]
     pub directory: Option<std::path::PathBuf>,
 
-    /// Enable verbose output (show git commands and debug info)
+    /// Show git commands and debug info
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
 
@@ -99,7 +99,7 @@ Xonsh (~/.xonshrc):
 Oil Shell (~/.config/oil/oshrc):
   eval "$(wt init oil)""#)]
     Shell {
-        /// Specific shell to configure (default: all shells with existing config files)
+        /// Shell to configure
         #[arg(long, value_enum)]
         shell: Option<Shell>,
 
@@ -107,7 +107,7 @@ Oil Shell (~/.config/oil/oshrc):
         #[arg(short, long)]
         force: bool,
 
-        /// Command name to use (defaults to 'wt')
+        /// Command name (default: 'wt')
         #[arg(long, default_value = DEFAULT_COMMAND_NAME)]
         command_name: String,
     },
@@ -120,33 +120,33 @@ pub enum StandaloneCommand {
         /// Hook type to run
         hook_type: HookType,
 
-        /// Auto-approve project commands without saving approvals.
+        /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
     },
 
     /// Commit changes with LLM-generated message
     Commit {
-        /// Auto-approve project commands without saving approvals.
+        /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
 
-        /// Skip pre-commit project hooks.
+        /// Skip pre-commit hooks
         #[arg(long)]
         no_verify: bool,
     },
 
     /// Squash commits with LLM-generated message
     Squash {
-        /// Target branch to squash against (defaults to default branch)
+        /// Target branch (default: default branch)
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
-        /// Auto-approve project commands without saving approvals.
+        /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
 
-        /// Skip pre-commit project hooks
+        /// Skip pre-commit hooks
         #[arg(long)]
         no_verify: bool,
     },
@@ -156,36 +156,36 @@ pub enum StandaloneCommand {
     /// Automatically stashes non-conflicting edits in the target worktree before
     /// the push and restores them afterward so other agents' changes stay intact.
     Push {
-        /// Target branch (defaults to default branch)
+        /// Target branch (default: default branch)
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
-        /// Allow pushing merge commits (non-linear history)
+        /// Allow merge commits
         #[arg(long)]
         allow_merge_commits: bool,
     },
 
     /// Rebase current branch onto target branch
     Rebase {
-        /// Target branch to rebase onto (defaults to default branch)
+        /// Target branch (default: default branch)
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
     },
 
     /// Approve commands in the project config (shows unapproved by default)
     AskApprovals {
-        /// Auto-approve project commands without saving approvals.
+        /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
 
-        /// Show all commands including already-approved ones
+        /// Show all commands
         #[arg(long)]
         all: bool,
     },
 
     /// Clear approved commands from config
     ClearApprovals {
-        /// Clear approvals from global config (all projects)
+        /// Clear global approvals
         #[arg(short, long)]
         global: bool,
     },
@@ -209,7 +209,7 @@ pub enum Commands {
         /// Shell to generate code for
         shell: Shell,
 
-        /// Command name to use (defaults to 'wt')
+        /// Command name (default: 'wt')
         #[arg(long, default_value = DEFAULT_COMMAND_NAME)]
         command_name: String,
     },
@@ -315,7 +315,7 @@ Rows are dimmed when no unique work (≡ matches main OR ∅ no commits)."#)]
         #[arg(long)]
         branches: bool,
 
-        /// Show CI status, conflict detection, and complete diff statistics
+        /// Show CI, conflicts, and full diffs
         ///
         /// Adds columns: CI (pipeline status), main…± (line diffs).
         /// Enables conflict detection (shows "=" symbol in Status column).
@@ -381,7 +381,7 @@ Use '@' to refer to your current HEAD (following git's convention):
   wt switch --create new-feature --base=@  # Branch from current HEAD
   wt remove @                              # Remove current worktree"#)]
     Switch {
-        /// Branch name, worktree path, '@' for current HEAD, or '-' for previous branch
+        /// Branch, path, '@' (HEAD), or '-' (previous)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 
@@ -389,7 +389,7 @@ Use '@' to refer to your current HEAD (following git's convention):
         #[arg(short = 'c', long)]
         create: bool,
 
-        /// Base branch to create from (only with --create). Use '@' for current HEAD
+        /// Base branch (with --create)
         #[arg(short = 'b', long, add = crate::completion::branch_value_completer())]
         base: Option<String>,
 
@@ -397,11 +397,11 @@ Use '@' to refer to your current HEAD (following git's convention):
         #[arg(short = 'x', long)]
         execute: Option<String>,
 
-        /// Auto-approve project commands without saving approvals.
+        /// Skip approval prompts
         #[arg(short = 'f', long)]
         force: bool,
 
-        /// Skip all project hooks: post-create and post-start.
+        /// Skip project hooks
         #[arg(long)]
         no_verify: bool,
     },
@@ -454,11 +454,11 @@ Remove multiple worktrees:
 Switch to default in primary:
   wt remove  # (when already in primary worktree)"#)]
     Remove {
-        /// Worktree names or branches to remove (use '@' for current, defaults to current if none specified)
+        /// Worktree or branch (@ for current)
         #[arg(add = crate::completion::worktree_branch_completer())]
         worktrees: Vec<String>,
 
-        /// Don't delete the branch after removing the worktree (by default, branches are deleted)
+        /// Keep branch after removal
         #[arg(long = "no-delete-branch")]
         no_delete_branch: bool,
     },
@@ -515,31 +515,31 @@ Keep worktree after merging:
 Skip pre-merge commands:
   wt merge --no-verify"#)]
     Merge {
-        /// Target branch to merge into (defaults to default branch)
+        /// Target branch (default: default branch)
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
-        /// Disable squashing commits (by default, commits are squashed into one before merging)
+        /// Don't squash commits
         #[arg(long = "no-squash", action = ArgAction::SetFalse, default_value_t = true)]
         squash_enabled: bool,
 
-        /// Push commits as-is without transformations (requires clean tree; implies --no-squash, --no-remove, and skips rebase)
+        /// Push without transformations
         #[arg(long)]
         no_commit: bool,
 
-        /// Keep the worktree after merging.
+        /// Keep worktree after merge
         #[arg(long = "no-remove")]
         no_remove: bool,
 
-        /// Skip pre-merge project hooks.
+        /// Skip pre-merge hooks
         #[arg(long)]
         no_verify: bool,
 
-        /// Auto-approve project commands without saving approvals.
+        /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
 
-        /// Only stage tracked files (git add -u) instead of all files (git add -A)
+        /// Stage tracked files only
         #[arg(long)]
         tracked_only: bool,
     },

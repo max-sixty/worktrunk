@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp5Os0LO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpeaTQjA/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -158,9 +158,9 @@ _wt() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 '-V[Print version]' \
@@ -176,10 +176,10 @@ _wt() {
         case $line[1] in
             (init)
 _arguments "${_arguments_options[@]}" : \
-'--command-name=[Command name to use (defaults to '\''wt'\'')]:COMMAND_NAME:_default' \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'--command-name=[Command name (default\: '\''wt'\'')]:COMMAND_NAME:_default' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':shell -- Shell to generate code for:(bash fish zsh)' \
@@ -187,9 +187,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (config)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ":: :_wt__config_commands" \
@@ -204,40 +204,40 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (init)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (list)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (refresh-cache)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (shell)
 _arguments "${_arguments_options[@]}" : \
-'--shell=[Specific shell to configure (default\: all shells with existing config files)]:SHELL:(bash fish zsh)' \
-'--command-name=[Command name to use (defaults to '\''wt'\'')]:COMMAND_NAME:_default' \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
+'--shell=[Shell to configure]:SHELL:(bash fish zsh)' \
+'--command-name=[Command name (default\: '\''wt'\'')]:COMMAND_NAME:_default' \
+'-C+[Change working directory]:path:_files' \
 '-f[Skip confirmation prompt]' \
 '--force[Skip confirmation prompt]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
@@ -248,9 +248,9 @@ esac
 ;;
 (beta)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ":: :_wt__beta_commands" \
@@ -265,11 +265,11 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (run-hook)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-f[Auto-approve project commands without saving approvals]' \
-'--force[Auto-approve project commands without saving approvals]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-f[Skip approval prompts]' \
+'--force[Skip approval prompts]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':hook_type -- Hook type to run:(post-create post-start pre-commit pre-merge post-merge)' \
@@ -277,78 +277,78 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (commit)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-f[Auto-approve project commands without saving approvals]' \
-'--force[Auto-approve project commands without saving approvals]' \
-'--no-verify[Skip pre-commit project hooks]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-f[Skip approval prompts]' \
+'--force[Skip approval prompts]' \
+'--no-verify[Skip pre-commit hooks]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (squash)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-f[Auto-approve project commands without saving approvals]' \
-'--force[Auto-approve project commands without saving approvals]' \
-'--no-verify[Skip pre-commit project hooks]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-f[Skip approval prompts]' \
+'--force[Skip approval prompts]' \
+'--no-verify[Skip pre-commit hooks]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'::target -- Target branch to squash against (defaults to default branch):_default' \
+'::target -- Target branch (default\: default branch):_default' \
 && ret=0
 ;;
 (push)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'--allow-merge-commits[Allow pushing merge commits (non-linear history)]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'--allow-merge-commits[Allow merge commits]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'::target -- Target branch (defaults to default branch):_default' \
+'::target -- Target branch (default\: default branch):_default' \
 && ret=0
 ;;
 (rebase)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'::target -- Target branch to rebase onto (defaults to default branch):_default' \
+'::target -- Target branch (default\: default branch):_default' \
 && ret=0
 ;;
 (ask-approvals)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-f[Auto-approve project commands without saving approvals]' \
-'--force[Auto-approve project commands without saving approvals]' \
-'--all[Show all commands including already-approved ones]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-f[Skip approval prompts]' \
+'--force[Skip approval prompts]' \
+'--all[Show all commands]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (clear-approvals)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-g[Clear approvals from global config (all projects)]' \
-'--global[Clear approvals from global config (all projects)]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-g[Clear global approvals]' \
+'--global[Clear global approvals]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (select)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
@@ -361,60 +361,60 @@ esac
 _arguments "${_arguments_options[@]}" : \
 '--format=[Output format]:FORMAT:((table\:"Human-readable table format"
 json\:"Machine-readable JSON with display fields (includes styled unicode for rendering)"))' \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
+'-C+[Change working directory]:path:_files' \
 '--branches[Include branches without worktrees]' \
-'--full[Show CI status, conflict detection, and complete diff statistics]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'--full[Show CI, conflicts, and full diffs]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (switch)
 _arguments "${_arguments_options[@]}" : \
-'-b+[Base branch to create from (only with --create). Use '\''@'\'' for current HEAD]:BASE:_default' \
-'--base=[Base branch to create from (only with --create). Use '\''@'\'' for current HEAD]:BASE:_default' \
+'-b+[Base branch (with --create)]:BASE:_default' \
+'--base=[Base branch (with --create)]:BASE:_default' \
 '-x+[Execute command after switching]:EXECUTE:_default' \
 '--execute=[Execute command after switching]:EXECUTE:_default' \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
+'-C+[Change working directory]:path:_files' \
 '-c[Create a new branch]' \
 '--create[Create a new branch]' \
-'-f[Auto-approve project commands without saving approvals]' \
-'--force[Auto-approve project commands without saving approvals]' \
-'--no-verify[Skip all project hooks\: post-create and post-start]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-f[Skip approval prompts]' \
+'--force[Skip approval prompts]' \
+'--no-verify[Skip project hooks]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
-':branch -- Branch name, worktree path, '\''@'\'' for current HEAD, or '\''-'\'' for previous branch:_default' \
+':branch -- Branch, path, '\''@'\'' (HEAD), or '\''-'\'' (previous):_default' \
 && ret=0
 ;;
 (remove)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'--no-delete-branch[Don'\''t delete the branch after removing the worktree (by default, branches are deleted)]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'--no-delete-branch[Keep branch after removal]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help]' \
 '--help[Print help]' \
-'*::worktrees -- Worktree names or branches to remove (use '\''@'\'' for current, defaults to current if none specified):_default' \
+'*::worktrees -- Worktree or branch (@ for current):_default' \
 && ret=0
 ;;
 (merge)
 _arguments "${_arguments_options[@]}" : \
-'-C+[Run as if worktrunk was started in <path> instead of the current working directory]:path:_files' \
-'--no-squash[Disable squashing commits (by default, commits are squashed into one before merging)]' \
-'--no-commit[Push commits as-is without transformations (requires clean tree; implies --no-squash, --no-remove, and skips rebase)]' \
-'--no-remove[Keep the worktree after merging]' \
-'--no-verify[Skip pre-merge project hooks]' \
-'-f[Auto-approve project commands without saving approvals]' \
-'--force[Auto-approve project commands without saving approvals]' \
-'--tracked-only[Only stage tracked files (git add -u) instead of all files (git add -A)]' \
-'-v[Enable verbose output (show git commands and debug info)]' \
-'--verbose[Enable verbose output (show git commands and debug info)]' \
+'-C+[Change working directory]:path:_files' \
+'--no-squash[Don'\''t squash commits]' \
+'--no-commit[Push without transformations]' \
+'--no-remove[Keep worktree after merge]' \
+'--no-verify[Skip pre-merge hooks]' \
+'-f[Skip approval prompts]' \
+'--force[Skip approval prompts]' \
+'--tracked-only[Stage tracked files only]' \
+'-v[Show git commands and debug info]' \
+'--verbose[Show git commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'::target -- Target branch to merge into (defaults to default branch):_default' \
+'::target -- Target branch (default\: default branch):_default' \
 && ret=0
 ;;
         esac

@@ -32,6 +32,23 @@ Example of escalating instead of suppressing:
 fn parse_config() { ... }
 ```
 
+### CLI Flag Descriptions
+
+Keep flag and argument descriptions brief—aim for 3-5 words maximum. Use parenthetical defaults sparingly, only when the default isn't obvious from context.
+
+**Good examples:**
+- `/// Skip approval prompts`
+- `/// Show CI, conflicts, and full diffs`
+- `/// Target branch (default: default branch)`
+- `/// Branch, path, '@' (HEAD), or '-' (previous)`
+
+**Bad examples (too verbose):**
+- `/// Auto-approve project commands without saving approvals.`
+- `/// Run as if worktrunk was started in <path> instead of the current working directory`
+- `/// Show CI status, conflict detection, and complete diff statistics`
+
+The help text should be scannable. Users reading `wt switch --help` need to quickly understand what each flag does without parsing long sentences.
+
 ## CLI Output Formatting Standards
 
 ### User Message Principles
