@@ -34,5 +34,5 @@ pre-commit = "pre-commit run --all-files"
 # Note: This must come AFTER post-merge-command because [pre-merge-command] starts
 # a TOML table section, and everything after it would be inside that section
 [pre-merge-command]
-insta = "NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never cargo insta test --test-runner nextest --test-runner-fallback true"
+insta = "NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never cargo insta test --check --test-runner nextest --test-runner-fallback true"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"
