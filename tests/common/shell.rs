@@ -1,71 +1,19 @@
 use super::{TestRepo, wt_command};
 use insta_cmd::get_cargo_bin;
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
-/// Get the path to the dev-detach helper binary.
-/// This binary calls setsid() before exec'ing the shell, detaching it from
-/// any controlling terminal and preventing PTY-related hangs.
-///
-/// Automatically builds dev-detach if it doesn't exist, so `cargo test` works
-/// with zero setup.
-fn get_dev_detach_bin() -> std::path::PathBuf {
-    use std::sync::Once;
-
-    // Build dev-detach once on first call if needed.
-    // Using Once instead of OnceLock ensures all threads within this process block
-    // until the build completes, preventing races where threads try to execute a
-    // partially-written binary.
-    static BUILT: Once = Once::new();
-    BUILT.call_once(|| {
-        // Check if dev-detach binary exists in target directory
-        let expected_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("dev-detach")))
-            .filter(|p| p.exists());
-
-        if expected_path.is_none() {
-            eprintln!("Building dev-detach helper binary...");
-            let status = Command::new("cargo")
-                .args(["build", "-p", "dev-detach"])
-                .status()
-                .expect("Failed to run cargo build");
-
-            if !status.success() {
-                panic!("Failed to build dev-detach");
-            }
-        }
-    });
-
-    let bin_path = get_cargo_bin("dev-detach");
-
-    // Verify the binary actually exists and is executable
-    if !bin_path.exists() {
-        panic!(
-            "get_cargo_bin returned non-existent path: {}",
-            bin_path.display()
-        );
-    }
-
-    // Check if the binary is executable (Unix-specific)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = std::fs::metadata(&bin_path) {
-            let permissions = metadata.permissions();
-            if permissions.mode() & 0o111 == 0 {
-                panic!(
-                    "dev-detach binary is not executable: {} (mode: {:o})",
-                    bin_path.display(),
-                    permissions.mode()
-                );
-            }
-        }
-    }
-
-    // Log the path for debugging (only visible when tests fail)
-    eprintln!("Using dev-detach binary at: {}", bin_path.display());
-
-    bin_path
+/// Get the path to the workspace Cargo.toml.
+/// Computed once and cached for the lifetime of the test process.
+fn workspace_manifest() -> &'static PathBuf {
+    static MANIFEST: OnceLock<PathBuf> = OnceLock::new();
+    MANIFEST.get_or_init(|| {
+        // Tests run from workspace root, so Cargo.toml is in current directory
+        std::env::current_dir()
+            .expect("Failed to get current directory")
+            .join("Cargo.toml")
+    })
 }
 
 /// Map shell display names to actual binaries.
@@ -79,9 +27,13 @@ pub fn get_shell_binary(shell: &str) -> &str {
 }
 
 /// Build a command to execute a shell script via dev-detach.
+/// Uses `cargo run --manifest-path <workspace>/Cargo.toml -p dev-detach` so cargo
+/// can find the workspace manifest while the shell executes in the test repo directory.
 fn build_shell_command(repo: &TestRepo, shell: &str, script: &str) -> Command {
-    let detach = get_dev_detach_bin();
-    let mut cmd = Command::new(detach);
+    let mut cmd = Command::new("cargo");
+    cmd.args(["run", "--manifest-path"])
+        .arg(workspace_manifest())
+        .args(["-p", "dev-detach", "--"]);
     repo.clean_cli_env(&mut cmd);
 
     // Prevent user shell config from leaking into tests
@@ -91,7 +43,7 @@ fn build_shell_command(repo: &TestRepo, shell: &str, script: &str) -> Command {
     cmd.env_remove("XONSHRC");
     cmd.env_remove("XDG_CONFIG_HOME");
 
-    // Build argument list: dev-detach <shell> [shell-flags...] -c <script>
+    // Build argument list: cargo run --manifest-path <...> -p dev-detach -- <shell> [shell-flags...] -c <script>
     cmd.arg(get_shell_binary(shell));
 
     // Add shell-specific no-config flags
@@ -116,20 +68,10 @@ fn build_shell_command(repo: &TestRepo, shell: &str, script: &str) -> Command {
 pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
     let mut cmd = build_shell_command(repo, shell, script);
 
-    let output = match cmd.current_dir(repo.root_path()).output() {
-        Ok(output) => output,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("dev-detach spawn failed: {} - retrying after 100ms", e);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            build_shell_command(repo, shell, script)
-                .current_dir(repo.root_path())
-                .output()
-                .unwrap_or_else(|e2| {
-                    panic!("Failed to execute {} script after retry: {}", shell, e2)
-                })
-        }
-        Err(e) => panic!("Failed to execute {} script: {}", shell, e),
-    };
+    let output = cmd
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to execute {} script: {}", shell, e));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -162,7 +104,7 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
                     None => "killed by signal".to_string(),
                 };
                 panic!(
-                    "Shell script failed on retry ({}):\nCommand: dev-detach {} [shell-flags...] -c <script>\nstdout: {}\nstderr: {}",
+                    "Shell script failed on retry ({}):\nCommand: cargo run -p dev-detach -- {} [shell-flags...] -c <script>\nstdout: {}\nstderr: {}",
                     exit_info,
                     shell,
                     String::from_utf8_lossy(&retry_output.stdout),
@@ -179,7 +121,7 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
             None => "killed by signal".to_string(),
         };
         panic!(
-            "Shell script failed ({}):\nCommand: dev-detach {} [shell-flags...] -c <script>\nstdout: {}\nstderr: {}",
+            "Shell script failed ({}):\nCommand: cargo run -p dev-detach -- {} [shell-flags...] -c <script>\nstdout: {}\nstderr: {}",
             exit_info,
             shell,
             String::from_utf8_lossy(&output.stdout),
