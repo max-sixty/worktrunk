@@ -24,13 +24,25 @@ repos:
     hooks:
       - id: clippy
         args: ["--all-targets", "--", "-D", "warnings"]
-  - repo: https://github.com/tcort/markdown-link-check
-    rev: v3.14.1
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.21.0
     hooks:
-      - id: markdown-link-check
-        name: markdown-link-check
+      # Fast PR mode - only check worktrunk domains and local files
+      - id: lychee
+        name: lychee (PR mode)
         types: [markdown]
-        args: ["--config", ".markdown-link-check.json"]
+        args:
+          - --include=^(https://(github\.com/worktrunk|worktrunk\.dev)|file://)
+          - --no-progress
+      # Comprehensive mode - check all links with full config
+      # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
+      - id: lychee
+        name: lychee-all (comprehensive)
+        types: [markdown]
+        stages: [manual]
+        args:
+          - --config=.config/lychee.toml
+          - --no-progress
   - repo: local
     hooks:
       - id: no-dbg
@@ -49,5 +61,5 @@ repos:
 
 ci:
   # Currently network access isn't supported in the CI product.
-  skip: [fmt, markdown-link-check]
+  skip: [fmt, lychee (PR mode)]
   autoupdate_commit_msg: "chore: pre-commit autoupdate"

@@ -1,1 +1,4 @@
 /target
+
+# Lychee link checker cache
+.lycheecache
