@@ -171,6 +171,34 @@ impl TestRepo {
         cmd.env("SOURCE_DATE_EPOCH", "1761609600");
     }
 
+    /// Get standard test environment variables as a vector
+    ///
+    /// This is useful for PTY tests and other cases where you need environment variables
+    /// as a vector rather than setting them on a Command.
+    pub fn test_env_vars(&self) -> Vec<(String, String)> {
+        vec![
+            ("CLICOLOR_FORCE".to_string(), "1".to_string()),
+            ("COLUMNS".to_string(), "150".to_string()),
+            ("GIT_CONFIG_GLOBAL".to_string(), "/dev/null".to_string()),
+            ("GIT_CONFIG_SYSTEM".to_string(), "/dev/null".to_string()),
+            (
+                "GIT_AUTHOR_DATE".to_string(),
+                "2025-01-01T00:00:00Z".to_string(),
+            ),
+            (
+                "GIT_COMMITTER_DATE".to_string(),
+                "2025-01-01T00:00:00Z".to_string(),
+            ),
+            ("LC_ALL".to_string(), "C".to_string()),
+            ("LANG".to_string(), "C".to_string()),
+            ("SOURCE_DATE_EPOCH".to_string(), "1761609600".to_string()),
+            (
+                "WORKTRUNK_CONFIG_PATH".to_string(),
+                self.test_config_path().display().to_string(),
+            ),
+        ]
+    }
+
     /// Create a configured git command with args and current_dir set
     ///
     /// This is a convenience wrapper around configure_git_cmd that reduces boilerplate.

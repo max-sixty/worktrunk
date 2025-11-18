@@ -3,6 +3,7 @@
 #![cfg(unix)]
 
 // column_alignment merged into spacing_edge_cases
+pub mod approval_pty;
 pub mod approval_save;
 pub mod approval_ui;
 pub mod approvals;

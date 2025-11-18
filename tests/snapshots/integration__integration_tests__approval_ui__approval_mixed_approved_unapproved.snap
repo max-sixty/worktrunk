@@ -2,11 +2,11 @@
 source: tests/integration_tests/approval_ui.rs
 expression: combined
 ---
-exit_code: 0
+exit_code: 1
 ----- stdout -----
-⚪ Commands declined, continuing worktree creation
-✅ [32mCreated new worktree for [1m[32mtest-mixed[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].test-mixed[0m[0m
-💡 [2mTo enable automatic cd, run: wt config shell[0m
+❌ [31mCannot prompt for approval in non-interactive environment[0m
+
+💡 [2mIn CI/CD, use --force to skip prompts. To pre-approve commands, use 'wt beta ask-approvals'[0m
 
 ----- stderr -----
 🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m2[0m[33m commands:[0m
@@ -16,5 +16,3 @@ exit_code: 0
 
 🔄 post-create:
 [40m [0m  [1m[34mecho[0m [32m'Third command'[0m[0m
-
-💡 Allow and remember? [1m[y/N][0m

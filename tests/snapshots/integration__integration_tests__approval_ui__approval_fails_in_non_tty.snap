@@ -1,11 +1,11 @@
 ---
-source: tests/integration_tests/approvals.rs
+source: tests/integration_tests/approval_ui.rs
 info:
   program: wt
   args:
-    - beta
-    - ask-approvals
-    - "--all"
+    - switch
+    - "--create"
+    - test-non-tty
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -17,7 +17,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpuzpIU1/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpSRSVBw/test-config.toml
 ---
 success: false
 exit_code: 1
@@ -30,4 +30,4 @@ exit_code: 1
 🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m1[0m[33m command:[0m
 
 🔄 post-create:
-[40m [0m  [1m[34mecho[0m [32m'test'[0m[0m
+[40m [0m  [1m[34mecho[0m [32m'test command'[0m[0m

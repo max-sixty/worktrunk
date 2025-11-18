@@ -44,6 +44,8 @@ pub enum GitError {
     MergeCommitsFound,
     /// Command was not approved by user
     CommandNotApproved,
+    /// Cannot prompt for approval in non-interactive environment
+    NotInteractive,
     /// Child process exited with non-zero code (preserves exit code for signals)
     ChildProcessExited { code: i32, message: String },
     /// Push operation failed
@@ -229,6 +231,14 @@ impl std::fmt::Display for GitError {
             // Command not approved
             GitError::CommandNotApproved => {
                 Ok(()) // on_skip callback handles the printing
+            }
+
+            // Not interactive (cannot prompt)
+            GitError::NotInteractive => {
+                write!(
+                    f,
+                    "{ERROR_EMOJI} {ERROR}Cannot prompt for approval in non-interactive environment{ERROR:#}\n\n{HINT_EMOJI} {HINT}In CI/CD, use --force to skip prompts. To pre-approve commands, use 'wt beta ask-approvals'{HINT:#}"
+                )
             }
 
             // Child process exited with non-zero code

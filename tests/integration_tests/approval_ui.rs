@@ -239,67 +239,6 @@ test = "echo 'Running tests...'"
     );
 }
 
-/// Test that shows the full output when config save fails due to permission error
-///
-/// This captures what users actually see when approve_command_batch() catches a save error
-/// at src/commands/command_approval.rs:82-85.
-#[test]
-fn test_permission_error_user_output() {
-    use std::fs::Permissions;
-    use std::os::unix::fs::PermissionsExt;
-
-    let repo = TestRepo::new();
-    repo.commit("Initial commit");
-
-    // Set up project config with post-create command
-    repo.write_project_config(r#"post-create-command = "echo 'test command'""#);
-
-    repo.commit("Add config");
-
-    // Create an initial config file and make it read-only BEFORE running the command
-    // This will cause the save operation to fail with a permission error
-    fs::write(repo.test_config_path(), "# read-only config\n").expect("Failed to create config");
-    let readonly_perms = Permissions::from_mode(0o444);
-    fs::set_permissions(repo.test_config_path(), readonly_perms).expect("Failed to set read-only");
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "test-permission"], None);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let mut child = cmd.spawn().expect("Failed to spawn command");
-
-        // Approve the command - this will trigger the permission error when saving
-        {
-            let stdin = child.stdin.as_mut().expect("Failed to get stdin");
-            stdin.write_all(b"y\n").expect("Failed to write to stdin");
-        }
-
-        let output = child
-            .wait_with_output()
-            .expect("Failed to wait for command");
-
-        // Restore write permissions to the config file for cleanup
-        let writable_perms = Permissions::from_mode(0o644);
-        fs::set_permissions(repo.test_config_path(), writable_perms)
-            .expect("Failed to restore permissions");
-
-        // Capture the full output showing the warning
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!(
-            "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
-            output.status.code().unwrap_or(-1),
-            stdout,
-            stderr
-        );
-
-        insta::assert_snapshot!("permission_error_user_output", combined);
-    });
-}
-
 /// Helper for run-hook snapshot tests with approval prompt
 fn snapshot_run_hook(test_name: &str, repo: &TestRepo, hook_type: &str, approve: bool) {
     let settings = setup_snapshot_settings(repo);
@@ -382,4 +321,49 @@ fn test_run_hook_post_merge_requires_approval() {
         "post-merge",
         false,
     );
+}
+
+/// Test that approval fails in non-TTY environment with clear error message
+///
+/// When stdin is not a TTY (e.g., CI/CD, piped input), approval prompts cannot be shown.
+/// The command should fail with a clear error telling users to use --force.
+#[test]
+fn test_approval_fails_in_non_tty() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    repo.write_project_config(r#"post-create-command = "echo 'test command'""#);
+    repo.commit("Add config");
+
+    // Run WITHOUT piping stdin - this simulates non-TTY environment
+    // When running under cargo test, stdin is not a TTY
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "test-non-tty"], None);
+        assert_cmd_snapshot!("approval_fails_in_non_tty", cmd);
+    });
+}
+
+/// Test that --force flag bypasses TTY requirement
+///
+/// Even in non-TTY environments, --force should allow commands to execute.
+#[test]
+fn test_force_bypasses_tty_check() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    repo.write_project_config(r#"post-create-command = "echo 'test command'""#);
+    repo.commit("Add config");
+
+    // Run with --force to bypass approval entirely
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "switch",
+            &["--create", "test-force-tty", "--force"],
+            None,
+        );
+        assert_cmd_snapshot!("force_bypasses_tty_check", cmd);
+    });
 }

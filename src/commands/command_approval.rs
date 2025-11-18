@@ -75,8 +75,8 @@ pub fn approve_command_batch(
     Ok(true)
 }
 
-fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> std::io::Result<bool> {
-    use std::io::{self, Write};
+fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> Result<bool, GitError> {
+    use std::io::{self, IsTerminal, Write};
 
     let project_name = project_id.split('/').next_back().unwrap_or(project_id);
     let bold = AnstyleStyle::new().bold();
@@ -104,6 +104,13 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> std::io
         eprintln!("{label}");
         eprint!("{}", format_bash_with_gutter(&cmd.expanded, ""));
         eprintln!();
+    }
+
+    // Check if stdin is a TTY before attempting to prompt
+    // This happens AFTER showing the commands so they appear in CI/CD logs
+    // even when the prompt cannot be displayed (fail-fast principle)
+    if !io::stdin().is_terminal() {
+        return Err(GitError::NotInteractive);
     }
 
     // Flush stderr before showing prompt to ensure all output is visible

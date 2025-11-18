@@ -4,12 +4,12 @@ expression: combined
 ---
 exit_code: 1
 ----- stdout -----
+❌ [31mCannot prompt for approval in non-interactive environment[0m
 
+💡 [2mIn CI/CD, use --force to skip prompts. To pre-approve commands, use 'wt beta ask-approvals'[0m
 
 ----- stderr -----
 🟡 [33m[1m[33mtest-repo[0m[33m wants to execute [1m[33m1[0m[33m command:[0m
 
 🔄 pre-merge:
 [40m [0m  [1m[34mecho[0m [32m'Running pre-merge checks on main'[0m[0m
-
-💡 Allow and remember? [1m[y/N][0m
