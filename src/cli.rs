@@ -542,6 +542,10 @@ Switch to default in primary:
         #[arg(long = "no-delete-branch", action = clap::ArgAction::SetFalse, default_value_t = true)]
         delete_branch: bool,
 
+        /// Delete unmerged branches
+        #[arg(short = 'D', long = "force-delete")]
+        force_delete: bool,
+
         /// Run removal in foreground
         #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
         background: bool,

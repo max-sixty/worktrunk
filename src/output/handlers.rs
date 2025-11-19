@@ -40,6 +40,17 @@ fn format_switch_message(result: &SwitchResult, branch: &str) -> (String, bool) 
     }
 }
 
+/// Get flag acknowledgment note for remove messages
+fn get_flag_note(no_delete_branch: bool, force_delete: bool, branch_deleted: bool) -> &'static str {
+    if no_delete_branch {
+        " (--no-delete-branch)"
+    } else if force_delete && branch_deleted {
+        " (--force-delete)"
+    } else {
+        ""
+    }
+}
+
 /// Format message for remove operation (includes emoji and color for consistency)
 ///
 /// `branch_deleted` indicates whether branch deletion actually succeeded (not just attempted)
@@ -53,6 +64,7 @@ fn format_remove_message(
         changed_directory,
         branch_name,
         no_delete_branch,
+        force_delete,
         ..
     } = result;
 
@@ -63,25 +75,28 @@ fn format_remove_message(
         "Removed worktree & branch"
     };
 
+    // Show flag acknowledgment when applicable
+    let flag_note = get_flag_note(*no_delete_branch, *force_delete, branch_deleted);
+
     let branch_display = branch.or(Some(branch_name));
 
     if *changed_directory {
         if let Some(b) = branch_display {
             // Re-establish GREEN after each green_bold reset to prevent color leak
             format!(
-                "{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
+                "{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}{flag_note}",
                 primary_path.display()
             )
         } else {
             format!(
-                "{GREEN}{action}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
+                "{GREEN}{action}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}{flag_note}",
                 primary_path.display()
             )
         }
     } else if let Some(b) = branch_display {
-        format!("{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN:#}")
+        format!("{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN:#}{flag_note}")
     } else {
-        format!("{GREEN}{action}{GREEN:#}")
+        format!("{GREEN}{action}{GREEN:#}{flag_note}")
     }
 }
 
@@ -173,6 +188,7 @@ pub fn handle_remove_output(
         changed_directory,
         branch_name,
         no_delete_branch,
+        force_delete,
         target_branch,
     } = result;
 
@@ -190,13 +206,16 @@ pub fn handle_remove_output(
         // Determine if we should delete the branch (check once upfront)
         let should_delete_branch = if *no_delete_branch {
             false
+        } else if *force_delete {
+            // Force delete requested - always delete
+            true
         } else {
             // Check if branch is fully merged to target
             let check_target = target_branch.as_deref().unwrap_or("HEAD");
             let deletion_repo = worktrunk::git::Repository::at(primary_path);
             deletion_repo
-                .run_command(&["merge-base", "--is-ancestor", branch_name, check_target])
-                .is_ok()
+                .is_ancestor(branch_name, check_target)
+                .unwrap_or(false)
         };
 
         // Show progress message based on what we'll do
@@ -205,9 +224,15 @@ pub fn handle_remove_output(
                 "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} in background; retaining branch (--no-delete-branch){CYAN:#}"
             )
         } else if should_delete_branch {
-            format!(
-                "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} & branch in background{CYAN:#}"
-            )
+            if *force_delete {
+                format!(
+                    "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} & branch in background (--force-delete){CYAN:#}"
+                )
+            } else {
+                format!(
+                    "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} & branch in background{CYAN:#}"
+                )
+            }
         } else {
             format!(
                 "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} in background; retaining unmerged branch{CYAN:#}"
@@ -240,25 +265,27 @@ pub fn handle_remove_output(
         // Delete the branch (unless --no-delete-branch was specified)
         let branch_deleted = if !no_delete_branch {
             let deletion_repo = worktrunk::git::Repository::at(primary_path);
-            let check_target = target_branch.as_deref().unwrap_or("HEAD");
 
-            // Use git merge-base --is-ancestor to check if branch is merged to target
-            let delete_result = match deletion_repo.run_command(&[
-                "merge-base",
-                "--is-ancestor",
-                branch_name,
-                check_target,
-            ]) {
-                Ok(_) => {
-                    // Branch is an ancestor of target (fully merged), safe to delete
-                    deletion_repo.run_command(&["branch", "-D", branch_name])
-                }
-                Err(_) => {
-                    // Branch is not fully merged to target
-                    Err(worktrunk::git::GitError::CommandFailed(format!(
-                        "error: the branch '{}' is not fully merged",
-                        branch_name
-                    )))
+            // Use git branch -D if force_delete is true, otherwise check if merged first
+            let delete_result = if *force_delete {
+                // Force delete - use -D directly
+                deletion_repo.run_command(&["branch", "-D", branch_name])
+            } else {
+                let check_target = target_branch.as_deref().unwrap_or("HEAD");
+
+                // Check if branch is merged to target using is_ancestor
+                match deletion_repo.is_ancestor(branch_name, check_target) {
+                    Ok(true) => {
+                        // Branch is an ancestor of target (fully merged), safe to delete
+                        deletion_repo.run_command(&["branch", "-D", branch_name])
+                    }
+                    Ok(false) | Err(_) => {
+                        // Branch is not fully merged to target
+                        Err(worktrunk::git::GitError::CommandFailed(format!(
+                            "error: the branch '{}' is not fully merged",
+                            branch_name
+                        )))
+                    }
                 }
             };
 

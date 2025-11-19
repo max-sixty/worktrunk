@@ -13,9 +13,10 @@
 Worktrunk is a CLI tool which makes working with git worktrees much much easier.
 It's designed for those running many concurrent AI coding agents.
 
-Git worktrees let multiple agents work on a single repo without colliding; each agent
-gets a separate directory. But creating worktrees, tracking paths, and cleaning
-up afterward is manual. Worktrunk automates that lifecycle.
+For context, git worktrees let multiple agents work on a single repo without
+colliding; each agent gets a separate directory with a version of the code. But
+creating worktrees, tracking paths & statuses, cleaning up, etc is manual.
+Worktrunk offers transparency and automation for this lifecycle.
 
 ## Quick Start
 
@@ -66,7 +67,7 @@ wt config shell  # Sets up shell integration
 
 ## Automation Features
 
-### LLM-Powered Commit Messages
+### LLM-Authored Commit Messages
 
 During merge operations, worktrunk can invoke a binary, such as [llm](https://llm.datasette.io/), to generate commit messages based on the diff and a configurable prompt.
 
@@ -97,20 +98,26 @@ $ wt merge
 ✅ Squashed @ a1b2c3d
 ```
 
-Set up LLM integration: run `wt config --help` to see the setup guide, or `wt config init` to create an example config file.
+To set up integration: run `wt config --help` to see the setup guide, or `wt config init` to create an example config file.
 
 <details>
-<summary><b>Advanced: Custom Prompt Templates</b></summary>
+<summary>Advanced: Custom Prompt Templates</summary>
 
-Worktrunk uses [minijinja templates](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for commit message prompts. Customize the prompts by setting `template` (inline) or `template-file` (external file) in the `[commit-generation]` section. Use `squash-template` / `squash-template-file` for squash commits.
+Worktrunk uses [minijinja
+templates](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for
+commit message prompts. Customize the prompts by setting `template` (inline) or
+`template-file` (external file) in the `[commit-generation]` section. Use
+`squash-template` / `squash-template-file` for squash commits.
 
-See [`config.example.toml`](config.example.toml) for complete template examples with all available variables (`git_diff`, `branch`, `recent_commits`, `commits`, `target_branch`, `repo`).
+See [`config.example.toml`](config.example.toml) for complete template examples
+with all available variables (`git_diff`, `branch`, `recent_commits`, `commits`,
+`target_branch`, `repo`).
 
 </details>
 
 ### Project Hooks
 
-Automate common tasks by creating `.config/wt.toml` in your repository root. Run tests before merging, install dependencies when creating worktrees, start dev servers automatically.
+Automate common tasks by creating `.config/wt.toml` in the repository root. Install dependencies when creating worktrees, start dev servers automatically, run tests before merging.
 
 ```toml
 # Install deps when creating a worktree
@@ -215,17 +222,19 @@ $ wt merge
 Worktrunk is opinionated! It's not designed to be all things to all people. The choices optimize for agent workflows:
 
 - Lots of short-lived worktrees
-- CLI-based Agents
-- Local inner dev loops
-- Navigated using the shell
-- Commits are squashed, linear histories
+- Trunk-based development
+- CLI-based agents
+- Inner dev loops are local
+- Shell navigation
+- Commits are squashed into linear histories
 - Maximum automation
 
-Standard `git worktree` commands continue working fine — adopting Worktrunk for a portion of a workflow doesn't require adopting it for everything.
+Adopting Worktrunk for a portion of a workflow doesn't require adopting it for
+everything — standard `git worktree` commands continue working fine.
 
 ## Tips
 
-**Create an alias for your favorite agent** - Shell aliases streamline common workflows. For example, to create a worktree and immediately start Claude:
+**Create an alias for an agent** - Shell aliases streamline common workflows. For example, to create a worktree and immediately start Claude:
 
 ```bash
 alias wsl='wt switch --create --execute=claude'
@@ -233,11 +242,20 @@ alias wsl='wt switch --create --execute=claude'
 
 Now `wsl new-feature` creates a branch, sets up the worktree, runs initialization hooks, and launches Claude in that directory.
 
-**Automatic branch status in Claude Code** - The Claude Code integration shows which branches have active AI sessions. When Claude starts working, the branch shows `🤖` in `wt list`. When waiting for input, it shows `💬`. Setup instructions: [Custom Worktree Status](#custom-worktree-status).
+**Automatic branch status in Claude Code** - The Claude Code integration shows
+which branches have active sessions. When Claude starts working, the branch
+shows `🤖` in `wt list`. When waiting for input, it shows `💬`. Setup
+instructions: [Custom Worktree Status](#custom-worktree-status).
 
-**Auto-generated commit messages** - Simon Willison's [llm](https://llm.datasette.io/) tool integrates seamlessly with worktrunk's commit generation. Install it, configure the command, and `wt merge` will automatically generate contextual commit messages. Setup guide: [LLM-Powered Commit Messages](#llm-powered-commit-messages).
+**Auto-generated commit messages** - Simon Willison's
+[llm](https://llm.datasette.io/) tool integrates seamlessly with worktrunk's
+commit generation. Install it, configure the command, and `wt merge` will
+automatically generate contextual commit messages. Setup guide: [LLM-Authored
+Commit Messages](#llm-authored-commit-messages).
 
-**Environment setup with hooks** - Each worktree is a separate directory. Use `post-create-command` to ensure consistent environments:
+**Environment setup with hooks** - Use `post-create-command` (or
+`post-start-command` for non-blocking) to run setup for that
+path:
 
 ```toml
 # In .config/wt.toml
@@ -278,9 +296,7 @@ Experimental commands for advanced workflows. These are subject to change.
 - `wt beta rebase [target]` - Rebase current branch onto target
 - `wt beta ask-approvals` - Approve commands in project config
 - `wt beta run-hook <hook-type>` - Run a project hook for testing
-- `wt beta select` - Interactive worktree selector (Unix only)
-
-**Note:** Beta commands may have breaking changes between releases.
+- `wt beta select` - Interactive worktree selector (Unix only, WIP)
 
 </details>
 
@@ -332,10 +348,13 @@ wt config --help  # Show LLM setup guide
 <summary>Configuration details</summary>
 
 **Global config** (`~/.config/worktrunk/config.toml`):
+
 - `worktree-path` - Path template for new worktrees
 - `[commit-generation]` - LLM command and prompt templates
+- `[projects."project-id"]` - Per-project approved commands (auto-populated)
 
 **Project config** (`.config/wt.toml` in repository root):
+
 - `[post-create-command]` - Commands after worktree creation
 - `[post-start-command]` - Background commands after creation
 - `[pre-commit-command]` - Validation before committing
@@ -352,6 +371,10 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 [commit-generation]
 command = "llm"
 args = ["-m", "claude-haiku-4-5-20251001"]
+
+# Approved commands (auto-populated when approving project hooks)
+[projects."github.com/user/repo"]
+approved-commands = ["npm install", "npm test"]
 ```
 
 **Example project config** (`.config/wt.toml`): See Project Hooks section above.
@@ -368,10 +391,10 @@ Add emoji status markers to branches that appear in `wt list`. Perfect for track
 
 ```bash
 # Set status for current branch
-wt config status set "🚧"
+wt config status set "🤖"
 
 # Or use git config directly
-git config worktrunk.status.feature-x "🚧"
+git config worktrunk.status.feature-x "💬"
 ```
 
 **Status appears in the Status column:**
@@ -390,18 +413,18 @@ dirty-with-status  ≡?🤖                  ./dirty-with-status           b8346
 The custom emoji appears directly after the git status symbols.
 
 <details>
-<summary><b>Automation with Claude Code Hooks</b></summary>
+<summary>Automation with Claude Code Hooks</summary>
 
 Claude Code can automatically set/clear emoji status when coding sessions start and end. This shows which branches have active AI sessions.
 
-**Easy setup:** The Worktrunk repository includes a `.claude-plugin` directory with pre-configured hooks. If you're working in this repository, the hooks are automatically available.
+**Easy setup:** The Worktrunk repository includes a `.claude-plugin` directory with pre-configured hooks. When working in this repository, the hooks are automatically available.
 
-**Manual setup for other repositories:** Copy the hooks from [`.claude-plugin/hooks/hooks.json`](.claude-plugin/hooks/hooks.json) to your `~/.claude/settings.json`.
+**Manual setup for other repositories:** Copy the hooks from [`.claude-plugin/hooks/hooks.json`](.claude-plugin/hooks/hooks.json) to `~/.claude/settings.json`.
 
-Now when you use Claude:
+When using Claude:
 
-- Sets status to `🤖` for the current branch when you submit a prompt (working)
-- Changes to `💬` when Claude needs your input (waiting for permission or idle)
+- Sets status to `🤖` for the current branch when submitting a prompt (working)
+- Changes to `💬` when Claude needs input (waiting for permission or idle)
 - Clears the status completely when the session ends
 
 **Status from other terminal:**
@@ -449,13 +472,15 @@ worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 
 ### Shell Integration
 
-Worktrunk can automatically configure your shell:
+Worktrunk can automatically configure the shell:
 
 ```bash
 wt config shell
 ```
 
-This adds shell integration to your config files (supports Bash, Zsh, and Fish). The integration enables `wt switch` to change directories and `wt remove` to return to the previous location.
+This adds shell integration to config files (supports Bash, Zsh, and Fish). The
+integration enables `wt switch` to change directories and `wt remove` to return
+to the previous location.
 
 For manual setup instructions, see `wt config shell --help`.
 
@@ -464,7 +489,7 @@ For manual setup instructions, see `wt config shell --help`.
 Worktrunk is in active development. The core features are stable and ready for use. While the project is pre-1.0, the CLI interface and major features are unlikely to change significantly.
 
 <details>
-<summary><b>Developing</b></summary>
+<summary>Developing</summary>
 
 ### Releases
 
@@ -493,9 +518,9 @@ Worktrunk executes commands in three contexts:
 
 1. **Project hooks** (`.config/wt.toml`) - Automation for worktree lifecycle
 2. **LLM commands** (`~/.config/worktrunk/config.toml`) - Commit message generation
-3. **--execute flag** - Commands you provide explicitly
+3. **--execute flag** - Commands provided explicitly
 
-Commands from project hooks and LLM configuration require approval on first run. Approved commands are saved to `~/.config/worktrunk/approved.toml`. If a command changes, worktrunk requires new approval.
+Commands from project hooks and LLM configuration require approval on first run. Approved commands are saved to `~/.config/worktrunk/config.toml` under the project's configuration. If a command changes, worktrunk requires new approval.
 
 **Example approval prompt:**
 

@@ -27,6 +27,7 @@ pub trait RepositoryCliExt {
         &self,
         branch_name: &str,
         no_delete_branch: bool,
+        force_delete: bool,
     ) -> Result<RemoveResult, GitError>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -74,6 +75,7 @@ impl RepositoryCliExt for Repository {
         &self,
         branch_name: &str,
         no_delete_branch: bool,
+        force_delete: bool,
     ) -> Result<RemoveResult, GitError> {
         let worktree_path = match self.worktree_for_branch(branch_name)? {
             Some(path) => path,
@@ -109,6 +111,7 @@ impl RepositoryCliExt for Repository {
             changed_directory,
             branch_name: branch_name.to_string(),
             no_delete_branch,
+            force_delete,
             target_branch: None,
         })
     }

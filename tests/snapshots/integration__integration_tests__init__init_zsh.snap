@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpwBTqs5/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpjwiWHn/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -438,6 +438,8 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-C+[Change working directory]:path:_files' \
 '--no-delete-branch[Keep branch after removal]' \
+'-D[Delete unmerged branches]' \
+'--force-delete[Delete unmerged branches]' \
 '--no-background[Run removal in foreground]' \
 '-v[Show git commands and debug info]' \
 '--verbose[Show git commands and debug info]' \

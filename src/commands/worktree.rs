@@ -150,6 +150,7 @@ pub enum RemoveResult {
         changed_directory: bool,
         branch_name: String,
         no_delete_branch: bool,
+        force_delete: bool,
         target_branch: Option<String>,
     },
 }
@@ -368,6 +369,7 @@ pub fn handle_switch(
 pub fn handle_remove(
     worktree_name: &str,
     no_delete_branch: bool,
+    force_delete: bool,
     background: bool,
 ) -> Result<RemoveResult, GitError> {
     let repo = Repository::current();
@@ -380,7 +382,7 @@ pub fn handle_remove(
         crate::output::progress(progress_msg)?;
     }
 
-    repo.remove_worktree_by_name(worktree_name, no_delete_branch)
+    repo.remove_worktree_by_name(worktree_name, no_delete_branch, force_delete)
 }
 
 impl<'a> CommandContext<'a> {

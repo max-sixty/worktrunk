@@ -197,6 +197,7 @@ pub fn handle_merge(
             changed_directory: true,
             branch_name: current_branch.clone(),
             no_delete_branch: false,
+            force_delete: false,
             target_branch: Some(target_branch.clone()),
         };
         crate::output::handle_remove_output(&remove_result, Some(&current_branch), true, false)?;

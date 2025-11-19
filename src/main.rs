@@ -271,14 +271,23 @@ fn main() {
         Commands::Remove {
             worktrees,
             delete_branch,
+            force_delete,
             background,
         } => (|| -> Result<(), GitError> {
+            // Validate conflicting flags
+            if !delete_branch && force_delete {
+                return Err(GitError::message(
+                    "Cannot use --force-delete with --no-delete-branch",
+                ));
+            }
+
             let repo = Repository::current();
 
             if worktrees.is_empty() {
                 // No worktrees specified, remove current worktree
                 let current_branch = repo.resolve_worktree_name("@")?;
-                let result = handle_remove(&current_branch, !delete_branch, background)?;
+                let result =
+                    handle_remove(&current_branch, !delete_branch, force_delete, background)?;
                 handle_remove_output(&result, None, false, background)
             } else {
                 // When removing multiple worktrees, we need to handle the current worktree last
@@ -309,13 +318,14 @@ fn main() {
                 // Remove others first, then current last
                 // Progress messages shown by handle_remove_output for all cases
                 for resolved in &others {
-                    let result = handle_remove(resolved, !delete_branch, background)?;
+                    let result = handle_remove(resolved, !delete_branch, force_delete, background)?;
                     handle_remove_output(&result, Some(resolved), false, background)?;
                 }
 
                 // Remove current worktree last (if it was in the list)
                 if let Some(resolved) = current {
-                    let result = handle_remove(&resolved, !delete_branch, background)?;
+                    let result =
+                        handle_remove(&resolved, !delete_branch, force_delete, background)?;
                     handle_remove_output(&result, Some(&resolved), false, background)?;
                 }
 
