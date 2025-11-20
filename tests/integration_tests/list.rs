@@ -1611,20 +1611,56 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Set up a real local bare repository as the remote for reliable upstream tracking
-    let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
+    // Create a remote repo by cloning to a separate directory
+    let remote_dir = repo.root_path().parent().unwrap().join("remote-repo");
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args([
         "clone",
-        "--bare",
         repo.root_path().to_str().unwrap(),
         remote_dir.to_str().unwrap(),
     ])
     .output()
     .unwrap();
 
-    // Add the local bare repo as origin
+    // In the remote repo, check out feature branch and make a commit
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "feature"])
+        .current_dir(&remote_dir)
+        .output()
+        .unwrap();
+
+    std::fs::write(remote_dir.join("remote-file.txt"), "remote content").unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "remote-file.txt"])
+        .current_dir(&remote_dir)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Remote commit"])
+        .current_dir(&remote_dir)
+        .output()
+        .unwrap();
+
+    // In the local feature worktree, make a different commit (creates divergence)
+    std::fs::write(feature.join("local-file.txt"), "local content").unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "local-file.txt"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Local commit"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+
+    // Set up the remote repo as origin for the feature worktree
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["remote", "add", "origin", remote_dir.to_str().unwrap()])
@@ -1632,85 +1668,18 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Push to establish the remote branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "feature"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    // Create divergence: local has commits remote doesn't have, AND vice versa
-    // Step 1: Make a local commit (we'll be ahead)
-    std::fs::write(feature.join("local-only.txt"), "local content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "local-only.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Local only commit"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    // Step 2: Simulate remote having a divergent commit by creating a parallel history
-
-    // Clone to a temp location starting from our current feature commit
-    let temp_wt = repo.root_path().parent().unwrap().join("temp-for-remote");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
-        "clone",
-        "--branch",
-        "feature",
-        remote_dir.to_str().unwrap(),
-        temp_wt.to_str().unwrap(),
-    ])
-    .output()
-    .unwrap();
-
-    // Reset to the commit BEFORE our local commit (so we diverge from a common ancestor)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["reset", "--hard", "HEAD~1"])
-        .current_dir(&temp_wt)
-        .output()
-        .unwrap();
-
-    // Make a different commit on the same base (creating true divergence)
-    std::fs::write(
-        temp_wt.join("remote-diverged.txt"),
-        "remote diverged content",
-    )
-    .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "remote-diverged.txt"])
-        .current_dir(&temp_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Remote diverged commit"])
-        .current_dir(&temp_wt)
-        .output()
-        .unwrap();
-
-    // Force push to update the remote (simulating someone else force-pushed)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "--force", "origin", "feature"])
-        .current_dir(&temp_wt)
-        .output()
-        .unwrap();
-
-    // Fetch so our feature worktree knows about the remote commit
+    // Fetch from the remote to establish tracking
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["fetch", "origin"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+
+    // Set up branch tracking
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
         .output()
         .unwrap();
@@ -1780,6 +1749,7 @@ fn test_list_maximum_status_symbols() {
         .unwrap();
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
+    // Use --full to enable conflict detection
     let settings = list_snapshots::standard_settings(&repo);
     settings.bind(|| {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
