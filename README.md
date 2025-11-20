@@ -46,6 +46,8 @@ $ wt merge
 # Shell back in main
 ```
 
+See [`wt merge`](#wt-merge-target) for all options.
+
 **See all active worktrees:**
 
 <!-- Output from: tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap -->
@@ -60,12 +62,16 @@ feature-x  +       ↑      +5 ↑3  ./feature-x           7fd821aa  10 months a
 ⚪ Showing 3 worktrees, 1 with changes, 2 ahead
 ```
 
+See [`wt list`](#wt-list) for all options.
+
 ## Installation
 
 ```bash
 cargo install worktrunk
 wt config shell  # Sets up shell integration
 ```
+
+See [Shell Integration](#shell-integration) for details.
 
 ## Design Philosophy
 
@@ -81,153 +87,6 @@ Worktrunk is opinionated! It's not designed to be all things to all people. The 
 
 Adopting Worktrunk for a portion of a workflow doesn't require adopting it for
 everything — standard `git worktree` commands continue working fine.
-
-## Automation Features
-
-### LLM-Authored Commit Messages
-
-Worktrunk can invoke an external commands during merge operations to generate
-commit messages. Simon Willison's [llm](https://llm.datasette.io/) tool reads
-the diff and a configurable prompt, then returns a formatted commit message.
-
-Add to `~/.config/worktrunk/config.toml`:
-
-```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4-5-20251001"]
-```
-
-Then `wt merge` will generate commit messages automatically:
-
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap -->
-
-```bash
-$ wt merge
-🔄 Squashing 3 commits into 1 (3 files, +33)...
-🔄 Generating squash commit message...
-  feat(auth): Implement JWT authentication system
-
-  Add comprehensive JWT token handling including validation, refresh logic,
-  and authentication tests. This establishes the foundation for secure
-  API authentication.
-
-  - Implement token refresh mechanism with expiry handling
-  - Add JWT encoding/decoding with signature verification
-  - Create test suite covering all authentication flows
-✅ Squashed @ a1b2c3d
-```
-
-To set up integration: run `wt config --help` to see the setup guide, or `wt config init` to create an example config file.
-
-<details>
-<summary>Advanced: Custom Prompt Templates</summary>
-
-Worktrunk uses [minijinja
-templates](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for
-commit message prompts. Customize the prompts by setting `template` (inline) or
-`template-file` (external file) in the `[commit-generation]` section. Use
-`squash-template` / `squash-template-file` for squash commits.
-
-See [`config.example.toml`](config.example.toml) for complete template examples
-with all available variables (`git_diff`, `branch`, `recent_commits`, `commits`,
-`target_branch`, `repo`).
-
-</details>
-
-### Project Hooks
-
-Automate common tasks by creating `.config/wt.toml` in the repository root. Install dependencies when creating worktrees, start dev servers automatically, run tests before merging.
-
-```toml
-# Install deps when creating a worktree
-[post-create-command]
-"install" = "uv sync"
-
-# Start dev server automatically
-[post-start-command]
-"dev" = "uv run dev"
-
-# Run tests before merging
-[pre-merge-command]
-"test" = "uv run pytest"
-"lint" = "uv run ruff check"
-```
-
-**Example: Creating a worktree with hooks:**
-
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap -->
-
-```bash
-$ wt switch --create feature-x
-🔄 Running post-create install:
-  uv sync
-✅ Created new worktree for feature-x from main at ../repo.feature-x/
-🔄 Running post-start dev:
-  uv run dev
-
-  Resolved 24 packages in 145ms
-  Installed 24 packages in 1.2s
-```
-
-**Example: Merging with pre-merge hooks:**
-
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap -->
-
-```bash
-$ wt merge
-🔄 Squashing 3 commits into 1 (2 files, +45)...
-🔄 Generating squash commit message...
-  feat(api): Add user authentication endpoints
-
-  Implement login and token refresh endpoints with JWT validation.
-  Includes comprehensive test coverage and input validation.
-✅ Squashed @ a1b2c3d
-🔄 Running pre-merge test:
-  uv run pytest
-
-  ============================= test session starts ==============================
-  collected 3 items
-
-  tests/test_auth.py::test_login_success PASSED                            [ 33%]
-  tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-  tests/test_auth.py::test_token_validation PASSED                         [100%]
-
-  ============================== 3 passed in 0.8s ===============================
-
-🔄 Running pre-merge lint:
-  uv run ruff check
-
-  All checks passed!
-
-🔄 Merging 1 commit to main @ a1b2c3d (no rebase needed)
-  * a1b2c3d (HEAD -> feature-auth) feat(api): Add user authentication endpoints
-   api/auth.py        | 31 +++++++++++++++++++++++++++++++
-   tests/test_auth.py | 14 ++++++++++++++
-   2 files changed, 45 insertions(+)
-✅ Merged to main (1 commit, 2 files, +45)
-🔄 Removing worktree & branch...
-✅ Removed worktree & branch for feature-auth, changed directory to ../repo/
-```
-
-<details>
-<summary>All available hooks</summary>
-
-| Hook                    | When It Runs                                                                   | Execution                                     | Failure Behavior             |
-| ----------------------- | ------------------------------------------------------------------------------ | --------------------------------------------- | ---------------------------- |
-| **post-create-command** | After `git worktree add` completes                                             | Sequential, blocking                          | Logs warning, continues      |
-| **post-start-command**  | After post-create completes                                                    | Parallel, non-blocking (background processes) | Logs warning, continues      |
-| **pre-commit-command**  | Before committing changes during `wt merge` (both squash and no-squash modes)  | Sequential, blocking, fail-fast               | Terminates merge immediately |
-| **pre-merge-command**   | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast               | Terminates merge immediately |
-| **post-merge-command**  | After successful merge and push to target branch, before cleanup               | Sequential, blocking                          | Logs warning, continues      |
-
-**Template variables:** `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`, `{{ target }}`
-
-**Skipping hooks:** `wt switch --no-verify` or `wt merge --no-verify`
-
-**Security:** Commands require approval on first run. Use `--force` to bypass.
-
-</details>
 
 ## Tips
 
@@ -252,7 +111,7 @@ Commit Messages](#llm-authored-commit-messages).
 
 **Environment setup with hooks** - Use `post-create-command` (or
 `post-start-command` for non-blocking) to run setup for that
-path:
+path. See [Project Hooks](#project-hooks) for details:
 
 ```toml
 # In .config/wt.toml
@@ -693,6 +552,153 @@ These commands are subject to change:
 
 </details>
 
+## Automation Features
+
+### LLM-Authored Commit Messages
+
+Worktrunk can invoke an external commands during merge operations to generate
+commit messages. Simon Willison's [llm](https://llm.datasette.io/) tool reads
+the diff and a configurable prompt, then returns a formatted commit message.
+
+Add to `~/.config/worktrunk/config.toml`:
+
+```toml
+[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4-5-20251001"]
+```
+
+Then `wt merge` will generate commit messages automatically:
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap -->
+
+```bash
+$ wt merge
+🔄 Squashing 3 commits into 1 (3 files, +33)...
+🔄 Generating squash commit message...
+  feat(auth): Implement JWT authentication system
+
+  Add comprehensive JWT token handling including validation, refresh logic,
+  and authentication tests. This establishes the foundation for secure
+  API authentication.
+
+  - Implement token refresh mechanism with expiry handling
+  - Add JWT encoding/decoding with signature verification
+  - Create test suite covering all authentication flows
+✅ Squashed @ a1b2c3d
+```
+
+To set up integration: run `wt config --help` to see the setup guide, or `wt config init` to create an example config file.
+
+<details>
+<summary>Advanced: Custom Prompt Templates</summary>
+
+Worktrunk uses [minijinja
+templates](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) for
+commit message prompts. Customize the prompts by setting `template` (inline) or
+`template-file` (external file) in the `[commit-generation]` section. Use
+`squash-template` / `squash-template-file` for squash commits.
+
+See [`config.example.toml`](config.example.toml) for complete template examples
+with all available variables (`git_diff`, `branch`, `recent_commits`, `commits`,
+`target_branch`, `repo`).
+
+</details>
+
+### Project Hooks
+
+Automate common tasks by creating `.config/wt.toml` in the repository root. Install dependencies when creating worktrees, start dev servers automatically, run tests before merging.
+
+```toml
+# Install deps when creating a worktree
+[post-create-command]
+"install" = "uv sync"
+
+# Start dev server automatically
+[post-start-command]
+"dev" = "uv run dev"
+
+# Run tests before merging
+[pre-merge-command]
+"test" = "uv run pytest"
+"lint" = "uv run ruff check"
+```
+
+**Example: Creating a worktree with hooks:**
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap -->
+
+```bash
+$ wt switch --create feature-x
+🔄 Running post-create install:
+  uv sync
+✅ Created new worktree for feature-x from main at ../repo.feature-x/
+🔄 Running post-start dev:
+  uv run dev
+
+  Resolved 24 packages in 145ms
+  Installed 24 packages in 1.2s
+```
+
+**Example: Merging with pre-merge hooks:**
+
+<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap -->
+
+```bash
+$ wt merge
+🔄 Squashing 3 commits into 1 (2 files, +45)...
+🔄 Generating squash commit message...
+  feat(api): Add user authentication endpoints
+
+  Implement login and token refresh endpoints with JWT validation.
+  Includes comprehensive test coverage and input validation.
+✅ Squashed @ a1b2c3d
+🔄 Running pre-merge test:
+  uv run pytest
+
+  ============================= test session starts ==============================
+  collected 3 items
+
+  tests/test_auth.py::test_login_success PASSED                            [ 33%]
+  tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
+  tests/test_auth.py::test_token_validation PASSED                         [100%]
+
+  ============================== 3 passed in 0.8s ===============================
+
+🔄 Running pre-merge lint:
+  uv run ruff check
+
+  All checks passed!
+
+🔄 Merging 1 commit to main @ a1b2c3d (no rebase needed)
+  * a1b2c3d (HEAD -> feature-auth) feat(api): Add user authentication endpoints
+   api/auth.py        | 31 +++++++++++++++++++++++++++++++
+   tests/test_auth.py | 14 ++++++++++++++
+   2 files changed, 45 insertions(+)
+✅ Merged to main (1 commit, 2 files, +45)
+🔄 Removing worktree & branch...
+✅ Removed worktree & branch for feature-auth, changed directory to ../repo/
+```
+
+<details>
+<summary>All available hooks</summary>
+
+| Hook                    | When It Runs                                                                   | Execution                                     | Failure Behavior             |
+| ----------------------- | ------------------------------------------------------------------------------ | --------------------------------------------- | ---------------------------- |
+| **post-create-command** | After `git worktree add` completes                                             | Sequential, blocking                          | Logs warning, continues      |
+| **post-start-command**  | After post-create completes                                                    | Parallel, non-blocking (background processes) | Logs warning, continues      |
+| **pre-commit-command**  | Before committing changes during `wt merge` (both squash and no-squash modes)  | Sequential, blocking, fail-fast               | Terminates merge immediately |
+| **pre-merge-command**   | After rebase completes during `wt merge` (validates rebased state before push) | Sequential, blocking, fail-fast               | Terminates merge immediately |
+| **post-merge-command**  | After successful merge and push to target branch, before cleanup               | Sequential, blocking                          | Logs warning, continues      |
+
+**Template variables:** `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ repo_root }}`, `{{ target }}`
+
+**Skipping hooks:** `wt switch --no-verify` or `wt merge --no-verify`
+
+**Security:** Commands require approval on first run. Use `--force` to bypass.
+
+</details>
+
 ## Configuration
 
 ```bash
@@ -878,8 +884,8 @@ Run without `--execute` to preview changes first.
 
 Worktrunk executes commands in three contexts:
 
-1. **Project hooks** (`.config/wt.toml`) - Automation for worktree lifecycle
-2. **LLM commands** (`~/.config/worktrunk/config.toml`) - Commit message generation
+1. **[Project hooks](#project-hooks)** (`.config/wt.toml`) - Automation for worktree lifecycle
+2. **[LLM commands](#llm-authored-commit-messages)** (`~/.config/worktrunk/config.toml`) - Commit message generation
 3. **--execute flag** - Commands provided explicitly
 
 Commands from project hooks and LLM configuration require approval on first run. Approved commands are saved to `~/.config/worktrunk/config.toml` under the project's configuration. If a command changes, worktrunk requires new approval.

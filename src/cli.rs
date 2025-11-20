@@ -495,7 +495,7 @@ Use '@' for current HEAD, '-' for previous, '^' for main:
     },
 
     /// Remove worktree and branch
-    #[command(after_help = r#"OPERATION
+    #[command(after_help = r#"BEHAVIOR:
 
 Remove Current Worktree (no arguments):
   - Requires clean working tree (no uncommitted changes)
