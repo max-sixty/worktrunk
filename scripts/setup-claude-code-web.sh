@@ -3,16 +3,18 @@
 # Claude Code Web - Environment Setup Script
 ###############################################################################
 #
-# This script sets up the development environment for working on worktrunk
-# in Claude Code web sessions.
+# This script prepares a fresh Claude Code web environment for worktrunk
+# development. It installs required dependencies but does NOT run tests.
 #
 # What it does:
-# - Verifies Rust toolchain
-# - Builds the project
-# - Runs unit tests
+# - Verifies Rust toolchain (1.90.0)
 # - Installs required shells (zsh, fish) on Debian/Ubuntu
-# - Runs integration tests
-# - Reports environment status
+# - Builds the project
+#
+# After running this script, run tests with:
+#   cargo test --lib --bins           # Unit tests
+#   cargo test --test integration     # Integration tests
+#   cargo run -- beta run-hook pre-merge  # All tests (via pre-merge hook)
 #
 # Usage:
 #   ./scripts/setup-claude-code-web.sh
@@ -72,26 +74,6 @@ if [ "$RUST_VERSION" != "$REQUIRED_VERSION" ]; then
     echo "  rustup should automatically use the correct version from rust-toolchain.toml"
 fi
 
-# Build the project
-echo ""
-echo "Building worktrunk..."
-if cargo build 2>&1 | tail -5; then
-    print_status "Build successful"
-else
-    print_error "Build failed"
-    exit 1
-fi
-
-# Run unit tests (lib + bins)
-echo ""
-echo "Running unit tests..."
-if cargo test --lib --bins --quiet 2>&1 | tail -5; then
-    print_status "Unit tests passed"
-else
-    print_error "Unit tests failed"
-    exit 1
-fi
-
 # Check and install shells
 echo ""
 echo "Checking shells for integration tests..."
@@ -140,34 +122,14 @@ if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
     done
 fi
 
-# Run integration tests
+# Build the project
 echo ""
-echo "Running integration tests..."
-if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
-    echo "(Note: Tests for missing shells will fail: ${SHELLS_MISSING[*]})"
-fi
-
-TEST_OUTPUT=$(cargo test --test integration 2>&1 || true)
-TEST_SUMMARY=$(echo "$TEST_OUTPUT" | grep "test result:" | tail -1)
-
-if echo "$TEST_SUMMARY" | grep -q "test result:"; then
-    PASSED=$(echo "$TEST_SUMMARY" | grep -oP '\d+(?= passed)')
-    FAILED=$(echo "$TEST_SUMMARY" | grep -oP '\d+(?= failed)' || echo "0")
-    IGNORED=$(echo "$TEST_SUMMARY" | grep -oP '\d+(?= ignored)' || echo "0")
-
-    print_status "Integration tests: $PASSED passed, $FAILED failed, $IGNORED ignored"
-
-    if [ "$FAILED" != "0" ] && [ "$FAILED" != "" ]; then
-        if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
-            print_warning "Some tests failed - this is expected:"
-            echo "  - Missing shells (${SHELLS_MISSING[*]}) cause shell-specific tests to fail"
-        else
-            print_warning "Some tests failed unexpectedly"
-            echo "  - PTY/snapshot tests may need updating with 'cargo insta review'"
-        fi
-    fi
+echo "Building worktrunk..."
+if cargo build 2>&1 | tail -5; then
+    print_status "Build successful"
 else
-    print_error "Could not parse test results"
+    print_error "Build failed"
+    exit 1
 fi
 
 # Summary
@@ -175,35 +137,28 @@ echo ""
 echo "========================================"
 echo "Setup Summary"
 echo "========================================"
-print_status "Core environment is ready"
+print_status "Environment is ready for development"
 print_status "Rust toolchain: $RUST_VERSION"
 print_status "Build: OK"
-print_status "Unit tests: OK"
+print_status "Shells available: ${SHELLS_AVAILABLE[*]}"
 
 if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
     echo ""
-    print_warning "Optional shells not installed: ${SHELLS_MISSING[*]}"
-    echo "  To run all integration tests, install:"
-    for shell in "${SHELLS_MISSING[@]}"; do
-        case "$shell" in
-            fish)
-                echo "    - fish: https://fishshell.com/ or 'apt-get install fish'"
-                ;;
-            zsh)
-                echo "    - zsh: 'apt-get install zsh'"
-                ;;
-        esac
-    done
+    print_warning "Some shells not installed: ${SHELLS_MISSING[*]}"
+    echo "  (Tests for these shells will fail)"
 fi
 
 echo ""
 echo "========================================"
-echo "Quick Start Commands"
+echo "Next Steps"
 echo "========================================"
-echo "  cargo build              # Build the project"
-echo "  cargo test --lib --bins  # Run unit tests"
-echo "  cargo test --test '*'    # Run integration tests"
-echo "  cargo run -- --help      # Run worktrunk CLI"
-echo "  ./target/debug/wt --help # Run built binary directly"
+echo "Run tests:"
+echo "  cargo test --lib --bins                # Unit tests"
+echo "  cargo test --test integration          # Integration tests"
+echo "  cargo run -- beta run-hook pre-merge   # All tests (via pre-merge hook)"
 echo ""
-print_status "Environment setup complete!"
+echo "Or start developing:"
+echo "  cargo run -- --help                    # Run worktrunk CLI"
+echo "  ./target/debug/wt list                 # Try a command"
+echo ""
+print_status "Setup complete!"

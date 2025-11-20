@@ -32,6 +32,33 @@ Example of escalating instead of suppressing:
 fn parse_config() { ... }
 ```
 
+## Testing
+
+### Running Tests
+
+```bash
+# Unit tests (fast, ~200 tests)
+cargo test --lib --bins
+
+# Integration tests (~360 tests, requires bash/zsh/fish shells)
+cargo test --test integration
+
+# Run all tests via pre-merge hook (recommended before committing)
+cargo run -- beta run-hook pre-merge
+```
+
+The pre-merge hook runs the full test suite and is the recommended way to verify changes before committing.
+
+### Claude Code Web Environment
+
+When working in Claude Code web, run the setup script first:
+
+```bash
+./scripts/setup-claude-code-web.sh
+```
+
+This installs required shells (zsh, fish) and builds the project. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) automatically skip when running as root, which is common in containerized environments.
+
 ### CLI Flag Descriptions
 
 Keep the first line of flag and argument descriptions brief—aim for 3-6 words. Use parenthetical defaults sparingly, only when the default isn't obvious from context.
