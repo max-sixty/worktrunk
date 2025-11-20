@@ -3,3 +3,7 @@
 # Lychee link checker cache
 .lycheecache
 test-concurrent.sh
+
+# Insta snapshot test artifacts
+*.snap.new
+*.snap.pending
