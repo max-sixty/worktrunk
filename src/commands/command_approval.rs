@@ -24,16 +24,12 @@ pub fn approve_command_batch(
     force: bool,
     commands_already_filtered: bool,
 ) -> Result<bool, GitError> {
-    let needs_approval: Vec<&Command> = if commands_already_filtered {
-        // Commands already filtered by caller, use as-is
-        commands.iter().collect()
-    } else {
-        // Filter to only unapproved commands
-        commands
-            .iter()
-            .filter(|cmd| !config.is_command_approved(project_id, &cmd.template))
-            .collect()
-    };
+    let needs_approval: Vec<&Command> = commands
+        .iter()
+        .filter(|cmd| {
+            commands_already_filtered || !config.is_command_approved(project_id, &cmd.template)
+        })
+        .collect();
 
     if needs_approval.is_empty() {
         return Ok(true);

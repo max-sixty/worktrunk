@@ -4,7 +4,7 @@ use insta_cmd::assert_cmd_snapshot;
 use std::fs;
 use tempfile::TempDir;
 
-/// Test configure-shell with --force flag (skips confirmation)
+/// Test `wt config shell` with --force flag (skips confirmation)
 #[test]
 fn test_configure_shell_with_yes() {
     let repo = TestRepo::new();
@@ -47,7 +47,7 @@ fn test_configure_shell_with_yes() {
     assert!(content.contains("eval \"$(command wt init zsh)\""));
 }
 
-/// Test configure-shell with specific shell
+/// Test `wt config shell` with specific shell
 #[test]
 fn test_configure_shell_specific_shell() {
     let repo = TestRepo::new();
@@ -92,7 +92,7 @@ fn test_configure_shell_specific_shell() {
     assert!(content.contains("eval \"$(command wt init zsh)\""));
 }
 
-/// Test configure-shell when line already exists
+/// Test `wt config shell` when line already exists
 #[test]
 fn test_configure_shell_already_exists() {
     let repo = TestRepo::new();
@@ -137,7 +137,7 @@ fn test_configure_shell_already_exists() {
     assert_eq!(count, 1, "Should only have one wt init line");
 }
 
-/// Test configure-shell for Fish (creates new file in conf.d/)
+/// Test `wt config shell` for Fish (creates new file in conf.d/)
 #[test]
 fn test_configure_shell_fish() {
     let repo = TestRepo::new();
@@ -185,7 +185,7 @@ fn test_configure_shell_fish() {
     );
 }
 
-/// Test configure-shell when no config files exist
+/// Test `wt config shell` when no config files exist
 #[test]
 fn test_configure_shell_no_files() {
     let repo = TestRepo::new();
@@ -220,8 +220,8 @@ fn test_configure_shell_no_files() {
     });
 }
 
-/// Test configure-shell for Fish with custom prefix
-/// Test configure-shell with multiple existing config files
+/// Test `wt config shell` for Fish with custom prefix
+/// Test `wt config shell` with multiple existing config files
 #[test]
 fn test_configure_shell_multiple_configs() {
     let repo = TestRepo::new();
@@ -277,7 +277,7 @@ fn test_configure_shell_multiple_configs() {
     );
 }
 
-/// Test configure-shell shows both shells needing updates and already configured shells
+/// Test `wt config shell` shows both shells needing updates and already configured shells
 #[test]
 fn test_configure_shell_mixed_states() {
     let repo = TestRepo::new();

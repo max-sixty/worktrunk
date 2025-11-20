@@ -43,14 +43,14 @@
 //! commands and adds `--internal`:
 //!
 //! 1. Shell wrapper calls: `wt switch --internal my-feature`
-//! 2. Binary outputs special directive protocol:
+//! 2. Binary outputs a NUL-delimited directive stream on **stdout** and user-facing messages on
+//!    **stderr**:
 //!    ```text
-//!    __WORKTRUNK_CD__/path/to/worktree
-//!    Created new branch and worktree for 'my-feature' at /path/to/worktree
+//!    __WORKTRUNK_CD__/path/to/worktree\0
 //!    ```
-//! 3. Shell wrapper parses output line-by-line
+//! 3. Shell wrapper splits stdout on `\0` bytes
 //! 4. When it sees `__WORKTRUNK_CD__<path>`, it executes `cd <path>` in the parent shell
-//! 5. Other lines are printed normally
+//! 5. Messages printed to stderr stream directly to the terminal for real-time feedback
 //!
 //! The binary **never changes directories itself** - it just communicates the desired path back
 //! to the shell wrapper via stdout using the `__WORKTRUNK_CD__` directive protocol.

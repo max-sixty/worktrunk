@@ -152,6 +152,18 @@ fn compute_upstream_divergence(ahead: usize, behind: usize) -> UpstreamDivergenc
     }
 }
 
+fn compute_divergences(
+    counts: &AheadBehind,
+    upstream: &UpstreamStatus,
+) -> (MainDivergence, UpstreamDivergence) {
+    let main_divergence = compute_main_divergence(counts.ahead, counts.behind);
+    let (upstream_ahead, upstream_behind) =
+        upstream.active().map(|(_, a, b)| (a, b)).unwrap_or((0, 0));
+    let upstream_divergence = compute_upstream_divergence(upstream_ahead, upstream_behind);
+
+    (main_divergence, upstream_divergence)
+}
+
 /// Determine branch state for a worktree.
 ///
 /// Returns:
@@ -205,6 +217,7 @@ fn compute_item_status_symbols(
     let default_upstream = UpstreamStatus::default();
     let counts = item.counts.as_ref().unwrap_or(&default_counts);
     let upstream = item.upstream.as_ref().unwrap_or(&default_upstream);
+    let (main_divergence, upstream_divergence) = compute_divergences(counts, upstream);
 
     match &item.kind {
         ItemKind::Worktree(data) => {
@@ -236,14 +249,6 @@ fn compute_item_status_symbols(
                 _ => GitOperation::None,
             };
 
-            // Main divergence
-            let main_divergence = compute_main_divergence(counts.ahead, counts.behind);
-
-            // Upstream divergence
-            let (upstream_ahead, upstream_behind) =
-                upstream.active().map(|(_, a, b)| (a, b)).unwrap_or((0, 0));
-            let upstream_divergence = compute_upstream_divergence(upstream_ahead, upstream_behind);
-
             // Combine conflicts and branch state (mutually exclusive)
             let branch_state = if has_conflicts {
                 BranchState::Conflicts
@@ -273,24 +278,12 @@ fn compute_item_status_symbols(
             // Simplified status computation for branches
             // Only compute symbols that apply to branches (no working tree, git operation, or worktree attrs)
 
-            // Main divergence
-            let main_divergence = compute_main_divergence(counts.ahead, counts.behind);
-
-            // Upstream divergence
-            let (upstream_ahead, upstream_behind) =
-                upstream.active().map(|(_, a, b)| (a, b)).unwrap_or((0, 0));
-            let upstream_divergence = compute_upstream_divergence(upstream_ahead, upstream_behind);
-
             // Branch state - branches can only show Conflicts or NoCommits
             // (MatchesMain only applies to worktrees since branches don't have working trees)
             let branch_state = if has_conflicts {
                 BranchState::Conflicts
-            } else if let Some(ref c) = item.counts {
-                if c.ahead == 0 {
-                    BranchState::NoCommits
-                } else {
-                    BranchState::None
-                }
+            } else if counts.ahead == 0 {
+                BranchState::NoCommits
             } else {
                 BranchState::None
             };
@@ -321,11 +314,9 @@ fn drain_cell_updates(
     worktree_items: &mut [ListItem],
     mut on_update: impl FnMut(usize, &mut ListItem, bool, Option<String>),
 ) {
-    use std::collections::HashMap;
-
     // Temporary storage for data needed by status_symbols computation
-    let mut has_conflicts_map: HashMap<usize, bool> = HashMap::new();
-    let mut user_status_map: HashMap<usize, Option<String>> = HashMap::new();
+    let mut has_conflicts_map: Vec<bool> = vec![false; worktree_items.len()];
+    let mut user_status_map: Vec<Option<String>> = vec![None; worktree_items.len()];
 
     // Process cell updates as they arrive
     while let Ok(update) = rx.recv() {
@@ -363,7 +354,7 @@ fn drain_cell_updates(
                 has_conflicts,
             } => {
                 // Store temporarily for status_symbols computation
-                has_conflicts_map.insert(item_idx, has_conflicts);
+                has_conflicts_map[item_idx] = has_conflicts;
             }
             CellUpdate::WorktreeState {
                 item_idx,
@@ -378,7 +369,7 @@ fn drain_cell_updates(
                 user_status,
             } => {
                 // Store temporarily for status_symbols computation
-                user_status_map.insert(item_idx, user_status);
+                user_status_map[item_idx] = user_status;
             }
             CellUpdate::Upstream { item_idx, upstream } => {
                 worktree_items[item_idx].upstream = Some(upstream);
@@ -393,8 +384,8 @@ fn drain_cell_updates(
         }
 
         // Invoke rendering callback (progressive mode re-renders rows, buffered mode does nothing)
-        let has_conflicts = has_conflicts_map.get(&item_idx).copied().unwrap_or(false);
-        let user_status = user_status_map.get(&item_idx).cloned().flatten();
+        let has_conflicts = has_conflicts_map[item_idx];
+        let user_status = user_status_map[item_idx].clone();
         on_update(
             item_idx,
             &mut worktree_items[item_idx],
