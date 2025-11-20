@@ -197,12 +197,22 @@ fn test_approval_prompt_permission_error() {
         use std::os::unix::fs::PermissionsExt;
 
         // Create the config file first
-        fs::write(config_path, "# read-only config\n").unwrap();
+        fs::write(&config_path, "# read-only config\n").unwrap();
 
         // Make it read-only
-        let mut perms = fs::metadata(config_path).unwrap().permissions();
+        let mut perms = fs::metadata(&config_path).unwrap().permissions();
         perms.set_mode(0o444); // Read-only
-        fs::set_permissions(config_path, perms).unwrap();
+        fs::set_permissions(&config_path, perms).unwrap();
+
+        // Test if permissions actually restrict us (skip if running as root)
+        if fs::write(&config_path, "test write").is_ok() {
+            // Running as root - restore permissions and skip test
+            let mut perms = fs::metadata(&config_path).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&config_path, perms).unwrap();
+            eprintln!("Skipping permission test - running with elevated privileges");
+            return;
+        }
     }
 
     let env_vars = repo.test_env_vars();

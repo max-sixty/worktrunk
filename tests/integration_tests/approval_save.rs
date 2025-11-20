@@ -297,6 +297,21 @@ fn test_permission_error_prevents_save() {
         fs::set_permissions(config_dir, readonly_perms).unwrap();
     }
 
+    // Test if permissions actually restrict us (skip if running as root)
+    // Root can write to read-only directories, so the test would be meaningless
+    let test_file = config_dir.join("test_write");
+    if fs::write(&test_file, "test").is_ok() {
+        // Running as root or permissions don't work
+        // Restore write permissions and skip test
+        #[cfg(unix)]
+        {
+            let writable_perms = Permissions::from_mode(0o755);
+            fs::set_permissions(config_dir, writable_perms).unwrap();
+        }
+        eprintln!("Skipping permission test - running with elevated privileges");
+        return;
+    }
+
     // Try to save a new approval - this should fail
     let mut config = WorktrunkConfig::default();
     let result = config.approve_command_to(
