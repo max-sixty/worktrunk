@@ -831,9 +831,7 @@ The custom emoji appears directly after the git status symbols.
 
 Claude Code can automatically set/clear emoji status when coding sessions start and end. This shows which branches have active AI sessions.
 
-**Easy setup:** The Worktrunk repository includes a `.claude-plugin` directory with pre-configured hooks. When working in this repository, the hooks are automatically available.
-
-**Manual setup for other repositories:** Copy the hooks from [`.claude-plugin/hooks/hooks.json`](.claude-plugin/hooks/hooks.json) to `~/.claude/settings.json`.
+**Easy setup:** The Worktrunk repository includes a `.claude-plugin` directory with pre-configured hooks.
 
 When using Claude:
 
