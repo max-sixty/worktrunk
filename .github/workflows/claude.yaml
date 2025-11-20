@@ -64,7 +64,7 @@ jobs:
           prefix-key: ${{ hashFiles('Cargo.lock') }}
           save-if: false
 
-      - name: Install Tier 1 shells (bash, zsh, fish)
+      - name: Install shells (bash, zsh, fish)
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh fish
