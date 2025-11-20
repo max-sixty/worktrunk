@@ -14,6 +14,13 @@ fn base_settings(repo: &TestRepo) -> Settings {
 pub fn standard_settings(repo: &TestRepo) -> Settings {
     let mut settings = base_settings(repo);
     settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]   ");
+    // Normalize WORKTRUNK_CONFIG_PATH across platforms (macOS, Linux, Windows)
+    // macOS: /var/folders/.../T/.tmpXXX/test-config.toml
+    // Linux: /tmp/.tmpXXX/test-config.toml
+    settings.add_filter(
+        r"(/var/folders/[^/]+/[^/]+/T/\.tmp[^/]+|/tmp/\.tmp[^/]+)/test-config\.toml",
+        "[TEST_TEMP]/test-config.toml",
+    );
     settings
 }
 
