@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp5JH1mZ/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp3ZxZaG/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -31,16 +31,27 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
-      "has_conflicts": false,
-      "branch_state": "",
-      "git_operation": "",
-      "worktree_attrs": "",
-      "main_divergence": "",
-      "upstream_divergence": "",
-      "working_tree": "",
-      "user_status": null
+      "status": {
+        "branch_state": "",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": {
+          "untracked": false,
+          "modified": false,
+          "staged": false,
+          "renamed": false,
+          "deleted": false
+        }
+      },
+      "status_symbols": {
+        "branch_state": "",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": ""
+      }
     },
     "type": "worktree",
     "path": "[REPO]",
@@ -74,16 +85,27 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
-      "has_conflicts": false,
-      "branch_state": "",
-      "git_operation": "",
-      "worktree_attrs": "",
-      "main_divergence": "↕",
-      "upstream_divergence": "",
-      "working_tree": "?!",
-      "user_status": null
+      "status": {
+        "branch_state": "",
+        "git_operation": "",
+        "main_divergence": "Diverged",
+        "upstream_divergence": "",
+        "working_tree": {
+          "untracked": true,
+          "modified": true,
+          "staged": false,
+          "renamed": false,
+          "deleted": false
+        }
+      },
+      "status_symbols": {
+        "branch_state": "",
+        "git_operation": "",
+        "main_divergence": "↕",
+        "upstream_divergence": "",
+        "working_tree": "?!"
+      }
     },
     "commits_display": "/u001b[32m↑2/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
     "branch_diff_display": "/u001b[32m+1/u001b[0m",
@@ -117,16 +139,27 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
-      "has_conflicts": false,
-      "branch_state": "∅",
-      "git_operation": "",
-      "worktree_attrs": "",
-      "main_divergence": "↓",
-      "upstream_divergence": "",
-      "working_tree": "",
-      "user_status": null
+      "status": {
+        "branch_state": "NoCommits",
+        "git_operation": "",
+        "main_divergence": "Behind",
+        "upstream_divergence": "",
+        "working_tree": {
+          "untracked": false,
+          "modified": false,
+          "staged": false,
+          "renamed": false,
+          "deleted": false
+        }
+      },
+      "status_symbols": {
+        "branch_state": "∅",
+        "git_operation": "",
+        "main_divergence": "↓",
+        "upstream_divergence": "",
+        "working_tree": ""
+      }
     },
     "commits_display": "/u001b[2m/u001b[31m↓2/u001b[0m",
     "type": "worktree",

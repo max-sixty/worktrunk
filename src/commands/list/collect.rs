@@ -177,14 +177,17 @@ fn determine_worktree_branch_state(
 /// It will recompute with the latest available data.
 ///
 /// Branches get a subset of status symbols (no working tree, git operation, or worktree attrs).
-fn compute_item_status_symbols(item: &mut ListItem, base_branch: Option<&str>) {
+fn compute_item_status_symbols(
+    item: &mut ListItem,
+    base_branch: Option<&str>,
+    has_conflicts: bool,
+    user_status: Option<String>,
+) {
     // Common fields for both worktrees and branches
     let default_counts = AheadBehind::default();
     let default_upstream = UpstreamStatus::default();
     let counts = item.counts.as_ref().unwrap_or(&default_counts);
     let upstream = item.upstream.as_ref().unwrap_or(&default_upstream);
-    let has_conflicts = item.has_conflicts.unwrap_or(false);
-    let user_status = item.user_status.clone();
 
     match &item.kind {
         ItemKind::Worktree(data) => {
@@ -295,8 +298,14 @@ fn compute_item_status_symbols(item: &mut ListItem, base_branch: Option<&str>) {
 fn drain_cell_updates(
     rx: chan::Receiver<CellUpdate>,
     worktree_items: &mut [ListItem],
-    mut on_update: impl FnMut(usize, &mut ListItem),
+    mut on_update: impl FnMut(usize, &mut ListItem, bool, Option<String>),
 ) {
+    use std::collections::HashMap;
+
+    // Temporary storage for data needed by status_symbols computation
+    let mut has_conflicts_map: HashMap<usize, bool> = HashMap::new();
+    let mut user_status_map: HashMap<usize, Option<String>> = HashMap::new();
+
     // Process cell updates as they arrive
     while let Ok(update) = rx.recv() {
         let item_idx = update.item_idx();
@@ -332,7 +341,8 @@ fn drain_cell_updates(
                 item_idx,
                 has_conflicts,
             } => {
-                worktree_items[item_idx].has_conflicts = Some(has_conflicts);
+                // Store temporarily for status_symbols computation
+                has_conflicts_map.insert(item_idx, has_conflicts);
             }
             CellUpdate::WorktreeState {
                 item_idx,
@@ -346,7 +356,8 @@ fn drain_cell_updates(
                 item_idx,
                 user_status,
             } => {
-                worktree_items[item_idx].user_status = user_status;
+                // Store temporarily for status_symbols computation
+                user_status_map.insert(item_idx, user_status);
             }
             CellUpdate::Upstream { item_idx, upstream } => {
                 worktree_items[item_idx].upstream = Some(upstream);
@@ -361,7 +372,14 @@ fn drain_cell_updates(
         }
 
         // Invoke rendering callback (progressive mode re-renders rows, buffered mode does nothing)
-        on_update(item_idx, &mut worktree_items[item_idx]);
+        let has_conflicts = has_conflicts_map.get(&item_idx).copied().unwrap_or(false);
+        let user_status = user_status_map.get(&item_idx).cloned().flatten();
+        on_update(
+            item_idx,
+            &mut worktree_items[item_idx],
+            has_conflicts,
+            user_status,
+        );
     }
 }
 
@@ -442,8 +460,6 @@ pub fn collect(
             branch_diff: None,
             upstream: None,
             pr_status: None,
-            has_conflicts: None,
-            user_status: None,
             status_symbols: None,
             display: super::model::DisplayFields::default(),
             // Type-specific data
@@ -465,8 +481,6 @@ pub fn collect(
             branch_diff: None,
             upstream: None,
             pr_status: None,
-            has_conflicts: None,
-            user_status: None,
             status_symbols: None,
             display: super::model::DisplayFields::default(),
             // Type-specific data
@@ -643,41 +657,46 @@ pub fn collect(
 
     // Drain cell updates with conditional progressive rendering
     let base_branch = primary.branch.as_deref();
-    drain_cell_updates(rx, &mut all_items, |item_idx, info| {
-        // Compute/recompute status symbols as data arrives (both modes)
-        // This is idempotent and updates status as new data (like upstream) arrives
-        // Base branch is None for primary worktree, Some(primary.branch) for others
-        let item_base_branch = if info.is_primary() { None } else { base_branch };
-        compute_item_status_symbols(info, item_base_branch);
+    drain_cell_updates(
+        rx,
+        &mut all_items,
+        |item_idx, info, has_conflicts, user_status| {
+            // Compute/recompute status symbols as data arrives (both modes)
+            // This is idempotent and updates status as new data (like upstream) arrives
+            // Base branch is None for primary worktree, Some(primary.branch) for others
+            let item_base_branch = if info.is_primary() { None } else { base_branch };
+            compute_item_status_symbols(info, item_base_branch, has_conflicts, user_status);
 
-        // Progressive mode only: update UI
-        if show_progress {
-            use anstyle::Style;
-            let dim = Style::new().dimmed();
+            // Progressive mode only: update UI
+            if show_progress {
+                use anstyle::Style;
+                let dim = Style::new().dimmed();
 
-            completed_cells += 1;
+                completed_cells += 1;
 
-            // Update footer progress
-            if let Some(pb) = footer_pb.as_ref() {
-                pb.set_position(completed_cells as u64);
-                pb.set_message(format!(
+                // Update footer progress
+                if let Some(pb) = footer_pb.as_ref() {
+                    pb.set_position(completed_cells as u64);
+                    pb.set_message(format!(
                     "{INFO_EMOJI} {dim}{footer_base} ({completed_cells}/{total_cells} cells loaded){dim:#}"
                 ));
-            }
+                }
 
-            // Re-render the row with caching and clamping (now includes status if computed)
-            if let Some(pb) = progress_bars.get(item_idx) {
-                let rendered = layout.format_list_item_line(info, current_worktree_path.as_ref());
-                let clamped = clamp(&rendered);
+                // Re-render the row with caching and clamping (now includes status if computed)
+                if let Some(pb) = progress_bars.get(item_idx) {
+                    let rendered =
+                        layout.format_list_item_line(info, current_worktree_path.as_ref());
+                    let clamped = clamp(&rendered);
 
-                // Only update if content changed
-                if clamped != last_lines[item_idx] {
-                    last_lines[item_idx] = clamped.clone();
-                    pb.set_message(clamped);
+                    // Only update if content changed
+                    if clamped != last_lines[item_idx] {
+                        last_lines[item_idx] = clamped.clone();
+                        pb.set_message(clamped);
+                    }
                 }
             }
-        }
-    });
+        },
+    );
 
     // Finalize progress bars: no clearing race; footer morphs into summary on TTY
     if show_progress {

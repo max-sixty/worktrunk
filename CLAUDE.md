@@ -494,10 +494,11 @@ Use `wt list --format=json` for structured data access. The output is an array o
 - `head_sha`, `timestamp`, `commit_message`: commit info
 - `ahead`, `behind`: commits ahead/behind main branch
 - `branch_diff`: `{added, deleted}` - line diff vs main
-- `has_conflicts`: boolean - merge conflicts with main
 - `upstream_remote`, `upstream_ahead`, `upstream_behind`: remote tracking status
 - `pr_status`: PR/CI status object (null if not available)
-- `user_status`: user-defined status from `worktrunk.status` config (optional)
+- `status_symbols`: structured status object with two maps:
+  - `status`: variant names for queryability (e.g., "MatchesMain", "Ahead")
+  - `status_symbols`: display symbols (e.g., "≡", "↑")
 
 ### Worktree-Specific Fields
 
@@ -509,7 +510,6 @@ Use `wt list --format=json` for structured data access. The output is an array o
 - `working_tree_diff_with_main`: `{added, deleted}` or null (null = not computed, `{0,0}` = matches main exactly)
 - `worktree_state`: "rebase" | "merge" | null - git operation in progress
 - `is_primary`: boolean - is main worktree
-- `status_symbols`: structured status object (see below)
 
 ### Branch-Specific Fields
 
@@ -517,7 +517,7 @@ Use `wt list --format=json` for structured data access. The output is an array o
 
 ### JSON Field Documentation
 
-**For status symbols and query examples, see:**
+**For complete field documentation and additional examples, see:**
 - `wt list --help` - authoritative source of truth
 - README.md - copy of help text for quick reference
 
