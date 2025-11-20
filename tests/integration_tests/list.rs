@@ -1,7 +1,7 @@
 use crate::common::{TestRepo, list_snapshots, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn snapshot_list(test_name: &str, repo: &TestRepo) {
@@ -1611,37 +1611,61 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Create a remote repo by cloning to a separate directory
-    let remote_dir = repo.root_path().parent().unwrap().join("remote-repo");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
-        "clone",
-        repo.root_path().to_str().unwrap(),
-        remote_dir.to_str().unwrap(),
-    ])
-    .output()
-    .unwrap();
+    // Create a real bare remote and push both branches so upstream tracking is deterministic
+    repo.setup_remote("main");
 
-    // In the remote repo, check out feature branch and make a commit
+    // Push feature to origin so the remote has the same base commit
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "feature"])
-        .current_dir(&remote_dir)
+    cmd.args(["push", "-u", "origin", "feature"])
+        .current_dir(&feature)
         .output()
         .unwrap();
 
-    std::fs::write(remote_dir.join("remote-file.txt"), "remote content").unwrap();
+    // Clone the bare remote and create a remote-only commit, then push it back
+    let remote_path = {
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        let output = cmd
+            .args(["remote", "get-url", "origin"])
+            .current_dir(repo.root_path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+
+    let remote_clone = repo.root_path().parent().unwrap().join("remote-clone");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["clone", remote_path.to_str().unwrap(), remote_clone.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "feature"])
+        .current_dir(&remote_clone)
+        .output()
+        .unwrap();
+
+    std::fs::write(remote_clone.join("remote-file.txt"), "remote content").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "remote-file.txt"])
-        .current_dir(&remote_dir)
+        .current_dir(&remote_clone)
         .output()
         .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Remote commit"])
-        .current_dir(&remote_dir)
+        .current_dir(&remote_clone)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["push", "origin", "feature"])
+        .current_dir(&remote_clone)
         .output()
         .unwrap();
 
@@ -1660,26 +1684,10 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Set up the remote repo as origin for the feature worktree
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["remote", "add", "origin", remote_dir.to_str().unwrap()])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    // Fetch from the remote to establish tracking
+    // Fetch remote so origin/feature includes the remote-only commit; upstream remains set from the earlier push -u
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["fetch", "origin"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    // Set up branch tracking
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
         .output()
         .unwrap();
@@ -1749,17 +1757,7 @@ fn test_list_maximum_status_symbols() {
         .unwrap();
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
-    //
-    // Note: Git's ahead/behind calculation for clone-based remotes is platform-dependent:
-    // - Ubuntu: reports behind=0, shows ⇡ (ahead only)
-    // - macOS: reports behind=1, shows ⇅ (diverged)
-    // We normalize the flaky upstream divergence symbol and behind count to accept either.
-    let mut settings = list_snapshots::standard_settings(&repo);
-    // Normalize upstream divergence: accept both ⇡ (ahead) and ⇅ (diverged)
-    // Note: Yellow ANSI code (\x1b[33m) appears before the ⊠ symbol
-    settings.add_filter(r"↕[⇡⇅]\x1b\[33m⊠", "↕[UPSTREAM]\x1b[33m⊠");
-    // Normalize remote behind count: accept both ↓0 and ↓1
-    settings.add_filter(r"↓[01]", "↓[N]");
+    let settings = list_snapshots::standard_settings(&repo);
     settings.bind(|| {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
