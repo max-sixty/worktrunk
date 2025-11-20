@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpFxEupS/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpnXjgUA/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -426,7 +426,7 @@ _arguments "${_arguments_options[@]}" : \
 '--create[Create a new branch]' \
 '-f[Skip approval prompts]' \
 '--force[Skip approval prompts]' \
-'--no-verify[Skip project hooks]' \
+'--no-verify[Skip all project hooks]' \
 '-v[Show commands and debug info]' \
 '--verbose[Show commands and debug info]' \
 '-h[Print help]' \
@@ -454,7 +454,7 @@ _arguments "${_arguments_options[@]}" : \
 '--no-squash[Skip commit squashing]' \
 '--no-commit[Skip commit, squash, and rebase]' \
 '--no-remove[Keep worktree after merge]' \
-'--no-verify[Skip project hooks]' \
+'--no-verify[Skip all project hooks]' \
 '-f[Skip approval prompts]' \
 '--force[Skip approval prompts]' \
 '--tracked-only[Stage tracked files only]' \

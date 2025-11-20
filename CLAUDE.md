@@ -515,14 +515,14 @@ Use `wt list --format=json` for structured data access. The output is an array o
 
 - `name`: branch name
 
-### Status Symbols Structure (worktrees only)
+### Status Symbols Structure
 
-The `status_symbols` object provides structured access to status indicators:
+The `status_symbols` object provides structured access to status indicators (available for both worktrees and branches):
 
 - `has_conflicts`: boolean
 - `branch_state`: "" | "≡" (matches main) | "∅" (no commits and clean)
 - `git_operation`: "" | "↻" (rebase) | "⋈" (merge)
-- `worktree_attrs`: combination of "◇" (bare), "⊠" (locked), "⚠" (prunable)
+- `worktree_attrs`: "⎇" for branches, or combination of "◇" (bare), "⊠" (locked), "⚠" (prunable) for worktrees
 - `main_divergence`: "" | "↑" (ahead) | "↓" (behind) | "↕" (diverged)
 - `upstream_divergence`: "" | "⇡" (ahead) | "⇣" (behind) | "⇅" (diverged)
 - `working_tree`: combination of "?" (untracked), "!" (modified), "+" (staged), "»" (renamed), "✘" (deleted)

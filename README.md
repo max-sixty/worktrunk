@@ -67,6 +67,21 @@ cargo install worktrunk
 wt config shell  # Sets up shell integration
 ```
 
+## Design Philosophy
+
+Worktrunk is opinionated! It's not designed to be all things to all people. The choices optimize for agent workflows:
+
+- Lots of short-lived worktrees
+- Trunk-based development
+- CLI-based agents
+- Inner dev loops are local
+- Shell navigation
+- Commits are squashed into linear histories
+- Maximum automation
+
+Adopting Worktrunk for a portion of a workflow doesn't require adopting it for
+everything — standard `git worktree` commands continue working fine.
+
 ## Automation Features
 
 ### LLM-Authored Commit Messages
@@ -214,21 +229,6 @@ $ wt merge
 
 </details>
 
-## Design Philosophy
-
-Worktrunk is opinionated! It's not designed to be all things to all people. The choices optimize for agent workflows:
-
-- Lots of short-lived worktrees
-- Trunk-based development
-- CLI-based agents
-- Inner dev loops are local
-- Shell navigation
-- Commits are squashed into linear histories
-- Maximum automation
-
-Adopting Worktrunk for a portion of a workflow doesn't require adopting it for
-everything — standard `git worktree` commands continue working fine.
-
 ## Tips
 
 **Create an alias for an agent** - Shell aliases streamline common workflows. For example, to create a worktree and immediately start Claude:
@@ -272,33 +272,306 @@ path:
 
 ## All Commands
 
-- `wt switch [branch]` - Switch to existing worktree (use `@` for current, `-` for previous, `^` for main)
-- `wt switch --create [branch]` - Create and switch (use `--base=^` for main, `--base=@` for current HEAD)
-- `wt remove [branch]` - Remove worktree (use `@` for current, `-` for previous, `^` for main)
-- `wt merge [target]` - Merge, push, cleanup
-- `wt list` - Show all worktrees
-- `wt config` - Manage configuration
-- `wt beta` - Development and testing utilities (see below)
-
-See `wt --help` for details.
-
 <details>
-<summary>Beta commands (<code>wt beta</code>)</summary>
+<summary><strong><code>wt switch [branch]</code></strong> - Switch to existing worktree or create a new one</summary>
 
-Experimental commands for advanced workflows. These are subject to change.
+```
+Usage: wt switch [OPTIONS] <BRANCH>
 
-- `wt beta commit` - Commit changes with LLM-generated message
-- `wt beta squash [target]` - Squash commits with LLM-generated message
-- `wt beta push [target]` - Push changes to target branch (auto-stashes non-conflicting edits)
-- `wt beta rebase [target]` - Rebase current branch onto target
-- `wt beta ask-approvals` - Approve commands in project config
-- `wt beta run-hook <hook-type>` - Run a project hook for testing
-- `wt beta select` - Interactive worktree selector (Unix only, WIP)
+Arguments:
+  <BRANCH>  Branch, path, '@' (HEAD), '-' (previous), or '^' (main)
+
+Options:
+  -c, --create             Create a new branch
+  -C <path>                Change working directory
+  -b, --base <BASE>        Base branch (defaults to default branch)
+  -v, --verbose            Show git commands and debug info
+  -x, --execute <EXECUTE>  Execute command after switching
+  -f, --force              Skip approval prompts
+      --no-verify          Skip project hooks
+  -h, --help               Print help
+```
+
+**BEHAVIOR:**
+
+Switching to Existing Worktree:
+  - If worktree exists for branch, changes directory via shell integration
+  - No hooks run
+  - No branch creation
+
+Creating New Worktree (--create):
+  1. Creates new branch (defaults to current default branch as base)
+  2. Creates worktree in configured location (default: `../{{ main_worktree }}.{{ branch }}`)
+  3. Runs post-create hooks sequentially (blocking)
+  4. Shows success message
+  5. Spawns post-start hooks in background (non-blocking)
+  6. Changes directory to new worktree via shell integration
+
+**HOOKS:**
+
+post-create (sequential, blocking):
+  - Run after worktree creation, before success message
+  - Typically: npm install, cargo build, setup tasks
+  - Failures block the operation
+  - Skip with --no-verify
+
+post-start (parallel, background):
+  - Spawned after success message shown
+  - Typically: dev servers, file watchers, editors
+  - Run in background, failures logged but don't block
+  - Logs: `.git/wt-logs/{branch}-post-start-{name}.log`
+  - Skip with --no-verify
+
+**EXAMPLES:**
+
+```bash
+# Switch to existing worktree
+wt switch feature-branch
+
+# Create new worktree from main
+wt switch --create new-feature
+
+# Switch to previous worktree
+wt switch -
+
+# Create from specific base
+wt switch --create hotfix --base production
+
+# Create and run command
+wt switch --create docs --execute "code ."
+
+# Skip hooks during creation
+wt switch --create temp --no-verify
+```
+
+**SHORTCUTS:**
+
+Use '@' for current HEAD, '-' for previous, '^' for main:
+```bash
+wt switch @                              # Switch to current branch's worktree
+wt switch -                              # Switch to previous worktree
+wt switch --create new-feature --base=^  # Branch from main (default)
+wt switch --create bugfix --base=@       # Branch from current HEAD
+wt remove @                              # Remove current worktree
+```
 
 </details>
 
 <details>
-<summary>Status column symbols in <code>wt list</code></summary>
+<summary><strong><code>wt merge [target]</code></strong> - Merge, push, and cleanup</summary>
+
+```
+Usage: wt merge [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]  Target branch (defaults to default branch)
+
+Options:
+  -C <path>         Change working directory
+      --no-squash   Skip commit squashing
+      --no-commit   Skip commit, squash, and rebase
+  -v, --verbose     Show git commands and debug info
+      --no-remove   Keep worktree after merge
+      --no-verify   Skip project hooks
+  -f, --force       Skip approval prompts
+      --tracked-only Stage tracked files only
+  -h, --help        Print help
+```
+
+**LIFECYCLE:**
+
+The merge operation follows a strict order designed for fail-fast execution:
+
+1. **Validate branches**
+   Verifies current branch exists (not detached HEAD) and determines target branch
+   (defaults to repository's default branch).
+
+2. **Auto-commit uncommitted changes**
+   If working tree has uncommitted changes, stages all changes (git add -A) and commits
+   with LLM-generated message.
+
+3. **Squash commits (default)**
+   By default, counts commits since merge base with target branch. When multiple
+   commits exist, squashes them into one with LLM-generated message. Skip squashing
+   with --no-squash.
+
+   A safety backup is created before squashing if there are working tree changes.
+   Recover with: `git reflog show refs/wt-backup/<branch>`
+
+4. **Rebase onto target**
+   Rebases current branch onto target branch. Detects conflicts and aborts if found.
+   This fails fast before running expensive checks.
+
+5. **Run pre-merge commands**
+   Runs commands from project config's `[pre-merge-command]` after rebase completes.
+   These receive `{{ target }}` placeholder for the target branch. Commands run sequentially
+   and any failure aborts the merge immediately. Skip with --no-verify.
+
+6. **Push to target**
+   Fast-forward pushes to target branch. Rejects non-fast-forward pushes (ensures
+   linear history). Temporarily stashes non-conflicting local edits in the target
+   worktree so they don't block the push, then restores them after success.
+
+7. **Clean up worktree and branch**
+   Removes current worktree, deletes the branch, and switches primary worktree to target
+   branch if needed. Skip removal with --no-remove.
+
+**EXAMPLES:**
+
+```bash
+# Basic merge to main
+wt merge
+
+# Merge without squashing
+wt merge --no-squash
+
+# Keep worktree after merging
+wt merge --no-remove
+
+# Skip pre-merge commands
+wt merge --no-verify
+```
+
+</details>
+
+<details>
+<summary><strong><code>wt remove [worktree]</code></strong> - Remove worktree and branch</summary>
+
+```
+Usage: wt remove [OPTIONS] [WORKTREES]...
+
+Arguments:
+  [WORKTREES]...  Worktree or branch (@ for current)
+
+Options:
+  -C <path>               Change working directory
+      --no-delete-branch  Keep branch after removal
+  -D, --force-delete      Delete unmerged branches
+  -v, --verbose           Show commands and debug info
+      --no-background     Run removal in foreground
+  -h, --help              Print help
+```
+
+**BEHAVIOR:**
+
+Remove Current Worktree (no arguments):
+  - Requires clean working tree (no uncommitted changes)
+  - If in worktree: removes it and switches to main worktree
+  - If in main worktree: switches to default branch (e.g., main)
+  - If already on default branch in main: does nothing
+
+Remove Specific Worktree (by name):
+  - Requires target worktree has clean working tree
+  - Removes specified worktree(s) and associated branches
+  - If removing current worktree, switches to main first
+  - Can remove multiple worktrees in one command
+
+Remove Multiple Worktrees:
+  - When removing multiple, current worktree is removed last
+  - Prevents deleting directory you're currently in
+  - Each worktree must have clean working tree
+
+**CLEANUP:**
+
+When removing a worktree (by default):
+  1. Validates worktree has no uncommitted changes
+  2. Changes directory (if removing current worktree)
+  3. Spawns background removal process (non-blocking)
+     - Directory deletion happens in background
+     - Git worktree metadata removed in background
+     - Branch deletion in background (uses git branch -d, safe delete)
+     - Logs: `.git/wt-logs/{branch}-remove.log`
+  4. Returns immediately so you can continue working
+     - Use --no-background for foreground removal (blocking)
+
+**EXAMPLES:**
+
+```bash
+# Remove current worktree and branch
+wt remove
+
+# Remove specific worktree and branch
+wt remove feature-branch
+
+# Remove worktree but keep branch
+wt remove --no-delete-branch feature-branch
+
+# Remove multiple worktrees
+wt remove old-feature another-branch
+
+# Remove in foreground (blocking)
+wt remove --no-background feature-branch
+
+# Switch to default in main
+wt remove  # (when already in main worktree)
+```
+
+</details>
+
+<details>
+<summary><strong><code>wt list</code></strong> - Show all worktrees and branches</summary>
+
+```
+Usage: wt list [OPTIONS]
+
+Options:
+  -C <path>
+          Change working directory
+
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - table: Human-readable table format
+          - json:  JSON output
+
+          [default: table]
+
+      --branches
+          Include branches without worktrees
+
+  -v, --verbose
+          Show git commands and debug info
+
+      --full
+          Show CI, conflicts, and full diffs
+
+          Adds columns: CI (pipeline status), main…± (line diffs).
+          Enables conflict detection (shows "=" symbol in Status column).
+          Requires network requests and git merge-tree operations.
+
+      --progressive
+          Show rows progressively (auto-detects TTY)
+
+      --no-progressive
+          Disable progressive rendering
+
+  -h, --help
+          Print help
+```
+
+**COLUMNS:**
+
+- **Branch:** Branch name
+- **Status:** Quick status symbols (see STATUS SYMBOLS below)
+- **HEAD±:** Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
+- **main↕:** Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
+- **main…± (--full):** Line diffs in commits ahead of main (+added -deleted)
+- **Path:** Worktree directory location
+- **Remote⇅:** Commits ahead↑/behind↓ relative to tracking branch (e.g. origin/branch)
+- **CI (--full):** CI pipeline status (tries PR/MR checks first, falls back to branch workflows)
+  - ● passed (green) - All checks passed
+  - ● running (blue) - Checks in progress
+  - ● failed (red) - Checks failed
+  - ● conflicts (yellow) - Merge conflicts with base
+  - ● no-ci (gray) - PR/MR or workflow found but no checks configured
+  - (blank) - No PR/MR or workflow found, or gh/glab CLI unavailable
+  - (dimmed) - Stale: unpushed local changes differ from PR/MR head
+- **Commit:** Short commit hash (8 chars)
+- **Age:** Time since last commit (relative)
+- **Message:** Last commit message (truncated)
+
+**STATUS SYMBOLS:**
 
 The Status column shows git repository state using compact symbols. Symbol order indicates priority: conflicts (blocking) → worktree state → git operations → branch divergence → working tree changes.
 
@@ -327,9 +600,96 @@ The Status column shows git repository state using compact symbols. Symbol order
 
 Symbols combine to show complete state (e.g., `≡↓!` means matches main, behind main, and has unstaged changes).
 
-**Dimming logic:** **Dimmed rows** indicate worktrees with no marginal information beyond main (no unique work). Lines dim when they have either `≡` (matches main) OR `∅` (no commits). Both conditions use OR logic: either is sufficient to dim. This focuses attention on worktrees containing work.
+**Dimming logic:** Dimmed rows indicate worktrees with no marginal information beyond main (no unique work). Lines dim when they have either `≡` (matches main) OR `∅` (no commits). Both conditions use OR logic: either is sufficient to dim. This focuses attention on worktrees containing work.
 
 **Branch-only entries:** Branches without worktrees show `·` in the Status column, indicating git status is not applicable (no working directory to check).
+
+</details>
+
+<details>
+<summary><strong><code>wt config</code></strong> - Manage configuration</summary>
+
+```
+Usage: wt config [OPTIONS] <COMMAND>
+
+Commands:
+  init           Initialize global configuration file with examples
+  list           List configuration files & locations
+  refresh-cache  Refresh default branch from remote
+  shell          Configure shell integration
+  status         Manage branch status markers
+
+Options:
+  -C <path>
+          Change working directory
+
+  -v, --verbose
+          Show commands and debug info
+
+  -h, --help
+          Print help
+```
+
+**LLM SETUP GUIDE:**
+
+Enable AI-generated commit messages
+
+1. Install an LLM tool (llm, aichat)
+
+   ```bash
+   uv tool install -U llm
+   ```
+
+2. Configure a model
+
+   For Claude:
+   ```bash
+   llm install llm-anthropic
+   llm keys set anthropic
+   # Paste your API key from: https://console.anthropic.com/settings/keys
+   llm models default claude-3.5-sonnet
+   ```
+
+   For OpenAI:
+   ```bash
+   llm keys set openai
+   # Paste your API key from: https://platform.openai.com/api-keys
+   ```
+
+3. Test it works
+
+   ```bash
+   llm "say hello"
+   ```
+
+4. Configure worktrunk
+
+   Add to `~/.config/worktrunk/config.toml`:
+
+   ```toml
+   [commit-generation]
+   command = "llm"
+   ```
+
+Use `wt config init` to create the config file if it doesn't exist.
+Use `wt config list` to view your current configuration.
+
+Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
+
+</details>
+
+<details>
+<summary><strong>Beta commands</strong> - Experimental commands for advanced workflows</summary>
+
+These commands are subject to change:
+
+- `wt beta commit` - Commit changes with LLM-generated message
+- `wt beta squash [target]` - Squash commits with LLM-generated message
+- `wt beta push [target]` - Push changes to target branch (auto-stashes non-conflicting edits)
+- `wt beta rebase [target]` - Rebase current branch onto target
+- `wt beta ask-approvals` - Approve commands in project config
+- `wt beta run-hook <hook-type>` - Run a project hook for testing
+- `wt beta select` - Interactive worktree selector (Unix only, WIP)
 
 </details>
 
@@ -452,7 +812,7 @@ dirty-with-status  ≡?🤖                  ./dirty-with-status           b8346
 
 </details>
 
-### Worktree Paths
+### Custom Worktree Paths
 
 By default, worktrees live as siblings to the main repo:
 

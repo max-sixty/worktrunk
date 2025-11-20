@@ -357,8 +357,9 @@ pub(crate) fn execute_streaming(
         .arg("-c")
         .arg(&command_to_run)
         .current_dir(working_dir)
-        // Use Stdio::inherit() to preserve TTY behavior
-        // This prevents commands like cargo from buffering output
+        .stdin(std::process::Stdio::null()) // Null stdin - child gets EOF immediately
+        .stdout(std::process::Stdio::inherit()) // Preserve TTY for output
+        .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
         .spawn()
         .map_err(|e| io::Error::other(format!("Failed to execute command: {}", e)))?;
 

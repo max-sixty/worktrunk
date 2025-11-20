@@ -205,7 +205,6 @@ pub struct ListItem {
 
 pub struct ListData {
     pub items: Vec<ListItem>,
-    pub current_worktree_path: Option<PathBuf>,
 }
 
 impl ListItem {
@@ -455,7 +454,7 @@ impl PositionMask {
             1, // POS_1_MAIN_DIVERGENCE: ↑, ↓, ↕ (1 char)
             1, // POS_2_UPSTREAM_DIVERGENCE: ⇡, ⇣, ⇅ (1 char)
             1, // POS_0B_BRANCH_STATE: ≡ or ∅ (1 char)
-            2, // POS_0D_WORKTREE_ATTRS: ⊠⚠ (max 2 symbols - bare filtered out)
+            2, // POS_0D_WORKTREE_ATTRS: ⎇ for branches (1 char), ⊠⚠ for worktrees (max 2)
             2, // POS_4_USER_STATUS: single emoji or two chars (allocate 2)
         ],
     };
@@ -472,7 +471,7 @@ impl PositionMask {
 /// - Position 0a: Conflicts (=)
 /// - Position 0b: Branch state (≡, ∅)
 /// - Position 0c: Git operation (↻, ⋈)
-/// - Position 0d: Worktree attributes (⊠, ⚠)
+/// - Position 0d: Item attributes (⎇ for branches, ⊠⚠ for worktrees)
 /// - Position 1: Main branch divergence (↑, ↓, ↕)
 /// - Position 2: Remote/upstream divergence (⇡, ⇣, ⇅)
 /// - Position 3: Working tree symbols (?, !, +, », ✘)
@@ -489,6 +488,7 @@ impl PositionMask {
 /// **NOT mutually exclusive (can co-occur):**
 /// - = can occur with any other symbol
 /// - ⊠, ⚠: Worktree can be locked+prunable (bare is filtered out)
+/// - ⎇: Branch indicator (mutually exclusive with ⊠⚠ as branches can't have worktree attrs)
 /// - All working tree symbols (?!+»✘): Can have multiple types of changes
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct StatusSymbols {
@@ -508,8 +508,8 @@ pub struct StatusSymbols {
     /// Position 0c - MUTUALLY EXCLUSIVE (enforced by enum)
     pub(crate) git_operation: GitOperation,
 
-    /// Worktree attributes: ⊠, ⚠
-    /// Position 0d - NOT mutually exclusive (can combine like "⊠⚠")
+    /// Item type attributes: ⎇ for branches, ⊠⚠ for worktree attrs (locked/prunable)
+    /// Position 0d - NOT mutually exclusive (worktree attrs can combine like "⊠⚠")
     pub(crate) worktree_attrs: String,
 
     /// Main branch divergence state
@@ -595,7 +595,12 @@ impl StatusSymbols {
             String::new()
         };
         let worktree_attrs_str = if !self.worktree_attrs.is_empty() {
-            format!("{WARNING}{}{WARNING:#}", self.worktree_attrs)
+            // Branch indicator (⎇) is informational (dimmed), worktree attrs (⊠⚠) are warnings (yellow)
+            if self.worktree_attrs == "⎇" {
+                format!("{HINT}{}{HINT:#}", self.worktree_attrs)
+            } else {
+                format!("{WARNING}{}{WARNING:#}", self.worktree_attrs)
+            }
         } else {
             String::new()
         };

@@ -9,6 +9,7 @@ mod cli;
 mod commands;
 mod completion;
 mod display;
+mod help_pager;
 mod llm;
 mod output;
 
@@ -29,8 +30,47 @@ use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{Cli, Commands, ConfigCommand, StandaloneCommand, StatusAction};
 
+/// Try to handle --help flag with pager before clap processes it
+fn maybe_handle_help_with_pager() -> bool {
+    use clap::error::ErrorKind;
+
+    let mut cmd = Cli::command();
+    match cmd.try_get_matches_from_mut(std::env::args()) {
+        Ok(_) => false, // Normal args, not help
+        Err(err) => {
+            match err.kind() {
+                ErrorKind::DisplayHelp => {
+                    // Handle help with pager
+                    let help_text = err.to_string();
+                    if let Err(e) = help_pager::show_help_in_pager(&help_text) {
+                        // Pager failed, show help directly
+                        log::debug!("Pager invocation failed: {}", e);
+                        println!("{}", err);
+                    }
+                    process::exit(0);
+                }
+                ErrorKind::DisplayVersion => {
+                    // Version display
+                    println!("{}", err);
+                    process::exit(0);
+                }
+                _ => {
+                    // Not help or version - this will be re-parsed by Cli::parse() below
+                    // which will handle the error with proper ANSI formatting
+                    false
+                }
+            }
+        }
+    }
+}
+
 fn main() {
     if completion::maybe_handle_env_completion() {
+        return;
+    }
+
+    // Handle --help with pager before clap processes it
+    if maybe_handle_help_with_pager() {
         return;
     }
 

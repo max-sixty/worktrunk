@@ -86,7 +86,7 @@ mod render;
 #[cfg(test)]
 mod spacing_test;
 
-use layout::{LayoutConfig, calculate_responsive_layout};
+// Layout is calculated in collect.rs
 use model::{ListData, ListItem};
 use progressive::RenderMode;
 use worktrunk::git::{GitError, Repository};
@@ -108,6 +108,9 @@ pub fn handle_list(
         crate::OutputFormat::Json => false, // JSON never shows progress
     };
 
+    // Render table in collect() for all table modes (progressive + buffered)
+    let render_table = matches!(format, crate::OutputFormat::Table);
+
     let list_data = collect::collect(
         &repo,
         show_branches,
@@ -115,13 +118,10 @@ pub fn handle_list(
         fetch_ci,
         check_conflicts,
         show_progress,
+        render_table,
     )?;
 
-    let Some(ListData {
-        items,
-        current_worktree_path,
-    }) = list_data
-    else {
+    let Some(ListData { items }) = list_data else {
         return Ok(());
     };
 
@@ -134,25 +134,8 @@ pub fn handle_list(
             crate::output::raw(json)?;
         }
         crate::OutputFormat::Table => {
-            let layout = calculate_responsive_layout(&items, show_full, fetch_ci);
-
-            // Progressive mode renders table during collection; buffered mode renders here
-            if !show_progress {
-                crate::output::raw_terminal(layout.format_header_line())?;
-                for item in &items {
-                    crate::output::raw_terminal(
-                        layout.format_list_item_line(item, current_worktree_path.as_ref()),
-                    )?;
-                }
-            }
-
-            // Summary:
-            // - progressive + TTY: already shown via footer.finish_with_message
-            // - progressive + non-TTY: already shown via multi.suspend() in collect.rs
-            // - buffered: render here
-            if !show_progress {
-                layout.render_summary(&items, show_branches)?;
-            }
+            // Table and summary already rendered in collect() for all modes
+            // Nothing to do here - collect() handles the complete table rendering
         }
     }
 
@@ -250,32 +233,4 @@ pub(crate) fn format_summary_message(
         .summary_parts(show_branches, hidden_nonempty_count)
         .join(", ");
     format!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}")
-}
-
-impl LayoutConfig {
-    fn render_summary(&self, items: &[ListItem], include_branches: bool) -> Result<(), GitError> {
-        use worktrunk::styling::{HINT, INFO_EMOJI};
-
-        if items.is_empty() {
-            crate::output::raw_terminal("")?;
-            crate::output::hint(format!("{HINT}No worktrees found{HINT:#}"))?;
-            crate::output::hint(format!(
-                "{HINT}Create one with: wt switch --create <branch>{HINT:#}"
-            ))?;
-            return Ok(());
-        }
-
-        let metrics = SummaryMetrics::from_items(items);
-
-        use anstyle::Style;
-        let dim = Style::new().dimmed();
-
-        let summary = metrics
-            .summary_parts(include_branches, self.hidden_nonempty_count)
-            .join(", ");
-
-        crate::output::raw_terminal("")?;
-        crate::output::raw_terminal(format!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}"))?;
-        Ok(())
-    }
 }

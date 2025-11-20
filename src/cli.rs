@@ -329,7 +329,17 @@ Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
     },
 
     /// List worktrees and optionally branches
-    #[command(after_help = "COLUMNS:
+    #[command(after_help = "OPERATION
+
+Displays worktrees in a table format with status information, commit details, and optional branch listings.
+
+- By default: Shows only worktrees
+- With --branches: Includes branches without worktrees
+- With --full: Adds CI status, conflict detection, and detailed diffs
+- With --format=json: Outputs structured JSON for scripting
+
+COLUMNS
+
   Branch: Branch name
   Status: Quick status symbols (see STATUS SYMBOLS below)
   HEAD±: Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
@@ -400,7 +410,7 @@ Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).")]
     },
 
     /// Switch to a worktree
-    #[command(after_help = r#"BEHAVIOR:
+    #[command(after_help = r#"OPERATION
 
 Switching to Existing Worktree:
   - If worktree exists for branch, changes directory via shell integration
@@ -415,7 +425,7 @@ Creating New Worktree (--create):
   5. Spawns post-start hooks in background (non-blocking)
   6. Changes directory to new worktree via shell integration
 
-HOOKS:
+HOOKS
 
 post-create (sequential, blocking):
   - Run after worktree creation, before success message
@@ -430,7 +440,7 @@ post-start (parallel, background):
   - Logs: .git/wt-logs/{branch}-post-start-{name}.log
   - Skip with --no-verify
 
-EXAMPLES:
+EXAMPLES
 
 Switch to existing worktree:
   wt switch feature-branch
@@ -450,7 +460,7 @@ Create and run command:
 Skip hooks during creation:
   wt switch --create temp --no-verify
 
-SHORTCUTS:
+SHORTCUTS
 
 Use '@' for current HEAD, '-' for previous, '^' for main:
   wt switch @                              # Switch to current branch's worktree
@@ -479,13 +489,13 @@ Use '@' for current HEAD, '-' for previous, '^' for main:
         #[arg(short = 'f', long)]
         force: bool,
 
-        /// Skip project hooks
+        /// Skip all project hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
 
     /// Remove worktree and branch
-    #[command(after_help = r#"BEHAVIOR:
+    #[command(after_help = r#"OPERATION
 
 Remove Current Worktree (no arguments):
   - Requires clean working tree (no uncommitted changes)
@@ -504,9 +514,7 @@ Remove Multiple Worktrees:
   - Prevents deleting directory you're currently in
   - Each worktree must have clean working tree
 
-CLEANUP:
-
-When removing a worktree (by default):
+Removal Process (by default):
   1. Validates worktree has no uncommitted changes
   2. Changes directory (if removing current worktree)
   3. Spawns background removal process (non-blocking)
@@ -517,7 +525,7 @@ When removing a worktree (by default):
   4. Returns immediately so you can continue working
      - Use --no-background for foreground removal (blocking)
 
-EXAMPLES:
+EXAMPLES
 
 Remove current worktree and branch:
   wt remove
@@ -557,7 +565,7 @@ Switch to default in main:
     /// Merge worktree into target branch
     #[command(long_about = r#"Merge worktree into target branch
 
-LIFECYCLE
+OPERATION
 
 The merge operation follows a strict order designed for fail-fast execution:
 
@@ -566,8 +574,9 @@ The merge operation follows a strict order designed for fail-fast execution:
    (defaults to repository's default branch).
 
 2. Auto-commit uncommitted changes
-   If working tree has uncommitted changes, stages all changes (git add -A) and commits
-   with LLM-generated message.
+   If working tree has uncommitted changes, stages changes and commits with LLM-generated
+   message. By default stages all changes (git add -A). Use --tracked-only to stage only
+   tracked files (git add -u).
 
 3. Squash commits (default)
    By default, counts commits since merge base with target branch. When multiple
@@ -595,6 +604,18 @@ The merge operation follows a strict order designed for fail-fast execution:
    Removes current worktree, deletes the branch, and switches main worktree to target
    branch if needed. Skip removal with --no-remove.
 
+8. Run post-merge commands
+   Runs commands from project config's [post-merge-command] in the destination worktree
+   after cleanup. These receive {{ target }} placeholder. Commands run sequentially,
+   failures are logged but don't abort. Skip with --no-verify.
+
+HOOKS
+
+The --no-verify flag skips all project hooks:
+- Pre-commit hooks (before committing working tree changes)
+- Pre-merge hooks (after rebase, before push)
+- Post-merge hooks (after cleanup)
+
 EXAMPLES
 
 Basic merge to main:
@@ -606,7 +627,7 @@ Merge without squashing:
 Keep worktree after merging:
   wt merge --no-remove
 
-Skip pre-merge commands:
+Skip all hooks:
   wt merge --no-verify"#)]
     Merge {
         /// Target branch (defaults to default branch)
@@ -625,7 +646,7 @@ Skip pre-merge commands:
         #[arg(long = "no-remove", action = clap::ArgAction::SetFalse, default_value_t = true)]
         remove: bool,
 
-        /// Skip project hooks
+        /// Skip all project hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 

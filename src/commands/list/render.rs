@@ -155,32 +155,40 @@ impl DiffColumnConfig {
         value > 0 || (value == 0 && always_show_zeros)
     }
 
-    /// Format a value using compact notation (C for hundreds, K for thousands)
-    /// Ensures the result never exceeds 2 characters
+    /// Format a value using compact notation (K for thousands, optionally C for hundreds)
+    ///
+    /// Returns (formatted_string, uses_compact_notation)
+    ///
+    /// For line diffs (Signs): Shows full numbers in 100-999 range, uses K for thousands
+    /// For commit counts (Arrows): Uses C for hundreds, K for thousands
     ///
     /// Note: Uses integer division for approximation (intentional truncation):
     /// - 648 / 100 = 6 → "6C" (represents ~600)
     /// - 1999 / 1000 = 1 → "1K" (represents ~1000)
     ///
-    /// This provides approximate values optimized for readability over precision.
-    ///
-    /// Examples: 5 -> "5", 42 -> "42", 100 -> "1C", 648 -> "6C", 1000 -> "1K", 15000 -> "9K"
-    fn format_overflow(value: usize) -> String {
+    /// Examples (Signs):  100 -> ("100", false), 648 -> ("648", false), 1000 -> ("1K", true)
+    /// Examples (Arrows): 100 -> ("1C", true),   648 -> ("6C", true),   1000 -> ("1K", true)
+    fn format_overflow(value: usize, variant: DiffVariant) -> (String, bool) {
         if value >= 10_000 {
             // Cap at 9K to maintain 2-char limit (indicates "very large")
-            "9K".to_string()
+            ("9K".to_string(), true)
         } else if value >= 1_000 {
-            format!("{}K", value / 1_000)
+            (format!("{}K", value / 1_000), true)
         } else if value >= 100 {
-            format!("{}C", value / 100)
+            match variant {
+                // Line diffs: show full number (user prefers precision over compactness)
+                DiffVariant::Signs => (value.to_string(), false),
+                // Commit counts: use C abbreviation
+                DiffVariant::Arrows => (format!("{}C", value / 100), true),
+            }
         } else {
-            value.to_string()
+            (value.to_string(), false)
         }
     }
 
     /// Render a subcolumn value with symbol and padding to fixed width
     /// Numbers are right-aligned on the ones column (e.g., " +2", "+53")
-    /// For overflow, renders bold with C/K suffix (e.g., bold "+6C", bold "+5K")
+    /// For compact notation (C/K suffix), renders bold (e.g., bold "+6C", bold "+5K")
     fn render_subcolumn(
         segment: &mut StyledLine,
         symbol: &str,
@@ -188,11 +196,12 @@ impl DiffColumnConfig {
         width: usize,
         style: Style,
         overflow: bool,
+        variant: DiffVariant,
     ) {
-        let value_str = if overflow {
-            Self::format_overflow(value)
+        let (value_str, is_compact) = if overflow {
+            Self::format_overflow(value, variant)
         } else {
-            value.to_string()
+            (value.to_string(), false)
         };
         let content_len = 1 + value_str.len(); // symbol + digits
         let padding_needed = width.saturating_sub(content_len);
@@ -202,10 +211,9 @@ impl DiffColumnConfig {
             segment.push_raw(" ".repeat(padding_needed));
         }
 
-        // Add styled content - bold entire value if using compact notation
-        if overflow {
-            // When overflow is true, format_overflow() uses compact notation (C/K suffix)
-            // Make entire value bold to emphasize approximation
+        // Add styled content - bold entire value if using compact notation (C/K suffix)
+        // to emphasize approximation
+        if is_compact {
             segment.push_styled(format!("{}{}", symbol, value_str), style.bold());
         } else {
             segment.push_styled(format!("{}{}", symbol, value_str), style);
@@ -246,6 +254,7 @@ impl DiffColumnConfig {
                 positive_width,
                 self.display.positive_style,
                 positive_overflow,
+                self.display.variant,
             );
         } else {
             // Empty positive subcolumn - add spaces to maintain alignment
@@ -264,6 +273,7 @@ impl DiffColumnConfig {
                 negative_width,
                 self.display.negative_style,
                 negative_overflow,
+                self.display.variant,
             );
         } else {
             // Empty negative subcolumn - add spaces to maintain alignment

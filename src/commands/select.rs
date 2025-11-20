@@ -255,6 +255,7 @@ pub fn handle_select() -> Result<(), GitError> {
         false, // fetch_ci (no CI with select command)
         false, // check_conflicts (no conflict checking with select command)
         false, // show_progress (no progress bars)
+        false, // render_table (select renders its own UI)
     )?
     else {
         return Ok(());

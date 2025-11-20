@@ -7,9 +7,12 @@
 //!
 //! ## Unified Collection Architecture
 //!
-//! Both progressive (with progress bars) and buffered (silent) modes use the same
-//! `collect_internal()` function. The only difference is whether progress bars are
-//! created and shown. This ensures a single canonical collection implementation.
+//! Progressive and buffered modes use the same collection and rendering code.
+//! The only difference is whether intermediate updates are shown during collection:
+//! - Progressive: shows progress bars with updates, then finalizes in place (TTY) or redraws (non-TTY)
+//! - Buffered: collects silently, then renders the final table
+//!
+//! Both modes render the final table in `collect()`, ensuring a single canonical rendering path.
 //!
 //! **Parallelism at two levels**:
 //! - Across worktrees: Multiple worktrees collected concurrently via Rayon
@@ -256,7 +259,7 @@ fn compute_item_status_symbols(item: &mut ListItem, base_branch: Option<&str>) {
                 has_potential_conflicts: false,
                 branch_state,
                 git_operation: GitOperation::None,
-                worktree_attrs: String::new(),
+                worktree_attrs: "⎇".to_string(), // Branch indicator
                 main_divergence,
                 upstream_divergence,
                 working_tree: String::new(),
@@ -373,7 +376,9 @@ fn get_branches_without_worktrees(
 /// Collect worktree data with optional progressive rendering.
 ///
 /// When `show_progress` is true, renders a skeleton immediately and updates as data arrives.
-/// When false, silently collects all data and returns it for external rendering.
+/// When false, behavior depends on `render_table`:
+/// - If `render_table` is true: renders final table (buffered mode)
+/// - If `render_table` is false: returns data without rendering (JSON mode)
 pub fn collect(
     repo: &Repository,
     show_branches: bool,
@@ -381,6 +386,7 @@ pub fn collect(
     fetch_ci: bool,
     check_conflicts: bool,
     show_progress: bool,
+    render_table: bool,
 ) -> Result<Option<super::model::ListData>, GitError> {
     use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
     use std::time::Duration;
@@ -708,15 +714,37 @@ pub fn collect(
             })?;
         }
     } else {
+        // Buffered mode (no progress bars shown)
         for pb in progress_bars {
             pb.finish();
+        }
+
+        // Render final table if requested (table format), otherwise just return data (JSON format)
+        if render_table {
+            // Build final summary string
+            let final_msg = super::format_summary_message(
+                &all_items,
+                show_branches,
+                layout.hidden_nonempty_count,
+            );
+
+            // Render complete table
+            crate::output::raw_terminal(layout.format_header_line())?;
+            for item in &all_items {
+                crate::output::raw_terminal(
+                    layout.format_list_item_line(item, current_worktree_path.as_ref()),
+                )?;
+            }
+            // Blank line + summary
+            crate::output::raw_terminal("")?;
+            crate::output::raw_terminal(final_msg)?;
         }
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
 
-    // Compute display fields for all items (used by JSON output and buffered mode)
-    // Progressive mode renders from raw data during collection but still populates these for consistency
+    // Compute display fields for all items (used by JSON output)
+    // Table rendering uses raw data directly; these fields provide pre-formatted strings for JSON
     for info in &mut all_items {
         info.display = super::model::DisplayFields::from_common_fields(
             &info.counts,
@@ -736,15 +764,13 @@ pub fn collect(
     // all_items now contains both worktrees and branches (if requested)
     let items = all_items;
 
-    // Progressive mode: table already rendered via progress bars (finished in place for TTY,
-    // or explicitly printed to stderr for non-TTY in the finalization code above)
-    // Buffered mode: table will be rendered in mod.rs
-    // Both modes: summary will be rendered in mod.rs
+    // Table rendering complete (when render_table=true):
+    // - Progressive + TTY: rows morphed in place, footer became summary
+    // - Progressive + Non-TTY: cleared progress bars, rendered final table
+    // - Buffered: rendered final table (no progress bars)
+    // JSON mode (render_table=false): no rendering, data returned for serialization
 
-    Ok(Some(super::model::ListData {
-        items,
-        current_worktree_path,
-    }))
+    Ok(Some(super::model::ListData { items }))
 }
 
 /// Sort worktrees for display (primary first, then current, then by timestamp descending).
