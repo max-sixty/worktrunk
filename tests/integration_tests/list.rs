@@ -1756,7 +1756,8 @@ fn test_list_maximum_status_symbols() {
     // We normalize the flaky upstream divergence symbol and behind count to accept either.
     let mut settings = list_snapshots::standard_settings(&repo);
     // Normalize upstream divergence: accept both ⇡ (ahead) and ⇅ (diverged)
-    settings.add_filter(r"↕[⇡⇅]⊠", "↕[UPSTREAM]⊠");
+    // Note: Yellow ANSI code (\x1b[33m) appears before the ⊠ symbol
+    settings.add_filter(r"↕[⇡⇅]\x1b\[33m⊠", "↕[UPSTREAM]\x1b[33m⊠");
     // Normalize remote behind count: accept both ↓0 and ↓1
     settings.add_filter(r"↓[01]", "↓[N]");
     settings.bind(|| {
