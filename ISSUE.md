@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-**Update (2025-11-20):** The test now runs deterministically without regex normalization. We switched to a bare remote workflow (`origin`) with an explicit push of `feature` before creating the remote-only commit, then push that remote commit back. Both sides share the same merge-base, so `rev-list --left-right --count origin/feature...feature` now returns `1	1` on macOS and Linux in CI and locally. The normalization filters were removed and the snapshot updated; full test suite passes locally. CI run pending after push.
+**Update (2025-11-20 05:35 UTC):** The test now runs deterministically without regex normalization. We keep a bare `origin` for upstream metadata but construct the divergence entirely locally: create a remote-only commit, reset back to the shared base, create a local-only commit, then set `refs/remotes/origin/feature` to the remote commit via `git update-ref` before wiring the upstream. This yields a fixed commit graph (ahead=1, behind=1) on macOS and Linux. The normalization filters are removed, snapshot unchanged, and CI (all matrices plus Tier 2) now passes on branch `ci`.
 
 We have a test (`test_list_maximum_status_symbols`) that displays all possible status symbols in worktrunk's output. The test currently uses normalization filters to work around platform-specific git behavior where Ubuntu and macOS report different ahead/behind counts for the same repository state. We want to keep the comprehensive test but remove these normalization hacks and make it work deterministically across all platforms.
 
