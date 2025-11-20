@@ -862,7 +862,6 @@ dirty-with-status  ≡?🤖                  ./dirty-with-status           b8346
 - Status is stored as `worktrunk.status.<branch>` in `.git/config`
 - Each branch can have its own status emoji
 - The hooks automatically detect the current branch and set/clear its status
-- Status is shared across all worktrees on the same branch (by design)
 - Works with any git repository, no special configuration needed
 
 </details>
