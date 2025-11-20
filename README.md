@@ -91,7 +91,7 @@ everything — standard `git worktree` commands continue working fine.
 
 ### LLM-Authored Commit Messages
 
-Worktrunk can invoke an external commands during merge operations to generate
+Worktrunk can invoke external commands during merge operations to generate
 commit messages. Simon Willison's [llm](https://llm.datasette.io/) tool reads
 the diff and a configurable prompt, then returns a formatted commit message.
 
@@ -841,7 +841,7 @@ When using Claude:
 - Changes to `💬` when Claude needs input (waiting for permission or idle)
 - Clears the status completely when the session ends
 
-**Status from other terminal:**
+**Status from another terminal:**
 
 <!-- Output from: tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
 
