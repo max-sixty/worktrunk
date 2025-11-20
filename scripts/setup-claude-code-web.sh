@@ -9,6 +9,7 @@
 # What it does:
 # - Verifies Rust toolchain (1.90.0)
 # - Installs required shells (zsh, fish) on Debian/Ubuntu
+# - Installs GitHub CLI (gh) for working with PRs/issues
 # - Builds the project
 #
 # After running this script, run tests with:
@@ -122,6 +123,27 @@ if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
     done
 fi
 
+# Install GitHub CLI (gh)
+echo ""
+echo "Installing GitHub CLI..."
+if command -v gh &> /dev/null; then
+    print_status "gh already installed"
+else
+    GH_VERSION="2.63.2"
+    ARCH="linux_amd64"
+    URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_${ARCH}.tar.gz"
+
+    mkdir -p ~/bin
+    TEMP=$(mktemp -d)
+    curl -fsSL "$URL" | tar -xz -C "$TEMP"
+    mv "$TEMP/gh_${GH_VERSION}_${ARCH}/bin/gh" ~/bin/gh
+    chmod +x ~/bin/gh
+    rm -rf "$TEMP"
+
+    export PATH="$HOME/bin:$PATH"
+    print_status "gh installed to ~/bin/gh"
+fi
+
 # Build the project
 echo ""
 echo "Building worktrunk..."
@@ -141,6 +163,9 @@ print_status "Environment is ready for development"
 print_status "Rust toolchain: $RUST_VERSION"
 print_status "Build: OK"
 print_status "Shells available: ${SHELLS_AVAILABLE[*]}"
+if command -v gh &> /dev/null; then
+    print_status "GitHub CLI (gh) installed"
+fi
 
 if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
     echo ""
