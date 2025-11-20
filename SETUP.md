@@ -31,8 +31,8 @@ cargo test --test integration
 
 ### ⚠️ Partial / Limited
 
-- **Integration Tests**: 324 of 360 tests pass
-  - 34 tests fail due to missing shells (zsh, fish) and snapshot updates
+- **Integration Tests**: 333 of 360 tests pass
+  - 25 tests fail due to missing shells (zsh, fish)
   - 2 tests are ignored
 
 - **Shell Support**:
@@ -42,18 +42,19 @@ cargo test --test integration
 
 ### Test Failure Breakdown
 
-The 34 failing tests fall into these categories:
+All 25 failing tests are due to missing shells (zsh, fish):
 
-1. **Shell-specific tests (majority)**: Tests parameterized with `rstest` for bash/zsh/fish
-   - These tests run for bash (passing) but fail for zsh/fish (not installed)
+1. **Parameterized shell tests**: Tests using `rstest` to run across bash/zsh/fish
+   - `case_2` failures: zsh not installed
+   - `case_3` failures: fish not installed
    - Affected test suites: `shell_wrapper`, `e2e_shell`, `e2e_shell_post_start`
 
-2. **PTY/Snapshot tests**: 8 tests need snapshot updates
-   - `approval_pty::*` - PTY approval prompt tests (snapshot diffs)
-   - `approval_save::test_permission_error_prevents_save` - permission test
+2. **Fish-specific tests**: 4 tests that only run on fish
+   - `test_fish_*` - Fish shell integration tests
 
 3. **Expected behavior**: These failures are normal for this environment
    - The codebase is designed to support multiple shells
+   - All bash tests pass successfully
    - CI/CD runs these tests in environments with all shells installed
 
 ## Installing Additional Shells (Optional)
@@ -207,7 +208,7 @@ Expected output:
 - ✓ Rust toolchain: 1.90.0
 - ✓ Build: OK
 - ✓ Unit tests: OK
-- ⚠️ Integration tests: 324 passed, 34 failed, 2 ignored
+- ⚠️ Integration tests: 333 passed, 25 failed, 2 ignored
 
 ---
 
