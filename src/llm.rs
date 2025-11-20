@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::{GitError, Repository};
+use worktrunk::path::format_path_for_display;
 
 use minijinja::Environment;
 
@@ -129,7 +130,7 @@ fn build_commit_prompt(
             std::fs::read_to_string(&expanded_path).map_err(|e| {
                 format!(
                     "Failed to read template-file '{}': {}",
-                    expanded_path.display(),
+                    format_path_for_display(&expanded_path),
                     e
                 )
             })?
@@ -174,7 +175,7 @@ fn build_squash_prompt(
             std::fs::read_to_string(&expanded_path).map_err(|e| {
                 format!(
                     "Failed to read squash-template-file '{}': {}",
-                    expanded_path.display(),
+                    format_path_for_display(&expanded_path),
                     e
                 )
             })?

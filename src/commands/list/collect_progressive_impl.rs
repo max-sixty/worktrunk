@@ -12,6 +12,7 @@
 use crossbeam_channel::Sender;
 use std::path::PathBuf;
 use worktrunk::git::{LineDiff, Repository, Worktree};
+use worktrunk::path::format_path_for_display;
 
 use super::ci_status::PrStatus;
 use super::collect::{CellUpdate, detect_worktree_state};
@@ -237,7 +238,7 @@ fn spawn_upstream<'scope>(
                             if verbose_errors {
                                 eprintln!(
                                     "Warning: ahead_behind failed for {}: {}",
-                                    path.display(),
+                                    format_path_for_display(&path),
                                     e
                                 );
                             }
@@ -250,7 +251,7 @@ fn spawn_upstream<'scope>(
                     if verbose_errors {
                         eprintln!(
                             "Warning: upstream_branch failed for {}: {}",
-                            path.display(),
+                            format_path_for_display(&path),
                             e
                         );
                     }

@@ -5,7 +5,22 @@ use crate::common::{
 use rstest::rstest;
 use std::fs;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+fn wait_for_file(path: &std::path::Path, timeout: Duration) {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!(
+        "File was not created within {:?}: {}",
+        timeout,
+        path.display()
+    );
+}
 
 /// Test that post-start background commands work with shell integration
 #[rstest]
@@ -71,9 +86,6 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
         output
     );
 
-    // Wait for background command to complete (command has sleep 0.05 + margin)
-    thread::sleep(Duration::from_millis(150));
-
     // Verify background command actually ran
     let worktree_path = repo
         .root_path()
@@ -105,14 +117,13 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
         log_files
     );
 
-    let marker_file = worktree_path.join("bg_marker.txt");
-    assert!(
-        marker_file.exists(),
-        "Background command should have created bg_marker.txt in {} (logs: {:?})",
-        worktree_path.display(),
-        log_files
+    // Wait for background command to complete (allow plenty of margin on CI)
+    wait_for_file(
+        worktree_path.join("bg_marker.txt").as_path(),
+        Duration::from_secs(1),
     );
 
+    let marker_file = worktree_path.join("bg_marker.txt");
     let content = fs::read_to_string(&marker_file).expect("Failed to read marker file");
     assert!(
         content.contains("Background task done"),
@@ -321,8 +332,16 @@ approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
         output
     );
 
-    // Wait for background command (command has sleep 0.05 + margin)
-    thread::sleep(Duration::from_millis(150));
+    // Wait for background command (allow plenty of margin on CI)
+    wait_for_file(
+        repo.root_path()
+            .parent()
+            .unwrap()
+            .join("test-repo.fish-bg-test")
+            .join("fish_bg.txt")
+            .as_path(),
+        Duration::from_secs(1),
+    );
 
     // Verify background command ran
     let worktree_path = repo

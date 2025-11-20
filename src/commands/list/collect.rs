@@ -315,8 +315,8 @@ fn drain_cell_updates(
     mut on_update: impl FnMut(usize, &mut ListItem, bool, Option<String>),
 ) {
     // Temporary storage for data needed by status_symbols computation
-    let mut has_conflicts_map: Vec<bool> = vec![false; worktree_items.len()];
-    let mut user_status_map: Vec<Option<String>> = vec![None; worktree_items.len()];
+    let mut has_conflicts_map: Vec<Option<bool>> = vec![None; worktree_items.len()];
+    let mut user_status_map: Vec<Option<Option<String>>> = vec![None; worktree_items.len()];
 
     // Process cell updates as they arrive
     while let Ok(update) = rx.recv() {
@@ -354,7 +354,7 @@ fn drain_cell_updates(
                 has_conflicts,
             } => {
                 // Store temporarily for status_symbols computation
-                has_conflicts_map[item_idx] = has_conflicts;
+                has_conflicts_map[item_idx] = Some(has_conflicts);
             }
             CellUpdate::WorktreeState {
                 item_idx,
@@ -369,7 +369,7 @@ fn drain_cell_updates(
                 user_status,
             } => {
                 // Store temporarily for status_symbols computation
-                user_status_map[item_idx] = user_status;
+                user_status_map[item_idx] = Some(user_status);
             }
             CellUpdate::Upstream { item_idx, upstream } => {
                 worktree_items[item_idx].upstream = Some(upstream);
@@ -384,8 +384,8 @@ fn drain_cell_updates(
         }
 
         // Invoke rendering callback (progressive mode re-renders rows, buffered mode does nothing)
-        let has_conflicts = has_conflicts_map[item_idx];
-        let user_status = user_status_map[item_idx].clone();
+        let has_conflicts = has_conflicts_map[item_idx].unwrap_or(false);
+        let user_status = user_status_map[item_idx].clone().unwrap_or(None);
         on_update(
             item_idx,
             &mut worktree_items[item_idx],
@@ -564,8 +564,11 @@ pub fn collect(
         })
         .collect();
 
-    // Cache last rendered message per row to avoid redundant updates
-    let mut last_lines: Vec<String> = vec![String::new(); all_items.len()];
+    // Cache last rendered (unclamped) message per row to avoid redundant updates.
+    // Store the full string so updates that are truncated for narrow terminals
+    // (e.g., CI column at the end) still trigger a refresh when the underlying
+    // data changes.
+    let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
 
     // Footer progress bar with loading status
     // Uses determinate bar (no spinner) with {wide_msg} to prevent clearing artifacts
@@ -700,9 +703,10 @@ pub fn collect(
                         layout.format_list_item_line(info, current_worktree_path.as_ref());
                     let clamped = clamp(&rendered);
 
-                    // Only update if content changed
-                    if clamped != last_lines[item_idx] {
-                        last_lines[item_idx] = clamped.clone();
+                    // Compare using the full (unclamped) line so updates that fall
+                    // past the clamp boundary still cause a redraw.
+                    if rendered != last_rendered_lines[item_idx] {
+                        last_rendered_lines[item_idx] = rendered;
                         pb.set_message(clamped);
                     }
                 }

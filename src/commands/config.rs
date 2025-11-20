@@ -1,6 +1,7 @@
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::path::PathBuf;
 use worktrunk::git::{GitError, GitResultExt, Repository};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     AnstyleStyle, CYAN, GREEN, GREEN_BOLD, HINT, HINT_EMOJI, INFO_EMOJI, SUCCESS_EMOJI,
     format_toml, print, println,
@@ -20,7 +21,7 @@ pub fn handle_config_init() -> Result<(), GitError> {
         let bold = AnstyleStyle::new().bold();
         println!(
             "{INFO_EMOJI} Global config already exists: {bold}{}{bold:#}",
-            config_path.display()
+            format_path_for_display(&config_path)
         );
         println!();
         println!("{HINT_EMOJI} {HINT}Use 'wt config list' to view existing configuration{HINT:#}");
@@ -41,7 +42,7 @@ pub fn handle_config_init() -> Result<(), GitError> {
     let green_bold = GREEN.bold();
     println!(
         "{SUCCESS_EMOJI} {GREEN}Created config file: {green_bold}{}{green_bold:#}",
-        config_path.display()
+        format_path_for_display(&config_path)
     );
     println!();
     println!(
@@ -73,7 +74,7 @@ fn display_global_config() -> Result<(), GitError> {
 
     println!(
         "{INFO_EMOJI} Global Config: {bold}{}{bold:#}",
-        config_path.display()
+        format_path_for_display(&config_path)
     );
 
     // Check if file exists
@@ -119,7 +120,7 @@ fn display_project_config() -> Result<(), GitError> {
 
     println!(
         "{INFO_EMOJI} Project Config: {bold}{}{bold:#}",
-        config_path.display()
+        format_path_for_display(&config_path)
     );
 
     // Check if file exists

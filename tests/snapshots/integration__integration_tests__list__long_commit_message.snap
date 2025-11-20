@@ -15,7 +15,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpO4JnM9/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /tmp/.tmpbvoSm5/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -24,6 +24,6 @@ exit_code: 0
 ----- stderr -----
 [1mBranch[0m     [1mStatus[0m              [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m         [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m              [1mMessage[0m
 [1m[35mmain[0m                                           [1m[35m./test-repo[0m           [2m1310bfb9[0m  [2m10 months ago[0m    [2mShort message[0m
-[2mfeature-a[0m       [2m∅[0m ↓                        [2m[31m↓1[0m  [2m./feature-a[0m           [2mf078644e[0m  [2m10 months ago[0m    [2mThis is a very long commit message that should…[0m
+[2mfeature-a[0m       [2m∅[0m [90m↓[0m                        [2m[31m↓1[0m  [2m./feature-a[0m           [2mf078644e[0m  [2m10 months ago[0m    [2mThis is a very long commit message that should…[0m
 
 ⚪ [2mShowing 2 worktrees[0m

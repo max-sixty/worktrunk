@@ -4,6 +4,7 @@ use crate::commands::process::spawn_detached;
 use crate::commands::worktree::{RemoveResult, SwitchResult};
 use crate::output::global::format_switch_success;
 use worktrunk::git::GitError;
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     CYAN, CYAN_BOLD, GREEN, GREEN_BOLD, WARNING, WARNING_BOLD, format_with_gutter,
 };
@@ -17,7 +18,7 @@ fn format_switch_message(result: &SwitchResult, branch: &str) -> (String, bool) 
             (
                 format!(
                     "Already on worktree for {bold}{branch}{bold:#} at {bold}{}{bold:#}",
-                    path.display()
+                    format_path_for_display(path)
                 ),
                 true, // is_info
             )
@@ -85,12 +86,12 @@ fn format_remove_message(
             // Re-establish GREEN after each green_bold reset to prevent color leak
             format!(
                 "{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}{flag_note}",
-                primary_path.display()
+                format_path_for_display(primary_path)
             )
         } else {
             format!(
                 "{GREEN}{action}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}{flag_note}",
-                primary_path.display()
+                format_path_for_display(primary_path)
             )
         }
     } else if let Some(b) = branch_display {

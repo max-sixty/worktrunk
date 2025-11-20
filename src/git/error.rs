@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use super::HookType;
+use crate::path::format_path_for_display;
 
 #[derive(Debug)]
 pub enum GitError {
@@ -189,7 +190,7 @@ impl std::fmt::Display for GitError {
                 write!(
                     f,
                     "\n{HINT_EMOJI} {HINT}Commit or stash these changes in {} first{HINT:#}",
-                    worktree_path.display()
+                    format_path_for_display(worktree_path)
                 )
             }
 
@@ -287,7 +288,7 @@ impl std::fmt::Display for GitError {
                 write!(
                     f,
                     "{ERROR_EMOJI} {ERROR}Directory already exists: {ERROR_BOLD}{}{ERROR_BOLD:#}{ERROR:#}\n\n{HINT_EMOJI} {HINT}Remove the directory or use a different branch name{HINT:#}",
-                    path.display()
+                    format_path_for_display(path)
                 )
             }
 
@@ -322,7 +323,7 @@ impl std::fmt::Display for GitError {
             } => {
                 let header = format!(
                     "{ERROR_EMOJI} {ERROR}Failed to remove worktree for {ERROR_BOLD}{branch}{ERROR_BOLD:#}{ERROR} at {ERROR_BOLD}{}{ERROR_BOLD:#}{ERROR:#}",
-                    path.display()
+                    format_path_for_display(path)
                 );
                 write!(f, "{}", format_error_block(header, error))
             }

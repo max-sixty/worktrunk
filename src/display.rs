@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use worktrunk::path::format_path_for_display;
 
 pub fn format_relative_time(timestamp: i64) -> String {
     const MINUTE: i64 = 60;
@@ -84,7 +85,7 @@ pub fn shorten_path(path: &Path, prefix: &Path) -> String {
     match path.strip_prefix(prefix) {
         Ok(rel) if rel.as_os_str().is_empty() => ".".to_string(),
         Ok(rel) => format!("./{}", rel.display()),
-        Err(_) => path.display().to_string(),
+        Err(_) => format_path_for_display(path),
     }
 }
 

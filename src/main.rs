@@ -3,6 +3,7 @@ use clap::{CommandFactory, Parser};
 use std::process;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository, set_base_path};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{SUCCESS_EMOJI, println};
 
 mod cli;
@@ -203,7 +204,7 @@ fn main() {
                             use worktrunk::styling::format_bash_with_gutter;
                             let bold = Style::new().bold();
                             let shell = result.shell;
-                            let path = result.path.display();
+                            let path = format_path_for_display(&result.path);
 
                             println!(
                                 "{} {} {bold}{shell}{bold:#} {path}",

@@ -35,7 +35,7 @@ fn test_config_init_already_exists() {
         success: true
         exit_code: 0
         ----- stdout -----
-        ⚪ Global config already exists: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
+        ⚪ Global config already exists: [1m~/.config/worktrunk/config.toml[0m
 
         💡 [2mUse 'wt config list' to view existing configuration[0m
 
@@ -69,7 +69,7 @@ fn test_config_init_creates_file() {
         success: true
         exit_code: 0
         ----- stdout -----
-        ✅ [32mCreated config file: [1m[32m[TEMP_HOME]/.config/worktrunk/config.toml[0m
+        ✅ [32mCreated config file: [1m[32m~/.config/worktrunk/config.toml[0m
 
         💡 [2mEdit this file to customize worktree paths and LLM settings[0m
 

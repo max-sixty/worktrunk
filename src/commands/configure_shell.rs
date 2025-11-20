@@ -1,6 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
     CYAN_BOLD, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter,
@@ -192,7 +193,7 @@ fn configure_shell_file(
     if path.exists() {
         // Read the file and check if our integration already exists
         let file = fs::File::open(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
 
         let reader = BufReader::new(file);
 
@@ -222,14 +223,22 @@ fn configure_shell_file(
         }
 
         // Append the line with proper spacing
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(path)
-            .map_err(|e| format!("Failed to open {} for writing: {}", path.display(), e))?;
+        let mut file = OpenOptions::new().append(true).open(path).map_err(|e| {
+            format!(
+                "Failed to open {} for writing: {}",
+                format_path_for_display(path),
+                e
+            )
+        })?;
 
         // Add blank line before config, then the config line with its own newline
-        write!(file, "\n{}\n", config_content)
-            .map_err(|e| format!("Failed to write to {}: {}", path.display(), e))?;
+        write!(file, "\n{}\n", config_content).map_err(|e| {
+            format!(
+                "Failed to write to {}: {}",
+                format_path_for_display(path),
+                e
+            )
+        })?;
 
         Ok(Some(ConfigureResult {
             shell,
@@ -258,8 +267,13 @@ fn configure_shell_file(
             }
 
             // Write the config content
-            fs::write(path, format!("{}\n", config_content))
-                .map_err(|e| format!("Failed to write to {}: {}", path.display(), e))?;
+            fs::write(path, format!("{}\n", config_content)).map_err(|e| {
+                format!(
+                    "Failed to write to {}: {}",
+                    format_path_for_display(path),
+                    e
+                )
+            })?;
 
             Ok(Some(ConfigureResult {
                 shell,
@@ -287,7 +301,7 @@ fn configure_fish_file(
     // Check if it already exists and has our integration
     if path.exists() {
         let existing_content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
 
         // Canonical detection: check if the file matches exactly what we write
         if existing_content.trim() == content {
@@ -332,8 +346,13 @@ fn configure_fish_file(
     }
 
     // Write the conditional wrapper (short one-liner that calls wt init fish | source)
-    fs::write(path, format!("{}\n", content))
-        .map_err(|e| format!("Failed to write to {}: {}", path.display(), e))?;
+    fs::write(path, format!("{}\n", content)).map_err(|e| {
+        format!(
+            "Failed to write to {}: {}",
+            format_path_for_display(path),
+            e
+        )
+    })?;
 
     Ok(Some(ConfigureResult {
         shell,
@@ -367,7 +386,7 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
         // Format with bold shell and path
         let bold = Style::new().bold();
         let shell = result.shell;
-        let path = result.path.display();
+        let path = format_path_for_display(&result.path);
 
         eprintln!(
             "{} {} {bold}{shell}{bold:#} {bold}{path}{bold:#}",

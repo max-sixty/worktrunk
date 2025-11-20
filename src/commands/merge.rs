@@ -1,6 +1,7 @@
 use worktrunk::HookType;
 use worktrunk::config::{Command, CommandPhase, ProjectConfig};
 use worktrunk::git::{GitError, Repository};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{CYAN, ERROR, ERROR_EMOJI, GREEN_BOLD, HINT, HINT_EMOJI};
 
 use super::command_approval::approve_command_batch;
@@ -234,7 +235,7 @@ fn format_merge_summary(primary_path: Option<&std::path::Path>) -> String {
     if let Some(path) = primary_path {
         format!(
             "{GREEN}Returned to primary at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
-            path.display()
+            format_path_for_display(path)
         )
     } else {
         format!("{GREEN}Worktree preserved (--no-remove){GREEN:#}")

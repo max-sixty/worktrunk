@@ -15,7 +15,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpnstGyk/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /tmp/.tmpwI22Ln/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -24,8 +24,8 @@ exit_code: 0
 ----- stderr -----
 [1mBranch[0m        [1mStatus[0m              [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m            [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m              [1mMessage[0m
 [1m[35mmain[0m                                              [1m[35m./test-repo[0m              [2mb834638e[0m  [2m10 months ago[0m    [2mInitial commit[0m
-main-symbol          ↑  💬                [32m↑1[0m      ./main-symbol            [2m579fcd0b[0m  [2m10 months ago[0m    [2mSymbol commit[0m
-pr-link              ↑  🤖                [32m↑1[0m      ./pr-link                [2me17e7d2d[0m  [2m10 months ago[0m    [2mPR commit[0m
-wli-sequence  [36m?![0m     ↑  🤖      [32m+1[0m [31m-112[0m   [32m↑1[0m      ./wli-sequence           [2ma2483ffd[0m  [2m10 months ago[0m    [2mInitial content[0m
+main-symbol          [90m↑[0m  💬                [32m↑1[0m      ./main-symbol            [2m579fcd0b[0m  [2m10 months ago[0m    [2mSymbol commit[0m
+pr-link              [90m↑[0m  🤖                [32m↑1[0m      ./pr-link                [2me17e7d2d[0m  [2m10 months ago[0m    [2mPR commit[0m
+wli-sequence  [36m?![0m     [90m↑[0m  🤖      [32m+1[0m [31m-112[0m   [32m↑1[0m      ./wli-sequence           [2ma2483ffd[0m  [2m10 months ago[0m    [2mInitial content[0m
 
 ⚪ [2mShowing 4 worktrees, 1 with changes, 3 ahead[0m

@@ -1611,75 +1611,61 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Create a remote repo by cloning to a separate directory
-    let remote_dir = repo.root_path().parent().unwrap().join("remote-repo");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
-        "clone",
-        repo.root_path().to_str().unwrap(),
-        remote_dir.to_str().unwrap(),
-    ])
-    .output()
-    .unwrap();
+    // Create a real bare remote so upstream exists, but keep all graph crafting local for determinism
+    repo.setup_remote("main");
 
-    // In the remote repo, check out feature branch and make a commit
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "feature"])
-        .current_dir(&remote_dir)
+    // Remember the shared base (Feature work)
+    let base_sha = {
+        let output = repo
+            .git_command(&["rev-parse", "HEAD"])
+            .current_dir(&feature)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+
+    // Remote-only commit
+    std::fs::write(feature.join("remote-file.txt"), "remote content").unwrap();
+    repo.git_command(&["add", "remote-file.txt"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    repo.git_command(&["commit", "-m", "Remote commit"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    let remote_sha = {
+        let output = repo
+            .git_command(&["rev-parse", "HEAD"])
+            .current_dir(&feature)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+
+    // Reset back to base so the remote commit is not in the local branch history
+    repo.git_command(&["reset", "--hard", &base_sha])
+        .current_dir(&feature)
         .output()
         .unwrap();
 
-    std::fs::write(remote_dir.join("remote-file.txt"), "remote content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "remote-file.txt"])
-        .current_dir(&remote_dir)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Remote commit"])
-        .current_dir(&remote_dir)
-        .output()
-        .unwrap();
-
-    // In the local feature worktree, make a different commit (creates divergence)
+    // Local-only commit (divergence on the local side)
     std::fs::write(feature.join("local-file.txt"), "local content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "local-file.txt"])
+    repo.git_command(&["add", "local-file.txt"])
         .current_dir(&feature)
         .output()
         .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Local commit"])
+    repo.git_command(&["commit", "-m", "Local commit"])
         .current_dir(&feature)
         .output()
         .unwrap();
 
-    // Set up the remote repo as origin for the feature worktree
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["remote", "add", "origin", remote_dir.to_str().unwrap()])
+    // Wire up upstream tracking deterministically: point origin/feature at the remote-only commit
+    repo.git_command(&["update-ref", "refs/remotes/origin/feature", &remote_sha])
         .current_dir(&feature)
         .output()
         .unwrap();
-
-    // Fetch from the remote to establish tracking
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["fetch", "origin"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    // Set up branch tracking
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "--set-upstream-to=origin/feature", "feature"])
+    repo.git_command(&["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
         .output()
         .unwrap();
@@ -1749,17 +1735,7 @@ fn test_list_maximum_status_symbols() {
         .unwrap();
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
-    //
-    // Note: Git's ahead/behind calculation for clone-based remotes is platform-dependent:
-    // - Ubuntu: reports behind=0, shows ⇡ (ahead only)
-    // - macOS: reports behind=1, shows ⇅ (diverged)
-    // We normalize the flaky upstream divergence symbol and behind count to accept either.
-    let mut settings = list_snapshots::standard_settings(&repo);
-    // Normalize upstream divergence: accept both ⇡ (ahead) and ⇅ (diverged)
-    // Note: Yellow ANSI code (\x1b[33m) appears before the ⊠ symbol
-    settings.add_filter(r"↕[⇡⇅]\x1b\[33m⊠", "↕[UPSTREAM]\x1b[33m⊠");
-    // Normalize remote behind count: accept both ↓0 and ↓1
-    settings.add_filter(r"↓[01]", "↓[N]");
+    let settings = list_snapshots::standard_settings(&repo);
     settings.bind(|| {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");

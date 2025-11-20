@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::worktree::RemoveResult;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::{GitError, GitResultExt, Repository};
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, HINT, HINT_BOLD, HINT_EMOJI, WARNING, WARNING_BOLD,
     format_with_gutter,
@@ -55,7 +56,7 @@ impl RepositoryCliExt for Repository {
                 eprintln!("{ERROR_EMOJI} {ERROR}No project configuration found{ERROR:#}");
                 eprintln!(
                     "{HINT_EMOJI} {HINT}Create a config file at: {HINT_BOLD}{}{HINT_BOLD:#}{HINT:#}",
-                    config_path.display()
+                    format_path_for_display(&config_path)
                 );
                 Err(GitError::CommandFailed(
                     "No project configuration found".to_string(),
@@ -167,7 +168,7 @@ impl RepositoryCliExt for Repository {
 
         crate::output::progress(format!(
             "{CYAN}Stashing changes in {CYAN_BOLD}{}{CYAN_BOLD:#}{CYAN}...{CYAN:#}",
-            wt_path.display()
+            format_path_for_display(wt_path)
         ))?;
 
         let stash_output =
@@ -258,7 +259,7 @@ impl TargetWorktreeStash {
     pub(crate) fn restore(self) -> Result<(), GitError> {
         crate::output::progress(format!(
             "{CYAN}Restoring stashed changes in {CYAN_BOLD}{}{CYAN_BOLD:#}{CYAN}...{CYAN:#}",
-            self.path.display()
+            format_path_for_display(&self.path)
         ))?;
 
         if let Err(_e) = self
@@ -268,7 +269,7 @@ impl TargetWorktreeStash {
             crate::output::warning(format!(
                 "{WARNING}Failed to restore stash {WARNING_BOLD}{stash_ref}{WARNING_BOLD:#}{WARNING} - run 'git stash pop {stash_ref}' in {WARNING_BOLD}{path}{WARNING_BOLD:#}{WARNING:#}",
                 stash_ref = self.stash_ref,
-                path = self.path.display(),
+                path = format_path_for_display(&self.path),
             ))?;
         }
 

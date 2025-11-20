@@ -77,6 +77,7 @@ pub use handlers::{
 };
 
 use std::path::Path;
+use worktrunk::path::format_path_for_display;
 
 /// Format a switch success message with a consistent location phrase
 ///
@@ -101,11 +102,11 @@ pub(crate) fn format_switch_success_message(
     match base_branch {
         Some(base) => format!(
             "{GREEN}{action} {GREEN_BOLD}{branch}{GREEN_BOLD:#}{GREEN} from {GREEN_BOLD}{base}{GREEN_BOLD:#}{GREEN} at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
-            path.display()
+            format_path_for_display(path)
         ),
         None => format!(
             "{GREEN}{action} {GREEN_BOLD}{branch}{GREEN_BOLD:#}{GREEN} at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
-            path.display()
+            format_path_for_display(path)
         ),
     }
 }

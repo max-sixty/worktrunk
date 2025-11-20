@@ -7,6 +7,14 @@
 # Note: Uses ${_WORKTRUNK_CMD:-{{ cmd_prefix }}} fallback because shell snapshot
 # systems may capture functions but not environment variables.
 wt_exec() {
+    # Disable job control notifications in zsh (prevents "[1] 12345" / "[1] + done" messages)
+    # Zsh prints these when background jobs start/complete in interactive shells
+    # Note: Bash also prints these, but `set +m` doesn't work within functions to suppress them
+    # Bash notifications are less intrusive (completion message only at next prompt vs inline)
+    if [[ -n "${ZSH_VERSION:-}" ]]; then
+        setopt LOCAL_OPTIONS NO_MONITOR
+    fi
+
     local exec_cmd="" chunk="" exit_code=0 tmp_dir="" fifo_path="" runner_pid=""
 
     # Create temp directory with FIFO for streaming output

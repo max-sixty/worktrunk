@@ -24,7 +24,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-⚪ Global Config: [1m[TEMP_HOME]/.config/worktrunk/config.toml[0m
+⚪ Global Config: [1m~/.config/worktrunk/config.toml[0m
 [40m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
 
 ⚪ Project Config: [1m[REPO]/.config/wt.toml[0m

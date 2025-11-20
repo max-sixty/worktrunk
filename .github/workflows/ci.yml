@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,7 +14,7 @@ env:
 
 jobs:
   test:
-    name: Test (Tier 1 shells only)
+    name: Test
     strategy:
       fail-fast: false
       matrix:
@@ -45,19 +46,19 @@ jobs:
         prefix-key: ${{ hashFiles('Cargo.lock') }}
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
-    - name: Install Tier 1 shells (bash, zsh, fish) - Ubuntu
+    - name: Install shells (bash, zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y zsh fish
 
-    - name: Install Tier 1 shells (bash, zsh, fish) - macOS
+    - name: Install shells (bash, zsh, fish) - macOS
       if: runner.os == 'macOS'
       run: |
         brew install fish
         # bash and zsh are pre-installed on macOS
 
-    - name: Install Tier 1 shells - Windows
+    - name: Install shells - Windows
       if: runner.os == 'Windows'
       run: |
         # Git Bash is pre-installed on GitHub Actions Windows runners

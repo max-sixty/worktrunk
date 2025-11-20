@@ -16,9 +16,9 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    PATH: "/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpwVmPMD/mock-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    PATH: "/tmp/.tmpnjjxec/mock-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpwVmPMD/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /tmp/.tmpnjjxec/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -27,9 +27,9 @@ exit_code: 0
 ----- stderr -----
 [1mBranch[0m       [1mStatus[0m              [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mPath[0m           [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m              [1mMessage[0m
 [1m[35mmain[0m                                                        [1m[35m./test-repo[0m     [32m↑0[0m  [2m[31m↓0[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
-ahead               ↑⇡                   [32m↑2[0m        [32m+2[0m       ./ahead         [32m↑2[0m  [2m[31m↓0[0m      [2m8d8f4673[0m  [2m10 months ago[0m    [2mAhead commit 2[0m
-[2mbehind[0m            [2m≡[0m  ⇣                                      [2m./behind[0m        [32m↑0[0m  [2m[31m↓1[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
-diverged            ↑⇅                   [32m↑1[0m        [32m+1[0m       ./diverged      [32m↑1[0m  [2m[31m↓1[0m      [2mca7cb696[0m  [2m10 months ago[0m    [2mDiverged local commit[0m
+ahead               [90m↑[0m[90m⇡[0m                   [32m↑2[0m        [32m+2[0m       ./ahead         [32m↑2[0m  [2m[31m↓0[0m      [2m8d8f4673[0m  [2m10 months ago[0m    [2mAhead commit 2[0m
+[2mbehind[0m            [2m≡[0m  [90m⇣[0m                                      [2m./behind[0m        [32m↑0[0m  [2m[31m↓1[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
+diverged            [90m↑[0m[90m⇅[0m                   [32m↑1[0m        [32m+1[0m       ./diverged      [32m↑1[0m  [2m[31m↓1[0m      [2mca7cb696[0m  [2m10 months ago[0m    [2mDiverged local commit[0m
 [2min-sync[0m           [2m≡[0m                                         [2m./in-sync[0m       [32m↑0[0m  [2m[31m↓0[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
 [2mno-upstream[0m       [2m≡[0m                                         [2m./no-upstream[0m               [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
 

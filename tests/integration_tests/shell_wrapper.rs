@@ -308,6 +308,9 @@ fn exec_in_pty_interactive(
     cmd.env("SHELL", shell);
 
     // For zsh, isolate from user rc files
+    // Note: We no longer pass NO_MONITOR here - job control notifications are now
+    // suppressed by the shell integration code itself (setopt LOCAL_OPTIONS NO_MONITOR
+    // in wt_exec). This ensures tests match real user experience.
     if shell == "zsh" {
         cmd.env("ZDOTDIR", "/dev/null");
         cmd.arg("--no-rcs");
@@ -315,8 +318,6 @@ fn exec_in_pty_interactive(
         cmd.arg("NO_GLOBAL_RCS");
         cmd.arg("-o");
         cmd.arg("NO_RCS");
-        cmd.arg("-o");
-        cmd.arg("NO_MONITOR");
     }
 
     cmd.arg("-c");
