@@ -968,3 +968,56 @@ cargo install worktrunk --no-default-features
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
+
+### How does Worktrunk compare to alternatives?
+
+#### vs. Branch Switching
+
+`git checkout` forces all work through a single directory. Switching branches means rebuilding artifacts, restarting dev servers, and stashing changes. Only one branch can be active at a time.
+
+Worktrunk gives each branch its own directory with independent build caches, processes, and editor state. Work on multiple branches simultaneously without rebuilding or stashing.
+
+#### vs. Plain `git worktree`
+
+Git's built-in worktree commands work but require manual lifecycle management:
+
+```bash
+# Plain git worktree workflow
+git worktree add -b feature-branch ../myapp-feature main
+cd ../myapp-feature
+# ...work, commit, push...
+cd ../myapp
+git merge feature-branch
+git worktree remove ../myapp-feature
+git branch -d feature-branch
+```
+
+Worktrunk automates the full lifecycle:
+
+```bash
+wt switch --create feature-branch  # Creates worktree, runs setup hooks
+# ...work...
+wt merge                            # Squashes, merges, removes worktree
+```
+
+What `git worktree` doesn't provide:
+
+- Consistent directory naming and cleanup validation
+- Project-specific automation (install dependencies, start services)
+- Unified status across all worktrees (commits, CI, conflicts, changes)
+
+Worktrunk adds path management, lifecycle hooks, and `wt list --full` for viewing all worktrees—branches, uncommitted changes, commits ahead/behind, CI status, and conflicts—in a single view.
+
+#### vs. git-machete / git-town
+
+Different scopes:
+
+- **git-machete**: Branch stack management in a single directory
+- **git-town**: Git workflow automation in a single directory
+- **worktrunk**: Multi-worktree management with hooks and status aggregation
+
+These tools can be used together—run git-machete or git-town inside individual worktrees.
+
+#### vs. Git TUIs (lazygit, gh-dash, etc.)
+
+Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, runs automation hooks, and aggregates status across branches (`wt list --full`). Use your preferred TUI inside each worktree directory.

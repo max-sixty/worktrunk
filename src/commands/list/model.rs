@@ -558,7 +558,7 @@ impl StatusSymbols {
     /// column position across all rows, while minimizing wasted space.
     pub fn render_with_mask(&self, mask: &PositionMask) -> String {
         use unicode_width::UnicodeWidthStr;
-        use worktrunk::styling::{CYAN, ERROR, HINT, WARNING};
+        use worktrunk::styling::{CYAN, ERROR, GRAY, HINT, WARNING};
 
         let mut result = String::with_capacity(12);
 
@@ -585,8 +585,16 @@ impl StatusSymbols {
         } else {
             String::new()
         };
-        let main_divergence_str = self.main_divergence.to_string();
-        let upstream_divergence_str = self.upstream_divergence.to_string();
+        let main_divergence_str = if self.main_divergence != MainDivergence::None {
+            format!("{GRAY}{}{GRAY:#}", self.main_divergence)
+        } else {
+            String::new()
+        };
+        let upstream_divergence_str = if self.upstream_divergence != UpstreamDivergence::None {
+            format!("{GRAY}{}{GRAY:#}", self.upstream_divergence)
+        } else {
+            String::new()
+        };
         let working_tree_str = if !self.working_tree.is_empty() {
             format!("{CYAN}{}{CYAN:#}", self.working_tree)
         } else {

@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpVF2rIO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /tmp/.tmpYJPBXb/test-config.toml
 ---
 success: false
 exit_code: 1
@@ -29,8 +29,7 @@ exit_code: 1
 [40m [0m  hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
 [40m [0m  hint: You can instead skip this commit: run "git rebase --skip".
 [40m [0m  hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
-[40m [0m  hint: Disable this message with "git config set advice.mergeConflict false"
-[40m [0m  Could not apply [SHA]... # Update shared.txt in feature
+[40m [0m  Could not apply [SHA]... Update shared.txt in feature
 
 
 ----- stderr -----
