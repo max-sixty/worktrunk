@@ -12,10 +12,11 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: /dev/null
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp2RL6AR/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpctSaZ5/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -288,13 +289,13 @@ complete -c wt -n "__fish_wt_using_subcommand switch" -s c -l create -d 'Create 
 complete -c wt -n "__fish_wt_using_subcommand switch" -s f -l force -d 'Skip approval prompts'
 complete -c wt -n "__fish_wt_using_subcommand switch" -l no-verify -d 'Skip all project hooks'
 complete -c wt -n "__fish_wt_using_subcommand switch" -s v -l verbose -d 'Show commands and debug info'
-complete -c wt -n "__fish_wt_using_subcommand switch" -s h -l help -d 'Print help'
+complete -c wt -n "__fish_wt_using_subcommand switch" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand remove" -s C -d 'Change working directory' -r -F
 complete -c wt -n "__fish_wt_using_subcommand remove" -l no-delete-branch -d 'Keep branch after removal'
 complete -c wt -n "__fish_wt_using_subcommand remove" -s D -l force-delete -d 'Delete unmerged branches'
 complete -c wt -n "__fish_wt_using_subcommand remove" -l no-background -d 'Run removal in foreground'
 complete -c wt -n "__fish_wt_using_subcommand remove" -s v -l verbose -d 'Show commands and debug info'
-complete -c wt -n "__fish_wt_using_subcommand remove" -s h -l help -d 'Print help'
+complete -c wt -n "__fish_wt_using_subcommand remove" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s C -d 'Change working directory' -r -F
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-squash -d 'Skip commit squashing'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-commit -d 'Skip commit, squash, and rebase'
