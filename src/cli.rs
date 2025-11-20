@@ -329,100 +329,52 @@ Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
     },
 
     /// List worktrees and optionally branches
-    #[command(after_help = "## OPERATION
+    #[command(after_help = r#"## OPERATION
 
-Displays worktrees in a table format with status information, commit details, and optional branch listings.
+Displays worktrees with status, commit, and optional branch details.
 
-- **By default:** Shows only worktrees
-- **With `--branches`:** Includes branches without worktrees
-- **With `--full`:** Adds CI status, conflict detection, and detailed diffs
-- **With `--format=json`:** Outputs structured JSON for scripting
+- Default: worktrees only
+- `--branches`: include branches without worktrees
+- `--full`: add CI status, conflict detection, branch diffs
+- `--format=json`: structured output for scripting
 
 ## COLUMNS
-
-- **Branch:** Branch name
-- **Status:** Quick status symbols (see STATUS SYMBOLS below)
-- **HEAD±:** Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
-- **main↕:** Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
-- **main…±** (`--full`): Line diffs in commits ahead of main (+added -deleted)
-- **Path:** Worktree directory location
-- **Remote⇅:** Commits ahead↑/behind↓ relative to tracking branch (e.g. `origin/branch`)
-- **CI** (`--full`): CI pipeline status (tries PR/MR checks first, falls back to branch workflows)
-  - `●` **passed** (green) - All checks passed
-  - `●` **running** (blue) - Checks in progress
-  - `●` **failed** (red) - Checks failed
-  - `●` **conflicts** (yellow) - Merge conflicts with base
-  - `●` **no-ci** (gray) - PR/MR or workflow found but no checks configured
-  - (blank) - No PR/MR or workflow found, or `gh`/`glab` CLI unavailable
-  - (dimmed) - Stale: unpushed local changes differ from PR/MR head
-- **Commit:** Short commit hash (8 chars)
-- **Age:** Time since last commit (relative)
-- **Message:** Last commit message (truncated)
+- Branch, Status, HEAD±, main↕
+- main…± (`--full`): line diffs in commits ahead of main
+- Path, Remote⇅, CI (`--full`), Commit, Age, Message
 
 ## STATUS SYMBOLS
-
 Order: `=≠ ≡∅ ↻⋈ ⎇⊠⚠ ↑↓ ⇡⇣ ?!+»✘`
-
-- `·` Branch without worktree (no working directory to check)
-- `=` **Merge conflicts** (unmerged paths in working tree)
-- `≠` **Potential conflicts** with main (`--full` only, detected via `git merge-tree`)
-- `≡` Working tree matches main (identical contents, regardless of commit history)
-- `∅` No commits (no commits ahead AND no uncommitted changes)
-- `↻` Rebase in progress
-- `⋈` Merge in progress
-- `⎇` Branch indicator (shown for branches without worktrees)
-- `⊠` Locked worktree
-- `⚠` Prunable worktree
-- `↑` Ahead of main branch
-- `↓` Behind main branch
-- `⇡` Ahead of remote tracking branch
-- `⇣` Behind remote tracking branch
-- `?` Untracked files present
-- `!` Modified files (unstaged changes)
-- `+` Staged files (ready to commit)
-- `»` Renamed files
-- `✘` Deleted files
-
-*Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).*
+- `·` branch only (no worktree)
+- `=` conflicts   · `≠` potential conflicts   · `≡` matches main   · `∅` no commits
+- `↻` rebase      · `⋈` merge
+- `⎇` branch marker · `⊠` locked · `⚠` prunable
+- `↑/↓/↕` vs main · `⇡/⇣/⇅` vs remote
+- Working tree: `?` untracked, `!` modified, `+` staged, `»` renamed, `✘` deleted
+- Rows dimmed when no unique work (≡ or ∅).
 
 ## JSON OUTPUT
+`--format=json` returns both:
+- `status`: programmatic values (variant names, booleans)
+- `status_symbols`: display symbols (strings)
 
-Use `--format=json` for structured data. The `status_symbols` field contains two maps:
+Key fields (both maps align):
+- `branch_state`: "", Conflicts, PotentialConflicts, MatchesMain, NoCommits
+- `git_operation`: "", Rebase, Merge
+- `worktree_attrs`: {locked, prunable} (worktrees only)
+- `main_divergence`: "", Ahead, Behind, Diverged
+- `upstream_divergence`: "", Ahead, Behind, Diverged
+- `working_tree`: {untracked, modified, staged, renamed, deleted}
+- `user_status`: optional string
 
-**`status` (variant names for querying):**
-- `branch_state`: \"\" | \"Conflicts\" | \"PotentialConflicts\" | \"MatchesMain\" | \"NoCommits\"
-- `git_operation`: \"\" | \"Rebase\" | \"Merge\"
-- `main_divergence`: \"\" | \"Ahead\" | \"Behind\" | \"Diverged\"
-- `upstream_divergence`: \"\" | \"Ahead\" | \"Behind\" | \"Diverged\"
-- `working_tree`: object with booleans
-  - `untracked`: boolean - untracked files present
-  - `modified`: boolean - unstaged changes
-  - `staged`: boolean - staged changes
-  - `renamed`: boolean - renamed files
-  - `deleted`: boolean - deleted files
-- `user_status`: string (optional) - custom status from git config
-
-**`status_symbols` (display symbols for rendering):**
-- `branch_state`: \"\" | \"=\" | \"≠\" | \"≡\" | \"∅\"
-- `git_operation`: \"\" | \"↻\" | \"⋈\"
-- `main_divergence`: \"\" | \"↑\" | \"↓\" | \"↕\"
-- `upstream_divergence`: \"\" | \"⇡\" | \"⇣\" | \"⇅\"
-- `working_tree`: string - combination of \"?!+»✘\"
-- `user_status`: string (optional) - same as status.user_status
-
-**Query examples:**
-
-  # Find worktrees with conflicts
-  jq '.[] | select(.status_symbols.status.branch_state == \"Conflicts\")'
-
-  # Find worktrees with untracked files
-  jq '.[] | select(.status_symbols.status.working_tree.untracked == true)'
-
-  # Find worktrees in rebase or merge
-  jq '.[] | select(.status_symbols.status.git_operation != \"\")'
-
-  # Get branches ahead of main
-  jq '.[] | select(.status_symbols.status.main_divergence == \"Ahead\")'")]
+Query examples:
+  jq '.[] | select(.status.branch_state == "Conflicts")'
+  jq '.[] | select(.status.worktree_attrs.locked != null)'
+  jq '.[] | select(.status.working_tree.untracked == true)'
+  jq '.[] | select(.status.git_operation != "")'
+  jq '.[] | select(.status.main_divergence == "Ahead")'
+  jq '.[] | select(.status_symbols.upstream_divergence == "⇡")'
+"#)]
     List {
         /// Output format
         #[arg(long, value_enum, default_value = "table")]
