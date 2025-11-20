@@ -828,8 +828,6 @@ mod tests {
             }),
             upstream: Some(UpstreamStatus::from_parts(Some("origin".to_string()), 4, 2)),
             pr_status: None,
-            has_conflicts: Some(false),
-            user_status: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
@@ -907,8 +905,6 @@ mod tests {
             }),
             upstream: Some(UpstreamStatus::default()),
             pr_status: None,
-            has_conflicts: Some(false),
-            user_status: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {

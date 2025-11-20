@@ -185,11 +185,6 @@ pub struct ListItem {
 
     /// CI/PR status: None = not loaded, Some(None) = no CI, Some(Some(status)) = has CI
     pub pr_status: Option<Option<PrStatus>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub has_conflicts: Option<bool>,
-    /// User-defined status from git config
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_status: Option<String>,
     /// Git status symbols - None until all dependencies are ready
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_symbols: Option<StatusSymbols>,
@@ -689,28 +684,109 @@ impl StatusSymbols {
     }
 }
 
+/// Working tree changes parsed into structured booleans
+#[derive(Debug, Clone, serde::Serialize)]
+struct WorkingTreeChanges {
+    untracked: bool,
+    modified: bool,
+    staged: bool,
+    renamed: bool,
+    deleted: bool,
+}
+
+impl WorkingTreeChanges {
+    fn from_symbols(symbols: &str) -> Self {
+        Self {
+            untracked: symbols.contains('?'),
+            modified: symbols.contains('!'),
+            staged: symbols.contains('+'),
+            renamed: symbols.contains('»'),
+            deleted: symbols.contains('✘'),
+        }
+    }
+}
+
+/// Status variant names (for queryability)
+#[derive(Debug, Clone, serde::Serialize)]
+struct StatusValues {
+    branch_state: &'static str,
+    git_operation: &'static str,
+    main_divergence: &'static str,
+    upstream_divergence: &'static str,
+    working_tree: WorkingTreeChanges,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_status: Option<String>,
+}
+
+/// Status symbols (for display)
+#[derive(Debug, Clone, serde::Serialize)]
+struct StatusSymbolsOnly {
+    branch_state: String,
+    git_operation: String,
+    main_divergence: String,
+    upstream_divergence: String,
+    working_tree: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_status: Option<String>,
+}
+
 impl serde::Serialize for StatusSymbols {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("StatusSymbols", 8)?;
+        let mut state = serializer.serialize_struct("StatusSymbols", 2)?;
 
-        // Convenience boolean - derived from branch_state
-        let has_conflicts = matches!(
-            self.branch_state,
-            BranchState::Conflicts | BranchState::PotentialConflicts
-        );
-        state.serialize_field("has_conflicts", &has_conflicts)?;
+        // Status variant names
+        let branch_state_variant = match self.branch_state {
+            BranchState::None => "",
+            BranchState::Conflicts => "Conflicts",
+            BranchState::PotentialConflicts => "PotentialConflicts",
+            BranchState::MatchesMain => "MatchesMain",
+            BranchState::NoCommits => "NoCommits",
+        };
 
-        state.serialize_field("branch_state", &self.branch_state)?;
-        state.serialize_field("git_operation", &self.git_operation)?;
-        state.serialize_field("worktree_attrs", &self.worktree_attrs)?;
-        state.serialize_field("main_divergence", &self.main_divergence)?;
-        state.serialize_field("upstream_divergence", &self.upstream_divergence)?;
-        state.serialize_field("working_tree", &self.working_tree)?;
-        state.serialize_field("user_status", &self.user_status)?;
+        let git_operation_variant = match self.git_operation {
+            GitOperation::None => "",
+            GitOperation::Rebase => "Rebase",
+            GitOperation::Merge => "Merge",
+        };
+
+        let main_divergence_variant = match self.main_divergence {
+            MainDivergence::None => "",
+            MainDivergence::Ahead => "Ahead",
+            MainDivergence::Behind => "Behind",
+            MainDivergence::Diverged => "Diverged",
+        };
+
+        let upstream_divergence_variant = match self.upstream_divergence {
+            UpstreamDivergence::None => "",
+            UpstreamDivergence::Ahead => "Ahead",
+            UpstreamDivergence::Behind => "Behind",
+            UpstreamDivergence::Diverged => "Diverged",
+        };
+
+        let status_values = StatusValues {
+            branch_state: branch_state_variant,
+            git_operation: git_operation_variant,
+            main_divergence: main_divergence_variant,
+            upstream_divergence: upstream_divergence_variant,
+            working_tree: WorkingTreeChanges::from_symbols(&self.working_tree),
+            user_status: self.user_status.clone(),
+        };
+
+        let status_symbols = StatusSymbolsOnly {
+            branch_state: self.branch_state.to_string(),
+            git_operation: self.git_operation.to_string(),
+            main_divergence: self.main_divergence.to_string(),
+            upstream_divergence: self.upstream_divergence.to_string(),
+            working_tree: self.working_tree.clone(),
+            user_status: self.user_status.clone(),
+        };
+
+        state.serialize_field("status", &status_values)?;
+        state.serialize_field("status_symbols", &status_symbols)?;
 
         state.end()
     }

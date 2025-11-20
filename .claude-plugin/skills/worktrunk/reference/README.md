@@ -10,13 +10,13 @@
 <!-- [![Downloads](https://img.shields.io/crates/d/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk) -->
 <!-- [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers) -->
 
-Worktrunk is a CLI tool which makes working with git worktrees much much easier.
+Worktrunk is a CLI tool which makes working with git worktrees much more fluid.
 It's designed for those running many concurrent AI coding agents.
 
 For context, git worktrees let multiple agents work on a single repo without
 colliding; each agent gets a separate directory with a version of the code. But
-creating worktrees, tracking paths & statuses, cleaning up, etc is manual.
-Worktrunk offers transparency and automation for this lifecycle.
+creating worktrees, tracking paths & statuses, cleaning up, etc, is manual.
+Worktrunk offers control, transparency & automation for this workflow.
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ $ wt switch --create fix-auth
 ✅ Created new worktree for fix-auth from main at ../repo.fix-auth/
 ```
 
-**Work, make changes, then merge back:**
+**After making changes, merge it back:**
 
 <!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap -->
 
@@ -43,7 +43,6 @@ $ wt merge
 ✅ Merged to main (1 commit, 1 file, +13)
 🔄 Removing worktree & branch...
 ✅ Removed worktree & branch for fix-auth, changed directory to ../repo/
-# Shell back in main
 ```
 
 See [`wt merge`](#wt-merge-target) for all options.
@@ -77,9 +76,9 @@ See [Shell Integration](#shell-integration) for details.
 
 Worktrunk is opinionated! It's not designed to be all things to all people. The choices optimize for agent workflows:
 
-- Lots of short-lived worktrees
 - Trunk-based development
-- CLI-based agents
+- Lots of short-lived worktrees
+- Terminal-based coding agents
 - Inner dev loops are local
 - Shell navigation
 - Commits are squashed into linear histories
@@ -301,32 +300,36 @@ Options:
 **BEHAVIOR:**
 
 Switching to Existing Worktree:
-  - If worktree exists for branch, changes directory via shell integration
-  - No hooks run
-  - No branch creation
+
+- If worktree exists for branch, changes directory via shell integration
+- No hooks run
+- No branch creation
 
 Creating New Worktree (--create):
-  1. Creates new branch (defaults to current default branch as base)
-  2. Creates worktree in configured location (default: `../{{ main_worktree }}.{{ branch }}`)
-  3. Runs post-create hooks sequentially (blocking)
-  4. Shows success message
-  5. Spawns post-start hooks in background (non-blocking)
-  6. Changes directory to new worktree via shell integration
+
+1. Creates new branch (defaults to current default branch as base)
+2. Creates worktree in configured location (default: `../{{ main_worktree }}.{{ branch }}`)
+3. Runs post-create hooks sequentially (blocking)
+4. Shows success message
+5. Spawns post-start hooks in background (non-blocking)
+6. Changes directory to new worktree via shell integration
 
 **HOOKS:**
 
 post-create (sequential, blocking):
-  - Run after worktree creation, before success message
-  - Typically: npm install, cargo build, setup tasks
-  - Failures block the operation
-  - Skip with --no-verify
+
+- Run after worktree creation, before success message
+- Typically: npm install, cargo build, setup tasks
+- Failures block the operation
+- Skip with --no-verify
 
 post-start (parallel, background):
-  - Spawned after success message shown
-  - Typically: dev servers, file watchers, editors
-  - Run in background, failures logged but don't block
-  - Logs: `.git/wt-logs/{branch}-post-start-{name}.log`
-  - Skip with --no-verify
+
+- Spawned after success message shown
+- Typically: dev servers, file watchers, editors
+- Run in background, failures logged but don't block
+- Logs: `.git/wt-logs/{branch}-post-start-{name}.log`
+- Skip with --no-verify
 
 **EXAMPLES:**
 
@@ -353,6 +356,7 @@ wt switch --create temp --no-verify
 **SHORTCUTS:**
 
 Use '@' for current HEAD, '-' for previous, '^' for main:
+
 ```bash
 wt switch @                              # Switch to current branch's worktree
 wt switch -                              # Switch to previous worktree
@@ -461,34 +465,38 @@ Options:
 **BEHAVIOR:**
 
 Remove Current Worktree (no arguments):
-  - Requires clean working tree (no uncommitted changes)
-  - If in worktree: removes it and switches to main worktree
-  - If in main worktree: switches to default branch (e.g., main)
-  - If already on default branch in main: does nothing
+
+- Requires clean working tree (no uncommitted changes)
+- If in worktree: removes it and switches to main worktree
+- If in main worktree: switches to default branch (e.g., main)
+- If already on default branch in main: does nothing
 
 Remove Specific Worktree (by name):
-  - Requires target worktree has clean working tree
-  - Removes specified worktree(s) and associated branches
-  - If removing current worktree, switches to main first
-  - Can remove multiple worktrees in one command
+
+- Requires target worktree has clean working tree
+- Removes specified worktree(s) and associated branches
+- If removing current worktree, switches to main first
+- Can remove multiple worktrees in one command
 
 Remove Multiple Worktrees:
-  - When removing multiple, current worktree is removed last
-  - Prevents deleting directory you're currently in
-  - Each worktree must have clean working tree
+
+- When removing multiple, current worktree is removed last
+- Prevents deleting directory you're currently in
+- Each worktree must have clean working tree
 
 **CLEANUP:**
 
 When removing a worktree (by default):
-  1. Validates worktree has no uncommitted changes
-  2. Changes directory (if removing current worktree)
-  3. Spawns background removal process (non-blocking)
-     - Directory deletion happens in background
-     - Git worktree metadata removed in background
-     - Branch deletion in background (uses git branch -d, safe delete)
-     - Logs: `.git/wt-logs/{branch}-remove.log`
-  4. Returns immediately so you can continue working
-     - Use --no-background for foreground removal (blocking)
+
+1. Validates worktree has no uncommitted changes
+2. Changes directory (if removing current worktree)
+3. Spawns background removal process (non-blocking)
+   - Directory deletion happens in background
+   - Git worktree metadata removed in background
+   - Branch deletion in background (uses git branch -d, safe delete)
+   - Logs: `.git/wt-logs/{branch}-remove.log`
+4. Returns immediately so you can continue working
+   - Use --no-background for foreground removal (blocking)
 
 **EXAMPLES:**
 
@@ -671,6 +679,7 @@ Enable AI-generated commit messages
 2. Configure a model
 
    For Claude:
+
    ```bash
    llm install llm-anthropic
    llm keys set anthropic
@@ -679,6 +688,7 @@ Enable AI-generated commit messages
    ```
 
    For OpenAI:
+
    ```bash
    llm keys set openai
    # Paste your API key from: https://platform.openai.com/api-keys

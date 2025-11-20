@@ -387,30 +387,42 @@ Order: `=≠ ≡∅ ↻⋈ ⎇⊠⚠ ↑↓ ⇡⇣ ?!+»✘`
 
 ## JSON OUTPUT
 
-Use `--format=json` for structured data. The `status_symbols` object provides:
+Use `--format=json` for structured data. The `status_symbols` field contains two maps:
 
-- `has_conflicts`: boolean - true when branch has conflicts with main
-- `branch_state`: \"\" | \"=\" (conflicts) | \"≠\" (potential) | \"≡\" (matches main) | \"∅\" (no commits)
-- `git_operation`: \"\" | \"↻\" (rebase) | \"⋈\" (merge)
-- `worktree_attrs`: \"⎇\" (branch) or combination of \"⊠\" (locked), \"⚠\" (prunable)
-- `main_divergence`: \"\" | \"↑\" (ahead) | \"↓\" (behind) | \"↕\" (diverged)
-- `upstream_divergence`: \"\" | \"⇡\" (ahead) | \"⇣\" (behind) | \"⇅\" (diverged)
-- `working_tree`: combination of \"?\" (untracked), \"!\" (modified), \"+\" (staged), \"»\" (renamed), \"✘\" (deleted)
-- `user_status`: custom status from git config (optional)
+**`status` (variant names for querying):**
+- `branch_state`: \"\" | \"Conflicts\" | \"PotentialConflicts\" | \"MatchesMain\" | \"NoCommits\"
+- `git_operation`: \"\" | \"Rebase\" | \"Merge\"
+- `main_divergence`: \"\" | \"Ahead\" | \"Behind\" | \"Diverged\"
+- `upstream_divergence`: \"\" | \"Ahead\" | \"Behind\" | \"Diverged\"
+- `working_tree`: object with booleans
+  - `untracked`: boolean - untracked files present
+  - `modified`: boolean - unstaged changes
+  - `staged`: boolean - staged changes
+  - `renamed`: boolean - renamed files
+  - `deleted`: boolean - deleted files
+- `user_status`: string (optional) - custom status from git config
+
+**`status_symbols` (display symbols for rendering):**
+- `branch_state`: \"\" | \"=\" | \"≠\" | \"≡\" | \"∅\"
+- `git_operation`: \"\" | \"↻\" | \"⋈\"
+- `main_divergence`: \"\" | \"↑\" | \"↓\" | \"↕\"
+- `upstream_divergence`: \"\" | \"⇡\" | \"⇣\" | \"⇅\"
+- `working_tree`: string - combination of \"?!+»✘\"
+- `user_status`: string (optional) - same as status.user_status
 
 **Query examples:**
 
   # Find worktrees with conflicts
-  jq '.[] | select(.type == \"worktree\" and .status_symbols.has_conflicts)'
+  jq '.[] | select(.status_symbols.status.branch_state == \"Conflicts\")'
 
-  # Find worktrees with uncommitted changes
-  jq '.[] | select(.type == \"worktree\" and .working_tree_diff.added > 0)'
+  # Find worktrees with untracked files
+  jq '.[] | select(.status_symbols.status.working_tree.untracked == true)'
 
   # Find worktrees in rebase or merge
-  jq '.[] | select(.type == \"worktree\" and .status_symbols.git_operation != \"\")'
+  jq '.[] | select(.status_symbols.status.git_operation != \"\")'
 
   # Get branches ahead of main
-  jq '.[] | select(.ahead > 0) | {branch: (.branch // .name), ahead}'")]
+  jq '.[] | select(.status_symbols.status.main_divergence == \"Ahead\")'")]
     List {
         /// Output format
         #[arg(long, value_enum, default_value = "table")]

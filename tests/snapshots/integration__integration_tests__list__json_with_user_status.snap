@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp8q3SVO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpQuUWBO/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -31,16 +31,27 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
-      "has_conflicts": false,
-      "branch_state": "",
-      "git_operation": "",
-      "worktree_attrs": "",
-      "main_divergence": "",
-      "upstream_divergence": "",
-      "working_tree": "",
-      "user_status": null
+      "status": {
+        "branch_state": "",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": {
+          "untracked": false,
+          "modified": false,
+          "staged": false,
+          "renamed": false,
+          "deleted": false
+        }
+      },
+      "status_symbols": {
+        "branch_state": "",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": ""
+      }
     },
     "type": "worktree",
     "path": "[REPO]",
@@ -74,17 +85,29 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "has_conflicts": false,
-    "user_status": "🔧",
     "status_symbols": {
-      "has_conflicts": false,
-      "branch_state": "≡",
-      "git_operation": "",
-      "worktree_attrs": "",
-      "main_divergence": "",
-      "upstream_divergence": "",
-      "working_tree": "",
-      "user_status": "🔧"
+      "status": {
+        "branch_state": "MatchesMain",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": {
+          "untracked": false,
+          "modified": false,
+          "staged": false,
+          "renamed": false,
+          "deleted": false
+        },
+        "user_status": "🔧"
+      },
+      "status_symbols": {
+        "branch_state": "≡",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": "",
+        "user_status": "🔧"
+      }
     },
     "type": "worktree",
     "path": "[WORKTREE_WITH_STATUS]",
@@ -118,16 +141,27 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "has_conflicts": false,
     "status_symbols": {
-      "has_conflicts": false,
-      "branch_state": "≡",
-      "git_operation": "",
-      "worktree_attrs": "",
-      "main_divergence": "",
-      "upstream_divergence": "",
-      "working_tree": "",
-      "user_status": null
+      "status": {
+        "branch_state": "MatchesMain",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": {
+          "untracked": false,
+          "modified": false,
+          "staged": false,
+          "renamed": false,
+          "deleted": false
+        }
+      },
+      "status_symbols": {
+        "branch_state": "≡",
+        "git_operation": "",
+        "main_divergence": "",
+        "upstream_divergence": "",
+        "working_tree": ""
+      }
     },
     "type": "worktree",
     "path": "[WORKTREE_WITHOUT_STATUS]",
