@@ -1,7 +1,7 @@
 use crate::common::{TestRepo, list_snapshots, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn snapshot_list(test_name: &str, repo: &TestRepo) {
@@ -1611,83 +1611,61 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Create a real bare remote and push both branches so upstream tracking is deterministic
+    // Create a real bare remote so upstream exists, but keep all graph crafting local for determinism
     repo.setup_remote("main");
 
-    // Push feature to origin so the remote has the same base commit
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "feature"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    // Clone the bare remote and create a remote-only commit, then push it back
-    let remote_path = {
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        let output = cmd
-            .args(["remote", "get-url", "origin"])
-            .current_dir(repo.root_path())
+    // Remember the shared base (Feature work)
+    let base_sha = {
+        let output = repo
+            .git_command(&["rev-parse", "HEAD"])
+            .current_dir(&feature)
             .output()
             .unwrap();
-        assert!(output.status.success());
-        PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     };
 
-    let remote_clone = repo.root_path().parent().unwrap().join("remote-clone");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["clone", remote_path.to_str().unwrap(), remote_clone.to_str().unwrap()])
+    // Remote-only commit
+    std::fs::write(feature.join("remote-file.txt"), "remote content").unwrap();
+    repo.git_command(&["add", "remote-file.txt"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    repo.git_command(&["commit", "-m", "Remote commit"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    let remote_sha = {
+        let output = repo
+            .git_command(&["rev-parse", "HEAD"])
+            .current_dir(&feature)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+
+    // Reset back to base so the remote commit is not in the local branch history
+    repo.git_command(&["reset", "--hard", &base_sha])
+        .current_dir(&feature)
         .output()
         .unwrap();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "feature"])
-        .current_dir(&remote_clone)
-        .output()
-        .unwrap();
-
-    std::fs::write(remote_clone.join("remote-file.txt"), "remote content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "remote-file.txt"])
-        .current_dir(&remote_clone)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Remote commit"])
-        .current_dir(&remote_clone)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "origin", "feature"])
-        .current_dir(&remote_clone)
-        .output()
-        .unwrap();
-
-    // In the local feature worktree, make a different commit (creates divergence)
+    // Local-only commit (divergence on the local side)
     std::fs::write(feature.join("local-file.txt"), "local content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "local-file.txt"])
+    repo.git_command(&["add", "local-file.txt"])
         .current_dir(&feature)
         .output()
         .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Local commit"])
+    repo.git_command(&["commit", "-m", "Local commit"])
         .current_dir(&feature)
         .output()
         .unwrap();
 
-    // Fetch remote so origin/feature includes the remote-only commit; upstream remains set from the earlier push -u
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["fetch", "origin"])
+    // Wire up upstream tracking deterministically: point origin/feature at the remote-only commit
+    repo.git_command(&["update-ref", "refs/remotes/origin/feature", &remote_sha])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    repo.git_command(&["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
         .output()
         .unwrap();

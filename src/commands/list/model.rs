@@ -522,10 +522,12 @@ pub struct StatusSymbols {
 }
 
 impl StatusSymbols {
+    #[cfg(unix)]
     /// Render symbols with full alignment (all positions)
     ///
-    /// This is used for the display fields in JSON output.
-    /// For table rendering with selective positions, use `render_with_mask()`.
+    /// This is used for the display fields in JSON output on Unix builds
+    /// (where the interactive selector is available). Windows builds skip
+    /// this helper, avoiding a dead_code lint from clippy.
     pub fn render(&self) -> String {
         self.render_with_mask(&PositionMask::FULL)
     }
