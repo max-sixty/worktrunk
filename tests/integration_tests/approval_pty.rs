@@ -6,6 +6,10 @@
 //! Note: These tests are separate from `approval_ui.rs` because they require PTY setup
 //! to simulate interactive terminals. The non-PTY tests in `approval_ui.rs` verify the
 //! error case (non-TTY environments).
+//!
+//! TODO: PTY snapshots show environment-specific linebreak variations due to timing-dependent
+//! buffering of input/output interleaving. Consider normalizing extra blank lines to make
+//! snapshots more stable across different environments (local vs CI vs Claude Code web).
 
 use crate::common::TestRepo;
 use insta::assert_snapshot;
@@ -182,6 +186,8 @@ fn test_approval_prompt_multiple_commands() {
     assert_snapshot!("approval_prompt_multiple_commands", normalized);
 }
 
+/// TODO: Find a way to test permission errors without skipping when running as root.
+/// See test_permission_error_prevents_save in approval_save.rs for details.
 #[test]
 fn test_approval_prompt_permission_error() {
     let repo = TestRepo::new();

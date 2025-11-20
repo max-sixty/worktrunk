@@ -170,6 +170,10 @@ impl TestRepo {
         cmd.env("LANG", "C");
         // Oct 28, 2025 - exactly 300 days (10 months) after commit date for deterministic relative times
         cmd.env("SOURCE_DATE_EPOCH", "1761609600");
+        // Disable git advice hints for stable output across versions
+        cmd.env("GIT_CONFIG_COUNT", "1");
+        cmd.env("GIT_CONFIG_KEY_0", "advice.mergeConflict");
+        cmd.env("GIT_CONFIG_VALUE_0", "false");
     }
 
     /// Get standard test environment variables as a vector
@@ -193,6 +197,10 @@ impl TestRepo {
             ("LC_ALL".to_string(), "C".to_string()),
             ("LANG".to_string(), "C".to_string()),
             ("SOURCE_DATE_EPOCH".to_string(), "1761609600".to_string()),
+            // Disable git advice hints for stable output across versions
+            ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+            ("GIT_CONFIG_KEY_0".to_string(), "advice.mergeConflict".to_string()),
+            ("GIT_CONFIG_VALUE_0".to_string(), "false".to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),

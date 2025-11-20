@@ -276,6 +276,11 @@ fn test_force_flag_saves_to_new_config_file() {
 /// are denied. The higher-level `approve_command_batch()` catches this error and
 /// displays a warning (see src/commands/command_approval.rs:82-85), allowing
 /// commands to execute even when the approval can't be saved.
+///
+/// TODO: Find a way to test permission errors without skipping when running as root.
+/// Currently skips in containerized environments (Claude Code web, Docker) where
+/// root can write to read-only files. Consider using capabilities or other mechanisms
+/// to test permission handling in all environments.
 #[test]
 fn test_permission_error_prevents_save() {
     use std::fs::Permissions;
