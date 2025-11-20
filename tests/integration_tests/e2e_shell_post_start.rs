@@ -15,7 +15,11 @@ fn wait_for_file(path: &std::path::Path, timeout: Duration) {
         }
         thread::sleep(Duration::from_millis(50));
     }
-    panic!("File was not created within {:?}: {}", timeout, path.display());
+    panic!(
+        "File was not created within {:?}: {}",
+        timeout,
+        path.display()
+    );
 }
 
 /// Test that post-start background commands work with shell integration
