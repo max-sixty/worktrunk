@@ -89,15 +89,15 @@ impl CellUpdate {
     /// Get the item index for this update
     fn item_idx(&self) -> usize {
         match self {
-            CellUpdate::CommitDetails { item_idx, .. } => *item_idx,
-            CellUpdate::AheadBehind { item_idx, .. } => *item_idx,
-            CellUpdate::BranchDiff { item_idx, .. } => *item_idx,
-            CellUpdate::WorkingTreeDiff { item_idx, .. } => *item_idx,
-            CellUpdate::Conflicts { item_idx, .. } => *item_idx,
-            CellUpdate::WorktreeState { item_idx, .. } => *item_idx,
-            CellUpdate::UserStatus { item_idx, .. } => *item_idx,
-            CellUpdate::Upstream { item_idx, .. } => *item_idx,
-            CellUpdate::CiStatus { item_idx, .. } => *item_idx,
+            CellUpdate::CommitDetails { item_idx, .. }
+            | CellUpdate::AheadBehind { item_idx, .. }
+            | CellUpdate::BranchDiff { item_idx, .. }
+            | CellUpdate::WorkingTreeDiff { item_idx, .. }
+            | CellUpdate::Conflicts { item_idx, .. }
+            | CellUpdate::WorktreeState { item_idx, .. }
+            | CellUpdate::UserStatus { item_idx, .. }
+            | CellUpdate::Upstream { item_idx, .. }
+            | CellUpdate::CiStatus { item_idx, .. } => *item_idx,
         }
     }
 }
@@ -115,23 +115,40 @@ pub(super) fn detect_worktree_state(repo: &Repository) -> Option<String> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DivergenceKind {
+    None,
+    Ahead,
+    Behind,
+    Diverged,
+}
+
+fn classify_divergence(ahead: usize, behind: usize) -> DivergenceKind {
+    match (ahead, behind) {
+        (0, 0) => DivergenceKind::None,
+        (a, 0) if a > 0 => DivergenceKind::Ahead,
+        (0, b) if b > 0 => DivergenceKind::Behind,
+        _ => DivergenceKind::Diverged,
+    }
+}
+
 /// Compute main branch divergence state from ahead/behind counts.
 fn compute_main_divergence(ahead: usize, behind: usize) -> MainDivergence {
-    match (ahead, behind) {
-        (0, 0) => MainDivergence::None,
-        (a, 0) if a > 0 => MainDivergence::Ahead,
-        (0, b) if b > 0 => MainDivergence::Behind,
-        _ => MainDivergence::Diverged,
+    match classify_divergence(ahead, behind) {
+        DivergenceKind::None => MainDivergence::None,
+        DivergenceKind::Ahead => MainDivergence::Ahead,
+        DivergenceKind::Behind => MainDivergence::Behind,
+        DivergenceKind::Diverged => MainDivergence::Diverged,
     }
 }
 
 /// Compute upstream divergence state from ahead/behind counts.
 fn compute_upstream_divergence(ahead: usize, behind: usize) -> UpstreamDivergence {
-    match (ahead, behind) {
-        (0, 0) => UpstreamDivergence::None,
-        (a, 0) if a > 0 => UpstreamDivergence::Ahead,
-        (0, b) if b > 0 => UpstreamDivergence::Behind,
-        _ => UpstreamDivergence::Diverged,
+    match classify_divergence(ahead, behind) {
+        DivergenceKind::None => UpstreamDivergence::None,
+        DivergenceKind::Ahead => UpstreamDivergence::Ahead,
+        DivergenceKind::Behind => UpstreamDivergence::Behind,
+        DivergenceKind::Diverged => UpstreamDivergence::Diverged,
     }
 }
 

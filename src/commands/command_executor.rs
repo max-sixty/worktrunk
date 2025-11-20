@@ -60,28 +60,27 @@ fn expand_commands(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    let mut base_extras = HashMap::new();
-    base_extras.insert(
+    let mut extras_owned = HashMap::new();
+    extras_owned.insert(
         "worktree".to_string(),
         ctx.worktree_path.to_string_lossy().to_string(),
     );
-    base_extras.insert(
+    extras_owned.insert(
         "repo_root".to_string(),
         repo_root.to_string_lossy().to_string(),
     );
     for &(key, value) in extra_vars {
-        base_extras.insert(key.to_string(), value.to_string());
+        extras_owned.insert(key.to_string(), value.to_string());
     }
+
+    let extras_ref: HashMap<&str, &str> = extras_owned
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     let mut expanded_commands = Vec::new();
 
     for cmd in commands {
-        let extras_owned = base_extras.clone();
-        let extras_ref: HashMap<&str, &str> = extras_owned
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
         let expanded_str = expand_template(&cmd.template, repo_name, ctx.branch, &extras_ref)
             .map_err(|e| {
                 GitError::message(format!(
