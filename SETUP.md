@@ -20,59 +20,32 @@ cargo test --test integration
 
 ## Environment Status
 
-### ✅ Working
+### ✅ Fully Working
 
 - **Rust Toolchain**: Version 1.90.0 (as specified in `rust-toolchain.toml`)
 - **Build System**: Cargo builds successfully with all dependencies
 - **Unit Tests**: All 197 unit tests pass (143 in lib, 54 in bins)
+- **Integration Tests**: All 358 tests pass (2 tests ignored)
 - **Core Functionality**: Binary builds and runs correctly
-- **Git Integration**: Git is available and working
-- **Bash Shell**: Available for shell integration tests
+- **Git Integration**: Git 2.43.0 available and working
+- **Shell Support**: All shells available
+  - ✅ bash 5.2.15
+  - ✅ zsh 5.9
+  - ✅ fish 3.7.0
 
-### ⚠️ Partial / Limited
+### Test Results
 
-- **Integration Tests**: 333 of 360 tests pass
-  - 25 tests fail due to missing shells (zsh, fish)
-  - 2 tests are ignored
+- **Total Tests**: 360
+- **Passing**: 358 (99.4%)
+- **Ignored**: 2 (0.6%)
+- **Failing**: 0
 
-- **Shell Support**:
-  - ✅ bash - fully available
-  - ❌ zsh - not installed
-  - ❌ fish - not installed
-
-### Test Failure Breakdown
-
-All 25 failing tests are due to missing shells (zsh, fish):
-
-1. **Parameterized shell tests**: Tests using `rstest` to run across bash/zsh/fish
-   - `case_2` failures: zsh not installed
-   - `case_3` failures: fish not installed
-   - Affected test suites: `shell_wrapper`, `e2e_shell`, `e2e_shell_post_start`
-
-2. **Fish-specific tests**: 4 tests that only run on fish
-   - `test_fish_*` - Fish shell integration tests
-
-3. **Expected behavior**: These failures are normal for this environment
-   - The codebase is designed to support multiple shells
-   - All bash tests pass successfully
-   - CI/CD runs these tests in environments with all shells installed
-
-## Installing Additional Shells (Optional)
-
-To run all integration tests, you can install the missing shells:
-
-```bash
-# Install zsh
-apt-get update && apt-get install -y zsh
-
-# Install fish
-apt-get update && apt-get install -y fish
-```
-
-After installing shells, re-run tests:
-```bash
-cargo test --test integration
-```
+All test suites pass successfully:
+- ✅ Unit tests (lib + bins)
+- ✅ Integration tests (all shells)
+- ✅ Shell wrapper tests (bash, zsh, fish)
+- ✅ PTY tests
+- ✅ Snapshot tests
 
 ## Updating Snapshots
 
@@ -157,25 +130,33 @@ worktrunk/
 
 ## Common Issues
 
-### Issue: Tests fail with "command not found: fish"
-
-**Solution**: Install fish shell or run only bash tests:
-```bash
-cargo test --test integration -- --skip fish
-```
-
 ### Issue: Snapshot test failures
 
-**Solution**: Review and update snapshots:
+If output format changes:
 ```bash
 cargo insta review
 ```
 
 ### Issue: Build fails with tree-sitter errors
 
-**Solution**: Disable syntax highlighting feature:
+Disable syntax highlighting feature (optional):
 ```bash
 cargo build --no-default-features
+```
+
+### Issue: Missing shells
+
+The setup script automatically installs zsh and fish on Debian/Ubuntu systems. If you're on a different system or if auto-install fails:
+
+```bash
+# macOS
+brew install zsh fish
+
+# Debian/Ubuntu
+apt-get install -y zsh fish
+
+# Fedora/RHEL
+dnf install -y zsh fish
 ```
 
 ## Development Guidelines
@@ -190,10 +171,10 @@ See `CLAUDE.md` for comprehensive guidelines including:
 
 ## Next Steps for Agents
 
-1. **To work on features**: All core functionality works, proceed with normal development
-2. **To run full test suite**: Install zsh and fish shells first
-3. **To update snapshots**: Use `cargo insta review` after making output changes
-4. **To understand codebase**: Read `CLAUDE.md` for project conventions
+1. **Environment is fully ready**: All tests pass, all shells installed
+2. **Start developing**: Proceed with any features or bug fixes
+3. **Update snapshots**: Use `cargo insta review` after making output changes
+4. **Follow conventions**: Read `CLAUDE.md` for project-specific guidelines
 
 ## Environment Verification
 
@@ -208,7 +189,8 @@ Expected output:
 - ✓ Rust toolchain: 1.90.0
 - ✓ Build: OK
 - ✓ Unit tests: OK
-- ⚠️ Integration tests: 333 passed, 25 failed, 2 ignored
+- ✓ All shells available: bash, zsh, fish
+- ✓ Integration tests: 358 passed, 0 failed, 2 ignored
 
 ---
 

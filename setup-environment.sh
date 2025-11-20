@@ -75,9 +75,9 @@ else
     exit 1
 fi
 
-# Check available shells
+# Check and install shells
 echo ""
-echo "Checking available shells for integration tests..."
+echo "Checking shells for integration tests..."
 SHELLS_AVAILABLE=()
 SHELLS_MISSING=()
 
@@ -87,14 +87,48 @@ for shell in bash zsh fish; do
         print_status "$shell is available"
     else
         SHELLS_MISSING+=("$shell")
-        print_warning "$shell is not installed (some integration tests will be skipped)"
     fi
 done
+
+# Install missing shells
+if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
+    echo ""
+    echo "Installing missing shells: ${SHELLS_MISSING[*]}"
+
+    # Check if we can use apt-get (Debian/Ubuntu)
+    if command -v apt-get &> /dev/null; then
+        # Install quietly
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq 2>&1 | grep -v "Failed to fetch" || true
+        apt-get install -y -qq "${SHELLS_MISSING[@]}" 2>&1 | tail -5 || {
+            print_warning "Could not install shells: ${SHELLS_MISSING[*]}"
+            echo "  Some integration tests will fail"
+        }
+    else
+        print_warning "Package manager not found, cannot install shells: ${SHELLS_MISSING[*]}"
+        echo "  Some integration tests will fail"
+    fi
+
+    # Re-check which shells are now available
+    SHELLS_AVAILABLE=()
+    SHELLS_MISSING=()
+    for shell in bash zsh fish; do
+        if command -v "$shell" &> /dev/null; then
+            SHELLS_AVAILABLE+=("$shell")
+            print_status "$shell is now available"
+        else
+            SHELLS_MISSING+=("$shell")
+            print_warning "$shell installation failed"
+        fi
+    done
+fi
 
 # Run integration tests
 echo ""
 echo "Running integration tests..."
-echo "(Note: Tests for missing shells will fail)"
+if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
+    echo "(Note: Tests for missing shells will fail: ${SHELLS_MISSING[*]})"
+fi
 
 TEST_OUTPUT=$(cargo test --test integration 2>&1 || true)
 TEST_SUMMARY=$(echo "$TEST_OUTPUT" | grep "test result:" | tail -1)
@@ -107,9 +141,13 @@ if echo "$TEST_SUMMARY" | grep -q "test result:"; then
     print_status "Integration tests: $PASSED passed, $FAILED failed, $IGNORED ignored"
 
     if [ "$FAILED" != "0" ] && [ "$FAILED" != "" ]; then
-        print_warning "Some tests failed - this is expected:"
-        echo "  - Missing shells (zsh, fish) cause shell-specific tests to fail"
-        echo "  - PTY/snapshot tests may need updating with 'cargo insta review'"
+        if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
+            print_warning "Some tests failed - this is expected:"
+            echo "  - Missing shells (${SHELLS_MISSING[*]}) cause shell-specific tests to fail"
+        else
+            print_warning "Some tests failed unexpectedly"
+            echo "  - PTY/snapshot tests may need updating with 'cargo insta review'"
+        fi
     fi
 else
     print_error "Could not parse test results"
