@@ -5,14 +5,11 @@ use crate::common::{
 use rstest::rstest;
 
 #[rstest]
-// bash is baseline, fish exercises alternate syntax
+// Test with bash (baseline) and fish (alternate syntax)
 #[case("bash")]
 #[case("fish")]
 #[case("zsh")]
-// TODO: Tier 2 shells (elvish, nushell, oil, powershell, xonsh) - would like to get these working
-// Currently disabled due to test failures and platform compatibility issues
-// #[cfg_attr(feature = "tier-2-integration-tests", case("oil"))]
-fn test_e2e_switch_and_remove_roundtrip(#[case] shell: &str) {
+fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
     repo.setup_remote("main");
@@ -70,7 +67,7 @@ fn test_e2e_switch_and_remove_roundtrip(#[case] shell: &str) {
 }
 
 #[test]
-fn test_bash_e2e_error_handling() {
+fn test_bash_shell_integration_error_handling() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -111,7 +108,7 @@ fn test_bash_e2e_error_handling() {
 }
 
 #[test]
-fn test_bash_e2e_switch_existing_worktree() {
+fn test_bash_shell_integration_switch_existing_worktree() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 

@@ -30,12 +30,10 @@ pub fn handle_init(
     // Generate completions to a string so we can filter out hidden commands
     let mut completion_output = Vec::new();
     let completion_shell = match shell {
-        shell::Shell::Bash | shell::Shell::Oil => CompletionShell::Bash,
+        shell::Shell::Bash => CompletionShell::Bash,
         shell::Shell::Fish => CompletionShell::Fish,
         shell::Shell::Zsh => CompletionShell::Zsh,
-        _ => unreachable!(
-            "supports_completion() check above ensures we only reach this for supported shells"
-        ),
+        // Disabled shells would be handled here
     };
     generate(
         completion_shell,

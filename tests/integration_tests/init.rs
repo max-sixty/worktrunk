@@ -25,17 +25,10 @@ fn snapshot_init(test_name: &str, shell: &str, extra_args: &[&str]) {
 }
 
 #[rstest]
-// Tier 1: Shells available in standard Ubuntu repos
+// Test supported shells
 #[case("bash")]
 #[case("fish")]
 #[case("zsh")]
-// Tier 2: Shells requiring extra setup
-// TODO: Fix non-core shells - all have snapshot mismatches in init output
-// #[cfg_attr(feature = "tier-2-integration-tests", case("elvish"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("nushell"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("oil"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("powershell"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("xonsh"))]
 fn test_init(#[case] shell: &str) {
     snapshot_init(&format!("init_{}", shell), shell, &[]);
 }

@@ -84,16 +84,12 @@ fn scan_shell_configs(
     let shells = if let Some(shell) = shell_filter {
         vec![shell]
     } else {
-        // Try all shells in consistent order
+        // Try all supported shells in consistent order
         vec![
             Shell::Bash,
             Shell::Zsh,
             Shell::Fish,
-            Shell::Nushell,
-            Shell::Powershell,
-            Shell::Oil,
-            Shell::Elvish,
-            Shell::Xonsh,
+            // Disabled shells: Nushell, Powershell, Oil, Elvish, Xonsh
         ]
     };
 

@@ -17,8 +17,8 @@ allow-branch = ["*"]
 consolidate-commits = true
 
 [features]
-# Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
-tier-2-integration-tests = []
+# Disabled: Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
+# tier-2-integration-tests = []
 # Enable syntax highlighting for bash commands in output (requires tree-sitter)
 # This is optional to avoid C compilation issues on some platforms
 default = ["syntax-highlighting"]

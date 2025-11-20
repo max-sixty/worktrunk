@@ -24,17 +24,10 @@ fn wait_for_file(path: &std::path::Path, timeout: Duration) {
 
 /// Test that post-start background commands work with shell integration
 #[rstest]
-// Test with bash (POSIX baseline) and fish (different syntax)
-// zsh removed - too similar to bash
+// Test with bash and fish
 #[case("bash")]
 #[case("fish")]
-// TODO: Tier 2 shells (elvish, nushell, oil, powershell, xonsh) - would like to get these working
-// Currently disabled due to test failures and platform compatibility issues
-// #[cfg_attr(feature = "tier-2-integration-tests", case("elvish"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("nushell"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("oil"))]
-// #[cfg_attr(feature = "tier-2-integration-tests", case("xonsh"))]
-fn test_e2e_post_start_background_command(#[case] shell: &str) {
+fn test_shell_integration_post_start_background(#[case] shell: &str) {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -134,7 +127,7 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
 
 /// Test that multiple post-start commands run in parallel with shell integration
 #[test]
-fn test_bash_post_start_multiple_parallel_commands() {
+fn test_bash_shell_integration_post_start_parallel() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -209,7 +202,7 @@ approved-commands = [
 
 /// Test that post-create commands block before shell returns
 #[test]
-fn test_bash_post_create_blocks() {
+fn test_bash_shell_integration_post_create_blocks() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -281,7 +274,7 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
 /// Test fish shell specifically with background tasks
 #[cfg(unix)]
 #[test]
-fn test_fish_post_start_background() {
+fn test_fish_shell_integration_post_start_background() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
