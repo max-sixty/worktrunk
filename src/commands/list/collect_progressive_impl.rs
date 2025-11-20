@@ -222,8 +222,9 @@ fn spawn_upstream<'scope>(
     let path = ctx.repo_path.clone();
     s.spawn(move || {
         let repo = Repository::at(&path);
-        let upstream = if let Some(branch) = branch.as_deref() {
-            match repo.upstream_branch(branch) {
+        let upstream = branch
+            .as_deref()
+            .and_then(|branch| match repo.upstream_branch(branch) {
                 Ok(Some(upstream_branch)) => {
                     let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
                     match repo.ahead_behind(&upstream_branch, &sha) {
@@ -255,11 +256,8 @@ fn spawn_upstream<'scope>(
                     }
                     None
                 }
-            }
-        } else {
-            None // No branch (detached HEAD)
-        };
-        let upstream = upstream.unwrap_or_default();
+            })
+            .unwrap_or_default();
         let _ = tx.send(CellUpdate::Upstream { item_idx, upstream });
     });
 }
@@ -269,7 +267,6 @@ fn spawn_ci_status<'scope>(
     s: &'scope std::thread::Scope<'scope, '_>,
     ctx: &TaskContext,
     fetch_ci: bool,
-    is_worktree: bool,
     tx: Sender<CellUpdate>,
 ) {
     if !fetch_ci {
@@ -281,28 +278,19 @@ fn spawn_ci_status<'scope>(
     let sha = ctx.commit_sha.clone();
     let path = ctx.repo_path.clone();
     s.spawn(move || {
-        if is_worktree {
-            // Worktree: get repo path from worktree_root()
-            let repo = Repository::at(&path);
-            if let Ok(repo_path) = repo.worktree_root() {
-                let pr_status = branch
-                    .as_deref()
-                    .and_then(|branch| PrStatus::detect(branch, &sha, &repo_path));
-                let _ = tx.send(CellUpdate::CiStatus {
-                    item_idx,
-                    pr_status,
-                });
-            }
-        } else {
-            // Branch: use repo_path directly
-            let pr_status = branch
-                .as_deref()
-                .and_then(|branch| PrStatus::detect(branch, &sha, &path));
-            let _ = tx.send(CellUpdate::CiStatus {
-                item_idx,
-                pr_status,
-            });
-        }
+        // Use the repository root if available; fall back to the provided path.
+        // This works for both worktrees and branches and keeps fork detection
+        // behavior consistent with GH/GL CLI expectations.
+        let repo_path = Repository::at(&path).worktree_root().ok().unwrap_or(path);
+
+        let pr_status = branch
+            .as_deref()
+            .and_then(|branch| PrStatus::detect(branch, &sha, &repo_path));
+
+        let _ = tx.send(CellUpdate::CiStatus {
+            item_idx,
+            pr_status,
+        });
     });
 }
 
@@ -351,7 +339,7 @@ pub fn collect_worktree_progressive(
         spawn_worktree_state(s, &ctx, tx.clone());
         spawn_user_status(s, &ctx, tx.clone());
         spawn_upstream(s, &ctx, true, tx.clone());
-        spawn_ci_status(s, &ctx, fetch_ci, true, tx);
+        spawn_ci_status(s, &ctx, fetch_ci, tx);
     });
 }
 
@@ -363,14 +351,11 @@ fn parse_status_for_symbols(status_output: &str) -> (String, bool) {
     let mut has_staged = false;
     let mut has_renamed = false;
     let mut has_deleted = false;
-    let mut is_dirty = false;
 
     for line in status_output.lines() {
         if line.len() < 2 {
             continue;
         }
-
-        is_dirty = true;
 
         let bytes = line.as_bytes();
         let index_status = bytes[0] as char;
@@ -415,6 +400,8 @@ fn parse_status_for_symbols(status_output: &str) -> (String, bool) {
         working_tree.push('✘');
     }
 
+    let is_dirty = has_untracked || has_modified || has_staged || has_renamed || has_deleted;
+
     (working_tree, is_dirty)
 }
 
@@ -450,6 +437,6 @@ pub fn collect_branch_progressive(
         spawn_branch_diff(s, &ctx, tx.clone());
         spawn_upstream(s, &ctx, false, tx.clone());
         spawn_conflicts(s, &ctx, check_conflicts, false, tx.clone());
-        spawn_ci_status(s, &ctx, fetch_ci, false, tx);
+        spawn_ci_status(s, &ctx, fetch_ci, tx);
     });
 }
