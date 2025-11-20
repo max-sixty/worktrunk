@@ -61,7 +61,9 @@ pub struct WorktreeData {
     pub path: PathBuf,
     pub bare: bool,
     pub detached: bool,
+    #[serde(skip)]
     pub locked: Option<String>,
+    #[serde(skip)]
     pub prunable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff: Option<LineDiff>,
@@ -186,7 +188,7 @@ pub struct ListItem {
     /// CI/PR status: None = not loaded, Some(None) = no CI, Some(Some(status)) = has CI
     pub pr_status: Option<Option<PrStatus>>,
     /// Git status symbols - None until all dependencies are ready
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub status_symbols: Option<StatusSymbols>,
 
     // Display fields for json-pretty format (with ANSI colors)
@@ -455,7 +457,7 @@ impl PositionMask {
             1, // POS_0C_GIT_OPERATION: ↻ or ⋈ (1 char)
             1, // POS_1_MAIN_DIVERGENCE: ↑, ↓, ↕ (1 char)
             1, // POS_2_UPSTREAM_DIVERGENCE: ⇡, ⇣, ⇅ (1 char)
-            2, // POS_0D_WORKTREE_ATTRS: ⎇ for branches (1 char), ⊠⚠ for worktrees (max 2, bare filtered out)
+            1, // POS_0D_WORKTREE_ATTRS: ⎇ for branches, ⌫⊠ for worktrees (priority-only: prunable > locked)
             2, // POS_4_USER_STATUS: single emoji or two chars (allocate 2)
         ],
     };
@@ -471,7 +473,7 @@ impl PositionMask {
 /// Symbols are categorized to enable vertical alignment in table output:
 /// - Position 0a: Conflicts or branch state (=, ≠, ≡, ∅) - mutually exclusive
 /// - Position 0c: Git operation (↻, ⋈)
-/// - Position 0d: Item attributes (⎇ for branches, ⊠⚠ for worktrees)
+/// - Position 0d: Item attributes (⎇ for branches, ⌫⊠ for worktrees - priority-only)
 /// - Position 1: Main branch divergence (↑, ↓, ↕)
 /// - Position 2: Remote/upstream divergence (⇡, ⇣, ⇅)
 /// - Position 3: Working tree symbols (?, !, +, », ✘)
@@ -480,14 +482,16 @@ impl PositionMask {
 /// ## Mutual Exclusivity
 ///
 /// **Mutually exclusive (enforced by type system):**
-/// - = vs ≠ vs ≡ vs ∅: ConflictsOrBranchState enum (combined position)
+/// - = vs ≠ vs ≡ vs ∅: BranchState enum (combined position)
 /// - ↻ vs ⋈: Git operation (GitOperation enum)
 /// - ↑ vs ↓ vs ↕: Main divergence (MainDivergence enum)
 /// - ⇡ vs ⇣ vs ⇅: Upstream divergence (UpstreamDivergence enum)
 ///
+/// **Priority-only (can co-occur but only highest priority shown):**
+/// - ⌫ vs ⊠: Worktree attrs (priority: prunable ⌫ > locked ⊠)
+/// - ⎇: Branch indicator (mutually exclusive with ⌫⊠ as branches can't have worktree attrs)
+///
 /// **NOT mutually exclusive (can co-occur):**
-/// - ⊠, ⚠: Worktree can be locked+prunable (bare is filtered out)
-/// - ⎇: Branch indicator (mutually exclusive with ⊠⚠ as branches can't have worktree attrs)
 /// - All working tree symbols (?!+»✘): Can have multiple types of changes
 #[derive(Debug, Clone, Default)]
 pub struct StatusSymbols {
@@ -500,9 +504,15 @@ pub struct StatusSymbols {
     /// Position 0c - MUTUALLY EXCLUSIVE (enforced by enum)
     pub(crate) git_operation: GitOperation,
 
-    /// Item type attributes: ⎇ for branches, ⊠⚠ for worktree attrs (locked/prunable)
-    /// Position 0d - NOT mutually exclusive (worktree attrs can combine like "⊠⚠")
+    /// Item type attributes: ⎇ for branches, ⌫⊠ for worktrees (priority-only: prunable > locked)
+    /// Position 0d - Priority-only rendering (shows highest priority symbol when multiple states exist)
     pub(crate) worktree_attrs: String,
+
+    /// Worktree locked status - None for branches, Some("reason") or None for worktrees
+    pub(crate) locked: Option<String>,
+
+    /// Worktree prunable status - None for branches, Some("reason") or None for worktrees
+    pub(crate) prunable: Option<String>,
 
     /// Main branch divergence state
     /// Position 1 - MUTUALLY EXCLUSIVE (enforced by enum)
@@ -522,12 +532,10 @@ pub struct StatusSymbols {
 }
 
 impl StatusSymbols {
-    #[cfg(unix)]
     /// Render symbols with full alignment (all positions)
     ///
-    /// This is used for the display fields in JSON output on Unix builds
-    /// (where the interactive selector is available). Windows builds skip
-    /// this helper, avoiding a dead_code lint from clippy.
+    /// This is used for the display fields in JSON output.
+    /// For table rendering with selective positions, use `render_with_mask()`.
     pub fn render(&self) -> String {
         self.render_with_mask(&PositionMask::FULL)
     }
@@ -583,7 +591,7 @@ impl StatusSymbols {
             String::new()
         };
         let worktree_attrs_str = if !self.worktree_attrs.is_empty() {
-            // Branch indicator (⎇) is informational (dimmed), worktree attrs (⊠⚠) are warnings (yellow)
+            // Branch indicator (⎇) is informational (dimmed), worktree attrs (⌫⊠) are warnings (yellow)
             if self.worktree_attrs == "⎇" {
                 format!("{HINT}{}{HINT:#}", self.worktree_attrs)
             } else {
@@ -708,11 +716,20 @@ impl WorkingTreeChanges {
     }
 }
 
+/// Worktree attributes in status (locked/prunable info)
+#[derive(Debug, Clone, serde::Serialize)]
+struct WorktreeAttrsStatus {
+    locked: Option<String>,
+    prunable: Option<String>,
+}
+
 /// Status variant names (for queryability)
 #[derive(Debug, Clone, serde::Serialize)]
 struct StatusValues {
     branch_state: &'static str,
     git_operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree_attrs: Option<WorktreeAttrsStatus>,
     main_divergence: &'static str,
     upstream_divergence: &'static str,
     working_tree: WorkingTreeChanges,
@@ -725,6 +742,7 @@ struct StatusValues {
 struct StatusSymbolsOnly {
     branch_state: String,
     git_operation: String,
+    worktree_attrs: String,
     main_divergence: String,
     upstream_divergence: String,
     working_tree: String,
@@ -769,9 +787,20 @@ impl serde::Serialize for StatusSymbols {
             UpstreamDivergence::Diverged => "Diverged",
         };
 
+        // Create worktree_attrs status if this is a worktree (has locked/prunable)
+        let worktree_attrs_status = if self.locked.is_some() || self.prunable.is_some() {
+            Some(WorktreeAttrsStatus {
+                locked: self.locked.clone(),
+                prunable: self.prunable.clone(),
+            })
+        } else {
+            None
+        };
+
         let status_values = StatusValues {
             branch_state: branch_state_variant,
             git_operation: git_operation_variant,
+            worktree_attrs: worktree_attrs_status,
             main_divergence: main_divergence_variant,
             upstream_divergence: upstream_divergence_variant,
             working_tree: WorkingTreeChanges::from_symbols(&self.working_tree),
@@ -781,6 +810,7 @@ impl serde::Serialize for StatusSymbols {
         let status_symbols = StatusSymbolsOnly {
             branch_state: self.branch_state.to_string(),
             git_operation: self.git_operation.to_string(),
+            worktree_attrs: self.worktree_attrs.clone(),
             main_divergence: self.main_divergence.to_string(),
             upstream_divergence: self.upstream_divergence.to_string(),
             working_tree: self.working_tree.clone(),

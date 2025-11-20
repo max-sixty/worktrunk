@@ -773,7 +773,11 @@ impl Repository {
 
     /// Get all branch names (local branches only).
     pub fn all_branches(&self) -> Result<Vec<String>, GitError> {
-        let stdout = self.run_command(&["branch", "--format=%(refname:short)"])?;
+        let stdout = self.run_command(&[
+            "branch",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+        ])?;
         Ok(stdout
             .lines()
             .map(|s| s.trim())

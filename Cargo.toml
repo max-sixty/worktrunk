@@ -60,6 +60,7 @@ strip-ansi-escapes = "0.2"
 strum = { version = "0.27", features = ["derive"] }
 synoptic = "2"
 terminal_size = "0.4"
+termimad = "0.34"
 toml = { version = "0.9", features = ["preserve_order"] }
 # All three crates must use the same version series to avoid native library conflicts
 # These are optional dependencies controlled by the "syntax-highlighting" feature.

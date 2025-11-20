@@ -16,7 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpQuUWBO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp82oCWF/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -31,34 +31,31 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "status_symbols": {
-      "status": {
-        "branch_state": "",
-        "git_operation": "",
-        "main_divergence": "",
-        "upstream_divergence": "",
-        "working_tree": {
-          "untracked": false,
-          "modified": false,
-          "staged": false,
-          "renamed": false,
-          "deleted": false
-        }
-      },
-      "status_symbols": {
-        "branch_state": "",
-        "git_operation": "",
-        "main_divergence": "",
-        "upstream_divergence": "",
-        "working_tree": ""
+    "status": {
+      "branch_state": "",
+      "git_operation": "",
+      "main_divergence": "",
+      "upstream_divergence": "",
+      "working_tree": {
+        "untracked": false,
+        "modified": false,
+        "staged": false,
+        "renamed": false,
+        "deleted": false
       }
+    },
+    "status_symbols": {
+      "branch_state": "",
+      "git_operation": "",
+      "worktree_attrs": "",
+      "main_divergence": "",
+      "upstream_divergence": "",
+      "working_tree": ""
     },
     "type": "worktree",
     "path": "[REPO]",
     "bare": false,
     "detached": false,
-    "locked": null,
-    "prunable": null,
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
@@ -85,36 +82,33 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "status_symbols": {
-      "status": {
-        "branch_state": "MatchesMain",
-        "git_operation": "",
-        "main_divergence": "",
-        "upstream_divergence": "",
-        "working_tree": {
-          "untracked": false,
-          "modified": false,
-          "staged": false,
-          "renamed": false,
-          "deleted": false
-        },
-        "user_status": "🔧"
+    "status": {
+      "branch_state": "MatchesMain",
+      "git_operation": "",
+      "main_divergence": "",
+      "upstream_divergence": "",
+      "working_tree": {
+        "untracked": false,
+        "modified": false,
+        "staged": false,
+        "renamed": false,
+        "deleted": false
       },
-      "status_symbols": {
-        "branch_state": "≡",
-        "git_operation": "",
-        "main_divergence": "",
-        "upstream_divergence": "",
-        "working_tree": "",
-        "user_status": "🔧"
-      }
+      "user_status": "🔧"
+    },
+    "status_symbols": {
+      "branch_state": "≡",
+      "git_operation": "",
+      "worktree_attrs": "",
+      "main_divergence": "",
+      "upstream_divergence": "",
+      "working_tree": "",
+      "user_status": "🔧"
     },
     "type": "worktree",
     "path": "[WORKTREE_WITH_STATUS]",
     "bare": false,
     "detached": false,
-    "locked": null,
-    "prunable": null,
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
@@ -141,34 +135,31 @@ exit_code: 0
     "upstream_ahead": 0,
     "upstream_behind": 0,
     "pr_status": null,
-    "status_symbols": {
-      "status": {
-        "branch_state": "MatchesMain",
-        "git_operation": "",
-        "main_divergence": "",
-        "upstream_divergence": "",
-        "working_tree": {
-          "untracked": false,
-          "modified": false,
-          "staged": false,
-          "renamed": false,
-          "deleted": false
-        }
-      },
-      "status_symbols": {
-        "branch_state": "≡",
-        "git_operation": "",
-        "main_divergence": "",
-        "upstream_divergence": "",
-        "working_tree": ""
+    "status": {
+      "branch_state": "MatchesMain",
+      "git_operation": "",
+      "main_divergence": "",
+      "upstream_divergence": "",
+      "working_tree": {
+        "untracked": false,
+        "modified": false,
+        "staged": false,
+        "renamed": false,
+        "deleted": false
       }
+    },
+    "status_symbols": {
+      "branch_state": "≡",
+      "git_operation": "",
+      "worktree_attrs": "",
+      "main_divergence": "",
+      "upstream_divergence": "",
+      "working_tree": ""
     },
     "type": "worktree",
     "path": "[WORKTREE_WITHOUT_STATUS]",
     "bare": false,
     "detached": false,
-    "locked": null,
-    "prunable": null,
     "working_tree_diff": {
       "added": 0,
       "deleted": 0

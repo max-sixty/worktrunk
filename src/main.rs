@@ -10,7 +10,9 @@ mod commands;
 mod completion;
 mod display;
 mod help_pager;
+mod help_resolver;
 mod llm;
+mod md_help;
 mod output;
 
 pub use crate::cli::OutputFormat;
@@ -32,20 +34,29 @@ use cli::{Cli, Commands, ConfigCommand, StandaloneCommand, StatusAction};
 
 /// Try to handle --help flag with pager before clap processes it
 fn maybe_handle_help_with_pager() -> bool {
+    use clap::ColorChoice;
     use clap::error::ErrorKind;
 
     let mut cmd = Cli::command();
+    cmd = cmd.color(ColorChoice::Always); // Force clap to always emit ANSI codes
+
+    // DON'T render markdown yet - let clap generate help first
+
     match cmd.try_get_matches_from_mut(std::env::args()) {
         Ok(_) => false, // Normal args, not help
         Err(err) => {
             match err.kind() {
                 ErrorKind::DisplayHelp => {
-                    // Handle help with pager
-                    let help_text = err.to_string();
-                    if let Err(e) = help_pager::show_help_in_pager(&help_text) {
-                        // Pager failed, show help directly
+                    // Re-resolve which subcommand's help user asked for
+                    let target = help_resolver::resolve_target_command(&mut cmd, std::env::args());
+                    let mut help = target.render_long_help().to_string(); // StyledStr -> string (contains raw markdown)
+
+                    // NOW render markdown sections to ANSI
+                    help = md_help::render_markdown_in_help(&help);
+
+                    if let Err(e) = help_pager::show_help_in_pager(&help) {
                         log::debug!("Pager invocation failed: {}", e);
-                        println!("{}", err);
+                        eprintln!("{}", help);
                     }
                     process::exit(0);
                 }
@@ -65,6 +76,9 @@ fn maybe_handle_help_with_pager() -> bool {
 }
 
 fn main() {
+    // Tell crossterm to always emit ANSI sequences
+    termimad::crossterm::style::force_color_output(true);
+
     if completion::maybe_handle_env_completion() {
         return;
     }
