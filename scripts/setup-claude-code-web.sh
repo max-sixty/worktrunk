@@ -1,11 +1,28 @@
 #!/bin/bash
-# Worktrunk Development Environment Setup Script
-# This script prepares the development environment for working on worktrunk in Claude Code web
+###############################################################################
+# Claude Code Web - Environment Setup Script
+###############################################################################
+#
+# This script sets up the development environment for working on worktrunk
+# in Claude Code web sessions.
+#
+# What it does:
+# - Verifies Rust toolchain
+# - Builds the project
+# - Runs unit tests
+# - Installs required shells (zsh, fish) on Debian/Ubuntu
+# - Runs integration tests
+# - Reports environment status
+#
+# Usage:
+#   ./scripts/setup-claude-code-web.sh
+#
+###############################################################################
 
 set -e  # Exit on error
 
 echo "========================================"
-echo "Worktrunk Environment Setup"
+echo "Claude Code Web - Worktrunk Setup"
 echo "========================================"
 echo ""
 
