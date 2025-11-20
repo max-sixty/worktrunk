@@ -3,13 +3,13 @@ source: tests/integration_tests/approval_pty.rs
 expression: normalized
 ---
 n
-
 🟡 [33m[1m[33mtest-repo[0m[33m needs approval to execute [1m[33m1[0m[33m command:[0m
 
 🔄 post-create:
 [40m [0m  [1m[34mecho[0m [32m'test command'[0m[0m
 
 💡 Allow and remember? [1m[y/N][0m 
+
 ⚪ Commands declined, continuing worktree creation
 ✅ [32mCreated new worktree for [1m[32mtest-decline[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO]/test-repo.test-decline[0m[0m
 💡 [2mTo enable automatic cd, run: wt config shell[0m
