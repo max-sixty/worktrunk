@@ -91,7 +91,7 @@ everything — standard `git worktree` commands continue working fine.
 
 ### LLM-Authored Commit Messages
 
-Worktrunk can invoke an external commands during merge operations to generate
+Worktrunk can invoke external commands during merge operations to generate
 commit messages. Simon Willison's [llm](https://llm.datasette.io/) tool reads
 the diff and a configurable prompt, then returns a formatted commit message.
 
@@ -831,9 +831,7 @@ The custom emoji appears directly after the git status symbols.
 
 Claude Code can automatically set/clear emoji status when coding sessions start and end. This shows which branches have active AI sessions.
 
-**Easy setup:** The Worktrunk repository includes a `.claude-plugin` directory with pre-configured hooks. When working in this repository, the hooks are automatically available.
-
-**Manual setup for other repositories:** Copy the hooks from [`.claude-plugin/hooks/hooks.json`](.claude-plugin/hooks/hooks.json) to `~/.claude/settings.json`.
+**Easy setup:** The Worktrunk repository includes a `.claude-plugin` directory with pre-configured hooks.
 
 When using Claude:
 
@@ -841,7 +839,7 @@ When using Claude:
 - Changes to `💬` when Claude needs input (waiting for permission or idle)
 - Clears the status completely when the session ends
 
-**Status from other terminal:**
+**Status from another terminal:**
 
 <!-- Output from: tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
 
@@ -862,7 +860,6 @@ dirty-with-status  ≡?🤖                  ./dirty-with-status           b8346
 - Status is stored as `worktrunk.status.<branch>` in `.git/config`
 - Each branch can have its own status emoji
 - The hooks automatically detect the current branch and set/clear its status
-- Status is shared across all worktrees on the same branch (by design)
 - Works with any git repository, no special configuration needed
 
 </details>
