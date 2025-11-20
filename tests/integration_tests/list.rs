@@ -1749,8 +1749,16 @@ fn test_list_maximum_status_symbols() {
         .unwrap();
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
-    // Use --full to enable conflict detection
-    let settings = list_snapshots::standard_settings(&repo);
+    //
+    // Note: Git's ahead/behind calculation for clone-based remotes is platform-dependent:
+    // - Ubuntu: reports behind=0, shows ⇡ (ahead only)
+    // - macOS: reports behind=1, shows ⇅ (diverged)
+    // We normalize the flaky upstream divergence symbol and behind count to accept either.
+    let mut settings = list_snapshots::standard_settings(&repo);
+    // Normalize upstream divergence: accept both ⇡ (ahead) and ⇅ (diverged)
+    settings.add_filter(r"↕[⇡⇅]⊠", "↕[UPSTREAM]⊠");
+    // Normalize remote behind count: accept both ↓0 and ↓1
+    settings.add_filter(r"↓[01]", "↓[N]");
     settings.bind(|| {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
