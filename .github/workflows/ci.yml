@@ -179,6 +179,12 @@ jobs:
     - name: 📂 Checkout code
       uses: actions/checkout@v5
 
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: msrv-${{ hashFiles('Cargo.lock') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
     - uses: baptiste0928/cargo-install@v3
       with:
         crate: cargo-msrv
@@ -197,6 +203,12 @@ jobs:
 
     # cargo-udeps requires nightly; update date periodically
     - run: rustup override set nightly-2025-11-10
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: udeps-${{ hashFiles('Cargo.lock') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - uses: baptiste0928/cargo-install@v3
       with:
