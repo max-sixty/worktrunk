@@ -85,27 +85,28 @@ branch workflows)
 
 [38;5;10mSTATUS SYMBOLS[39m
 
-Order: =≠ ≡∅ ↻⋈ ⎇⌫⊠ ↑↓ ⇡⇣ ?!+»✘
+Order: ?!+»✘ =≠≡∅ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠
 
-- [2m·[0m Branch without worktree (no working directory to check)
+- [36m?[0m Untracked files present
+- [36m![0m Modified files (unstaged changes)
+- [36m+[0m Staged files (ready to commit)
+- [36m»[0m Renamed files
+- [36m✘[0m Deleted files
 - [31m=[0m Merge conflicts (unmerged paths in working tree)
 - [33m≠[0m Potential conflicts with main (--full only, detected via git merge-tree)
 - [2m≡[0m Working tree matches main (identical contents, regardless of commit history)
 - [2m∅[0m No commits (no commits ahead AND no uncommitted changes)
 - [33m↻[0m Rebase in progress
 - [33m⋈[0m Merge in progress
+- ↑ Ahead of main branch
+- ↓ Behind main branch
+- ↕ Diverged (both ahead and behind main)
+- ⇡ Ahead of remote tracking branch
+- ⇣ Behind remote tracking branch
+- ⇅ Diverged (both ahead and behind remote)
 - ⎇ Branch indicator (shown for branches without worktrees)
 - ⌫ Prunable worktree (directory missing, can be pruned)
 - [33m⊠[0m Locked worktree (protected from auto-removal)
-- ↑ Ahead of main branch
-- ↓ Behind main branch
-- ⇡ Ahead of remote tracking branch
-- ⇣ Behind remote tracking branch
-- [36m?[0m Untracked files present
-- [36m![0m Modified files (unstaged changes)
-- [36m+[0m Staged files (ready to commit)
-- [36m»[0m Renamed files
-- [36m✘[0m Deleted files
 
 Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).
 
