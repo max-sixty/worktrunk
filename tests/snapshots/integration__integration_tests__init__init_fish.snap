@@ -19,7 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpFcnCHf/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpmxQ2Xu/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -192,7 +192,7 @@ complete -c wt -n "__fish_wt_needs_command" -s v -l verbose -d 'Show commands an
 complete -c wt -n "__fish_wt_needs_command" -s h -l help -d 'Print help'
 complete -c wt -n "__fish_wt_needs_command" -s V -l version -d 'Print version'
 complete -c wt -n "__fish_wt_needs_command" -f -a "init" -d 'Generate shell integration code'
-complete -c wt -n "__fish_wt_needs_command" -f -a "config" -d 'Manage configuration. For AI commit setup, run: `wt config --help` (see \'LLM SETUP GUIDE\').'
+complete -c wt -n "__fish_wt_needs_command" -f -a "config" -d 'Manage configuration'
 complete -c wt -n "__fish_wt_needs_command" -f -a "beta" -d 'Development and testing utilities'
 complete -c wt -n "__fish_wt_needs_command" -f -a "list" -d 'List worktrees and optionally branches'
 complete -c wt -n "__fish_wt_needs_command" -f -a "switch" -d 'Switch to a worktree'

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use worktrunk::git::{GitError, GitResultExt, Repository};
+use worktrunk::git::{GitError, Repository};
 
 /// Spawn a detached background process with output redirected to a log file
 ///
@@ -32,14 +32,18 @@ pub fn spawn_detached(
 
     // Create log directory in the common git directory
     let log_dir = git_common_dir.join("wt-logs");
-    fs::create_dir_all(&log_dir).git_context("Failed to create log directory")?;
+    fs::create_dir_all(&log_dir)
+        .map_err(|e| GitError::CommandFailed(format!("Failed to create log directory\n   {e}")))?;
 
     // Generate log filename (no timestamp - overwrites on each run)
     // Format: {branch}-{name}.log (e.g., "feature-post-start-npm.log", "bugfix-remove.log")
-    let log_path = log_dir.join(format!("{}-{}.log", branch, name));
+    // Sanitize branch name: replace '/' with '-' to avoid creating subdirectories
+    let safe_branch = branch.replace('/', "-");
+    let log_path = log_dir.join(format!("{}-{}.log", safe_branch, name));
 
     // Create log file
-    let log_file = fs::File::create(&log_path).git_context("Failed to create log file")?;
+    let log_file = fs::File::create(&log_path)
+        .map_err(|e| GitError::CommandFailed(format!("Failed to create log file\n   {e}")))?;
 
     #[cfg(unix)]
     {
@@ -80,12 +84,14 @@ fn spawn_detached_unix(
         })?))
         .stderr(Stdio::from(log_file))
         .spawn()
-        .git_context("Failed to spawn detached process")?;
+        .map_err(|e| {
+            GitError::CommandFailed(format!("Failed to spawn detached process\n   {e}"))
+        })?;
 
     // Wait for the outer shell to exit (immediate, doesn't block on background command)
-    child
-        .wait()
-        .git_context("Failed to wait for detachment shell")?;
+    child.wait().map_err(|e| {
+        GitError::CommandFailed(format!("Failed to wait for detachment shell\n   {e}"))
+    })?;
 
     Ok(())
 }
@@ -113,7 +119,9 @@ fn spawn_detached_windows(
         .stderr(Stdio::from(log_file))
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()
-        .git_context("Failed to spawn detached process")?;
+        .map_err(|e| {
+            GitError::CommandFailed(format!("Failed to spawn detached process\n   {e}"))
+        })?;
 
     Ok(())
 }

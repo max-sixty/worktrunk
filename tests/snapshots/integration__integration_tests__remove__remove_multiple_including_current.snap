@@ -12,8 +12,11 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_COUNT: "1"
     GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_CONFIG_VALUE_0: "false"
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
@@ -23,8 +26,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mRemoving [1m[36mfeature-b[0m[36m & branch in background[0m
-🔄 [36mRemoving [1m[36mfeature-c[0m[36m & branch in background[0m
-🔄 [36mRemoving [1m[36mfeature-a[0m[36m & branch in background[0m
+🔄 [36mRemoving [1m[36mfeature-b[0m[36m worktree & branch in background[0m
+🔄 [36mRemoving [1m[36mfeature-c[0m[36m worktree & branch in background[0m
+🔄 [36mRemoving [1m[36mfeature-a[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
