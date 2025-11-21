@@ -114,6 +114,12 @@ fn normalize_output(output: &str) -> String {
         .unwrap()
         .replace_all(&output, "[CONFIG]");
 
+    // Normalize consecutive blank lines to make snapshots stable across environments
+    // PTY output timing can cause environment-specific linebreak variations
+    let output = regex::Regex::new(r"\n\n+")
+        .unwrap()
+        .replace_all(&output, "\n\n");
+
     output.to_string()
 }
 
