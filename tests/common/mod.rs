@@ -199,7 +199,10 @@ impl TestRepo {
             ("SOURCE_DATE_EPOCH".to_string(), "1761609600".to_string()),
             // Disable git advice hints for stable output across versions
             ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
-            ("GIT_CONFIG_KEY_0".to_string(), "advice.mergeConflict".to_string()),
+            (
+                "GIT_CONFIG_KEY_0".to_string(),
+                "advice.mergeConflict".to_string(),
+            ),
             ("GIT_CONFIG_VALUE_0".to_string(), "false".to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
