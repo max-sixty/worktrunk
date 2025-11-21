@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEMO_DIR="$SCRIPT_DIR/wt-demo"
 OUT_DIR="$DEMO_DIR/out"
+DEMO_ROOT="$OUT_DIR/.demo"
 DEMO_HOME="${DEMO_HOME:-$DEMO_ROOT}"
 LOG="$OUT_DIR/record.log"
 TAPE_TEMPLATE="$DEMO_DIR/demo.tape"
@@ -112,6 +113,8 @@ prepare_repo() {
 name = "acme"
 version = "0.1.0"
 edition = "2021"
+
+[workspace]
 CARGO
   cat >"$DEMO_REPO/rust-toolchain.toml" <<'TOOLCHAIN'
 [toolchain]
@@ -194,7 +197,22 @@ if [[ "$1" == "pr" && "$2" == "list" ]]; then
 fi
 
 if [[ "$1" == "run" && "$2" == "list" ]]; then
-  echo '[]'
+  branch=""
+  for arg in "$@"; do
+    if [[ "$prev" == "--branch" ]]; then
+      branch="$arg"
+    fi
+    prev="$arg"
+  done
+
+  case "$branch" in
+    main)
+      echo '[{"status":"completed","conclusion":"success","headSha":"abc123"}]'
+      ;;
+    *)
+      echo '[]'
+      ;;
+  esac
   exit 0
 fi
 
@@ -218,36 +236,136 @@ TOML
   git -C "$DEMO_REPO" branch docs/readme
   git -C "$DEMO_REPO" branch spike/search
 
-  create_branch_and_worktree feature/alpha "notes: alpha" "- Added alpha note"
-  create_branch_and_worktree feature/beta "notes: beta" "- Added beta note"
-  create_branch_and_worktree feature/hooks "hooks: demo" "- Added hooks demo"
+  create_branch_alpha
+  create_branch_beta
+
+  # Add commit to main after beta, so beta is behind
+  echo "# Development" >>"$DEMO_REPO/README.md"
+  echo "See CONTRIBUTING.md for guidelines." >>"$DEMO_REPO/README.md"
+  git -C "$DEMO_REPO" add README.md
+  SKIP_DEMO_HOOK=1 git -C "$DEMO_REPO" commit -qm "docs: add development section"
+  git -C "$DEMO_REPO" push -q
+
+  create_branch_hooks
 }
 
-create_branch_and_worktree() {
-  local branch="$1" label="$2" line="$3"
+create_branch_alpha() {
+  local branch="feature/alpha"
   local path="$DEMO_WORK_BASE/acme.${branch//\//-}"
   git -C "$DEMO_REPO" checkout -q -b "$branch" main
-  printf "%s\n" "$line" >>"$DEMO_REPO/notes.txt"
-  git -C "$DEMO_REPO" add notes.txt
-  SKIP_DEMO_HOOK=1 git -C "$DEMO_REPO" commit -qm "$label"
+  # Modify README: expand significantly (+12, -1)
+  cat >"$DEMO_REPO/README.md" <<'MD'
+# Worktrunk demo
+
+A demo repository for showcasing worktrunk features.
+
+## Features
+
+- Fast worktree switching
+- Integrated merge workflow
+- Pre-merge test hooks
+- LLM-generated commit messages
+
+## Getting Started
+
+Run `wt list` to see all worktrees.
+MD
+  git -C "$DEMO_REPO" add README.md
+  SKIP_DEMO_HOOK=1 git -C "$DEMO_REPO" commit -qm "docs: expand README"
+  # Add more commits to vary main↕
+  echo "# Contributing" >>"$DEMO_REPO/README.md"
+  echo "PRs welcome!" >>"$DEMO_REPO/README.md"
+  git -C "$DEMO_REPO" add README.md
+  SKIP_DEMO_HOOK=1 git -C "$DEMO_REPO" commit -qm "docs: add contributing section"
+  echo "" >>"$DEMO_REPO/README.md"
+  echo "# License" >>"$DEMO_REPO/README.md"
+  echo "MIT" >>"$DEMO_REPO/README.md"
+  git -C "$DEMO_REPO" add README.md
+  SKIP_DEMO_HOOK=1 git -C "$DEMO_REPO" commit -qm "docs: add license"
   git -C "$DEMO_REPO" push -u origin "$branch" -q
   git -C "$DEMO_REPO" checkout -q main
   git -C "$DEMO_REPO" worktree add -q "$path" "$branch"
+  # Add unpushed commit (shows ⇡ in Status)
+  echo "# FAQ" >>"$path/README.md"
+  git -C "$path" add README.md
+  git -C "$path" commit -qm "docs: add FAQ section"
+  # Significant working tree changes
+  # Modified file (!)
+  cat >"$path/README.md" <<'MD'
+# Worktrunk demo
 
-  # Add varied states for list output
-  case "$branch" in
-    feature/alpha)
-      echo "// alpha scratch" >"$path/scratch_alpha.rs"               # untracked
-      ;;
-    feature/beta)
-      echo "- beta staged addition" >>"$path/notes.txt"
-      git -C "$path" add notes.txt                                   # staged
-      ;;
-    feature/hooks)
-      echo "- hook tweak" >>"$path/notes.txt"
-      git -C "$path" add notes.txt && git -C "$path" commit -qm "hook tweak"  # clean after commit, shows history
-      ;;
-  esac
+A powerful demo for worktrunk.
+
+## Quick Start
+
+1. Clone the repo
+2. Run `wt list`
+3. Switch worktrees with `wt switch`
+
+## Commands
+
+- `wt list` - Show worktrees
+- `wt switch` - Switch worktree
+- `wt merge` - Merge and cleanup
+MD
+  # Untracked file (?)
+  echo "// scratch" >"$path/scratch.rs"
+}
+
+create_branch_beta() {
+  local branch="feature/beta"
+  local path="$DEMO_WORK_BASE/acme.${branch//\//-}"
+  git -C "$DEMO_REPO" checkout -q -b "$branch" main
+  # No commits - same as main (↑0)
+  git -C "$DEMO_REPO" push -u origin "$branch" -q
+  git -C "$DEMO_REPO" checkout -q main
+  git -C "$DEMO_REPO" worktree add -q "$path" "$branch"
+  # Staged new file (+)
+  echo "# TODO" >"$path/notes.txt"
+  echo "- Add caching" >>"$path/notes.txt"
+  git -C "$path" add notes.txt
+}
+
+create_branch_hooks() {
+  local branch="feature/hooks"
+  local path="$DEMO_WORK_BASE/acme.${branch//\//-}"
+  git -C "$DEMO_REPO" checkout -q -b "$branch" main
+  # Refactor lib.rs: add multiply/subtract, remove both old tests (+12, -8)
+  cat >"$DEMO_REPO/src/lib.rs" <<'RUST'
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+pub fn subtract(a: i32, b: i32) -> i32 {
+    a - b
+}
+
+pub fn multiply(a: i32, b: i32) -> i32 {
+    a * b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_operations() {
+        assert_eq!(add(2, 3), 5);
+        assert_eq!(subtract(5, 3), 2);
+        assert_eq!(multiply(3, 4), 12);
+    }
+}
+RUST
+  git -C "$DEMO_REPO" add src/lib.rs
+  SKIP_DEMO_HOOK=1 git -C "$DEMO_REPO" commit -qm "feat: add math operations, consolidate tests"
+  # No push - this branch has no upstream
+  git -C "$DEMO_REPO" checkout -q main
+  git -C "$DEMO_REPO" worktree add -q "$path" "$branch"
+  # Staged change (+)
+  echo "// Division coming soon" >>"$path/src/lib.rs"
+  git -C "$path" add src/lib.rs
+  # Modified file (!) - modify again after staging
+  echo "// TODO: add division" >>"$path/src/lib.rs"
 }
 
 render_tape() {
@@ -264,7 +382,12 @@ record_text() {
   mkdir -p "$OUT_DIR"
   DEMO_RAW="$OUT_DIR/run.raw.txt"
   local real_home="$HOME"
-  env DEMO_REPO="$DEMO_REPO" RAW_PATH="$DEMO_RAW" bash -lc '
+
+  # Extract commands from demo.tape
+  local commands
+  commands=$(grep -E '^Type ' "$TAPE_TEMPLATE" | sed 's/^Type //' | tr -d '"' | tr -d "'")
+
+  env DEMO_REPO="$DEMO_REPO" RAW_PATH="$DEMO_RAW" COMMANDS="$commands" bash -lc '
     set -o pipefail
     export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
     export RUSTUP_HOME="'"$real_home"'/.rustup"
@@ -281,11 +404,13 @@ record_text() {
     eval "$(wt config shell init bash)" >/dev/null 2>&1
     cd "$DEMO_REPO"
     {
-      wt list --branches --full
-      wt switch --create feature/reports
-      echo "- Q4 report ready" >> notes.md
-      wt merge
-      wt list --branches --full
+      while IFS= read -r cmd; do
+        # Skip setup commands and exit
+        case "$cmd" in
+          "export "*|"eval "*|"cd "*|"clear"|"exit") continue ;;
+        esac
+        eval "$cmd"
+      done <<< "$COMMANDS"
     } >"$RAW_PATH" 2>&1
   '
   RAW_PATH="$DEMO_RAW" OUT_DIR="$OUT_DIR" python3 - <<'PY'
