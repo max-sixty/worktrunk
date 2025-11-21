@@ -294,7 +294,9 @@ pub enum StandaloneCommand {
 
     /// Squash commits with LLM-generated message
     Squash {
-        /// Target branch (defaults to default branch)
+        /// Target branch
+        ///
+        /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
@@ -312,7 +314,9 @@ pub enum StandaloneCommand {
     /// Automatically stashes non-conflicting edits in the target worktree before
     /// the push and restores them afterward so other agents' changes stay intact.
     Push {
-        /// Target branch (defaults to default branch)
+        /// Target branch
+        ///
+        /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
@@ -323,7 +327,9 @@ pub enum StandaloneCommand {
 
     /// Rebase onto target
     Rebase {
-        /// Target branch (defaults to default branch)
+        /// Target branch
+        ///
+        /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
     },
@@ -485,7 +491,7 @@ Note: `locked` and `prunable` are top-level fields on worktree objects, not in s
         #[arg(long)]
         branches: bool,
 
-        /// Include remote branches from primary remote
+        /// Include primary remote branches
         #[arg(long)]
         remotes: bool,
 
@@ -584,11 +590,13 @@ wt remove @                              # Remove current worktree
         #[arg(short = 'c', long)]
         create: bool,
 
-        /// Base branch (defaults to default branch)
+        /// Base branch
+        ///
+        /// Defaults to default branch.
         #[arg(short = 'b', long, add = crate::completion::branch_value_completer())]
         base: Option<String>,
 
-        /// Execute command after switching
+        /// Command to run after switch
         #[arg(short = 'x', long)]
         execute: Option<String>,
 
@@ -710,7 +718,9 @@ Skip all hooks:
 wt merge --no-verify
 ```"#)]
     Merge {
-        /// Target branch (defaults to default branch)
+        /// Target branch
+        ///
+        /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 

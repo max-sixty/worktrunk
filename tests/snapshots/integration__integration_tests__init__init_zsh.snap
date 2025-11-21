@@ -12,13 +12,13 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpWiQOW2/test-gitconfig
+    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpm9QNFk/test-gitconfig
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpWiQOW2/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpm9QNFk/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -445,9 +445,9 @@ _arguments "${_arguments_options[@]}" : \
 '--no-verify[Skip pre-commit hooks]' \
 '-v[Show commands and debug info]' \
 '--verbose[Show commands and debug info]' \
-'-h[Print help]' \
-'--help[Print help]' \
-'::target -- Target branch (defaults to default branch):_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::target -- Target branch:_default' \
 && ret=0
 ;;
 (push)
@@ -459,7 +459,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Show commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'::target -- Target branch (defaults to default branch):_default' \
+'::target -- Target branch:_default' \
 && ret=0
 ;;
 (rebase)
@@ -468,9 +468,9 @@ _arguments "${_arguments_options[@]}" : \
 '--config=[User config file path]:path:_files' \
 '-v[Show commands and debug info]' \
 '--verbose[Show commands and debug info]' \
-'-h[Print help]' \
-'--help[Print help]' \
-'::target -- Target branch (defaults to default branch):_default' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::target -- Target branch:_default' \
 && ret=0
 ;;
 (select)
@@ -494,7 +494,7 @@ json\:"JSON output"))' \
 '-C+[Change working directory]:path:_files' \
 '--config=[User config file path]:path:_files' \
 '--branches[Include branches without worktrees]' \
-'--remotes[Include remote branches from primary remote]' \
+'--remotes[Include primary remote branches]' \
 '--full[Show CI, conflicts, diffs]' \
 '--progressive[Force progressive (or --no-progressive)]' \
 '--no-progressive[Force buffered rendering]' \
@@ -506,10 +506,10 @@ json\:"JSON output"))' \
 ;;
 (switch)
 _arguments "${_arguments_options[@]}" : \
-'-b+[Base branch (defaults to default branch)]:BASE:_default' \
-'--base=[Base branch (defaults to default branch)]:BASE:_default' \
-'-x+[Execute command after switching]:EXECUTE:_default' \
-'--execute=[Execute command after switching]:EXECUTE:_default' \
+'-b+[Base branch]:BASE:_default' \
+'--base=[Base branch]:BASE:_default' \
+'-x+[Command to run after switch]:EXECUTE:_default' \
+'--execute=[Command to run after switch]:EXECUTE:_default' \
 '-C+[Change working directory]:path:_files' \
 '--config=[User config file path]:path:_files' \
 '-c[Create a new branch]' \
@@ -554,7 +554,7 @@ _arguments "${_arguments_options[@]}" : \
 '--verbose[Show commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'::target -- Target branch (defaults to default branch):_default' \
+'::target -- Target branch:_default' \
 && ret=0
 ;;
         esac

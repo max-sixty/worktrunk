@@ -21,10 +21,12 @@ Options:
       Create a new branch
 
   -b, --base <BASE>
-      Base branch (defaults to default branch)
+      Base branch                
+                                 
+      Defaults to default branch.
 
   -x, --execute <EXECUTE>
-      Execute command after switching
+      Command to run after switch
 
   -f, --force
       Skip approval prompts
