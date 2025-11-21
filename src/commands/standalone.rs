@@ -256,10 +256,16 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<bool> {
         return Ok(false);
     }
 
-    // Rebase onto target
-    crate::output::progress(format!(
-        "{CYAN}Rebasing onto {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}{CYAN}...{CYAN:#}"
-    ))?;
+    // Check if this is a fast-forward or true rebase
+    let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
+    let is_fast_forward = merge_base == head_sha;
+
+    // Only show progress for true rebases (fast-forwards are instant)
+    if !is_fast_forward {
+        crate::output::progress(format!(
+            "{CYAN}Rebasing onto {CYAN_BOLD}{target_branch}{CYAN_BOLD:#}{CYAN}...{CYAN:#}"
+        ))?;
+    }
 
     let rebase_result = repo.run_command(&["rebase", &target_branch]);
 
@@ -287,9 +293,15 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<bool> {
 
     // Success
     use worktrunk::styling::GREEN;
-    crate::output::success(format!(
-        "{GREEN}Rebased onto {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN:#}"
-    ))?;
+    if is_fast_forward {
+        crate::output::success(format!(
+            "{GREEN}Fast-forwarded to {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN:#}"
+        ))?;
+    } else {
+        crate::output::success(format!(
+            "{GREEN}Rebased onto {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN:#}"
+        ))?;
+    }
 
     Ok(true)
 }

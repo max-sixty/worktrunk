@@ -2507,6 +2507,97 @@ fn test_merge_no_commits_with_changes() {
 }
 
 #[test]
+fn test_merge_rebase_fast_forward() {
+    // Test fast-forward case: branch has no commits, main moved ahead
+    // Should show "Fast-forwarded to main" without progress message
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create a feature worktree with NO commits (just branched from main)
+    let feature_wt = repo.add_worktree("fast-forward-test", "fast-forward-test");
+
+    // Advance main with a new commit (in the primary worktree which is on main)
+    fs::write(repo.root_path().join("main-update.txt"), "main content")
+        .expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "main-update.txt"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Update main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to commit");
+
+    // Merge - should fast-forward (no commits to replay)
+    snapshot_merge(
+        "merge_rebase_fast_forward",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}
+
+#[test]
+fn test_merge_rebase_true_rebase() {
+    // Test true rebase case: branch has commits and main moved ahead
+    // Should show "Rebasing onto main..." progress message
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create a feature worktree with a commit
+    let feature_wt = repo.add_worktree("true-rebase-test", "true-rebase-test");
+    fs::write(feature_wt.join("feature.txt"), "feature content").expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Advance main with a new commit (in the primary worktree which is on main)
+    fs::write(repo.root_path().join("main-update.txt"), "main content")
+        .expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "main-update.txt"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Update main"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to commit");
+
+    // Merge - should show rebasing progress (has commits to replay)
+    snapshot_merge(
+        "merge_rebase_true_rebase",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}
+
+#[test]
 fn test_merge_primary_on_different_branch() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
