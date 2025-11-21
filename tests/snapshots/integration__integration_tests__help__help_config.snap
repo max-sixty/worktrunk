@@ -8,14 +8,20 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-wt-config - Manage configuration. For AI commit setup, run: wt config --help 
-(see 'LLM SETUP GUIDE').
+wt-config - Manage configuration
 Usage: wt config [OPTIONS] <COMMAND>
+
+Commands:
+  init           Initialize global configuration file with examples
+  list           List configuration files & locations
+  refresh-cache  Refresh default branch from remote
+  shell          Configure shell integration
+  status         Manage branch status markers
 
 Options:
   -C <path>

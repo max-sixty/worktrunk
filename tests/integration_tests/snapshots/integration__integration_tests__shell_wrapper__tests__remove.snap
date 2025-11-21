@@ -2,4 +2,4 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mRemoving [1m[36mto-remove[0m[36m & branch in background[0m
+🔄 [36mRemoving [1m[36mto-remove[0m[36m worktree & branch in background[0m
