@@ -357,7 +357,7 @@ Displays worktrees in a table format with status information, commit details, an
 
 - **By default:** Shows only worktrees
 - **With `--branches`:** Includes local branches without worktrees
-- **With `--remotes`:** Includes remote branches from origin
+- **With `--remotes`:** Includes remote branches from primary remote
 - **With `--full`:** Adds CI status, conflict detection, and detailed diffs
 - **With `--format=json`:** Outputs structured JSON for scripting
 
@@ -462,7 +462,7 @@ Use `--format=json` for structured data. Each object contains two status maps:
         #[arg(long)]
         branches: bool,
 
-        /// Include remote branches
+        /// Include remote branches from primary remote
         #[arg(long)]
         remotes: bool,
 

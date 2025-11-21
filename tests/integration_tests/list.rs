@@ -36,6 +36,22 @@ fn snapshot_list_with_branches(test_name: &str, repo: &TestRepo) {
     );
 }
 
+fn snapshot_list_with_remotes(test_name: &str, repo: &TestRepo) {
+    run_snapshot(
+        list_snapshots::standard_settings(repo),
+        test_name,
+        list_snapshots::command_remotes(repo),
+    );
+}
+
+fn snapshot_list_with_branches_and_remotes(test_name: &str, repo: &TestRepo) {
+    run_snapshot(
+        list_snapshots::standard_settings(repo),
+        test_name,
+        list_snapshots::command_branches_and_remotes(repo),
+    );
+}
+
 fn snapshot_list_progressive(test_name: &str, repo: &TestRepo) {
     run_snapshot(
         list_snapshots::standard_settings(repo),
@@ -90,6 +106,16 @@ fn create_branch(repo: &TestRepo, branch_name: &str) {
         .current_dir(repo.root_path())
         .output()
         .expect("Failed to create branch");
+}
+
+/// Helper to push a branch to origin (creating a remote branch)
+fn push_branch(repo: &TestRepo, branch_name: &str) {
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["push", "origin", branch_name])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to push branch to origin");
 }
 
 #[test]
@@ -248,6 +274,84 @@ fn test_list_with_branches_flag_only_branches() {
     create_branch(&repo, "branch-gamma");
 
     snapshot_list_with_branches("with_branches_flag_only_branches", &repo);
+}
+
+#[test]
+fn test_list_with_remotes_flag() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create and push some remote branches
+    create_branch(&repo, "remote-feature-1");
+    push_branch(&repo, "remote-feature-1");
+    create_branch(&repo, "remote-feature-2");
+    push_branch(&repo, "remote-feature-2");
+
+    // Delete local branches so they only exist as remotes
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "-D", "remote-feature-1", "remote-feature-2"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to delete local branches");
+
+    snapshot_list_with_remotes("with_remotes_flag", &repo);
+}
+
+#[test]
+fn test_list_with_remotes_and_branches() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create local branches without worktrees
+    create_branch(&repo, "local-branch-1");
+    create_branch(&repo, "local-branch-2");
+
+    // Create and push remote branches
+    create_branch(&repo, "remote-only-1");
+    push_branch(&repo, "remote-only-1");
+    create_branch(&repo, "remote-only-2");
+    push_branch(&repo, "remote-only-2");
+
+    // Delete local copies of remote branches
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "-D", "remote-only-1", "remote-only-2"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to delete local branches");
+
+    snapshot_list_with_branches_and_remotes("with_remotes_and_branches", &repo);
+}
+
+#[test]
+fn test_list_with_remotes_filters_existing_worktrees() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create worktree with a branch
+    repo.add_worktree("feature-with-worktree", "feature-with-worktree");
+
+    // Push the branch so it exists remotely
+    push_branch(&repo, "feature-with-worktree");
+
+    // Create a remote-only branch
+    create_branch(&repo, "remote-only");
+    push_branch(&repo, "remote-only");
+
+    // Delete local copy
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "-D", "remote-only"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to delete local branch");
+
+    // Should show only remote-only, not feature-with-worktree
+    snapshot_list_with_remotes("with_remotes_filters_worktrees", &repo);
 }
 
 #[test]

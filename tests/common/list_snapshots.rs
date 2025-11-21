@@ -79,6 +79,18 @@ pub fn command_progressive_json(repo: &TestRepo) -> Command {
     cmd
 }
 
+pub fn command_remotes(repo: &TestRepo) -> Command {
+    let mut cmd = command(repo, repo.root_path());
+    cmd.arg("--remotes");
+    cmd
+}
+
+pub fn command_branches_and_remotes(repo: &TestRepo) -> Command {
+    let mut cmd = command(repo, repo.root_path());
+    cmd.args(["--branches", "--remotes"]);
+    cmd
+}
+
 pub fn command_no_progressive_json(repo: &TestRepo) -> Command {
     let mut cmd = command(repo, repo.root_path());
     cmd.args(["--no-progressive", "--format=json"]);

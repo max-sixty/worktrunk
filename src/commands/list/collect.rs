@@ -422,7 +422,7 @@ fn get_branches_without_worktrees(
     Ok(branches_without_worktrees)
 }
 
-/// Get remote branches from origin that don't have local worktrees.
+/// Get remote branches from the primary remote that don't have local worktrees.
 ///
 /// Returns (branch_name, commit_sha) pairs for remote branches.
 /// Filters out branches that already have worktrees (whether the worktree is on the
@@ -431,10 +431,14 @@ fn get_remote_branches(
     repo: &Repository,
     worktrees: &[Worktree],
 ) -> Result<Vec<(String, String)>, GitError> {
-    // Get all remote branches from origin
+    // Get all remote branches from primary remote
     let all_remote_branches = repo.list_remote_branches()?;
 
-    // Build a set of branch names that have worktrees (without origin/ prefix)
+    // Get primary remote name for prefix stripping
+    let remote = repo.primary_remote()?;
+    let remote_prefix = format!("{}/", remote);
+
+    // Build a set of branch names that have worktrees
     let worktree_branches: std::collections::HashSet<String> = worktrees
         .iter()
         .filter_map(|wt| wt.branch.clone())
@@ -444,9 +448,9 @@ fn get_remote_branches(
     let remote_branches: Vec<_> = all_remote_branches
         .into_iter()
         .filter(|(remote_branch_name, _)| {
-            // Extract local branch name from "origin/feature" -> "feature"
+            // Extract local branch name from "<remote>/feature" -> "feature"
             let local_name = remote_branch_name
-                .strip_prefix("origin/")
+                .strip_prefix(&remote_prefix)
                 .unwrap_or(remote_branch_name);
             // Include remote branch if local branch doesn't have a worktree
             !worktree_branches.contains(local_name)
@@ -650,7 +654,7 @@ pub fn collect(
             parts.push(format!("{} branches", num_local_branches));
         }
         if show_remotes && num_remote_branches > 0 {
-            parts.push(format!("{} remotes", num_remote_branches));
+            parts.push(format!("{} remote branches", num_remote_branches));
         }
         format!("Showing {}", parts.join(", "))
     } else {
