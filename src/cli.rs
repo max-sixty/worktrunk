@@ -356,7 +356,8 @@ Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
 Displays worktrees in a table format with status information, commit details, and optional branch listings.
 
 - **By default:** Shows only worktrees
-- **With `--branches`:** Includes branches without worktrees
+- **With `--branches`:** Includes local branches without worktrees
+- **With `--remotes`:** Includes remote branches from origin
 - **With `--full`:** Adds CI status, conflict detection, and detailed diffs
 - **With `--format=json`:** Outputs structured JSON for scripting
 
@@ -460,6 +461,10 @@ Use `--format=json` for structured data. Each object contains two status maps:
         /// Include branches without worktrees
         #[arg(long)]
         branches: bool,
+
+        /// Include remote branches
+        #[arg(long)]
+        remotes: bool,
 
         /// Show CI, conflicts, diffs
         ///

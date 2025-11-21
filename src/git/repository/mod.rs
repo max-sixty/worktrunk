@@ -619,6 +619,38 @@ impl Repository {
         Ok(branches)
     }
 
+    /// List remote branches from origin, excluding HEAD.
+    ///
+    /// Returns (branch_name, commit_sha) pairs for remote branches.
+    /// Branch names are in the form "origin/feature", not "feature".
+    pub fn list_remote_branches(&self) -> Result<Vec<(String, String)>, GitError> {
+        let output = self.run_command(&[
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname)",
+            "refs/remotes/origin/",
+        ])?;
+
+        let branches: Vec<(String, String)> = output
+            .lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() == 2 {
+                    let branch_name = parts[0];
+                    // Skip origin/HEAD (symref)
+                    if branch_name != "origin/HEAD" {
+                        Some((branch_name.to_string(), parts[1].to_string()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(branches)
+    }
+
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> Result<LineDiff, GitError> {
         // Limit concurrent diff operations to reduce mmap thrash on pack files

@@ -94,6 +94,7 @@ use worktrunk::git::{GitError, Repository};
 pub fn handle_list(
     format: crate::OutputFormat,
     show_branches: bool,
+    show_remotes: bool,
     show_full: bool,
     render_mode: RenderMode,
 ) -> Result<(), GitError> {
@@ -114,6 +115,7 @@ pub fn handle_list(
     let list_data = collect::collect(
         &repo,
         show_branches,
+        show_remotes,
         show_full,
         fetch_ci,
         check_conflicts,

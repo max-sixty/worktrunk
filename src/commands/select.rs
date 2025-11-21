@@ -250,7 +250,9 @@ pub fn handle_select() -> Result<(), GitError> {
 
     // Gather list data using simplified collection (buffered mode)
     let Some(list_data) = collect::collect(
-        &repo, false, // show_branches (select only shows worktrees, not branches)
+        &repo,
+        false, // show_branches (select only shows worktrees, not branches)
+        false, // show_remotes (select only shows worktrees, not remote branches)
         false, // show_full (no full layout needed)
         false, // fetch_ci (no CI with select command)
         false, // check_conflicts (no conflict checking with select command)

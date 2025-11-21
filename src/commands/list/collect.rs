@@ -422,6 +422,40 @@ fn get_branches_without_worktrees(
     Ok(branches_without_worktrees)
 }
 
+/// Get remote branches from origin that don't have local worktrees.
+///
+/// Returns (branch_name, commit_sha) pairs for remote branches.
+/// Filters out branches that already have worktrees (whether the worktree is on the
+/// local tracking branch or not).
+fn get_remote_branches(
+    repo: &Repository,
+    worktrees: &[Worktree],
+) -> Result<Vec<(String, String)>, GitError> {
+    // Get all remote branches from origin
+    let all_remote_branches = repo.list_remote_branches()?;
+
+    // Build a set of branch names that have worktrees (without origin/ prefix)
+    let worktree_branches: std::collections::HashSet<String> = worktrees
+        .iter()
+        .filter_map(|wt| wt.branch.clone())
+        .collect();
+
+    // Filter to remote branches whose local equivalent doesn't have a worktree
+    let remote_branches: Vec<_> = all_remote_branches
+        .into_iter()
+        .filter(|(remote_branch_name, _)| {
+            // Extract local branch name from "origin/feature" -> "feature"
+            let local_name = remote_branch_name
+                .strip_prefix("origin/")
+                .unwrap_or(remote_branch_name);
+            // Include remote branch if local branch doesn't have a worktree
+            !worktree_branches.contains(local_name)
+        })
+        .collect();
+
+    Ok(remote_branches)
+}
+
 /// Collect worktree data with optional progressive rendering.
 ///
 /// When `show_progress` is true, renders a skeleton immediately and updates as data arrives.
@@ -431,6 +465,7 @@ fn get_branches_without_worktrees(
 pub fn collect(
     repo: &Repository,
     show_branches: bool,
+    show_remotes: bool,
     show_full: bool,
     fetch_ci: bool,
     check_conflicts: bool,
@@ -459,6 +494,13 @@ pub fn collect(
     // Get branches early for layout calculation and skeleton creation (when --branches is used)
     let branches_without_worktrees = if show_branches {
         get_branches_without_worktrees(repo, &worktrees.worktrees)?
+    } else {
+        Vec::new()
+    };
+
+    // Get remote branches (when --remotes is used)
+    let remote_branches = if show_remotes {
+        get_remote_branches(repo, &worktrees.worktrees)?
     } else {
         Vec::new()
     };
@@ -503,7 +545,26 @@ pub fn collect(
         });
     }
 
-    // Calculate layout from items (both worktrees and branches)
+    // Initialize remote branch items with identity fields and None for computed fields
+    let remote_start_idx = all_items.len();
+    for (branch_name, commit_sha) in &remote_branches {
+        all_items.push(super::model::ListItem {
+            // Common fields
+            head: commit_sha.clone(),
+            branch: Some(branch_name.clone()),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            upstream: None,
+            pr_status: None,
+            status_symbols: None,
+            display: super::model::DisplayFields::default(),
+            // Type-specific data
+            kind: super::model::ItemKind::Branch,
+        });
+    }
+
+    // Calculate layout from items (worktrees, local branches, and remote branches)
     let layout = super::layout::calculate_layout_from_basics(&all_items, show_full, fetch_ci);
 
     // Single-line invariant: use safe width to prevent line wrapping
@@ -580,12 +641,18 @@ pub fn collect(
         .iter()
         .filter(|item| item.worktree_data().is_some())
         .count();
-    let num_branches = all_items.len() - num_worktrees;
-    let footer_base = if show_branches && num_branches > 0 {
-        format!(
-            "Showing {} worktrees, {} branches",
-            num_worktrees, num_branches
-        )
+    let num_local_branches = branches_without_worktrees.len();
+    let num_remote_branches = remote_branches.len();
+
+    let footer_base = if (show_branches && num_local_branches > 0) || (show_remotes && num_remote_branches > 0) {
+        let mut parts = vec![format!("{} worktrees", num_worktrees)];
+        if show_branches && num_local_branches > 0 {
+            parts.push(format!("{} branches", num_local_branches));
+        }
+        if show_remotes && num_remote_branches > 0 {
+            parts.push(format!("{} remotes", num_remote_branches));
+        }
+        format!("Showing {}", parts.join(", "))
     } else {
         let plural = if num_worktrees == 1 { "" } else { "s" };
         format!("Showing {} worktree{}", num_worktrees, plural)
@@ -675,6 +742,31 @@ pub fn collect(
         });
     }
 
+    // Spawn remote branch collection in background thread (if requested)
+    if show_remotes {
+        let remote_branches_clone = remote_branches.clone();
+        let primary_path = primary.path.clone();
+        let tx_remote = tx.clone();
+        let base_branch_clone = base_branch.clone();
+        std::thread::spawn(move || {
+            remote_branches_clone
+                .par_iter()
+                .enumerate()
+                .for_each(|(idx, (branch_name, commit_sha))| {
+                    let item_idx = remote_start_idx + idx;
+                    super::collect_progressive_impl::collect_branch_progressive(
+                        branch_name,
+                        commit_sha,
+                        &primary_path,
+                        item_idx,
+                        &base_branch_clone,
+                        &options,
+                        tx_remote.clone(),
+                    );
+                });
+        });
+    }
+
     // Drop the original sender so drain_cell_updates knows when all spawned threads are done
     drop(tx);
 
@@ -733,8 +825,11 @@ pub fn collect(
         let is_tty = std::io::stderr().is_terminal(); // Check stderr, not stdout ✅
 
         // Build final summary string once using helper function
-        let final_msg =
-            super::format_summary_message(&all_items, show_branches, layout.hidden_nonempty_count);
+        let final_msg = super::format_summary_message(
+            &all_items,
+            show_branches || show_remotes,
+            layout.hidden_nonempty_count,
+        );
 
         if is_tty {
             // Interactive: morph footer → summary, keep rows in place
@@ -789,7 +884,7 @@ pub fn collect(
             // Build final summary string
             let final_msg = super::format_summary_message(
                 &all_items,
-                show_branches,
+                show_branches || show_remotes,
                 layout.hidden_nonempty_count,
             );
 

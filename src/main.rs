@@ -267,6 +267,7 @@ fn main() {
         Commands::List {
             format,
             branches,
+            remotes,
             full,
             progressive,
             no_progressive,
@@ -279,7 +280,7 @@ fn main() {
                 _ => None,
             };
             let render_mode = RenderMode::detect(progressive_opt, cli.internal);
-            handle_list(format, branches, full, render_mode)
+            handle_list(format, branches, remotes, full, render_mode)
         }
         Commands::Switch {
             branch,
