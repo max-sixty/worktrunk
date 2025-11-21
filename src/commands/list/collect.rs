@@ -56,7 +56,6 @@ pub(super) enum CellUpdate {
         working_tree_diff_with_main: Option<LineDiff>,
         /// Symbols for uncommitted changes (?, !, +, », ✘)
         working_tree_symbols: String,
-        is_dirty: bool,
         has_conflicts: bool,
     },
     /// Potential merge conflicts with main (merge-tree simulation)
@@ -214,6 +213,8 @@ fn compute_item_status_symbols(
     default_branch: Option<&str>,
     has_merge_tree_conflicts: bool,
     user_status: Option<String>,
+    working_tree_symbols: Option<&str>,
+    has_conflicts: bool,
 ) {
     // Common fields for both worktrees and branches
     let default_counts = AheadBehind::default();
@@ -253,7 +254,6 @@ fn compute_item_status_symbols(
             };
 
             // Combine conflicts and branch state (mutually exclusive)
-            let has_conflicts = data.has_conflicts.unwrap_or(false);
             let branch_state = if has_conflicts {
                 BranchState::Conflicts
             } else if has_merge_tree_conflicts {
@@ -266,15 +266,9 @@ fn compute_item_status_symbols(
                 branch_state,
                 git_operation,
                 item_attrs,
-                locked: data.locked.clone(),
-                prunable: data.prunable.clone(),
                 main_divergence,
                 upstream_divergence,
-                working_tree: data
-                    .working_tree_symbols
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_string(),
+                working_tree: working_tree_symbols.unwrap_or("").to_string(),
                 user_status,
             });
         }
@@ -300,8 +294,6 @@ fn compute_item_status_symbols(
                 branch_state,
                 git_operation: GitOperation::None,
                 item_attrs: "⎇".to_string(), // Branch indicator
-                locked: None,
-                prunable: None,
                 main_divergence,
                 upstream_divergence,
                 working_tree: String::new(),
@@ -320,11 +312,13 @@ fn compute_item_status_symbols(
 fn drain_cell_updates(
     rx: chan::Receiver<CellUpdate>,
     items: &mut [ListItem],
-    mut on_update: impl FnMut(usize, &mut ListItem, bool, Option<String>),
+    mut on_update: impl FnMut(usize, &mut ListItem, bool, Option<String>, Option<&str>, bool),
 ) {
     // Temporary storage for data needed by status_symbols computation
     let mut merge_tree_conflicts_map: Vec<Option<bool>> = vec![None; items.len()];
     let mut user_status_map: Vec<Option<Option<String>>> = vec![None; items.len()];
+    let mut working_tree_symbols_map: Vec<Option<String>> = vec![None; items.len()];
+    let mut has_conflicts_map: Vec<Option<bool>> = vec![None; items.len()];
 
     // Process cell updates as they arrive
     while let Ok(update) = rx.recv() {
@@ -348,16 +342,15 @@ fn drain_cell_updates(
                 working_tree_diff,
                 working_tree_diff_with_main,
                 working_tree_symbols,
-                is_dirty,
                 has_conflicts,
             } => {
                 if let ItemKind::Worktree(data) = &mut items[item_idx].kind {
                     data.working_tree_diff = Some(working_tree_diff);
                     data.working_tree_diff_with_main = Some(working_tree_diff_with_main);
-                    data.working_tree_symbols = Some(working_tree_symbols);
-                    data.is_dirty = Some(is_dirty);
-                    data.has_conflicts = Some(has_conflicts);
                 }
+                // Store temporarily for status_symbols computation
+                working_tree_symbols_map[item_idx] = Some(working_tree_symbols);
+                has_conflicts_map[item_idx] = Some(has_conflicts);
             }
             CellUpdate::MergeTreeConflicts {
                 item_idx,
@@ -396,11 +389,15 @@ fn drain_cell_updates(
         // Invoke rendering callback (progressive mode re-renders rows, buffered mode does nothing)
         let has_merge_tree_conflicts = merge_tree_conflicts_map[item_idx].unwrap_or(false);
         let user_status = user_status_map[item_idx].clone().unwrap_or(None);
+        let working_tree_symbols = working_tree_symbols_map[item_idx].as_deref();
+        let has_conflicts = has_conflicts_map[item_idx].unwrap_or(false);
         on_update(
             item_idx,
             &mut items[item_idx],
             has_merge_tree_conflicts,
             user_status,
+            working_tree_symbols,
+            has_conflicts,
         );
     }
 }
@@ -694,7 +691,12 @@ pub fn collect(
     drain_cell_updates(
         rx,
         &mut all_items,
-        |item_idx, item, has_merge_tree_conflicts, user_status| {
+        |item_idx,
+         item,
+         has_merge_tree_conflicts,
+         user_status,
+         working_tree_symbols,
+         has_conflicts| {
             // Compute/recompute status symbols as data arrives (both modes)
             // This is idempotent and updates status as new data (like upstream) arrives
             let item_default_branch = if item.is_main() {
@@ -707,6 +709,8 @@ pub fn collect(
                 item_default_branch,
                 has_merge_tree_conflicts,
                 user_status,
+                working_tree_symbols,
+                has_conflicts,
             );
 
             // Progressive mode only: update UI

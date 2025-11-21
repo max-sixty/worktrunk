@@ -145,10 +145,6 @@ exit_code: 0
     "status": {
       "branch_state": "MatchesMain",
       "git_operation": "",
-      "worktree_attrs": {
-        "locked": "Testing",
-        "prunable": null
-      },
       "main_divergence": "",
       "upstream_divergence": "",
       "working_tree": {
@@ -171,6 +167,7 @@ exit_code: 0
     "path": "[WORKTREE_LOCKED_FEATURE]",
     "bare": false,
     "detached": false,
+    "locked": "Testing",
     "working_tree_diff": {
       "added": 0,
       "deleted": 0

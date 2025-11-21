@@ -841,9 +841,6 @@ mod tests {
                 working_tree_diff_with_main: Some(Some(LineDiff::default())),
                 worktree_state: None,
                 is_main: false,
-                working_tree_symbols: Some(String::new()),
-                is_dirty: Some(false),
-                has_conflicts: Some(false),
                 working_diff_display: None,
             })),
         };
@@ -927,9 +924,6 @@ mod tests {
                 working_tree_diff_with_main: Some(Some(LineDiff::default())),
                 worktree_state: None,
                 is_main: true, // Primary worktree: no ahead/behind shown
-                working_tree_symbols: Some(String::new()),
-                is_dirty: Some(false),
-                has_conflicts: Some(false),
                 working_diff_display: None,
             })),
         };

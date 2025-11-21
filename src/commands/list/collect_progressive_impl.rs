@@ -146,7 +146,6 @@ fn spawn_working_tree_diff<'scope>(
                     working_tree_diff: LineDiff::default(),
                     working_tree_diff_with_main: None,
                     working_tree_symbols: String::new(),
-                    is_dirty: false,
                     has_conflicts: false,
                 });
                 return;
@@ -175,7 +174,6 @@ fn spawn_working_tree_diff<'scope>(
             working_tree_diff,
             working_tree_diff_with_main,
             working_tree_symbols,
-            is_dirty,
             has_conflicts,
         });
     });

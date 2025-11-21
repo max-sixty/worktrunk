@@ -61,9 +61,9 @@ pub struct WorktreeData {
     pub path: PathBuf,
     pub bare: bool,
     pub detached: bool,
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub locked: Option<String>,
-    #[serde(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prunable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff: Option<LineDiff>,
@@ -76,15 +76,6 @@ pub struct WorktreeData {
     pub working_tree_diff_with_main: Option<Option<LineDiff>>,
     pub worktree_state: Option<String>,
     pub is_main: bool,
-    /// Working tree symbols (?, !, +, », ✘) - used for status computation, not serialized
-    #[serde(skip)]
-    pub(crate) working_tree_symbols: Option<String>,
-    /// is_dirty flag - used for status computation, not serialized
-    #[serde(skip)]
-    pub(crate) is_dirty: Option<bool>,
-    /// Unresolved paths present in working tree (merge or rebase conflicts)
-    #[serde(skip)]
-    pub(crate) has_conflicts: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_diff_display: Option<String>,
 }
@@ -506,14 +497,7 @@ pub struct StatusSymbols {
 
     /// Item type attributes: ⎇ for branches, ⌫⊠ for worktrees (priority-only: prunable > locked)
     /// Priority-only rendering (shows highest priority symbol when multiple states exist)
-    /// Note: Serialized as "worktree_attrs" in JSON for API compatibility
     pub(crate) item_attrs: String,
-
-    /// Worktree locked status - None for branches, Some("reason") or None for worktrees
-    pub(crate) locked: Option<String>,
-
-    /// Worktree prunable status - None for branches, Some("reason") or None for worktrees
-    pub(crate) prunable: Option<String>,
 
     /// Main branch divergence state (mutually exclusive)
     pub(crate) main_divergence: MainDivergence,
@@ -716,20 +700,11 @@ impl WorkingTreeChanges {
     }
 }
 
-/// Worktree attributes (locked/prunable info)
-#[derive(Debug, Clone, serde::Serialize)]
-struct WorktreeAttrs {
-    locked: Option<String>,
-    prunable: Option<String>,
-}
-
 /// Status variant names (for queryability)
 #[derive(Debug, Clone, serde::Serialize)]
 struct QueryableStatus {
     branch_state: &'static str,
     git_operation: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    worktree_attrs: Option<WorktreeAttrs>,
     main_divergence: &'static str,
     upstream_divergence: &'static str,
     working_tree: WorkingTreeChanges,
@@ -787,20 +762,9 @@ impl serde::Serialize for StatusSymbols {
             UpstreamDivergence::Diverged => "Diverged",
         };
 
-        // Create worktree_attrs if this is a worktree (has locked/prunable)
-        let worktree_attrs = if self.locked.is_some() || self.prunable.is_some() {
-            Some(WorktreeAttrs {
-                locked: self.locked.clone(),
-                prunable: self.prunable.clone(),
-            })
-        } else {
-            None
-        };
-
         let queryable_status = QueryableStatus {
             branch_state: branch_state_variant,
             git_operation: git_operation_variant,
-            worktree_attrs,
             main_divergence: main_divergence_variant,
             upstream_divergence: upstream_divergence_variant,
             working_tree: WorkingTreeChanges::from_symbols(&self.working_tree),
