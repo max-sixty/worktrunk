@@ -1,3 +1,0 @@
-{"run_id":"1763705564-215817491","line":654,"new":{"module_name":"integration__integration_tests__post_start_commands","snapshot_name":"post_start_complex_shell_commands","metadata":{"source":"tests/integration_tests/post_start_commands.rs","assertion_line":654,"expression":"contents"},"snapshot":""},"old":{"module_name":"integration__integration_tests__post_start_commands","metadata":{},"snapshot":"line2"}}
-{"run_id":"1763705564-215817491","line":443,"new":null,"old":null}
-{"run_id":"1763705564-215817491","line":707,"new":null,"old":null}
