@@ -5,6 +5,7 @@ members = ["tests/helpers/dev-detach", "tests/helpers/setup-select-test"]
 name = "worktrunk"
 version = "0.1.5"
 edition = "2024"
+rust-version = "1.89"
 build = "build.rs"
 repository = "https://github.com/max-sixty/worktrunk"
 description = "A Git worktree manager for trunk-based development"

@@ -148,3 +148,88 @@ jobs:
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: pre-commit run lychee --all-files
       continue-on-error: true
+
+  # Check if Cargo files changed (for conditional jobs below)
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      cargo: ${{ steps.filter.outputs.cargo }}
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v5
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          cargo:
+            - 'Cargo.toml'
+            - 'Cargo.lock'
+            - 'rust-toolchain.toml'
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v5
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-msrv
+
+    - name: Verify minimum rust version
+      run: cargo msrv verify
+
+  check-unused-dependencies:
+    name: Unused dependencies
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v5
+
+    # cargo-udeps requires nightly; update date periodically
+    - run: rustup override set nightly-2025-11-10
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-udeps
+
+    - uses: clechasseur/rs-cargo@v4
+      with:
+        command: udeps
+        args: --all-targets --locked
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v5
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ hashFiles('Cargo.lock') }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Install shells (zsh, fish)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zsh fish
+
+    - name: 📊 Run benchmarks
+      uses: clechasseur/rs-cargo@v4
+      with:
+        command: bench
+        # Skip bench_list_real_repo which clones rust-lang/rust (~2-5 min)
+        args: --locked -- --warm-up-time=0.3 --measurement-time=1 --skip real_repo
