@@ -558,7 +558,7 @@ impl StatusSymbols {
     /// column position across all rows, while minimizing wasted space.
     pub fn render_with_mask(&self, mask: &PositionMask) -> String {
         use unicode_width::UnicodeWidthStr;
-        use worktrunk::styling::{CYAN, ERROR, GRAY, HINT, WARNING};
+        use worktrunk::styling::{CYAN, ERROR, HINT, WARNING};
 
         let mut result = String::with_capacity(12);
 
@@ -572,7 +572,7 @@ impl StatusSymbols {
         // - Red (ERROR): Actual conflicts (blocking problems)
         // - Yellow (WARNING): Potential conflicts, git operations, locked/prunable (active/stuck states)
         // - Cyan: Working tree changes (activity)
-        // - Dimmed (HINT): Branch state symbols that indicate removability
+        // - Dimmed (HINT): Branch state symbols that indicate removability + divergence arrows (low urgency)
         let branch_state_str = match self.branch_state {
             BranchState::Conflicts => format!("{ERROR}={ERROR:#}"),
             BranchState::PotentialConflicts => format!("{WARNING}≠{WARNING:#}"),
@@ -586,12 +586,12 @@ impl StatusSymbols {
             String::new()
         };
         let main_divergence_str = if self.main_divergence != MainDivergence::None {
-            format!("{GRAY}{}{GRAY:#}", self.main_divergence)
+            format!("{HINT}{}{HINT:#}", self.main_divergence)
         } else {
             String::new()
         };
         let upstream_divergence_str = if self.upstream_divergence != UpstreamDivergence::None {
-            format!("{GRAY}{}{GRAY:#}", self.upstream_divergence)
+            format!("{HINT}{}{HINT:#}", self.upstream_divergence)
         } else {
             String::new()
         };

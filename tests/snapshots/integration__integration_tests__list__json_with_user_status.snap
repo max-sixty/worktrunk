@@ -10,13 +10,16 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_COUNT: "1"
     GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_CONFIG_VALUE_0: "false"
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpKOi1g7/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -27,6 +30,12 @@ exit_code: 0
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Initial commit",
+    "ahead": 0,
+    "behind": 0,
+    "branch_diff": {
+      "added": 0,
+      "deleted": 0
+    },
     "upstream_remote": null,
     "upstream_ahead": 0,
     "upstream_behind": 0,

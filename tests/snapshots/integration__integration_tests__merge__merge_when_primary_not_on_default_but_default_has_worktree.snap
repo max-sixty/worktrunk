@@ -1,9 +1,11 @@
 ---
 source: tests/integration_tests/merge.rs
+assertion_line: 12
 info:
   program: wt
   args:
     - merge
+    - main
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -14,11 +16,10 @@ info:
     GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_CONFIG_VALUE_0: "false"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmplZVJ0R/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -29,6 +30,6 @@ exit_code: 0
 [40m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving worktree & branch...[0m
-✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, changed directory to [1m[32m[REPO][0m[0m
+✅ [32mRemoved worktree & branch for [1m[32mfeature[0m[32m, changed directory to [1m[32m[REPO].main-wt[0m[0m
 
 ----- stderr -----

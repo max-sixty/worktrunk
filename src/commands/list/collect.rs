@@ -206,6 +206,8 @@ fn determine_worktree_branch_state(
 /// It will recompute with the latest available data.
 ///
 /// Branches get a subset of status symbols (no working tree, git operation, or worktree attrs).
+// TODO(status-indicator): show a status glyph when a worktree's checked-out branch
+// differs from the branch name we associate with it (e.g., worktree exists but on another branch).
 fn compute_item_status_symbols(
     item: &mut ListItem,
     base_branch: Option<&str>,
@@ -443,6 +445,7 @@ pub fn collect(
         return Ok(None);
     }
 
+    let base_branch = repo.default_branch()?;
     let primary = worktrees.worktrees[0].clone();
     let current_worktree_path = repo.worktree_root().ok();
 
@@ -507,9 +510,10 @@ pub fn collect(
     // (which breaks indicatif's line-based cursor math).
     let max_width = super::layout::get_safe_list_width();
 
+    // Clamp helper to keep progress output single-line in narrow terminals.
     let clamp = |s: &str| -> String {
-        if console::measure_text_width(s) > max_width {
-            console::truncate_str(s, max_width, "…").into_owned()
+        if crate::display::visible_width(s) > max_width {
+            crate::display::truncate_visible(s, max_width, "…")
         } else {
             s.to_owned()
         }
@@ -565,9 +569,8 @@ pub fn collect(
         .collect();
 
     // Cache last rendered (unclamped) message per row to avoid redundant updates.
-    // Store the full string so updates that are truncated for narrow terminals
-    // (e.g., CI column at the end) still trigger a refresh when the underlying
-    // data changes.
+    // TODO(list-progressive): if we change clamping/detection strategy, keep a test case
+    // for off-screen CI column updates to ensure we still refresh rows.
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
 
     // Footer progress bar with loading status
@@ -620,21 +623,28 @@ pub fn collect(
     // Create channel for cell updates
     let (tx, rx) = chan::unbounded();
 
+    // Create collection options
+    let options = super::collect_progressive_impl::CollectOptions {
+        fetch_ci,
+        check_conflicts,
+    };
+
     // Spawn worktree collection in background thread
     let sorted_worktrees_clone = sorted_worktrees.clone();
-    let primary_clone = primary.clone();
     let tx_worktrees = tx.clone();
+    let base_branch_clone = base_branch.clone();
     std::thread::spawn(move || {
         sorted_worktrees_clone
             .par_iter()
             .enumerate()
             .for_each(|(idx, wt)| {
+                // Always pass base_branch for ahead/behind/diff computation
+                // Status symbols will filter based on is_primary flag
                 super::collect_progressive_impl::collect_worktree_progressive(
                     wt,
-                    &primary_clone,
                     idx,
-                    fetch_ci,
-                    check_conflicts,
+                    &base_branch_clone,
+                    &options,
                     tx_worktrees.clone(),
                 );
             });
@@ -643,8 +653,9 @@ pub fn collect(
     // Spawn branch collection in background thread (if requested)
     if show_branches {
         let branches_clone = branches_without_worktrees.clone();
-        let primary_clone = primary.clone();
+        let primary_path = primary.path.clone();
         let tx_branches = tx.clone();
+        let base_branch_clone = base_branch.clone();
         std::thread::spawn(move || {
             branches_clone
                 .par_iter()
@@ -654,10 +665,10 @@ pub fn collect(
                     super::collect_progressive_impl::collect_branch_progressive(
                         branch_name,
                         commit_sha,
-                        &primary_clone,
+                        &primary_path,
                         item_idx,
-                        fetch_ci,
-                        check_conflicts,
+                        &base_branch_clone,
+                        &options,
                         tx_branches.clone(),
                     );
                 });
@@ -671,15 +682,17 @@ pub fn collect(
     let mut completed_cells = 0;
 
     // Drain cell updates with conditional progressive rendering
-    let base_branch = primary.branch.as_deref();
     drain_cell_updates(
         rx,
         &mut all_items,
         |item_idx, info, has_conflicts, user_status| {
             // Compute/recompute status symbols as data arrives (both modes)
             // This is idempotent and updates status as new data (like upstream) arrives
-            // Base branch is None for primary worktree, Some(primary.branch) for others
-            let item_base_branch = if info.is_primary() { None } else { base_branch };
+            let item_base_branch = if info.is_primary() {
+                None
+            } else {
+                Some(base_branch.as_str())
+            };
             compute_item_status_symbols(info, item_base_branch, has_conflicts, user_status);
 
             // Progressive mode only: update UI
@@ -703,8 +716,7 @@ pub fn collect(
                         layout.format_list_item_line(info, current_worktree_path.as_ref());
                     let clamped = clamp(&rendered);
 
-                    // Compare using the full (unclamped) line so updates that fall
-                    // past the clamp boundary still cause a redraw.
+                    // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
                     if rendered != last_rendered_lines[item_idx] {
                         last_rendered_lines[item_idx] = rendered;
                         pb.set_message(clamped);

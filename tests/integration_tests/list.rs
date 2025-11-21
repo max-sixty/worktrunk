@@ -1742,3 +1742,13 @@ fn test_list_maximum_status_symbols() {
         assert_cmd_snapshot!("maximum_status_symbols", cmd);
     });
 }
+
+#[test]
+fn test_list_warns_when_default_branch_missing_worktree() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    // Move primary worktree off the default branch so no worktree holds it
+    repo.switch_primary_to("develop");
+
+    snapshot_list("default_branch_missing_worktree", &repo);
+}

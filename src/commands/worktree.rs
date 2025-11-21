@@ -247,7 +247,7 @@ pub fn handle_switch(
         None => {}
     }
 
-    // No existing worktree, create one
+    // No existing worktree, create one (or reuse target path if available)
     let repo_root = repo.worktree_base()?;
 
     let repo_name = repo_root
@@ -261,6 +261,20 @@ pub fn handle_switch(
             .format_path(repo_name, &resolved_branch)
             .map_err(|e| GitError::message(format!("Failed to format worktree path: {}", e)))?,
     );
+
+    // If the target path already exists but no worktree is registered for this branch,
+    // surface a helpful error instead of letting git fail with "already exists".
+    if repo.worktree_for_branch(&resolved_branch)?.is_none() && worktree_path.exists() {
+        let occupant = Repository::at(&worktree_path)
+            .current_branch()
+            .ok()
+            .flatten();
+        return Err(GitError::WorktreePathOccupied {
+            branch: resolved_branch.clone(),
+            path: worktree_path.clone(),
+            occupant,
+        });
+    }
 
     // Create the worktree
     // Build git worktree add command
@@ -474,6 +488,11 @@ pub fn handle_push(
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
 
+    // A worktree for the target branch is optional for push:
+    // - If present, we use it to check for overlapping dirty files.
+    // - If absent, we skip that safety step but still allow the push (git itself is fine).
+    let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+
     // Check if it's a fast-forward
     if !repo.is_ancestor(&target_branch, "HEAD")? {
         // Get formatted commit log (commits in target that we don't have)
@@ -522,9 +541,8 @@ pub fn handle_push(
     }
 
     // Check for conflicting changes in target worktree (auto-stash safe changes)
-    let target_worktree = repo.worktree_for_branch(&target_branch)?;
     let mut target_worktree_stash =
-        repo.prepare_target_worktree(target_worktree.as_ref(), &target_branch)?;
+        repo.prepare_target_worktree(target_worktree_path.as_ref(), &target_branch)?;
 
     // Count commits and show what will be pushed
     let commit_count = repo.count_commits(&target_branch, "HEAD")?;

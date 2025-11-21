@@ -1,10 +1,9 @@
 ---
-source: tests/integration_tests/push.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - beta
-    - push
+    - merge
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -15,19 +14,15 @@ info:
     GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_CONFIG_VALUE_0: "false"
-    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmprsBxfk/test-config.toml
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mPushing 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m
-[40m [0m  * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature file
-[40m [0m   feature.txt | 1 [32m+[m
-[40m [0m   1 file changed, 1 insertion(+)
-✅ [32mPushed to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
+✅ [32mMerged to [1m[32mmain[0m[0m (no new commits, no rebase needed)
+✅ [32mWorktree preserved (--no-remove)[0m
 
 ----- stderr -----

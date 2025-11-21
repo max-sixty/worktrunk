@@ -535,3 +535,14 @@ fn test_create_with_base_main() {
         &["--create", "new-feature", "--base", "^"],
     );
 }
+
+#[test]
+fn test_switch_default_branch_missing_worktree() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Move the primary worktree off the default branch so no worktree holds it
+    repo.switch_primary_to("develop");
+
+    snapshot_switch("switch_default_branch_missing_worktree", &repo, &["main"]);
+}

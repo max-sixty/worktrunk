@@ -90,9 +90,13 @@ pub fn handle_merge(
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
+    let worktrees = repo.list_worktrees()?;
+    // Worktree for target is optional: if present we use it for safety checks and as destination.
+    let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
-    // When current == target, force --no-remove (can't remove the worktree we're on)
-    let no_remove_effective = no_remove || current_branch == target_branch;
+    // When current == target or we're in the primary worktree, force --no-remove (can't remove it)
+    let in_primary = !repo.is_in_worktree().unwrap_or(false);
+    let no_remove_effective = no_remove || current_branch == target_branch || in_primary;
 
     // Collect and approve all commands upfront for batch permission request
     let (all_commands, project_id) = MergeCommandCollector {
@@ -172,16 +176,10 @@ pub fn handle_merge(
         }),
     )?;
 
-    // Get primary worktree path before cleanup (while we can still run git commands)
-    let worktrees = repo.list_worktrees()?;
-    let primary_worktree_dir = worktrees.worktrees[0].path.clone();
-
-    // Determine destination: target branch's worktree if it exists, otherwise primary worktree
-    let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
+    // Destination: prefer the target branch's worktree; fall back to primary when absent
     let destination_path = target_worktree_path
-        .as_ref()
-        .unwrap_or(&primary_worktree_dir)
-        .clone();
+        .clone()
+        .unwrap_or_else(|| worktrees.worktrees[0].path.clone());
 
     // Finish worktree unless --no-remove was specified
     if !no_remove_effective {

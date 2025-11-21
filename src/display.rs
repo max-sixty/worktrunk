@@ -6,8 +6,10 @@
 //! - Text truncation with word boundaries
 //! - Terminal width detection
 
+use ansi_str::AnsiStr;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use worktrunk::path::format_path_for_display;
 
 pub fn format_relative_time(timestamp: i64) -> String {
@@ -139,6 +141,51 @@ pub fn get_terminal_width() -> usize {
         .unwrap_or(80)
 }
 
+/// Compute visible width of a styled string by stripping ANSI/OSC first.
+pub fn visible_width(rendered: &str) -> usize {
+    UnicodeWidthStr::width(rendered.ansi_strip().as_ref())
+}
+
+/// Truncate a styled string to a visible width budget, preserving escapes.
+/// Escape sequences (ANSI/OSC) are zero-width; ellipsis is added when truncating.
+/// Appends ESC[0m on truncation to avoid style bleed.
+pub fn truncate_visible(rendered: &str, max_width: usize, ellipsis: &str) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let plain = rendered.ansi_strip();
+    let plain_str = plain.as_ref();
+    if UnicodeWidthStr::width(plain_str) <= max_width {
+        return rendered.to_owned();
+    }
+
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let budget = max_width.saturating_sub(ellipsis_width);
+    if budget == 0 {
+        let mut out = String::new();
+        out.push_str(ellipsis);
+        out.push_str("\u{1b}[0m");
+        return out;
+    }
+
+    let mut cut_at = 0;
+    let mut width = 0;
+    for (i, ch) in plain_str.char_indices() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + w > budget {
+            break;
+        }
+        width += w;
+        cut_at = i + ch.len_utf8();
+    }
+
+    let mut out = rendered.ansi_cut(..cut_at).into_owned();
+    out.push_str(ellipsis);
+    out.push_str("\u{1b}[0m");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +267,27 @@ mod tests {
         // Should truncate mid-word if no space found
         assert!(result.width() <= 20, "Width should be <= 20");
         assert!(result.ends_with('…'), "Should end with ellipsis");
+    }
+
+    #[test]
+    fn visible_width_strips_osc8() {
+        let s = "\u{1b}]8;;https://example.com\u{1b}\\A\u{1b}]8;;\u{1b}\\";
+        assert_eq!(visible_width(s), 1, "OSC-8 should be zero-width");
+    }
+
+    #[test]
+    fn truncate_visible_preserves_budget_and_resets() {
+        let colored = "\u{1b}[31mhello\u{1b}[0m";
+        let out = truncate_visible(colored, 3, "…");
+        assert_eq!(visible_width(&out), 3);
+        assert!(out.ends_with("\u{1b}[0m"));
+    }
+
+    #[test]
+    fn truncate_visible_handles_wide_emoji() {
+        let rocket = "🚀";
+        let out = truncate_visible(rocket, 1, "…");
+        assert_eq!(visible_width(&out), 1);
+        assert!(out.ends_with("\u{1b}[0m"));
     }
 }

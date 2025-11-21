@@ -555,3 +555,9 @@ ANSI-formatted strings for human-readable output:
 - `upstream_display`, `ci_status_display` (optional)
 - `status_display`: rendered status symbols + user status
 - `working_diff_display` (worktrees only, optional)
+
+## Worktree Model
+
+- Worktrees are **addressed by branch name**, not by filesystem path.
+- Each worktree should map to **exactly one branch**.
+- We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees.

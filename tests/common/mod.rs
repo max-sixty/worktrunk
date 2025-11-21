@@ -687,6 +687,19 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         "post-start-[NAME]-[TIMESTAMP].log",
     );
 
+    // Filter out Git hint messages that vary across Git versions
+    // These hints appear during rebase conflicts and can differ between versions
+    // Pattern matches lines with gutter formatting + "hint:" + message + newline
+    // The gutter is: ESC[40m ESC[0m followed by spaces
+    settings.add_filter(r"(?m)^\x1b\[40m \x1b\[0m {1,2}hint:.*\n", "");
+
+    // Normalize Git error message format differences across versions
+    // Older Git (< 2.43): "Could not apply [SHA]... # commit message"
+    // Newer Git (>= 2.43): "Could not apply [SHA]... commit message"
+    // Add the "# " prefix to newer Git output for consistency with snapshots
+    // Match if followed by a letter/character (not "#")
+    settings.add_filter(r"(Could not apply \[SHA\]\.\.\.) ([A-Za-z])", "$1 # $2");
+
     settings
 }
 
