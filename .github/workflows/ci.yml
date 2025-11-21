@@ -234,6 +234,5 @@ jobs:
       uses: clechasseur/rs-cargo@v4
       with:
         command: bench
-        # Run specific benchmark targets (criterion), not #[bench] tests
-        # Skip bench_list_real_repo which clones rust-lang/rust (~2-5 min)
-        args: --locked --bench completion --bench list -- --warm-up-time 0.3 --measurement-time 1 --skip real_repo
+        # Run completion benchmarks (list has slow real_repo tests)
+        args: --locked --bench completion -- --warm-up-time 0.3 --measurement-time 1
