@@ -43,9 +43,22 @@ fn help_styles() -> Styles {
 
 /// Default command name for worktrunk
 const DEFAULT_COMMAND_NAME: &str = "wt";
+
+/// Help template for commands without subcommands
 const HELP_TEMPLATE: &str = "\
 {before-help}{name} - {about-with-newline}\
 Usage: {usage}
+
+Options:
+{options}{after-help}";
+
+/// Help template for commands with subcommands
+const HELP_TEMPLATE_WITH_SUBCOMMANDS: &str = "\
+{before-help}{name} - {about-with-newline}\
+Usage: {usage}
+
+Commands:
+{subcommands}
 
 Options:
 {options}{after-help}";
@@ -57,7 +70,13 @@ pub fn build_command() -> Command {
 }
 
 fn apply_help_template_recursive(mut cmd: Command) -> Command {
-    cmd = cmd.help_template(HELP_TEMPLATE);
+    let template = if cmd.get_subcommands().next().is_some() {
+        HELP_TEMPLATE_WITH_SUBCOMMANDS
+    } else {
+        HELP_TEMPLATE
+    };
+    cmd = cmd.help_template(template);
+
     for sub in cmd.get_subcommands_mut() {
         let sub_cmd = std::mem::take(sub);
         let sub_cmd = apply_help_template_recursive(sub_cmd);
@@ -302,7 +321,7 @@ pub enum Commands {
 
     /// Manage configuration
     #[command(
-        about = "Manage configuration. For AI commit setup, run: `wt config --help` (see 'LLM SETUP GUIDE').",
+        about = "Manage configuration",
         after_long_help = r#"LLM SETUP GUIDE:
 Enable AI-generated commit messages
 

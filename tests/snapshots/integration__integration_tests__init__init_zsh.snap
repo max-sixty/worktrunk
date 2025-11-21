@@ -15,10 +15,11 @@ info:
     GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_CONFIG_VALUE_0: "false"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmp8OQXUV/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpcO3S47/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -498,7 +499,7 @@ esac
 _wt_commands() {
     local commands; commands=(
 'init:Generate shell integration code' \
-'config:Manage configuration. For AI commit setup, run\: \`wt config --help\` (see '\''LLM SETUP GUIDE'\'').' \
+'config:Manage configuration' \
 'beta:Development and testing utilities' \
 'list:List worktrees and optionally branches' \
 'switch:Switch to a worktree' \
