@@ -8,6 +8,13 @@ fn base_settings(repo: &TestRepo) -> Settings {
     settings.set_snapshot_path("../snapshots");
     normalize_worktree_paths(&mut settings, repo);
     settings.add_filter(r"\\", "/");
+
+    // Redact volatile metadata captured by insta-cmd (same as common::setup_snapshot_settings)
+    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    settings.add_redaction(".env.HOME", "[TEST_HOME]");
+    settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
+    settings.add_redaction(".env.PATH", "[PATH]");
+
     settings
 }
 

@@ -14,7 +14,7 @@ info:
     LC_ALL: C
     NO_COLOR: ""
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG: /tmp/.tmpVM7Bxk/test-config.toml
+    WORKTRUNK_CONFIG: /tmp/.tmpA2l3ZL/test-config.toml
 ---
 success: true
 exit_code: 0
