@@ -1,4 +1,5 @@
 /target
+scripts/wt-demo/out/
 
 # Lychee link checker cache
 .lycheecache
