@@ -851,7 +851,7 @@ mod tests {
                 working_tree_diff: Some(LineDiff::from((100, 50))),
                 working_tree_diff_with_main: Some(Some(LineDiff::default())),
                 worktree_state: None,
-                is_primary: false,
+                is_main: false,
                 working_tree_symbols: Some(String::new()),
                 is_dirty: Some(false),
                 working_diff_display: None,
@@ -879,7 +879,11 @@ mod tests {
         let mut prev_kind = first.kind;
         for column in columns_iter {
             // No gap after gutter column - its content includes the spacing
-            let expected_gap = if prev_kind == ColumnKind::Gutter { 0 } else { 2 };
+            let expected_gap = if prev_kind == ColumnKind::Gutter {
+                0
+            } else {
+                2
+            };
             assert_eq!(
                 column.start,
                 previous_end + expected_gap,
@@ -932,7 +936,7 @@ mod tests {
                 working_tree_diff: Some(LineDiff::default()),
                 working_tree_diff_with_main: Some(Some(LineDiff::default())),
                 worktree_state: None,
-                is_primary: true, // Primary worktree: no ahead/behind shown
+                is_main: true, // Primary worktree: no ahead/behind shown
                 working_tree_symbols: Some(String::new()),
                 is_dirty: Some(false),
                 working_diff_display: None,

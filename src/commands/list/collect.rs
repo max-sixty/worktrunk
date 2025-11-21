@@ -167,18 +167,18 @@ fn compute_divergences(
 /// Determine branch state for a worktree.
 ///
 /// Returns:
-/// - `BranchState::None` if primary worktree or no base branch
+/// - `BranchState::None` if main worktree or no base branch
 /// - `BranchState::MatchesMain` if working tree matches main exactly (no commits, no diff)
 /// - `BranchState::NoCommits` if no commits and working tree is clean
 /// - `BranchState::None` otherwise
 fn determine_worktree_branch_state(
-    is_primary: bool,
+    is_main: bool,
     base_branch: Option<&str>,
     ahead: usize,
     working_tree_diff: Option<&LineDiff>,
     working_tree_diff_with_main: &Option<Option<LineDiff>>,
 ) -> BranchState {
-    if is_primary || base_branch.is_none() {
+    if is_main || base_branch.is_none() {
         return BranchState::None;
     }
 
@@ -224,7 +224,7 @@ fn compute_item_status_symbols(
     match &item.kind {
         ItemKind::Worktree(data) => {
             // Full status computation for worktrees
-            // Use base_branch directly (None for primary worktree)
+            // Use base_branch directly (None for main worktree)
 
             // Worktree attributes - priority: prunable > locked (1 char max)
             let worktree_attrs = if data.prunable.is_some() {
@@ -235,9 +235,9 @@ fn compute_item_status_symbols(
                 String::new()
             };
 
-            // Determine branch state (only for non-primary worktrees with base branch)
+            // Determine branch state (only for non-main worktrees with base branch)
             let branch_state = determine_worktree_branch_state(
-                data.is_primary,
+                data.is_main,
                 base_branch,
                 counts.ahead,
                 data.working_tree_diff.as_ref(),
@@ -446,13 +446,19 @@ pub fn collect(
     }
 
     let base_branch = repo.default_branch()?;
-    let primary = worktrees.worktrees[0].clone();
+    // Main worktree is the worktree on the default branch (if exists), else first worktree
+    let main_worktree = worktrees
+        .worktrees
+        .iter()
+        .find(|wt| wt.branch.as_deref() == Some(base_branch.as_str()))
+        .cloned()
+        .unwrap_or_else(|| worktrees.worktrees[0].clone());
     let current_worktree_path = repo.worktree_root().ok();
 
     // Sort worktrees for display order
     let sorted_worktrees = sort_worktrees(
         &worktrees.worktrees,
-        &primary,
+        &main_worktree,
         current_worktree_path.as_ref(),
     );
 
@@ -479,7 +485,7 @@ pub fn collect(
             display: super::model::DisplayFields::default(),
             // Type-specific data
             kind: super::model::ItemKind::Worktree(Box::new(
-                super::model::WorktreeData::from_worktree(wt, wt.path == primary.path),
+                super::model::WorktreeData::from_worktree(wt, wt.path == main_worktree.path),
             )),
         })
         .collect();
@@ -639,7 +645,7 @@ pub fn collect(
             .enumerate()
             .for_each(|(idx, wt)| {
                 // Always pass base_branch for ahead/behind/diff computation
-                // Status symbols will filter based on is_primary flag
+                // Status symbols will filter based on is_main flag
                 super::collect_progressive_impl::collect_worktree_progressive(
                     wt,
                     idx,
@@ -653,7 +659,7 @@ pub fn collect(
     // Spawn branch collection in background thread (if requested)
     if show_branches {
         let branches_clone = branches_without_worktrees.clone();
-        let primary_path = primary.path.clone();
+        let main_path = main_worktree.path.clone();
         let tx_branches = tx.clone();
         let base_branch_clone = base_branch.clone();
         std::thread::spawn(move || {
@@ -665,7 +671,7 @@ pub fn collect(
                     super::collect_progressive_impl::collect_branch_progressive(
                         branch_name,
                         commit_sha,
-                        &primary_path,
+                        &main_path,
                         item_idx,
                         &base_branch_clone,
                         &options,
@@ -688,7 +694,7 @@ pub fn collect(
         |item_idx, info, has_conflicts, user_status| {
             // Compute/recompute status symbols as data arrives (both modes)
             // This is idempotent and updates status as new data (like upstream) arrives
-            let item_base_branch = if info.is_primary() {
+            let item_base_branch = if info.is_main() {
                 None
             } else {
                 Some(base_branch.as_str())
@@ -837,10 +843,10 @@ pub fn collect(
     Ok(Some(super::model::ListData { items }))
 }
 
-/// Sort worktrees for display (primary first, then current, then by timestamp descending).
+/// Sort worktrees for display (main first, then current, then by timestamp descending).
 fn sort_worktrees(
     worktrees: &[Worktree],
-    primary: &Worktree,
+    main_worktree: &Worktree,
     current_path: Option<&std::path::PathBuf>,
 ) -> Vec<Worktree> {
     let timestamps: Vec<i64> = worktrees
@@ -854,10 +860,10 @@ fn sort_worktrees(
 
     let mut indexed: Vec<_> = worktrees.iter().enumerate().collect();
     indexed.sort_by_key(|(idx, wt)| {
-        let is_primary = wt.path == primary.path;
+        let is_main = wt.path == main_worktree.path;
         let is_current = current_path.map(|cp| &wt.path == cp).unwrap_or(false);
 
-        let priority = if is_primary {
+        let priority = if is_main {
             0
         } else if is_current {
             1

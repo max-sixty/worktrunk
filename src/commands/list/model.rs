@@ -75,7 +75,7 @@ pub struct WorktreeData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff_with_main: Option<Option<LineDiff>>,
     pub worktree_state: Option<String>,
-    pub is_primary: bool,
+    pub is_main: bool,
     /// Working tree symbols (?, !, +, », ✘) - used for status computation, not serialized
     #[serde(skip)]
     pub(crate) working_tree_symbols: Option<String>,
@@ -88,7 +88,7 @@ pub struct WorktreeData {
 
 impl WorktreeData {
     /// Create WorktreeData from a Worktree, with all computed fields set to None.
-    pub(crate) fn from_worktree(wt: &worktrunk::git::Worktree, is_primary: bool) -> Self {
+    pub(crate) fn from_worktree(wt: &worktrunk::git::Worktree, is_main: bool) -> Self {
         Self {
             // Identity fields (known immediately from worktree list)
             path: wt.path.clone(),
@@ -96,7 +96,7 @@ impl WorktreeData {
             detached: wt.detached,
             locked: wt.locked.clone(),
             prunable: wt.prunable.clone(),
-            is_primary,
+            is_main,
 
             // Computed fields start as None (filled progressively)
             ..Default::default()
@@ -173,7 +173,7 @@ pub struct ListItem {
     pub commit: Option<CommitDetails>,
 
     // TODO: Evaluate if skipping these fields in JSON when None is correct behavior.
-    // Currently, primary worktree omits counts/branch_diff (since it doesn't compare to itself),
+    // Currently, main worktree omits counts/branch_diff (since it doesn't compare to itself),
     // but consumers may expect these fields to always be present (even if zero).
     // Consider: always include with default values vs current "omit when not computed" approach.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -209,8 +209,8 @@ impl ListItem {
         self.branch.as_deref().unwrap_or("(detached)")
     }
 
-    pub fn is_primary(&self) -> bool {
-        matches!(&self.kind, ItemKind::Worktree(data) if data.is_primary)
+    pub fn is_main(&self) -> bool {
+        matches!(&self.kind, ItemKind::Worktree(data) if data.is_main)
     }
 
     pub fn head(&self) -> &str {
@@ -250,7 +250,7 @@ impl ListItem {
 
     /// Determine if the item contains no unique work and can likely be removed.
     pub(crate) fn is_potentially_removable(&self) -> bool {
-        if self.is_primary() {
+        if self.is_main() {
             return false;
         }
 

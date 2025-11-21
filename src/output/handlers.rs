@@ -61,7 +61,7 @@ fn format_remove_message(
     branch_deleted: bool,
 ) -> String {
     let RemoveResult::RemovedWorktree {
-        primary_path,
+        main_path,
         changed_directory,
         branch_name,
         no_delete_branch,
@@ -86,12 +86,12 @@ fn format_remove_message(
             // Re-establish GREEN after each green_bold reset to prevent color leak
             format!(
                 "{GREEN}{action} for {GREEN_BOLD}{b}{GREEN_BOLD:#}{GREEN}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}{flag_note}",
-                format_path_for_display(primary_path)
+                format_path_for_display(main_path)
             )
         } else {
             format!(
                 "{GREEN}{action}, changed directory to {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}{flag_note}",
-                format_path_for_display(primary_path)
+                format_path_for_display(main_path)
             )
         }
     } else if let Some(b) = branch_display {
@@ -184,7 +184,7 @@ pub fn handle_remove_output(
     background: bool,
 ) -> Result<(), GitError> {
     let RemoveResult::RemovedWorktree {
-        primary_path,
+        main_path,
         worktree_path,
         changed_directory,
         branch_name,
@@ -195,7 +195,7 @@ pub fn handle_remove_output(
 
     // 1. Emit cd directive if needed - shell will execute this immediately
     if *changed_directory {
-        super::change_directory(primary_path)?;
+        super::change_directory(main_path)?;
         super::flush()?; // Force flush to ensure shell processes the cd
     }
 
@@ -213,7 +213,7 @@ pub fn handle_remove_output(
         } else {
             // Check if branch is fully merged to target
             let check_target = target_branch.as_deref().unwrap_or("HEAD");
-            let deletion_repo = worktrunk::git::Repository::at(primary_path);
+            let deletion_repo = worktrunk::git::Repository::at(main_path);
             deletion_repo
                 .is_ancestor(branch_name, check_target)
                 .unwrap_or(false)
@@ -244,8 +244,8 @@ pub fn handle_remove_output(
         // Build command with the decision we already made
         let remove_command = build_remove_command(worktree_path, branch_name, should_delete_branch);
 
-        // Spawn the removal in background - runs from primary_path (where we cd'd to)
-        spawn_detached(&repo, primary_path, &remove_command, branch_name, "remove")?;
+        // Spawn the removal in background - runs from main_path (where we cd'd to)
+        spawn_detached(&repo, main_path, &remove_command, branch_name, "remove")?;
 
         super::flush()?;
         Ok(())
@@ -265,7 +265,7 @@ pub fn handle_remove_output(
 
         // Delete the branch (unless --no-delete-branch was specified)
         let branch_deleted = if !no_delete_branch {
-            let deletion_repo = worktrunk::git::Repository::at(primary_path);
+            let deletion_repo = worktrunk::git::Repository::at(main_path);
 
             // Use git branch -D if force_delete is true, otherwise check if merged first
             let delete_result = if *force_delete {

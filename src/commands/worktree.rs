@@ -145,7 +145,7 @@ impl SwitchResult {
 pub enum RemoveResult {
     /// Removed worktree and returned to primary (if needed)
     RemovedWorktree {
-        primary_path: PathBuf,
+        main_path: PathBuf,
         worktree_path: PathBuf,
         changed_directory: bool,
         branch_name: String,

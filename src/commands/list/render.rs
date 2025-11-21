@@ -375,7 +375,7 @@ impl LayoutConfig {
         use unicode_width::UnicodeWidthStr;
 
         let branch = item.branch_name();
-        let is_primary = item.is_primary();
+        let is_main = item.is_main();
         let shortened_path = item
             .worktree_path()
             .map(|p| shorten_path(p, &self.common_prefix))
@@ -394,7 +394,7 @@ impl LayoutConfig {
                     let symbol = if has_worktree {
                         if is_current {
                             "@ "
-                        } else if is_primary {
+                        } else if is_main {
                             "^ "
                         } else {
                             "+ "
@@ -408,7 +408,7 @@ impl LayoutConfig {
                     // Show actual branch name
                     let style = if is_current {
                         CURRENT.bold()
-                    } else if is_primary {
+                    } else if is_main {
                         Style::new()
                             .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
                             .bold()
@@ -426,7 +426,7 @@ impl LayoutConfig {
                     // Show actual path
                     let style = if is_current {
                         CURRENT.bold()
-                    } else if is_primary {
+                    } else if is_main {
                         Style::new()
                             .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
                             .bold()
@@ -515,7 +515,7 @@ impl<'a> ListRowContext<'a> {
             let is_current = current_worktree_path
                 .map(|p| p == &info.path)
                 .unwrap_or(false);
-            match (is_current, info.is_primary) {
+            match (is_current, info.is_main) {
                 (true, _) => Some(CURRENT),
                 (_, true) => Some(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)))),
                 _ => None,
@@ -555,7 +555,7 @@ impl ColumnLayout {
                     // Worktree: priority is current > primary > regular
                     if ctx.is_current {
                         "@ " // Current worktree
-                    } else if info.is_primary {
+                    } else if info.is_main {
                         "^ " // Primary worktree
                     } else {
                         "+ " // Regular worktree
@@ -605,7 +605,7 @@ impl ColumnLayout {
                 self.render_diff_cell(diff.added, diff.deleted)
             }
             ColumnKind::AheadBehind => {
-                if ctx.item.is_primary() {
+                if ctx.item.is_main() {
                     return StyledLine::new();
                 }
                 let ahead = ctx.counts.ahead;
@@ -616,7 +616,7 @@ impl ColumnLayout {
                 self.render_diff_cell(ahead, behind)
             }
             ColumnKind::BranchDiff => {
-                if ctx.item.is_primary() {
+                if ctx.item.is_main() {
                     return StyledLine::new();
                 }
                 self.render_diff_cell(ctx.branch_diff.added, ctx.branch_diff.deleted)

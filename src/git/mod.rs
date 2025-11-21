@@ -75,7 +75,7 @@ pub struct Worktree {
 ///
 /// This type ensures:
 /// - Bare worktrees are filtered out (only worktrees with working trees are included)
-/// - The primary worktree is always identifiable (first non-bare worktree at index 0)
+/// - The main worktree is always identifiable (first non-bare worktree at index 0)
 /// - Construction fails if no valid worktrees exist
 #[derive(Debug, Clone)]
 pub struct WorktreeList {

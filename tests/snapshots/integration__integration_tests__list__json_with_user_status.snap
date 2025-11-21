@@ -19,7 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpKOi1g7/test-config.toml
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
@@ -74,7 +74,7 @@ exit_code: 0
       "deleted": 0
     },
     "worktree_state": null,
-    "is_primary": true
+    "is_main": true
   },
   {
     "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
@@ -127,7 +127,7 @@ exit_code: 0
       "deleted": 0
     },
     "worktree_state": null,
-    "is_primary": false
+    "is_main": false
   },
   {
     "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
@@ -178,7 +178,7 @@ exit_code: 0
       "deleted": 0
     },
     "worktree_state": null,
-    "is_primary": false
+    "is_main": false
   }
 ]
 

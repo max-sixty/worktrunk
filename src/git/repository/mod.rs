@@ -643,7 +643,7 @@ impl Repository {
 
     /// Return the working tree diff versus a base branch when their trees match.
     ///
-    /// When `base_branch` is `None` (primary worktree), this always returns `Some(LineDiff::default())`.
+    /// When `base_branch` is `None` (main worktree), this always returns `Some(LineDiff::default())`.
     /// If the base branch tree matches HEAD and the working tree is dirty, the precise diff is
     /// computed; otherwise we return zero to indicate the trees (and working tree) match.
     /// When the trees differ, we return `None` so callers can skip expensive comparisons.
@@ -813,7 +813,7 @@ impl Repository {
     /// List all worktrees for this repository.
     ///
     /// Returns a WorktreeList that automatically filters out bare repositories
-    /// and provides access to the primary worktree.
+    /// and provides access to the main worktree.
     pub fn list_worktrees(&self) -> Result<WorktreeList, GitError> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
         let raw_worktrees = Worktree::parse_porcelain_list(&stdout)?;

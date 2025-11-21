@@ -9,7 +9,7 @@ use worktrunk::git::{GitError, Repository};
 /// - On Unix: uses double-fork with setsid to create a daemon
 /// - On Windows: uses CREATE_NEW_PROCESS_GROUP to detach from console
 ///
-/// Logs are centralized in the primary worktree's `.git/wt-logs/` directory.
+/// Logs are centralized in the main worktree's `.git/wt-logs/` directory.
 ///
 /// # Arguments
 /// * `repo` - Repository instance for accessing git common directory

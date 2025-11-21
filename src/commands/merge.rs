@@ -94,7 +94,7 @@ pub fn handle_merge(
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
-    // When current == target or we're in the primary worktree, force --no-remove (can't remove it)
+    // When current == target or we're in the main worktree, force --no-remove (can't remove it)
     let in_primary = !repo.is_in_worktree().unwrap_or(false);
     let no_remove_effective = no_remove || current_branch == target_branch || in_primary;
 
@@ -191,7 +191,7 @@ pub fn handle_merge(
         crate::output::progress(format!("{CYAN}Removing worktree & branch...{CYAN:#}"))?;
         let worktree_root = repo.worktree_root()?;
         let remove_result = RemoveResult::RemovedWorktree {
-            primary_path: destination_path.clone(),
+            main_path: destination_path.clone(),
             worktree_path: worktree_root,
             changed_directory: true,
             branch_name: current_branch.clone(),
@@ -226,11 +226,11 @@ pub fn handle_merge(
 }
 
 /// Format the merge summary message (no emoji - output system adds it)
-fn format_merge_summary(primary_path: Option<&std::path::Path>) -> String {
+fn format_merge_summary(main_path: Option<&std::path::Path>) -> String {
     use worktrunk::styling::GREEN;
 
     // Show where we ended up
-    if let Some(path) = primary_path {
+    if let Some(path) = main_path {
         format!(
             "{GREEN}Returned to primary at {GREEN_BOLD}{}{GREEN_BOLD:#}{GREEN:#}",
             format_path_for_display(path)
@@ -241,8 +241,8 @@ fn format_merge_summary(primary_path: Option<&std::path::Path>) -> String {
 }
 
 /// Handle output for merge summary using global output context
-fn handle_merge_summary_output(primary_path: Option<&std::path::Path>) -> Result<(), GitError> {
-    let message = format_merge_summary(primary_path);
+fn handle_merge_summary_output(main_path: Option<&std::path::Path>) -> Result<(), GitError> {
+    let message = format_merge_summary(main_path);
 
     // Show success message (formatting added by OutputContext)
     crate::output::success(message)?;
