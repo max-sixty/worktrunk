@@ -18,8 +18,7 @@ colliding; each agent gets a separate directory with a version of the code. But
 creating worktrees, tracking paths & statuses, cleaning up, etc, is manual.
 Worktrunk offers control, transparency & automation for this workflow.
 
-<!-- TODO: Add demo gif when available -->
-<!-- ![Worktrunk Demo](scripts/wt-demo/out/wt-demo.gif) -->
+![Worktrunk Demo](scripts/wt-demo/out/wt-demo.gif)
 
 ## Quick Start
 
@@ -614,7 +613,7 @@ Order: `?!+»✘ ✖⚠≡∅ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠`
 - `⌫` Prunable worktree (directory missing, can be pruned)
 - `⊠` Locked worktree (protected from auto-removal)
 
-*Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).*
+_Rows are dimmed when no unique work (≡ matches main OR ∅ no commits)._
 
 **JSON OUTPUT:**
 
@@ -622,6 +621,7 @@ Use `--format=json` for structured data. Each object contains two status maps
 with the same fields in the same order as STATUS SYMBOLS above:
 
 **`status`** - variant names for querying:
+
 - `working_tree`: `{untracked, modified, staged, renamed, deleted}` booleans
 - `branch_state`: `""` | `"Conflicts"` | `"MergeTreeConflicts"` | `"MatchesMain"` | `"NoCommits"`
 - `git_operation`: `""` | `"Rebase"` | `"Merge"`
