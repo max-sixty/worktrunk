@@ -20,7 +20,9 @@ cp -cR {{ repo_root }}/target/. {{ worktree }}/target/
 # Post-merge commands
 # These run in the main worktree after successful merge and push
 # Available template variables: {{ repo }}, {{ branch }}, {{ worktree }}, {{ repo_root }}, {{ target }}
-post-merge-command = "cargo install --path ."
+[post-merge-command]
+build = "cargo build --all-targets"
+install = "cargo install --path ."
 
 # Pre-commit commands
 # These run sequentially before committing changes during merge (both squash and no-squash)
