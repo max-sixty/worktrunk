@@ -18,6 +18,13 @@ use super::ci_status::PrStatus;
 use super::collect::{CellUpdate, detect_worktree_state};
 use super::model::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
 
+/// Options for controlling what data to collect.
+#[derive(Clone, Copy)]
+pub struct CollectOptions {
+    pub fetch_ci: bool,
+    pub check_conflicts: bool,
+}
+
 /// Context for spawning parallel tasks.
 struct TaskContext {
     repo_path: PathBuf,
@@ -312,22 +319,16 @@ fn spawn_ci_status<'scope>(
 /// Errors are handled with TODO for simplicity (simplest thing for now).
 pub fn collect_worktree_progressive(
     wt: &Worktree,
-    primary: &Worktree,
     item_idx: usize,
-    fetch_ci: bool,
-    check_conflicts: bool,
+    base_branch: &str,
+    options: &CollectOptions,
     tx: Sender<CellUpdate>,
 ) {
-    let base_branch = primary
-        .branch
-        .as_deref()
-        .filter(|_| wt.path != primary.path);
-
     let ctx = TaskContext {
         repo_path: wt.path.clone(),
         commit_sha: wt.head.clone(),
         branch: wt.branch.clone(),
-        base_branch: base_branch.map(String::from),
+        base_branch: Some(base_branch.to_string()),
         item_idx,
     };
 
@@ -336,11 +337,11 @@ pub fn collect_worktree_progressive(
         spawn_ahead_behind(s, &ctx, tx.clone());
         spawn_branch_diff(s, &ctx, tx.clone());
         spawn_working_tree_diff(s, &ctx, tx.clone());
-        spawn_conflicts(s, &ctx, check_conflicts, true, tx.clone());
+        spawn_conflicts(s, &ctx, options.check_conflicts, true, tx.clone());
         spawn_worktree_state(s, &ctx, tx.clone());
         spawn_user_status(s, &ctx, tx.clone());
         spawn_upstream(s, &ctx, true, tx.clone());
-        spawn_ci_status(s, &ctx, fetch_ci, tx);
+        spawn_ci_status(s, &ctx, options.fetch_ci, tx);
     });
 }
 
@@ -418,17 +419,17 @@ fn parse_status_for_symbols(status_output: &str) -> (String, bool) {
 pub fn collect_branch_progressive(
     branch_name: &str,
     commit_sha: &str,
-    primary: &Worktree,
+    repo_path: &std::path::Path,
     item_idx: usize,
-    fetch_ci: bool,
-    check_conflicts: bool,
+    base_branch: &str,
+    options: &CollectOptions,
     tx: Sender<CellUpdate>,
 ) {
     let ctx = TaskContext {
-        repo_path: primary.path.clone(),
+        repo_path: repo_path.to_path_buf(),
         commit_sha: commit_sha.to_string(),
         branch: Some(branch_name.to_string()),
-        base_branch: primary.branch.as_deref().map(String::from),
+        base_branch: Some(base_branch.to_string()),
         item_idx,
     };
 
@@ -437,7 +438,7 @@ pub fn collect_branch_progressive(
         spawn_ahead_behind(s, &ctx, tx.clone());
         spawn_branch_diff(s, &ctx, tx.clone());
         spawn_upstream(s, &ctx, false, tx.clone());
-        spawn_conflicts(s, &ctx, check_conflicts, false, tx.clone());
-        spawn_ci_status(s, &ctx, fetch_ci, tx);
+        spawn_conflicts(s, &ctx, options.check_conflicts, false, tx.clone());
+        spawn_ci_status(s, &ctx, options.fetch_ci, tx);
     });
 }

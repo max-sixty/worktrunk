@@ -1,10 +1,10 @@
 ---
-source: tests/integration_tests/push.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - beta
-    - push
+    - switch
+    - main
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -24,10 +24,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mPushing 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m
-[40m [0m  * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature file
-[40m [0m   feature.txt | 1 [32m+[m
-[40m [0m   1 file changed, 1 insertion(+)
-✅ [32mPushed to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
+✅ [32mSwitched to worktree for [1m[32mmain[0m[32m at [1m[32m[REPO].main[0m[0m
+💡 [2mTo enable automatic cd, run: wt config shell[0m
 
 ----- stderr -----

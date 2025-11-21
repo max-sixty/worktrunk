@@ -79,6 +79,45 @@ fn test_merge_fast_forward() {
 }
 
 #[test]
+fn test_merge_when_primary_not_on_default_but_default_has_worktree() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Move the primary worktree off main
+    repo.switch_primary_to("develop");
+
+    // Ensure main still has a worktree (secondary)
+    let _main_wt = repo.add_main_worktree();
+
+    // Create a feature worktree and commit
+    let feature_wt = repo.add_worktree("feature", "feature");
+    std::fs::write(feature_wt.join("feature.txt"), "feature content")
+        .expect("Failed to write file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    snapshot_merge(
+        "merge_when_primary_not_on_default_but_default_has_worktree",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}
+
+#[test]
 fn test_merge_with_no_remove_flag() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
@@ -2883,4 +2922,14 @@ fn test_merge_squash_with_working_tree_creates_backup() {
         "Expected backup in reflog, but reflog was: {}",
         reflog
     );
+}
+
+#[test]
+fn test_merge_when_default_branch_missing_worktree() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    // Move primary off default branch so no worktree holds it
+    repo.switch_primary_to("develop");
+
+    snapshot_merge("merge_default_branch_missing_worktree", &repo, &[], None);
 }

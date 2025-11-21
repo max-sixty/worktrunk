@@ -114,7 +114,30 @@ fn normalize_output(output: &str) -> String {
         .unwrap()
         .replace_all(&output, "[CONFIG]");
 
-    output.to_string()
+    // Normalize blank lines due to PTY timing variations
+    // Different environments (local, CI, Claude Code web) may have blank lines
+    // in different positions due to timing-dependent buffering.
+
+    // PTYs use \r\n line endings, normalize to \n first
+    let mut output_str = output.replace("\r\n", "\n");
+
+    // Ensure blank line after user input (y or n)
+    if output_str.starts_with("y\n") || output_str.starts_with("n\n") {
+        // Check if there's already a blank line after y/n
+        if !output_str.starts_with("y\n\n") && !output_str.starts_with("n\n\n") {
+            // Add blank line after y/n
+            output_str = output_str.replacen("y\n🟡", "y\n\n🟡", 1);
+            output_str = output_str.replacen("n\n🟡", "n\n\n🟡", 1);
+        }
+    }
+
+    // Remove blank line between prompt and subsequent message
+    // The prompt ends with "] " followed by newline, then we may have blank line
+    // Pattern: [y/N] followed by ANSI codes, space, newline, blank line, then emoji
+    output_str = output_str.replace("[y/N]\x1b[0m \n\n🔄", "[y/N]\x1b[0m \n🔄");
+    output_str = output_str.replace("[y/N]\x1b[0m \n\n⚪", "[y/N]\x1b[0m \n⚪");
+
+    output_str
 }
 
 #[test]

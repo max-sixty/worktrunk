@@ -57,7 +57,7 @@ pub const GREEN_BOLD: Style = Style::new()
     .fg_color(Some(Color::Ansi(AnsiColor::Green)))
     .bold();
 
-/// Gray style for status arrows (divergence indicators) - use as `{GRAY}text{GRAY:#}`
+/// Gray style for secondary/metadata text - use as `{GRAY}text{GRAY:#}`
 pub const GRAY: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlack)));
 
 // ============================================================================

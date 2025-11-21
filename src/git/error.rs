@@ -30,6 +30,12 @@ pub enum GitError {
     WorktreeMissing { branch: String },
     /// No worktree found for branch
     NoWorktreeFound { branch: String },
+    /// Expected branch has no worktree and its target path is already used by another branch
+    WorktreePathOccupied {
+        branch: String,
+        path: PathBuf,
+        occupant: Option<String>,
+    },
     /// Cannot push due to conflicting uncommitted changes
     ConflictingChanges {
         files: Vec<String>,
@@ -169,6 +175,23 @@ impl std::fmt::Display for GitError {
                 write!(
                     f,
                     "{ERROR_EMOJI} {ERROR}No worktree found for branch {ERROR_BOLD}{branch}{ERROR_BOLD:#}{ERROR:#}"
+                )
+            }
+
+            GitError::WorktreePathOccupied {
+                branch,
+                path,
+                occupant,
+            } => {
+                let occupant_note = occupant
+                    .as_ref()
+                    .map(|b| format!(" (currently on {ERROR_BOLD}{b}{ERROR_BOLD:#})"))
+                    .unwrap_or_default();
+                write!(
+                    f,
+                    "{ERROR_EMOJI} {ERROR}Cannot create worktree for {ERROR_BOLD}{branch}{ERROR_BOLD:#}{ERROR}: target path already exists{ERROR:#}\n\n{HINT_EMOJI} {HINT}Reuse the existing worktree at {}{} or remove it before retrying{HINT:#}",
+                    format_path_for_display(path),
+                    occupant_note
                 )
             }
 

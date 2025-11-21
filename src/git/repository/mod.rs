@@ -373,16 +373,7 @@ impl Repository {
             return Ok(branches[0].clone());
         }
 
-        // 2. Use the branch HEAD points to (from main worktree)
-        // This is what the main worktree is currently on
-        if let Ok(current) = self.run_command(&["symbolic-ref", "--short", "HEAD"]) {
-            let branch = current.trim().to_string();
-            if !branch.is_empty() {
-                return Ok(branch);
-            }
-        }
-
-        // 3. Check git config init.defaultBranch
+        // 2. Check git config init.defaultBranch
         if let Ok(default) = self.run_command(&["config", "--get", "init.defaultBranch"]) {
             let branch = default.trim().to_string();
             if !branch.is_empty() && branches.contains(&branch) {
@@ -390,14 +381,14 @@ impl Repository {
             }
         }
 
-        // 4. Look for common branch names
+        // 3. Look for common branch names
         for name in ["main", "master", "develop", "trunk"] {
             if branches.contains(&name.to_string()) {
                 return Ok(name.to_string());
             }
         }
 
-        // 5. Give up - can't infer
+        // 4. Give up - can't infer
         Err(GitError::CommandFailed(
             "Could not infer default branch. Please specify target branch explicitly or set up a remote.".to_string()
         ))

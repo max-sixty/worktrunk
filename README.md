@@ -83,6 +83,7 @@ Worktrunk is opinionated! It's not designed to be all things to all people. The 
 - Shell navigation
 - Commits are squashed into linear histories
 - Maximum automation
+- Branches as handles, one branch per worktree
 
 Adopting Worktrunk for a portion of a workflow doesn't require adopting it for
 everything — standard `git worktree` commands continue working fine.
