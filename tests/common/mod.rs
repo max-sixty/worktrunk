@@ -690,10 +690,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Filter out git hint messages that vary across git versions
     // Match gutter-formatted hints (with ANSI codes) across multiple lines
     // Pattern: gutter prefix + "hint:" + message + newline
-    settings.add_filter(
-        r"(?m)^\x1b\[40m \x1b\[0m  hint:.*\n",
-        "",
-    );
+    settings.add_filter(r"(?m)^\x1b\[40m \x1b\[0m  hint:.*\n", "");
 
     settings
 }
