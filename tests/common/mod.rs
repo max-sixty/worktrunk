@@ -103,6 +103,8 @@ pub struct TestRepo {
     remote: Option<PathBuf>, // Path to bare remote repo if created
     /// Isolated config file for this test (prevents pollution of user's config)
     test_config_path: PathBuf,
+    /// Git config file with test settings (advice disabled, etc.)
+    git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
     mock_bin_path: Option<PathBuf>,
 }
@@ -122,12 +124,21 @@ impl TestRepo {
         // Create isolated config path for this test
         let test_config_path = temp_dir.path().join("test-config.toml");
 
+        // Create git config file with test settings
+        let git_config_path = temp_dir.path().join("test-gitconfig");
+        std::fs::write(
+            &git_config_path,
+            "[advice]\n\tmergeConflict = false\n\tresolveConflict = false\n",
+        )
+        .expect("Failed to write git config");
+
         let repo = Self {
             temp_dir,
             root,
             worktrees: HashMap::new(),
             remote: None,
             test_config_path,
+            git_config_path,
             mock_bin_path: None,
         };
 
@@ -162,7 +173,8 @@ impl TestRepo {
     /// This sets environment variables only for the specific command,
     /// ensuring thread-safety and test isolation.
     pub fn configure_git_cmd(&self, cmd: &mut Command) {
-        cmd.env("GIT_CONFIG_GLOBAL", "/dev/null");
+        // Use test git config file with advice settings disabled
+        cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
         cmd.env("GIT_CONFIG_SYSTEM", "/dev/null");
         cmd.env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z");
         cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
@@ -170,12 +182,6 @@ impl TestRepo {
         cmd.env("LANG", "C");
         // Oct 28, 2025 - exactly 300 days (10 months) after commit date for deterministic relative times
         cmd.env("SOURCE_DATE_EPOCH", "1761609600");
-        // Disable git advice hints for stable output across versions
-        cmd.env("GIT_CONFIG_COUNT", "2");
-        cmd.env("GIT_CONFIG_KEY_0", "advice.mergeConflict");
-        cmd.env("GIT_CONFIG_VALUE_0", "false");
-        cmd.env("GIT_CONFIG_KEY_1", "advice.resolveConflict");
-        cmd.env("GIT_CONFIG_VALUE_1", "false");
     }
 
     /// Get standard test environment variables as a vector
@@ -186,7 +192,11 @@ impl TestRepo {
         vec![
             ("CLICOLOR_FORCE".to_string(), "1".to_string()),
             ("COLUMNS".to_string(), "150".to_string()),
-            ("GIT_CONFIG_GLOBAL".to_string(), "/dev/null".to_string()),
+            // Use test git config file with advice settings disabled
+            (
+                "GIT_CONFIG_GLOBAL".to_string(),
+                self.git_config_path.display().to_string(),
+            ),
             ("GIT_CONFIG_SYSTEM".to_string(), "/dev/null".to_string()),
             (
                 "GIT_AUTHOR_DATE".to_string(),
@@ -199,18 +209,6 @@ impl TestRepo {
             ("LC_ALL".to_string(), "C".to_string()),
             ("LANG".to_string(), "C".to_string()),
             ("SOURCE_DATE_EPOCH".to_string(), "1761609600".to_string()),
-            // Disable git advice hints for stable output across versions
-            ("GIT_CONFIG_COUNT".to_string(), "2".to_string()),
-            (
-                "GIT_CONFIG_KEY_0".to_string(),
-                "advice.mergeConflict".to_string(),
-            ),
-            ("GIT_CONFIG_VALUE_0".to_string(), "false".to_string()),
-            (
-                "GIT_CONFIG_KEY_1".to_string(),
-                "advice.resolveConflict".to_string(),
-            ),
-            ("GIT_CONFIG_VALUE_1".to_string(), "false".to_string()),
             (
                 "WORKTRUNK_CONFIG_PATH".to_string(),
                 self.test_config_path().display().to_string(),
@@ -673,6 +671,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // (metadata is handled via redactions below)
     settings.add_filter(r".*/\.tmp[^/]+/test-config\.toml", "[TEST_CONFIG]");
 
+    // Normalize GIT_CONFIG_GLOBAL temp paths
+    settings.add_filter(r".*/\.tmp[^/]+/test-gitconfig", "[TEST_GIT_CONFIG]");
+
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
     // Examples:
@@ -682,6 +683,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(r"HOME: .*/\.tmp[^/\s]+", "HOME: [TEST_HOME]");
 
     // Redact volatile metadata captured by insta-cmd (applies to the `info` block)
+    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
     settings.add_redaction(".env.HOME", "[TEST_HOME]");
     settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
