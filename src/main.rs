@@ -281,13 +281,14 @@ fn main() {
 
                     // Get config values if we can determine the project ID
                     // If we can't (e.g., early in initialization), use defaults
-                    let (show_branches_config, show_full_config) = repo.project_identifier()
+                    let (show_branches_config, show_full_config) = repo
+                        .project_identifier()
                         .ok()
                         .and_then(|project_id| {
                             config.projects.get(&project_id).and_then(|p| {
-                                p.list.as_ref().map(|l| {
-                                    (l.branches.unwrap_or(false), l.full.unwrap_or(false))
-                                })
+                                p.list
+                                    .as_ref()
+                                    .map(|l| (l.branches.unwrap_or(false), l.full.unwrap_or(false)))
                             })
                         })
                         .unwrap_or((false, false));

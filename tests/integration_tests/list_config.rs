@@ -127,7 +127,9 @@ branches = false
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         // CLI flag --branches should override config
-        cmd.arg("list").arg("--branches").current_dir(repo.root_path());
+        cmd.arg("list")
+            .arg("--branches")
+            .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
     });
