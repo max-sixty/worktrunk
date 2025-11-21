@@ -222,21 +222,21 @@ pub fn handle_remove_output(
         // Show progress message based on what we'll do
         let action = if *no_delete_branch {
             format!(
-                "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} in background; retaining branch (--no-delete-branch){CYAN:#}"
+                "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} worktree in background; retaining branch (--no-delete-branch){CYAN:#}"
             )
         } else if should_delete_branch {
             if *force_delete {
                 format!(
-                    "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} & branch in background (--force-delete){CYAN:#}"
+                    "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} worktree & branch in background (--force-delete){CYAN:#}"
                 )
             } else {
                 format!(
-                    "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} & branch in background{CYAN:#}"
+                    "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} worktree & branch in background{CYAN:#}"
                 )
             }
         } else {
             format!(
-                "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} in background; retaining unmerged branch{CYAN:#}"
+                "{CYAN}Removing {CYAN_BOLD}{branch_name}{CYAN_BOLD:#}{CYAN} worktree in background; retaining unmerged branch{CYAN:#}"
             )
         };
         super::progress(action)?;
