@@ -631,7 +631,16 @@ fn allocate_columns_with_priority(
         let start = if columns.is_empty() {
             0
         } else {
-            position + gap
+            // No gap after gutter column - its content includes the spacing
+            let prev_was_gutter = columns
+                .last()
+                .map(|c: &ColumnLayout| c.kind == ColumnKind::Gutter)
+                .unwrap_or(false);
+            if prev_was_gutter {
+                position
+            } else {
+                position + gap
+            }
         };
         position = start + col.width;
 
@@ -867,13 +876,17 @@ mod tests {
         assert_eq!(first.start, 0, "Gutter should begin at position 0");
 
         let mut previous_end = first.start + first.width;
+        let mut prev_kind = first.kind;
         for column in columns_iter {
+            // No gap after gutter column - its content includes the spacing
+            let expected_gap = if prev_kind == ColumnKind::Gutter { 0 } else { 2 };
             assert_eq!(
                 column.start,
-                previous_end + 2,
-                "Columns should be separated by a 2-space gap"
+                previous_end + expected_gap,
+                "Columns should be separated by expected gap (0 after gutter, 2 otherwise)"
             );
             previous_end = column.start + column.width;
+            prev_kind = column.kind;
         }
 
         let path_column = layout

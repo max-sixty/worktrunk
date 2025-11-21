@@ -26,7 +26,7 @@ pub fn standard_settings(repo: &TestRepo) -> Settings {
     // Linux: /tmp/.tmpXXX/test-config.toml
     settings.add_filter(
         r"(/var/folders/[^/]+/[^/]+/T/\.tmp[^/]+|/tmp/\.tmp[^/]+)/test-config\.toml",
-        "[TEST_TEMP]/test-config.toml",
+        "[TEST_CONFIG]",
     );
     settings
 }
