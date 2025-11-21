@@ -198,6 +198,27 @@ Skip confirmation prompt:
 }
 
 #[derive(Subcommand)]
+pub enum ApprovalsCommand {
+    /// Store approvals in config
+    Ask {
+        /// Skip approval prompts
+        #[arg(short, long)]
+        force: bool,
+
+        /// Show all commands
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Clear approved commands from config
+    Clear {
+        /// Clear global approvals
+        #[arg(short, long)]
+        global: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum ConfigCommand {
     /// Shell integration setup
     Shell {
@@ -218,6 +239,12 @@ pub enum ConfigCommand {
     Status {
         #[command(subcommand)]
         action: StatusAction,
+    },
+
+    /// Manage command approvals
+    Approvals {
+        #[command(subcommand)]
+        action: ApprovalsCommand,
     },
 }
 
@@ -298,24 +325,6 @@ pub enum StandaloneCommand {
         /// Target branch (defaults to default branch)
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
-    },
-
-    /// Store approvals in config
-    AskApprovals {
-        /// Skip approval prompts
-        #[arg(short, long)]
-        force: bool,
-
-        /// Show all commands
-        #[arg(long)]
-        all: bool,
-    },
-
-    /// Clear approved commands from config
-    ClearApprovals {
-        /// Clear global approvals
-        #[arg(short, long)]
-        global: bool,
     },
 
     /// Interactive worktree selector

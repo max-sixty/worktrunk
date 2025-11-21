@@ -32,7 +32,10 @@ use commands::{
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
-use cli::{Cli, Commands, ConfigCommand, ConfigShellCommand, StandaloneCommand, StatusAction};
+use cli::{
+    ApprovalsCommand, Cli, Commands, ConfigCommand, ConfigShellCommand, StandaloneCommand,
+    StatusAction,
+};
 
 /// Try to handle --help flag with pager before clap processes it
 fn maybe_handle_help_with_pager() -> bool {
@@ -252,6 +255,10 @@ fn main() {
                 StatusAction::Set { value, branch } => handle_config_status_set(value, branch),
                 StatusAction::Unset { target } => handle_config_status_unset(target),
             },
+            ConfigCommand::Approvals { action } => match action {
+                ApprovalsCommand::Ask { force, all } => handle_standalone_ask_approvals(force, all),
+                ApprovalsCommand::Clear { global } => handle_standalone_clear_approvals(global),
+            },
         },
         Commands::Standalone { action } => match action {
             StandaloneCommand::RunHook { hook_type, force } => {
@@ -268,12 +275,6 @@ fn main() {
                 allow_merge_commits,
             } => handle_push(target.as_deref(), allow_merge_commits, "Pushed to", None),
             StandaloneCommand::Rebase { target } => handle_rebase(target.as_deref()).map(|_| ()),
-            StandaloneCommand::AskApprovals { force, all } => {
-                handle_standalone_ask_approvals(force, all)
-            }
-            StandaloneCommand::ClearApprovals { global } => {
-                handle_standalone_clear_approvals(global)
-            }
             #[cfg(unix)]
             StandaloneCommand::Select => handle_select(),
         },

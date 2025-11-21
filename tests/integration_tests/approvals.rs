@@ -8,8 +8,8 @@ use worktrunk::config::WorktrunkConfig;
 fn snapshot_ask_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "beta", &[], None);
-        cmd.arg("ask-approvals").args(args);
+        let mut cmd = make_snapshot_cmd(repo, "config", &[], None);
+        cmd.arg("approvals").arg("ask").args(args);
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -18,8 +18,8 @@ fn snapshot_ask_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
 fn snapshot_clear_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "beta", &[], None);
-        cmd.arg("clear-approvals").args(args);
+        let mut cmd = make_snapshot_cmd(repo, "config", &[], None);
+        cmd.arg("approvals").arg("clear").args(args);
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -153,8 +153,8 @@ fn test_clear_approvals_after_clear() {
         .expect("Failed to save approval");
 
     // Clear approvals
-    let mut cmd = make_snapshot_cmd(&repo, "beta", &[], None);
-    cmd.arg("clear-approvals");
+    let mut cmd = make_snapshot_cmd(&repo, "config", &[], None);
+    cmd.arg("approvals").arg("clear");
     cmd.output().expect("Failed to clear approvals");
 
     // Try to clear again (should show "no approvals")

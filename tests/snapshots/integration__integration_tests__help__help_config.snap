@@ -22,6 +22,7 @@ Commands:
   list           List configuration files & locations
   refresh-cache  Refresh default branch from remote
   status         Manage branch status markers
+  approvals      Manage command approvals
 
 Options:
   -C <path>

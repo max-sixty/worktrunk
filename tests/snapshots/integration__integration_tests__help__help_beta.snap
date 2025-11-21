@@ -17,14 +17,12 @@ wt-beta - Development and testing utilities
 Usage: wt beta [OPTIONS] <COMMAND>
 
 Commands:
-  run-hook         Run project hook
-  commit           Commit changes with LLM-generated message
-  squash           Squash commits with LLM-generated message
-  push             Push changes to local target branch
-  rebase           Rebase onto target
-  ask-approvals    Store approvals in config
-  clear-approvals  Clear approved commands from config
-  select           Interactive worktree selector
+  run-hook  Run project hook
+  commit    Commit changes with LLM-generated message
+  squash    Squash commits with LLM-generated message
+  push      Push changes to local target branch
+  rebase    Rebase onto target
+  select    Interactive worktree selector
 
 Options:
   -C <path>
