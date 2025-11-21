@@ -1427,4 +1427,456 @@ approved-commands = ["echo 'fish background task'"]
             assert_snapshot!("source_flag_error_passthrough", output.normalized());
         }
     }
+
+    // ========================================================================
+    // Job Control Notification Tests
+    // ========================================================================
+    //
+    // These tests verify that job control notifications ([1] 12345, [1] + done)
+    // don't leak into user output. Zsh suppresses these with NO_MONITOR,
+    // bash shows them at the next prompt (less intrusive).
+
+    /// Test that zsh doesn't show job control notifications inline
+    /// The NO_MONITOR option should suppress [1] 12345 and [1] + done messages
+    #[test]
+    fn test_zsh_no_job_control_notifications() {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Configure a post-start command that will trigger background job
+        let config_dir = repo.root_path().join(".config");
+        fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+        fs::write(
+            config_dir.join("wt.toml"),
+            r#"post-start-command = "echo 'background job'""#,
+        )
+        .expect("Failed to write project config");
+
+        repo.commit("Add post-start command");
+
+        // Pre-approve the command
+        fs::write(
+            repo.test_config_path(),
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."test-repo"]
+approved-commands = ["echo 'background job'"]
+"#,
+        )
+        .expect("Failed to write user config");
+
+        let output = exec_through_wrapper("zsh", &repo, "switch", &["--create", "zsh-job-test"]);
+
+        assert_eq!(output.exit_code, 0, "Command should succeed");
+        output.assert_no_directive_leaks();
+
+        // Critical: zsh should NOT show job control notifications
+        // These patterns indicate job control messages leaked through
+        assert!(
+            !output.combined.contains("[1]"),
+            "Zsh should suppress job control notifications with NO_MONITOR.\nOutput:\n{}",
+            output.combined
+        );
+        assert!(
+            !output.combined.contains("+ done"),
+            "Zsh should suppress job completion notifications.\nOutput:\n{}",
+            output.combined
+        );
+    }
+
+    /// Test bash background job behavior
+    /// Note: Bash shows [1] + done at the next prompt, which we can't fully suppress
+    /// in functions. This test documents the behavior.
+    #[test]
+    fn test_bash_job_control_behavior() {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Configure a post-start command that will trigger background job
+        let config_dir = repo.root_path().join(".config");
+        fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+        fs::write(
+            config_dir.join("wt.toml"),
+            r#"post-start-command = "echo 'bash background'""#,
+        )
+        .expect("Failed to write project config");
+
+        repo.commit("Add post-start command");
+
+        // Pre-approve the command
+        fs::write(
+            repo.test_config_path(),
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."test-repo"]
+approved-commands = ["echo 'bash background'"]
+"#,
+        )
+        .expect("Failed to write user config");
+
+        let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "bash-job-test"]);
+
+        assert_eq!(output.exit_code, 0, "Command should succeed");
+        output.assert_no_directive_leaks();
+
+        // Bash may show job notifications - this test documents current behavior
+        // The key is that directives don't leak (checked above)
+        // Job notifications at next prompt are acceptable (less intrusive than inline)
+
+        // Verify the command completed successfully
+        assert!(
+            output.combined.contains("Created new worktree"),
+            "Should show success message"
+        );
+    }
+
+    // ========================================================================
+    // Completion Functionality Tests
+    // ========================================================================
+
+    /// Test that bash completions are properly registered
+    #[test]
+    fn test_bash_completions_registered() {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, "bash");
+
+        // Script that sources wrapper and checks if completion is registered
+        let script = format!(
+            r#"
+            export WORKTRUNK_BIN='{}'
+            export WORKTRUNK_CONFIG_PATH='{}'
+            {}
+            # Check if wt completion is registered
+            complete -p wt 2>/dev/null && echo "__COMPLETION_REGISTERED__" || echo "__NO_COMPLETION__"
+            "#,
+            wt_bin.display(),
+            repo.test_config_path().display(),
+            wrapper_script
+        );
+
+        let final_script = format!("( {} ) 2>&1", script);
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars: Vec<(&str, &str)> =
+            vec![("WORKTRUNK_CONFIG_PATH", &config_path), ("TERM", "xterm")];
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("bash", &final_script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Script should succeed");
+        assert!(
+            combined.contains("__COMPLETION_REGISTERED__"),
+            "Bash completions should be registered after sourcing wrapper.\nOutput:\n{}",
+            combined
+        );
+    }
+
+    /// Test that fish completions are properly registered
+    #[test]
+    fn test_fish_completions_registered() {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, "fish");
+
+        // Script that sources wrapper and checks if completion is registered
+        let script = format!(
+            r#"
+            set -x WORKTRUNK_BIN '{}'
+            set -x WORKTRUNK_CONFIG_PATH '{}'
+            {}
+            # Check if wt completions are registered
+            if complete -c wt 2>/dev/null | grep -q .
+                echo "__COMPLETION_REGISTERED__"
+            else
+                echo "__NO_COMPLETION__"
+            end
+            "#,
+            wt_bin.display(),
+            repo.test_config_path().display(),
+            wrapper_script
+        );
+
+        let final_script = format!("begin\n{}\nend 2>&1", script);
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars: Vec<(&str, &str)> =
+            vec![("WORKTRUNK_CONFIG_PATH", &config_path), ("TERM", "xterm")];
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("fish", &final_script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Script should succeed");
+        assert!(
+            combined.contains("__COMPLETION_REGISTERED__"),
+            "Fish completions should be registered after sourcing wrapper.\nOutput:\n{}",
+            combined
+        );
+    }
+
+    /// Test that zsh completions are properly registered
+    #[test]
+    fn test_zsh_completions_registered() {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, "zsh");
+
+        // Script that sources wrapper and checks if completion function exists
+        let script = format!(
+            r#"
+            autoload -Uz compinit && compinit -i 2>/dev/null
+            export WORKTRUNK_BIN='{}'
+            export WORKTRUNK_CONFIG_PATH='{}'
+            {}
+            # Check if _wt completion function exists
+            if (( $+functions[_wt] )); then
+                echo "__COMPLETION_REGISTERED__"
+            else
+                echo "__NO_COMPLETION__"
+            fi
+            "#,
+            wt_bin.display(),
+            repo.test_config_path().display(),
+            wrapper_script
+        );
+
+        let final_script = format!("( {} ) 2>&1", script);
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars: Vec<(&str, &str)> = vec![
+            ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("TERM", "xterm"),
+            ("ZDOTDIR", "/dev/null"),
+        ];
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive("zsh", &final_script, repo.root_path(), &env_vars, &[]);
+
+        assert_eq!(exit_code, 0, "Script should succeed");
+        assert!(
+            combined.contains("__COMPLETION_REGISTERED__"),
+            "Zsh completions should be registered after sourcing wrapper.\nOutput:\n{}",
+            combined
+        );
+    }
+
+    // ========================================================================
+    // Special Characters in Branch Names Tests
+    // ========================================================================
+
+    /// Test that branch names with special characters work correctly
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_branch_name_with_slashes(#[case] shell: &str) {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Branch name with slashes (common git convention)
+        let output =
+            exec_through_wrapper(shell, &repo, "switch", &["--create", "feature/test-branch"]);
+
+        assert_eq!(output.exit_code, 0, "{}: Command should succeed", shell);
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created new worktree"),
+            "{}: Should create worktree for branch with slashes",
+            shell
+        );
+    }
+
+    /// Test that branch names with dashes and underscores work
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_branch_name_with_dashes_underscores(#[case] shell: &str) {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "fix-bug_123"]);
+
+        assert_eq!(output.exit_code, 0, "{}: Command should succeed", shell);
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created new worktree"),
+            "{}: Should create worktree for branch with dashes/underscores",
+            shell
+        );
+    }
+
+    // ========================================================================
+    // WORKTRUNK_BIN Fallback Tests
+    // ========================================================================
+
+    /// Test that shell integration works when wt is not in PATH but WORKTRUNK_BIN is set
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_worktrunk_bin_fallback(#[case] shell: &str) {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wrapper_script = generate_wrapper(&repo, shell);
+
+        // Script that explicitly removes wt from PATH but sets WORKTRUNK_BIN
+        let script = match shell {
+            "zsh" => format!(
+                r#"
+                autoload -Uz compinit && compinit -i 2>/dev/null
+                # Clear PATH to ensure wt is not found via PATH
+                export PATH="/usr/bin:/bin"
+                export WORKTRUNK_BIN='{}'
+                export WORKTRUNK_CONFIG_PATH='{}'
+                export CLICOLOR_FORCE=1
+                {}
+                wt switch --create fallback-test
+                echo "__PWD__ $PWD"
+                "#,
+                wt_bin.display(),
+                repo.test_config_path().display(),
+                wrapper_script
+            ),
+            "fish" => format!(
+                r#"
+                # Clear PATH to ensure wt is not found via PATH
+                set -x PATH /usr/bin /bin
+                set -x WORKTRUNK_BIN '{}'
+                set -x WORKTRUNK_CONFIG_PATH '{}'
+                set -x CLICOLOR_FORCE 1
+                {}
+                wt switch --create fallback-test
+                echo "__PWD__ $PWD"
+                "#,
+                wt_bin.display(),
+                repo.test_config_path().display(),
+                wrapper_script
+            ),
+            _ => format!(
+                r#"
+                # Clear PATH to ensure wt is not found via PATH
+                export PATH="/usr/bin:/bin"
+                export WORKTRUNK_BIN='{}'
+                export WORKTRUNK_CONFIG_PATH='{}'
+                export CLICOLOR_FORCE=1
+                {}
+                wt switch --create fallback-test
+                echo "__PWD__ $PWD"
+                "#,
+                wt_bin.display(),
+                repo.test_config_path().display(),
+                wrapper_script
+            ),
+        };
+
+        let final_script = match shell {
+            "fish" => format!("begin\n{}\nend 2>&1", script),
+            _ => format!("( {} ) 2>&1", script),
+        };
+
+        let config_path = repo.test_config_path().to_string_lossy().to_string();
+        let env_vars: Vec<(&str, &str)> = vec![
+            ("WORKTRUNK_CONFIG_PATH", &config_path),
+            ("TERM", "xterm"),
+            ("GIT_AUTHOR_NAME", "Test User"),
+            ("GIT_AUTHOR_EMAIL", "test@example.com"),
+            ("GIT_COMMITTER_NAME", "Test User"),
+            ("GIT_COMMITTER_EMAIL", "test@example.com"),
+        ];
+
+        let (combined, exit_code) =
+            exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
+
+        let output = ShellOutput {
+            combined,
+            exit_code,
+        };
+
+        assert_eq!(
+            output.exit_code, 0,
+            "{}: Command should succeed with WORKTRUNK_BIN fallback",
+            shell
+        );
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created new worktree"),
+            "{}: Should create worktree using WORKTRUNK_BIN fallback.\nOutput:\n{}",
+            shell,
+            output.combined
+        );
+
+        // Verify we actually cd'd to the new worktree
+        assert!(
+            output.combined.contains("fallback-test"),
+            "{}: Should be in the new worktree directory.\nOutput:\n{}",
+            shell,
+            output.combined
+        );
+    }
+
+    // ========================================================================
+    // Interrupt/Cleanup Tests
+    // ========================================================================
+
+    /// Test that shell integration completes without leaving zombie processes
+    /// Note: Temp directory cleanup is verified implicitly by successful test completion.
+    /// We can't check for specific temp files because tests run in parallel.
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_shell_completes_cleanly(#[case] shell: &str) {
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Configure a post-start command to exercise the background job code path
+        let config_dir = repo.root_path().join(".config");
+        fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+        fs::write(
+            config_dir.join("wt.toml"),
+            r#"post-start-command = "echo 'cleanup test'""#,
+        )
+        .expect("Failed to write project config");
+
+        repo.commit("Add post-start command");
+
+        // Pre-approve the command
+        fs::write(
+            repo.test_config_path(),
+            r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."test-repo"]
+approved-commands = ["echo 'cleanup test'"]
+"#,
+        )
+        .expect("Failed to write user config");
+
+        // Run a command that exercises the full FIFO/background job code path
+        let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "cleanup-test"]);
+
+        // Verify command completed successfully
+        // If cleanup failed (e.g., FIFO not removed, zombie process),
+        // the command would hang or fail
+        assert_eq!(
+            output.exit_code, 0,
+            "{}: Command should complete cleanly",
+            shell
+        );
+        output.assert_no_directive_leaks();
+
+        assert!(
+            output.combined.contains("Created new worktree"),
+            "{}: Should complete successfully",
+            shell
+        );
+    }
 }
