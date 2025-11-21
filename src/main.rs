@@ -431,15 +431,43 @@ fn main() {
             verify,
             force,
             tracked_only,
-        } => handle_merge(
-            target.as_deref(),
-            !squash,
-            !commit,
-            !remove,
-            !verify,
-            force,
-            tracked_only,
-        ),
+        } => WorktrunkConfig::load()
+            .context("Failed to load config")
+            .and_then(|config| {
+                // Get config values from global merge config
+                let (no_squash_config, no_commit_config, no_remove_config, no_verify_config, tracked_only_config) =
+                    config
+                        .merge
+                        .as_ref()
+                        .map(|m| {
+                            (
+                                m.no_squash.unwrap_or(false),
+                                m.no_commit.unwrap_or(false),
+                                m.no_remove.unwrap_or(false),
+                                m.no_verify.unwrap_or(false),
+                                m.tracked_only.unwrap_or(false),
+                            )
+                        })
+                        .unwrap_or((false, false, false, false, false));
+
+                // CLI flags override config
+                // Note: CLI flags are inverted (e.g., `squash` means "do squash", but we pass `no_squash` to handle_merge)
+                let no_squash = !squash || no_squash_config;
+                let no_commit = !commit || no_commit_config;
+                let no_remove = !remove || no_remove_config;
+                let no_verify = !verify || no_verify_config;
+                let tracked_only_final = tracked_only || tracked_only_config;
+
+                handle_merge(
+                    target.as_deref(),
+                    no_squash,
+                    no_commit,
+                    no_remove,
+                    no_verify,
+                    force,
+                    tracked_only_final,
+                )
+            }),
     };
 
     if let Err(e) = result {

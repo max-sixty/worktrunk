@@ -77,6 +77,7 @@ mod tests {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         };
         assert_eq!(
             config.format_path("myproject", "feature-x").unwrap(),
@@ -91,6 +92,7 @@ mod tests {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         };
         assert_eq!(
             config.format_path("myproject", "feature-x").unwrap(),
@@ -105,6 +107,7 @@ mod tests {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         };
         assert_eq!(
             config.format_path("myproject", "feature-x").unwrap(),
@@ -120,6 +123,7 @@ mod tests {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         };
         assert_eq!(
             config.format_path("myproject", "feature/foo").unwrap(),
@@ -134,6 +138,7 @@ mod tests {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         };
         assert_eq!(
             config.format_path("myproject", "feature/sub/task").unwrap(),
@@ -149,6 +154,7 @@ mod tests {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         };
         assert_eq!(
             config.format_path("myproject", "feature\\foo").unwrap(),
