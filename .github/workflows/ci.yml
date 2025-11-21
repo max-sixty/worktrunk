@@ -153,6 +153,8 @@ jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     outputs:
       cargo: ${{ steps.filter.outputs.cargo }}
     steps:
