@@ -154,6 +154,7 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       cargo: ${{ steps.filter.outputs.cargo }}
