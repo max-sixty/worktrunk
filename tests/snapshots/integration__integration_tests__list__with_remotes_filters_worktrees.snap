@@ -19,7 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /tmp/.tmpO6ZzrO/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /tmp/.tmpseTZRb/test-config.toml
 ---
 success: true
 exit_code: 0

@@ -280,15 +280,16 @@ fn test_list_with_branches_flag_only_branches() {
 fn test_list_with_remotes_flag() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
+    // Setup remote creates origin and pushes main to it
     repo.setup_remote("main");
 
-    // Create and push some remote branches
+    // Create feature branches in the main repo and push them
     create_branch(&repo, "remote-feature-1");
-    push_branch(&repo, "remote-feature-1");
     create_branch(&repo, "remote-feature-2");
+    push_branch(&repo, "remote-feature-1");
     push_branch(&repo, "remote-feature-2");
 
-    // Delete local branches so they only exist as remotes
+    // Delete the local branches - now they only exist as origin/remote-feature-*
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["branch", "-D", "remote-feature-1", "remote-feature-2"])
@@ -296,6 +297,11 @@ fn test_list_with_remotes_flag() {
         .output()
         .expect("Failed to delete local branches");
 
+    // Should show:
+    // - main worktree (primary)
+    // - origin/remote-feature-1 (remote branch without local worktree)
+    // - origin/remote-feature-2 (remote branch without local worktree)
+    // Should NOT show origin/main (main has a worktree)
     snapshot_list_with_remotes("with_remotes_flag", &repo);
 }
 
@@ -305,24 +311,28 @@ fn test_list_with_remotes_and_branches() {
     repo.commit("Initial commit");
     repo.setup_remote("main");
 
-    // Create local branches without worktrees
-    create_branch(&repo, "local-branch-1");
-    create_branch(&repo, "local-branch-2");
+    // Create local-only branches (not worktrees, not pushed)
+    create_branch(&repo, "local-only-1");
+    create_branch(&repo, "local-only-2");
 
-    // Create and push remote branches
+    // Create branches, push them, then delete locally to make them remote-only
     create_branch(&repo, "remote-only-1");
-    push_branch(&repo, "remote-only-1");
     create_branch(&repo, "remote-only-2");
+    push_branch(&repo, "remote-only-1");
     push_branch(&repo, "remote-only-2");
-
-    // Delete local copies of remote branches
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["branch", "-D", "remote-only-1", "remote-only-2"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to delete local branches");
+        .expect("Failed to delete branches");
 
+    // Should show:
+    // - main worktree
+    // - local-only-1 branch (local, no worktree)
+    // - local-only-2 branch (local, no worktree)
+    // - origin/remote-only-1 (remote, no local)
+    // - origin/remote-only-2 (remote, no local)
     snapshot_list_with_branches_and_remotes("with_remotes_and_branches", &repo);
 }
 
@@ -332,25 +342,25 @@ fn test_list_with_remotes_filters_existing_worktrees() {
     repo.commit("Initial commit");
     repo.setup_remote("main");
 
-    // Create worktree with a branch
+    // Create a worktree and push the branch
     repo.add_worktree("feature-with-worktree", "feature-with-worktree");
-
-    // Push the branch so it exists remotely
     push_branch(&repo, "feature-with-worktree");
 
-    // Create a remote-only branch
+    // Create a branch, push it, delete it locally (remote-only)
     create_branch(&repo, "remote-only");
     push_branch(&repo, "remote-only");
-
-    // Delete local copy
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["branch", "-D", "remote-only"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to delete local branch");
+        .expect("Failed to delete branch");
 
-    // Should show only remote-only, not feature-with-worktree
+    // Should show:
+    // - main worktree
+    // - feature-with-worktree worktree
+    // - origin/remote-only (remote branch without local worktree)
+    // Should NOT show origin/main or origin/feature-with-worktree (both have worktrees)
     snapshot_list_with_remotes("with_remotes_filters_worktrees", &repo);
 }
 
