@@ -510,9 +510,10 @@ pub fn collect(
     // (which breaks indicatif's line-based cursor math).
     let max_width = super::layout::get_safe_list_width();
 
+    // Clamp helper to keep progress output single-line in narrow terminals.
     let clamp = |s: &str| -> String {
-        if console::measure_text_width(s) > max_width {
-            console::truncate_str(s, max_width, "…").into_owned()
+        if crate::display::visible_width(s) > max_width {
+            crate::display::truncate_visible(s, max_width, "…")
         } else {
             s.to_owned()
         }
@@ -568,9 +569,8 @@ pub fn collect(
         .collect();
 
     // Cache last rendered (unclamped) message per row to avoid redundant updates.
-    // Store the full string so updates that are truncated for narrow terminals
-    // (e.g., CI column at the end) still trigger a refresh when the underlying
-    // data changes.
+    // TODO(list-progressive): if we change clamping/detection strategy, keep a test case
+    // for off-screen CI column updates to ensure we still refresh rows.
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
 
     // Footer progress bar with loading status
@@ -716,8 +716,7 @@ pub fn collect(
                         layout.format_list_item_line(info, current_worktree_path.as_ref());
                     let clamped = clamp(&rendered);
 
-                    // Compare using the full (unclamped) line so updates that fall
-                    // past the clamp boundary still cause a redraw.
+                    // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
                     if rendered != last_rendered_lines[item_idx] {
                         last_rendered_lines[item_idx] = rendered;
                         pb.set_message(clamped);
