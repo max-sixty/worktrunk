@@ -11,14 +11,16 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_COUNT: "1"
     GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
-    GIT_EDITOR: ""
+    GIT_CONFIG_VALUE_0: "false"
     LANG: C
     LC_ALL: C
-    PATH: "[PATH]"
+    PATH: "/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpBwHpRJ/mock-bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpkbqh7q:/opt/homebrew/lib/node_modules/@openai/codex/vendor/aarch64-apple-darwin/path:/Users/maximilian/.cargo/bin:/Users/maximilian/.local/bin:/Users/maximilian/.bun/bin"
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpBwHpRJ/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -27,9 +29,9 @@ exit_code: 0
 ----- stderr -----
 [1mBranch[0m       [1mStatus[0m              [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mPath[0m           [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m              [1mMessage[0m
 [1m[35mmain[0m                                                        [1m[35m./test-repo[0m     [32m↑0[0m  [2m[31m↓0[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
-ahead               [90m↑[0m[90m⇡[0m                   [32m↑2[0m        [32m+2[0m       ./ahead         [32m↑2[0m  [2m[31m↓0[0m      [2m8d8f4673[0m  [2m10 months ago[0m    [2mAhead commit 2[0m
-[2mbehind[0m            [2m≡[0m  [90m⇣[0m                                      [2m./behind[0m        [32m↑0[0m  [2m[31m↓1[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
-diverged            [90m↑[0m[90m⇅[0m                   [32m↑1[0m        [32m+1[0m       ./diverged      [32m↑1[0m  [2m[31m↓1[0m      [2mca7cb696[0m  [2m10 months ago[0m    [2mDiverged local commit[0m
+ahead               [2m↑[0m[2m⇡[0m                   [32m↑2[0m        [32m+2[0m       ./ahead         [32m↑2[0m  [2m[31m↓0[0m      [2m8d8f4673[0m  [2m10 months ago[0m    [2mAhead commit 2[0m
+[2mbehind[0m            [2m≡[0m  [2m⇣[0m                                      [2m./behind[0m        [32m↑0[0m  [2m[31m↓1[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
+diverged            [2m↑[0m[2m⇅[0m                   [32m↑1[0m        [32m+1[0m       ./diverged      [32m↑1[0m  [2m[31m↓1[0m      [2mca7cb696[0m  [2m10 months ago[0m    [2mDiverged local commit[0m
 [2min-sync[0m           [2m≡[0m                                         [2m./in-sync[0m       [32m↑0[0m  [2m[31m↓0[0m      [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
 [2mno-upstream[0m       [2m≡[0m                                         [2m./no-upstream[0m               [2m6c3da842[0m  [2m10 months ago[0m    [2mInitial commit on main[0m
 
