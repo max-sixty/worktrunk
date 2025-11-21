@@ -1,6 +1,7 @@
 /// Logical identifier for each column rendered by `wt list`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ColumnKind {
+    Gutter, // Type indicator: `@` (current), `^` (primary), `+` (worktree), space (branch-only)
     Branch,
     Status, // Includes both git status symbols and user-defined status
     WorkingDiff,
@@ -55,12 +56,20 @@ impl ColumnSpec {
 /// Static registry of all possible columns in display order.
 pub const COLUMN_SPECS: &[ColumnSpec] = &[
     ColumnSpec::new(
+        ColumnKind::Gutter,
+        super::layout::HEADER_GUTTER,
+        0,
+        false,
+        false,
+        0,
+    ),
+    ColumnSpec::new(
         ColumnKind::Branch,
         super::layout::HEADER_BRANCH,
         1,
         false,
         false,
-        0,
+        1,
     ),
     ColumnSpec::new(
         ColumnKind::Status,
@@ -68,7 +77,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         2,
         false,
         false,
-        1,
+        2,
     ),
     ColumnSpec::new(
         ColumnKind::WorkingDiff,
@@ -76,7 +85,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         3,
         false,
         false,
-        2,
+        3,
     ),
     ColumnSpec::new(
         ColumnKind::AheadBehind,
@@ -84,7 +93,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         4,
         false,
         false,
-        3,
+        4,
     ),
     ColumnSpec::new(
         ColumnKind::BranchDiff,
@@ -92,7 +101,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         5,
         true,
         false,
-        4,
+        5,
     ),
     ColumnSpec::new(
         ColumnKind::Path,
@@ -100,7 +109,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         6,
         false,
         false,
-        5,
+        6,
     ),
     ColumnSpec::new(
         ColumnKind::Upstream,
@@ -108,7 +117,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         7,
         false,
         false,
-        6,
+        7,
     ),
     ColumnSpec::new(
         ColumnKind::CiStatus,
@@ -116,7 +125,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         8,
         false,
         true,
-        7,
+        8,
     ),
     ColumnSpec::new(
         ColumnKind::Commit,
@@ -124,7 +133,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         9,
         false,
         false,
-        8,
+        9,
     ),
     ColumnSpec::new(
         ColumnKind::Time,
@@ -132,7 +141,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         10,
         false,
         false,
-        9,
+        10,
     ),
     ColumnSpec::new(
         ColumnKind::Message,
@@ -140,6 +149,6 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         11,
         false,
         false,
-        10,
+        11,
     ),
 ];

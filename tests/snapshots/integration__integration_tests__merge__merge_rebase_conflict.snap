@@ -15,6 +15,7 @@ info:
     GIT_CONFIG_KEY_0: advice.mergeConflict
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_CONFIG_VALUE_0: "false"
+    GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
@@ -27,7 +28,11 @@ exit_code: 1
 ❌ [31mRebase onto [1m[31mmain[0m[31m incomplete[0m
 [40m [0m  Rebasing (1/1)
 [40m [0m  error: could not apply [SHA]... Update shared.txt in feature
-[40m [0m  Could not apply [SHA]... # Update shared.txt in feature
+[40m [0m  hint: Resolve all conflicts manually, mark them as resolved with
+[40m [0m  hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+[40m [0m  hint: You can instead skip this commit: run "git rebase --skip".
+[40m [0m  hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+[40m [0m  Could not apply [SHA]... Update shared.txt in feature
 
 
 ----- stderr -----

@@ -3,7 +3,6 @@ source: tests/integration_tests/approval_pty.rs
 expression: normalized
 ---
 y
-
 🟡 [33m[1m[33mtest-repo[0m[33m needs approval to execute [1m[33m3[0m[33m commands:[0m
 
 🔄 post-create [1minstall[0m:
@@ -16,6 +15,7 @@ y
 [40m [0m  [1m[34mecho[0m [32m'Running tests...'[0m[0m
 
 💡 Allow and remember? [1m[y/N][0m 
+
 🔄 [36mRunning post-create [1minstall[0m:[0m
 [40m [0m  [1m[34mecho[0m [32m'Installing dependencies...'[0m[0m
 [0mInstalling dependencies...
