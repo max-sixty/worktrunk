@@ -115,6 +115,10 @@ impl CommitGenerationConfig {
 /// ```toml
 /// [projects."github.com/user/repo"]
 /// approved-commands = ["npm install", "npm test"]
+///
+/// [projects."github.com/user/repo".list]
+/// full = true
+/// branches = false
 /// ```
 ///
 /// # Future Extensibility
@@ -131,6 +135,22 @@ pub struct UserProjectConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub approved_commands: Vec<String>,
+
+    /// Configuration for the `wt list` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListConfig>,
+}
+
+/// Configuration for the `wt list` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ListConfig {
+    /// Show CI, conflicts, and diffs by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full: Option<bool>,
+
+    /// Include branches without worktrees by default
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branches: Option<bool>,
 }
 
 impl Default for WorktrunkConfig {

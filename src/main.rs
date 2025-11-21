@@ -272,14 +272,39 @@ fn main() {
             no_progressive,
         } => {
             use commands::list::progressive::RenderMode;
-            // Convert two bools to Option<bool>: Some(true), Some(false), or None
-            let progressive_opt = match (progressive, no_progressive) {
-                (true, _) => Some(true),
-                (_, true) => Some(false),
-                _ => None,
-            };
-            let render_mode = RenderMode::detect(progressive_opt, cli.internal);
-            handle_list(format, branches, full, render_mode)
+
+            // Load config and merge with CLI flags (CLI flags take precedence)
+            WorktrunkConfig::load()
+                .git_context("Failed to load config")
+                .and_then(|config| {
+                    let repo = Repository::current();
+
+                    // Get config values if we can determine the project ID
+                    // If we can't (e.g., early in initialization), use defaults
+                    let (show_branches_config, show_full_config) = repo.project_identifier()
+                        .ok()
+                        .and_then(|project_id| {
+                            config.projects.get(&project_id).and_then(|p| {
+                                p.list.as_ref().map(|l| {
+                                    (l.branches.unwrap_or(false), l.full.unwrap_or(false))
+                                })
+                            })
+                        })
+                        .unwrap_or((false, false));
+
+                    // CLI flags override config
+                    let show_branches = branches || show_branches_config;
+                    let show_full = full || show_full_config;
+
+                    // Convert two bools to Option<bool>: Some(true), Some(false), or None
+                    let progressive_opt = match (progressive, no_progressive) {
+                        (true, _) => Some(true),
+                        (_, true) => Some(false),
+                        _ => None,
+                    };
+                    let render_mode = RenderMode::detect(progressive_opt, cli.internal);
+                    handle_list(format, show_branches, show_full, render_mode)
+                })
         }
         Commands::Switch {
             branch,
