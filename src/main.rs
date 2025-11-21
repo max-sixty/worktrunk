@@ -426,44 +426,67 @@ fn main() {
         Commands::Merge {
             target,
             squash,
+            no_squash,
             commit,
+            no_commit,
             remove,
+            no_remove,
             verify,
+            no_verify,
             force,
             tracked_only,
+            no_tracked_only,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
-                // Get config values from global merge config
-                let (no_squash_config, no_commit_config, no_remove_config, no_verify_config, tracked_only_config) =
-                    config
-                        .merge
-                        .as_ref()
-                        .map(|m| {
-                            (
-                                m.no_squash.unwrap_or(false),
-                                m.no_commit.unwrap_or(false),
-                                m.no_remove.unwrap_or(false),
-                                m.no_verify.unwrap_or(false),
-                                m.tracked_only.unwrap_or(false),
-                            )
-                        })
-                        .unwrap_or((false, false, false, false, false));
+                // Convert paired flags to Option<bool>: Some(true), Some(false), or None
+                let squash_opt = match (squash, no_squash) {
+                    (true, _) => Some(false), // --squash means don't skip (no_squash = false)
+                    (_, true) => Some(true),  // --no-squash means skip (no_squash = true)
+                    _ => None,
+                };
+                let commit_opt = match (commit, no_commit) {
+                    (true, _) => Some(false), // --commit means don't skip (no_commit = false)
+                    (_, true) => Some(true),  // --no-commit means skip (no_commit = true)
+                    _ => None,
+                };
+                let remove_opt = match (remove, no_remove) {
+                    (true, _) => Some(false), // --remove means don't skip (no_remove = false)
+                    (_, true) => Some(true),  // --no-remove means skip (no_remove = true)
+                    _ => None,
+                };
+                let verify_opt = match (verify, no_verify) {
+                    (true, _) => Some(false), // --verify means don't skip (no_verify = false)
+                    (_, true) => Some(true),  // --no-verify means skip (no_verify = true)
+                    _ => None,
+                };
+                let tracked_only_opt = match (tracked_only, no_tracked_only) {
+                    (true, _) => Some(true),  // --tracked-only
+                    (_, true) => Some(false), // --no-tracked-only
+                    _ => None,
+                };
 
-                // CLI flags override config
-                // Note: CLI flags are inverted (e.g., `squash` means "do squash", but we pass `no_squash` to handle_merge)
-                let no_squash = !squash || no_squash_config;
-                let no_commit = !commit || no_commit_config;
-                let no_remove = !remove || no_remove_config;
-                let no_verify = !verify || no_verify_config;
-                let tracked_only_final = tracked_only || tracked_only_config;
+                // Get config defaults
+                let merge_config = config.merge.as_ref();
+                let no_squash_default = merge_config.and_then(|m| m.no_squash).unwrap_or(false);
+                let no_commit_default = merge_config.and_then(|m| m.no_commit).unwrap_or(false);
+                let no_remove_default = merge_config.and_then(|m| m.no_remove).unwrap_or(false);
+                let no_verify_default = merge_config.and_then(|m| m.no_verify).unwrap_or(false);
+                let tracked_only_default = merge_config.and_then(|m| m.tracked_only).unwrap_or(false);
+
+                // CLI flags override config, config overrides defaults
+                let no_squash_final = squash_opt.unwrap_or(no_squash_default);
+                let no_commit_final = commit_opt.unwrap_or(no_commit_default);
+                let no_remove_final = remove_opt.unwrap_or(no_remove_default);
+                let no_verify_final = verify_opt.unwrap_or(no_verify_default);
+                let tracked_only_final = tracked_only_opt.unwrap_or(tracked_only_default);
 
                 handle_merge(
                     target.as_deref(),
-                    no_squash,
-                    no_commit,
-                    no_remove,
-                    no_verify,
+                    no_squash_final,
+                    no_commit_final,
+                    no_remove_final,
+                    no_verify_final,
                     force,
                     tracked_only_final,
                 )

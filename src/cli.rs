@@ -692,28 +692,48 @@ wt merge --no-verify
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
 
-        /// Skip commit squashing
-        #[arg(long = "no-squash", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        /// Force commit squashing
+        #[arg(long, overrides_with = "no_squash", hide = true)]
         squash: bool,
 
-        /// Skip commit, squash, and rebase
-        #[arg(long = "no-commit", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        /// Skip commit squashing
+        #[arg(long = "no-squash", overrides_with = "squash")]
+        no_squash: bool,
+
+        /// Force commit, squash, and rebase
+        #[arg(long, overrides_with = "no_commit", hide = true)]
         commit: bool,
 
-        /// Keep worktree after merge
-        #[arg(long = "no-remove", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        /// Skip commit, squash, and rebase
+        #[arg(long = "no-commit", overrides_with = "commit")]
+        no_commit: bool,
+
+        /// Force worktree removal after merge
+        #[arg(long, overrides_with = "no_remove", hide = true)]
         remove: bool,
 
-        /// Skip all project hooks
-        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        /// Keep worktree after merge
+        #[arg(long = "no-remove", overrides_with = "remove")]
+        no_remove: bool,
+
+        /// Force running project hooks
+        #[arg(long, overrides_with = "no_verify", hide = true)]
         verify: bool,
+
+        /// Skip all project hooks
+        #[arg(long = "no-verify", overrides_with = "verify")]
+        no_verify: bool,
 
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
 
         /// Stage tracked files only
-        #[arg(long)]
+        #[arg(long, overrides_with = "no_tracked_only")]
         tracked_only: bool,
+
+        /// Stage all files (tracked and untracked)
+        #[arg(long = "no-tracked-only", overrides_with = "tracked_only", hide = true)]
+        no_tracked_only: bool,
     },
 }
