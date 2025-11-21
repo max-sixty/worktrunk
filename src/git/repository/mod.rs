@@ -401,15 +401,37 @@ impl Repository {
     }
 
     /// Get the git common directory (the actual .git directory for the repository).
+    ///
+    /// Always returns an absolute path, resolving any relative paths returned by git.
     pub fn git_common_dir(&self) -> Result<PathBuf, GitError> {
         let stdout = self.run_command(&["rev-parse", "--git-common-dir"])?;
-        Ok(PathBuf::from(stdout.trim()))
+        let path = PathBuf::from(stdout.trim());
+
+        // Resolve relative paths against the repo's directory
+        if path.is_relative() {
+            self.path.join(&path).canonicalize().map_err(|e| {
+                GitError::CommandFailed(format!("Failed to resolve git common directory\n   {e}"))
+            })
+        } else {
+            Ok(path)
+        }
     }
 
     /// Get the git directory (may be different from common-dir in worktrees).
+    ///
+    /// Always returns an absolute path, resolving any relative paths returned by git.
     pub fn git_dir(&self) -> Result<PathBuf, GitError> {
         let stdout = self.run_command(&["rev-parse", "--git-dir"])?;
-        Ok(PathBuf::from(stdout.trim()))
+        let path = PathBuf::from(stdout.trim());
+
+        // Resolve relative paths against the repo's directory
+        if path.is_relative() {
+            self.path.join(&path).canonicalize().map_err(|e| {
+                GitError::CommandFailed(format!("Failed to resolve git directory\n   {e}"))
+            })
+        } else {
+            Ok(path)
+        }
     }
 
     /// Get the base directory where worktrees are created relative to.

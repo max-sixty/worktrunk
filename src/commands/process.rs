@@ -37,9 +37,10 @@ pub fn spawn_detached(
 
     // Generate log filename (no timestamp - overwrites on each run)
     // Format: {branch}-{name}.log (e.g., "feature-post-start-npm.log", "bugfix-remove.log")
-    // Sanitize branch name: replace '/' with '-' to avoid creating subdirectories
+    // Sanitize branch and name: replace '/' with '-' to avoid creating subdirectories
     let safe_branch = branch.replace('/', "-");
-    let log_path = log_dir.join(format!("{}-{}.log", safe_branch, name));
+    let safe_name = name.replace('/', "-");
+    let log_path = log_dir.join(format!("{}-{}.log", safe_branch, safe_name));
 
     // Create log file
     let log_file = fs::File::create(&log_path)
