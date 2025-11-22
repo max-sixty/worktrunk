@@ -130,10 +130,17 @@ pub fn command_task_dag_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
 }
 
 fn normalize_worktree_paths(settings: &mut Settings, repo: &TestRepo) {
-    settings.add_filter(repo.root_path().to_str().unwrap(), "[REPO]");
+    // Canonicalize to handle macOS /var -> /private/var symlink
+    let root_canonical = repo
+        .root_path()
+        .canonicalize()
+        .unwrap_or_else(|_| repo.root_path().to_path_buf());
+    settings.add_filter(&regex::escape(root_canonical.to_str().unwrap()), "[REPO]");
+
     for (name, path) in &repo.worktrees {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         settings.add_filter(
-            path.to_str().unwrap(),
+            &regex::escape(canonical.to_str().unwrap()),
             format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
         );
     }

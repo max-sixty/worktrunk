@@ -1,4 +1,4 @@
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, setup_temp_snapshot_settings, wt_command};
 use insta_cmd::assert_cmd_snapshot;
 use std::fs;
 use std::path::PathBuf;
@@ -145,14 +145,17 @@ impl BareRepoTest {
 
     /// Configure a wt command with test environment
     fn configure_wt_cmd(&self, cmd: &mut Command) {
-        cmd.env("WORKTRUNK_CONFIG", self.test_config_path.to_str().unwrap())
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("SOURCE_DATE_EPOCH", "1761609600")
-            .env("LC_ALL", "C")
-            .env("LANG", "C")
-            .env_remove("NO_COLOR")
-            .env_remove("CLICOLOR_FORCE");
+        cmd.env(
+            "WORKTRUNK_CONFIG_PATH",
+            self.test_config_path.to_str().unwrap(),
+        )
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("SOURCE_DATE_EPOCH", "1761609600")
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR_FORCE");
     }
 }
 
@@ -167,12 +170,15 @@ fn test_bare_repo_list_worktrees() {
     let feature_worktree = test.create_worktree("feature", "test-repo.feature");
     test.commit_in_worktree(&feature_worktree, "Work on feature");
 
-    // Run wt list from the main worktree
-    let mut cmd = wt_command();
-    test.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(&main_worktree);
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        // Run wt list from the main worktree
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(&main_worktree);
 
-    assert_cmd_snapshot!(cmd);
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 #[test]
@@ -205,11 +211,8 @@ fn test_bare_repo_switch_creates_worktree() {
     let main_worktree = test.create_worktree("main", "test-repo.main");
     test.commit_in_worktree(&main_worktree, "Initial commit");
 
-    // Create worktrunk config to use worktree naming pattern suitable for bare repos
-    let config = r#"
-worktree-path = "{{ branch }}"
-"#;
-    fs::write(test.config_path(), config).expect("Failed to write config");
+    // Use default template (sibling worktrees): ../{{ main_worktree }}.{{ branch }}
+    // No config needed - defaults will create worktrees as siblings with dot separator
 
     // Run wt switch --create to create a new worktree
     let mut cmd = wt_command();
@@ -244,8 +247,8 @@ worktree-path = "{{ branch }}"
         String::from_utf8_lossy(&list_output.stdout)
     );
 
-    // Verify the new worktree was created
-    // With template "{{ branch }}", it creates as sibling: bare-repo-name.feature
+    // Verify the new worktree was created as sibling with dot separator
+    // Default template: ../{{ main_worktree }}.{{ branch }} -> test-repo.git.feature
     let bare_name = test.bare_repo_path().file_name().unwrap().to_str().unwrap();
     let expected_path = test.temp_path().join(format!("{}.feature", bare_name));
     assert!(
@@ -377,11 +380,8 @@ fn test_bare_repo_worktree_base_used_for_paths() {
     let main_worktree = test.create_worktree("main", "test-repo.main");
     test.commit_in_worktree(&main_worktree, "Initial commit");
 
-    // Configure to use simple branch naming
-    let config = r#"
-worktree-path = "{{ branch }}"
-"#;
-    fs::write(test.config_path(), config).expect("Failed to write config");
+    // Use default template - creates sibling worktrees with dot separator
+    // No config needed - defaults will create worktrees as siblings
 
     // Create new worktree - should be created relative to bare repo root
     let mut cmd = wt_command();
@@ -392,6 +392,7 @@ worktree-path = "{{ branch }}"
     cmd.output().expect("Failed to run wt switch");
 
     // Verify path is created as sibling to bare repo (using worktree_base)
+    // Default template: ../{{ main_worktree }}.{{ branch }} -> test-repo.git.dev
     let bare_name = test.bare_repo_path().file_name().unwrap().to_str().unwrap();
     let expected = test.temp_path().join(format!("{}.dev", bare_name));
     assert!(
@@ -490,11 +491,8 @@ fn test_bare_repo_merge_workflow() {
     let main_worktree = test.create_worktree("main", "test-repo.main");
     test.commit_in_worktree(&main_worktree, "Initial commit on main");
 
-    // Create feature worktree with config
-    let config = r#"
-worktree-path = "{{ branch }}"
-"#;
-    fs::write(test.config_path(), config).expect("Failed to write config");
+    // Use default template - creates sibling worktrees with dot separator
+    // No config needed - defaults will create worktrees as siblings
 
     // Create feature branch worktree
     let mut cmd = wt_command();
@@ -503,7 +501,7 @@ worktree-path = "{{ branch }}"
         .current_dir(&main_worktree);
     cmd.output().expect("Failed to create feature worktree");
 
-    // Get feature worktree path
+    // Get feature worktree path (default template: ../{{ main_worktree }}.{{ branch }})
     let bare_name = test.bare_repo_path().file_name().unwrap().to_str().unwrap();
     let feature_worktree = test.temp_path().join(format!("{}.feature", bare_name));
     assert!(feature_worktree.exists(), "Feature worktree should exist");

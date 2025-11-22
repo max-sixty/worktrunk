@@ -7,14 +7,14 @@ info:
   env:
     CLICOLOR_FORCE: ""
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: /dev/null
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmppkxcjs/test-config.toml
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0

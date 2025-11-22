@@ -1,4 +1,4 @@
-use crate::common::{TestRepo, list_snapshots, wt_command};
+use crate::common::{TestRepo, list_snapshots, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use std::path::Path;
@@ -642,19 +642,10 @@ fn test_list_with_upstream_tracking() {
     repo.add_worktree("no-upstream", "no-upstream");
 
     // Run list --branches --full to show all columns including Remote
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let mut settings = setup_snapshot_settings(&repo);
 
-    // Normalize paths
-    settings.add_filter(repo.root_path().to_str().unwrap(), "[REPO]");
-    for (name, path) in &repo.worktrees {
-        settings.add_filter(
-            path.to_str().unwrap(),
-            format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
-        );
-    }
+    // Additional custom filters
     settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]   ");
-    settings.add_filter(r"\\", "/");
 
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -1165,7 +1156,9 @@ fn test_list_with_c_flag() {
     repo.add_worktree("feature-b", "feature-b");
 
     // Run wt -C <repo_path> list from a completely different directory
-    let settings = list_snapshots::standard_settings(&repo);
+    let mut settings = list_snapshots::standard_settings(&repo);
+    // Redact the -C path argument in metadata (try different selector formats)
+    settings.add_redaction(".args[1]", "[REPO_PATH]");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(["-C", repo.root_path().to_str().unwrap(), "list"]);

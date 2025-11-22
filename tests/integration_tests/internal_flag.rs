@@ -5,8 +5,10 @@
 //! 2. Commands that DON'T emit directives work correctly with --internal
 //! 3. The --internal flag can be safely passed to all commands
 
-use crate::common::{TestRepo, set_temp_home_env, setup_snapshot_settings_with_home, wt_command};
-use insta::Settings;
+use crate::common::{
+    TestRepo, set_temp_home_env, setup_snapshot_settings, setup_snapshot_settings_with_home,
+    wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
 use std::fs;
 use tempfile::TempDir;
@@ -25,11 +27,7 @@ fn test_list_with_internal_flag() {
     let repo = TestRepo::new();
     repo.commit("Initial commit");
 
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    // Normalize temp directory paths
-    settings.add_filter(r"/private/var/folders/[^\s]+/test-repo", "[REPO]");
-    settings.add_filter(r"/tmp/\.tmp[^\s]+/test-repo", "[REPO]");
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();

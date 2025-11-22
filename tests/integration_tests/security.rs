@@ -145,7 +145,7 @@
 //! For comprehensive security testing, see `tests/integration_tests/shell_wrapper.rs` which
 //! tests the full shell integration pipeline.
 
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use std::process::Command;
@@ -424,8 +424,7 @@ fn test_branch_name_with_cd_directive_not_executed() {
         return;
     }
 
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let mut settings = setup_snapshot_settings(&repo);
     settings.add_filter(r"__WORKTRUNK_CD__[^\x00]+", "__WORKTRUNK_CD__[PATH]");
 
     settings.bind(|| {
@@ -453,8 +452,7 @@ fn test_error_message_with_directive_not_executed() {
     // Try to switch to a non-existent branch with a name that looks like a directive
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6";
 
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();

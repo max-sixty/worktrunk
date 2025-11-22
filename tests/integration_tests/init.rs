@@ -6,8 +6,15 @@ use rstest::rstest;
 /// Helper to create snapshot for config shell init command
 fn snapshot_init(test_name: &str, shell: &str, extra_args: &[&str]) {
     let repo = TestRepo::new();
+
+    // Custom settings for init tests - these output shell scripts with intentional
+    // backslashes (\cd, \n) so we can't use setup_snapshot_settings which has a
+    // backslash normalization filter that would corrupt the output
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    // Redact volatile env vars in metadata
+    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
 
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -36,8 +43,12 @@ fn test_init(#[case] shell: &str) {
 #[test]
 fn test_init_invalid_shell() {
     let repo = TestRepo::new();
+
+    // Same custom settings as snapshot_init
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
 
     settings.bind(|| {
         let mut cmd = wt_command();

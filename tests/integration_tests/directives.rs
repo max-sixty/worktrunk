@@ -1,4 +1,4 @@
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use std::process::Command;
@@ -154,8 +154,7 @@ fn test_merge_internal_no_remove() {
         .output()
         .expect("Failed to commit");
 
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let mut settings = setup_snapshot_settings(&repo);
     // Normalize SHA in output
     settings.add_filter(r"@ [a-f0-9]{7}", "@ [SHA]");
 
@@ -210,15 +209,10 @@ fn test_merge_internal_remove() {
         .output()
         .expect("Failed to commit");
 
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+    let mut settings = setup_snapshot_settings(&repo);
     // Normalize SHA and path in output
     settings.add_filter(r"@ [a-f0-9]{7}", "@ [SHA]");
     settings.add_filter(r"__WORKTRUNK_CD__[^\x00]+", "__WORKTRUNK_CD__[PATH]");
-    // Normalize temp directory paths in success message (macOS)
-    settings.add_filter(r"/private/var/folders/[^\s]+/test-repo", "[REPO]");
-    // Normalize temp directory paths in success message (Linux)
-    settings.add_filter(r"/tmp/\.tmp[^\s]+/test-repo", "[REPO]");
 
     settings.bind(|| {
         let mut cmd = wt_command();

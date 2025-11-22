@@ -734,6 +734,25 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     settings
 }
 
+/// Create configured insta Settings for snapshot tests with a temp directory
+///
+/// Use this for tests that don't use TestRepo but need temp path redaction and
+/// standard env var redactions (e.g., bare repository tests).
+pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Settings {
+    let mut settings = insta::Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+
+    // Filter temp paths in output
+    settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
+    settings.add_filter(r"\\", "/");
+
+    // Redact volatile metadata captured by insta-cmd
+    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+
+    settings
+}
+
 /// Create a configured Command for snapshot testing
 ///
 /// This extracts the common command setup while allowing the test file

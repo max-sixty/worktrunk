@@ -10,13 +10,13 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpakZbbN/test-gitconfig
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpakZbbN/test-config.toml
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
@@ -24,6 +24,6 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m  [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1m[35mmain[0m        [2m^[0m                          [1m[35m.[0m              [2mb834638e[0m  [2m10mo[0m  [2mInitial commit[0m
+@ [1m[35mmain[0m        [2m^[0m                          [1m[35m.[0m              [SHA]  [2m10mo[0m  [2mInitial commit[0m
 
 ⚪ [2mShowing 1 worktree[0m
