@@ -432,6 +432,23 @@ fn exec_through_wrapper_interactive(
     working_dir: &std::path::Path,
     inputs: &[&str],
 ) -> ShellOutput {
+    exec_through_wrapper_with_env(shell, repo, subcommand, args, working_dir, inputs, &[])
+}
+
+/// Execute a command through a shell wrapper with custom environment variables
+///
+/// Like `exec_through_wrapper_interactive` but allows additional env vars to be set.
+/// Useful for tests that need custom PATH (e.g., for mock binaries).
+#[cfg(test)]
+fn exec_through_wrapper_with_env(
+    shell: &str,
+    repo: &TestRepo,
+    subcommand: &str,
+    args: &[&str],
+    working_dir: &std::path::Path,
+    inputs: &[&str],
+    extra_env: &[(&str, &str)],
+) -> ShellOutput {
     let script = build_shell_script(shell, repo, subcommand, args);
 
     // Keep config path as owned String because:
@@ -442,7 +459,7 @@ fn exec_through_wrapper_interactive(
     let config_path = repo.test_config_path().to_string_lossy().to_string();
 
     // Same environment setup as exec_through_wrapper_from
-    let env_vars: Vec<(&str, &str)> = vec![
+    let mut env_vars: Vec<(&str, &str)> = vec![
         ("CLICOLOR_FORCE", "1"),
         ("WORKTRUNK_CONFIG_PATH", &config_path),
         ("TERM", "xterm"),
@@ -456,6 +473,9 @@ fn exec_through_wrapper_interactive(
         ("LC_ALL", "C"),
         ("SOURCE_DATE_EPOCH", "1761609600"),
     ];
+
+    // Add extra env vars (these can override defaults if needed)
+    env_vars.extend(extra_env.iter().copied());
 
     let (combined, exit_code) =
         exec_in_pty_interactive(shell, &script, working_dir, &env_vars, inputs);
@@ -1878,5 +1898,383 @@ approved-commands = ["echo 'cleanup test'"]
             "{}: Should complete successfully",
             shell
         );
+    }
+
+    // ========================================================================
+    // README Example Tests (PTY-based for interleaved output)
+    // ========================================================================
+    //
+    // These tests generate snapshots for README.md examples. They use PTY execution
+    // to capture stdout/stderr interleaved in the order users see them.
+    //
+    // See tests/CLAUDE.md for background on why PTY-based tests are needed for README examples.
+
+    /// README example: Pre-merge hooks with squash and LLM commit message
+    ///
+    /// This test demonstrates:
+    /// - Multiple commits being squashed with LLM-generated message
+    /// - Pre-merge hooks (test, lint) running before merge
+    ///
+    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_merge.snap
+    #[test]
+    fn test_readme_example_hooks_pre_merge() {
+        let mut repo = TestRepo::new();
+        repo.commit("Initial commit");
+        repo.setup_remote("main");
+
+        // Create project config with pre-merge hooks
+        let config_dir = repo.root_path().join(".config");
+        fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+
+        // Create mock commands for realistic output
+        let bin_dir = repo.root_path().join(".bin");
+        fs::create_dir_all(&bin_dir).expect("Failed to create bin dir");
+
+        // Mock pytest command
+        let pytest_script = r#"#!/bin/sh
+cat << 'EOF'
+
+============================= test session starts ==============================
+collected 3 items
+
+tests/test_auth.py::test_login_success PASSED                            [ 33%]
+tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
+tests/test_auth.py::test_token_validation PASSED                         [100%]
+
+============================== 3 passed in 0.8s ===============================
+
+EOF
+exit 0
+"#;
+        fs::write(bin_dir.join("pytest"), pytest_script).expect("Failed to write pytest script");
+
+        // Mock ruff command
+        let ruff_script = r#"#!/bin/sh
+if [ "$1" = "check" ]; then
+    echo ""
+    echo "All checks passed!"
+    echo ""
+    exit 0
+else
+    echo "ruff: unknown command '$1'"
+    exit 1
+fi
+"#;
+        fs::write(bin_dir.join("ruff"), ruff_script).expect("Failed to write ruff script");
+
+        // Mock llm command for commit message
+        let llm_script = r#"#!/bin/sh
+cat > /dev/null
+cat << 'EOF'
+feat(api): Add user authentication endpoints
+
+Implement login and token refresh endpoints with JWT validation.
+Includes comprehensive test coverage and input validation.
+EOF
+"#;
+        fs::write(bin_dir.join("llm"), llm_script).expect("Failed to write llm script");
+
+        // Mock uv command for running pytest and ruff
+        let uv_script = r#"#!/bin/sh
+if [ "$1" = "run" ] && [ "$2" = "pytest" ]; then
+    exec pytest
+elif [ "$1" = "run" ] && [ "$2" = "ruff" ]; then
+    shift 2
+    exec ruff "$@"
+else
+    echo "uv: unknown command '$1 $2'"
+    exit 1
+fi
+"#;
+        fs::write(bin_dir.join("uv"), uv_script).expect("Failed to write uv script");
+
+        // Make scripts executable (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for script in &["pytest", "ruff", "llm", "uv"] {
+                let mut perms = fs::metadata(bin_dir.join(script)).unwrap().permissions();
+                perms.set_mode(0o755);
+                fs::set_permissions(bin_dir.join(script), perms).unwrap();
+            }
+        }
+
+        let config_content = r#"
+[pre-merge-command]
+"test" = "uv run pytest"
+"lint" = "uv run ruff check"
+"#;
+
+        fs::write(config_dir.join("wt.toml"), config_content)
+            .expect("Failed to write project config");
+
+        // Commit the config
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["add", ".config/wt.toml", ".bin"])
+            .current_dir(repo.root_path())
+            .output()
+            .expect("Failed to add config");
+
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["commit", "-m", "Add pre-merge hooks"])
+            .current_dir(repo.root_path())
+            .output()
+            .expect("Failed to commit config");
+
+        // Create a worktree for main
+        let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+            .current_dir(repo.root_path())
+            .output()
+            .expect("Failed to add worktree");
+
+        // Create a feature worktree and make multiple commits
+        let feature_wt = repo.add_worktree("feature-auth", "feature-auth");
+
+        // First commit - create initial auth.py with login endpoint
+        fs::create_dir_all(feature_wt.join("api")).expect("Failed to create api dir");
+        let auth_py_v1 = r#"# Authentication API endpoints
+from typing import Dict, Optional
+import jwt
+from datetime import datetime, timedelta, timezone
+
+def login(username: str, password: str) -> Optional[Dict]:
+    """Authenticate user and return JWT token."""
+    # Validate credentials (stub)
+    if not username or not password:
+        return None
+
+    # Generate JWT token
+    payload = {
+        'sub': username,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+    }
+    token = jwt.encode(payload, 'secret', algorithm='HS256')
+    return {'token': token, 'expires_in': 3600}
+"#;
+        std::fs::write(feature_wt.join("api/auth.py"), auth_py_v1).expect("Failed to write file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["add", "api/auth.py"])
+            .current_dir(&feature_wt)
+            .output()
+            .expect("Failed to add file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["commit", "-m", "Add login endpoint"])
+            .current_dir(&feature_wt)
+            .output()
+            .expect("Failed to commit");
+
+        // Second commit - add tests
+        fs::create_dir_all(feature_wt.join("tests")).expect("Failed to create tests dir");
+        let test_auth_py = r#"# Authentication endpoint tests
+import pytest
+from api.auth import login
+
+def test_login_success():
+    result = login('user', 'pass')
+    assert result and 'token' in result
+
+def test_login_invalid_password():
+    result = login('user', '')
+    assert result is None
+
+def test_token_validation():
+    assert login('valid_user', 'valid_pass')['expires_in'] == 3600
+"#;
+        std::fs::write(feature_wt.join("tests/test_auth.py"), test_auth_py)
+            .expect("Failed to write file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["add", "tests/test_auth.py"])
+            .current_dir(&feature_wt)
+            .output()
+            .expect("Failed to add file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["commit", "-m", "Add authentication tests"])
+            .current_dir(&feature_wt)
+            .output()
+            .expect("Failed to commit");
+
+        // Third commit - add refresh endpoint
+        let auth_py_v2 = r#"# Authentication API endpoints
+from typing import Dict, Optional
+import jwt
+from datetime import datetime, timedelta, timezone
+
+def login(username: str, password: str) -> Optional[Dict]:
+    """Authenticate user and return JWT token."""
+    # Validate credentials (stub)
+    if not username or not password:
+        return None
+
+    # Generate JWT token
+    payload = {
+        'sub': username,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+    }
+    token = jwt.encode(payload, 'secret', algorithm='HS256')
+    return {'token': token, 'expires_in': 3600}
+
+def refresh_token(token: str) -> Optional[Dict]:
+    """Refresh an existing JWT token."""
+    try:
+        payload = jwt.decode(token, 'secret', algorithms=['HS256'])
+        new_payload = {
+            'sub': payload['sub'],
+            'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+        }
+        new_token = jwt.encode(new_payload, 'secret', algorithm='HS256')
+        return {'token': new_token, 'expires_in': 3600}
+    except jwt.InvalidTokenError:
+        return None
+"#;
+        std::fs::write(feature_wt.join("api/auth.py"), auth_py_v2).expect("Failed to write file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["add", "api/auth.py"])
+            .current_dir(&feature_wt)
+            .output()
+            .expect("Failed to add file");
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["commit", "-m", "Add validation"])
+            .current_dir(&feature_wt)
+            .output()
+            .expect("Failed to commit");
+
+        // Configure LLM in worktrunk config
+        let llm_path = bin_dir.join("llm");
+        let worktrunk_config = format!(
+            r#"worktree-path = "../test-repo.{{{{ branch }}}}"
+
+[commit-generation]
+command = "{}"
+"#,
+            llm_path.display()
+        );
+        fs::write(repo.test_config_path(), worktrunk_config)
+            .expect("Failed to write worktrunk config");
+
+        // Set PATH with mock binaries and run merge
+        let path_with_bin = format!(
+            "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            bin_dir.display()
+        );
+
+        let output = exec_through_wrapper_with_env(
+            "bash",
+            &repo,
+            "merge",
+            &["main", "--force"],
+            &feature_wt,
+            &[],
+            &[("PATH", &path_with_bin)],
+        );
+
+        assert_eq!(output.exit_code, 0, "Merge should succeed");
+        assert_snapshot!(output.normalized());
+    }
+
+    /// README example: Creating worktree with post-create and post-start hooks
+    ///
+    /// This test demonstrates:
+    /// - Post-create hooks (install dependencies)
+    /// - Post-start hooks (start dev server)
+    ///
+    /// Uses shell wrapper to avoid "To enable automatic cd" hint.
+    ///
+    /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
+    #[test]
+    fn test_readme_example_hooks_post_create() {
+        let mut repo = TestRepo::new();
+        repo.commit("Initial commit");
+        repo.setup_remote("main");
+
+        // Create project config with post-create and post-start hooks
+        let config_dir = repo.root_path().join(".config");
+        fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+
+        // Create mock commands for realistic output
+        let bin_dir = repo.root_path().join(".bin");
+        fs::create_dir_all(&bin_dir).expect("Failed to create bin dir");
+
+        // Mock uv command that simulates dependency installation
+        let uv_script = r#"#!/bin/sh
+if [ "$1" = "sync" ]; then
+    echo ""
+    echo "  Resolved 24 packages in 145ms"
+    echo "  Installed 24 packages in 1.2s"
+    exit 0
+elif [ "$1" = "run" ] && [ "$2" = "dev" ]; then
+    echo ""
+    echo "  Starting dev server on http://localhost:3000..."
+    exit 0
+else
+    echo "uv: unknown command '$1 $2'"
+    exit 1
+fi
+"#;
+        fs::write(bin_dir.join("uv"), uv_script).expect("Failed to write uv script");
+
+        // Make scripts executable (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(bin_dir.join("uv")).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(bin_dir.join("uv"), perms).unwrap();
+        }
+
+        let config_content = r#"
+[post-create-command]
+"install" = "uv sync"
+
+[post-start-command]
+"dev" = "uv run dev"
+"#;
+
+        fs::write(config_dir.join("wt.toml"), config_content)
+            .expect("Failed to write project config");
+
+        // Commit the config
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["add", ".config/wt.toml", ".bin"])
+            .current_dir(repo.root_path())
+            .output()
+            .expect("Failed to add config");
+
+        let mut cmd = Command::new("git");
+        repo.configure_git_cmd(&mut cmd);
+        cmd.args(["commit", "-m", "Add project hooks"])
+            .current_dir(repo.root_path())
+            .output()
+            .expect("Failed to commit config");
+
+        // Set PATH with mock binaries and run switch --create
+        let path_with_bin = format!(
+            "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            bin_dir.display()
+        );
+
+        let output = exec_through_wrapper_with_env(
+            "bash",
+            &repo,
+            "switch",
+            &["--create", "feature-x", "--force"],
+            repo.root_path(),
+            &[],
+            &[("PATH", &path_with_bin)],
+        );
+
+        assert_eq!(output.exit_code, 0, "Switch should succeed");
+        assert_snapshot!(output.normalized());
     }
 }

@@ -28,36 +28,34 @@ List worktrees, create a worktree, make a trivial change, merge the change:
 
 **Create a worktree:**
 
-<!-- Output from: tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_simple_switch.snap -->
-
+<!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_simple_switch.snap -->
 ```bash
 $ wt switch --create fix-auth
-✅ Created new worktree for fix-auth from main at ../repo.fix-auth/
+✅ Created new worktree for fix-auth from main at ../repo.fix-auth
 ```
+<!-- README:end -->
 
 ...then do work. Then, when ready...
 
 **Merge it:**
 
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap -->
-
+<!-- README:snapshot:tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap -->
 ```bash
 $ wt merge
 🔄 Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
-
    * a1b2c3d (HEAD -> fix-auth) Implement JWT validation
     auth.rs | 13 +++++++++++++
     1 file changed, 13 insertions(+)
 ✅ Merged to main (1 commit, 1 file, +13)
 🔄 Removing fix-auth worktree & branch in background
 ```
+<!-- README:end -->
 
 See [`wt merge`](#wt-merge) for all options.
 
 **List worktrees:**
 
-<!-- Output from: tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap -->
-
+<!-- README:snapshot:tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap -->
 ```bash
 $ wt list
   Branch     Status         HEAD±    main↕  Path         Remote⇅  Commit    Age   Message
@@ -67,6 +65,7 @@ $ wt list
 
 ⚪ Showing 3 worktrees, 1 with changes, 2 ahead
 ```
+<!-- README:end -->
 
 See [`wt list`](#wt-list) for all options.
 
@@ -117,23 +116,37 @@ args = ["-m", "claude-haiku-4-5-20251001"]
 
 Then `wt merge` will generate commit messages automatically:
 
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap -->
-
+<!-- README:snapshot:tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap -->
 ```bash
 $ wt merge
-🔄 Squashing 3 commits into 1 (3 files, +33)...
+🔄 Squashing 3 commits into a single commit (3 files, +33)...
 🔄 Generating squash commit message...
-  feat(auth): Implement JWT authentication system
+   feat(auth): Implement JWT authentication system
 
-  Add comprehensive JWT token handling including validation, refresh logic,
-  and authentication tests. This establishes the foundation for secure
-  API authentication.
+   Add comprehensive JWT token handling including validation, refresh logic,
+   and authentication tests. This establishes the foundation for secure
+   API authentication.
 
-  - Implement token refresh mechanism with expiry handling
-  - Add JWT encoding/decoding with signature verification
-  - Create test suite covering all authentication flows
+   - Implement token refresh mechanism with expiry handling
+   - Add JWT encoding/decoding with signature verification
+   - Create test suite covering all authentication flows
 ✅ Squashed @ a1b2c3d
+🔄 Running pre-merge test:
+   cargo test
+🔄 Running pre-merge lint:
+   cargo clippy
+🔄 Merging 1 commit to main @ a1b2c3d (no rebase needed)
+   * a1b2c3d (HEAD -> feature-auth) feat(auth): Implement JWT authentication system
+    auth.rs      |  8 ++++++++
+    auth_test.rs | 17 +++++++++++++++++
+    jwt.rs       |  8 ++++++++
+    3 files changed, 33 insertions(+)
+✅ Merged to main (1 commit, 3 files, +33)
+🔄 Removing feature-auth worktree & branch in background
+🔄 Running post-merge install:
+   cargo install --path .
 ```
+<!-- README:end -->
 
 For more details, including custom prompt templates: `wt config --help`
 
@@ -164,59 +177,59 @@ Automate tasks at different points in the worktree lifecycle. Configure hooks in
 "lint" = "uv run ruff check"
 ```
 
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap -->
-
+<!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_hooks_post_create.snap -->
 ```bash
 $ wt switch --create feature-x
 🔄 Running post-create install:
-  uv sync
-✅ Created new worktree for feature-x from main at ../repo.feature-x/
-🔄 Running post-start dev:
-  uv run dev
+   uv sync
 
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
+✅ Created new worktree for feature-x from main at ../repo.feature-x
+🔄 Running post-start dev:
+   uv run dev
 ```
+<!-- README:end -->
 
 <details>
 <summary>Merging with pre-merge hooks</summary>
 
-<!-- Output from: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap -->
-
+<!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_hooks_pre_merge.snap -->
 ```bash
 $ wt merge
-🔄 Squashing 3 commits into 1 (2 files, +45)...
+🔄 Squashing 3 commits into a single commit (2 files, +45)...
 🔄 Generating squash commit message...
-  feat(api): Add user authentication endpoints
+   feat(api): Add user authentication endpoints
 
-  Implement login and token refresh endpoints with JWT validation.
-  Includes comprehensive test coverage and input validation.
+   Implement login and token refresh endpoints with JWT validation.
+   Includes comprehensive test coverage and input validation.
 ✅ Squashed @ a1b2c3d
 🔄 Running pre-merge test:
-  uv run pytest
+   uv run pytest
 
-  ============================= test session starts ==============================
-  collected 3 items
+============================= test session starts ==============================
+collected 3 items
 
-  tests/test_auth.py::test_login_success PASSED                            [ 33%]
-  tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-  tests/test_auth.py::test_token_validation PASSED                         [100%]
+tests/test_auth.py::test_login_success PASSED                            [ 33%]
+tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
+tests/test_auth.py::test_token_validation PASSED                         [100%]
 
-  ============================== 3 passed in 0.8s ===============================
+============================== 3 passed in 0.8s ===============================
 
 🔄 Running pre-merge lint:
-  uv run ruff check
+   uv run ruff check
 
-  All checks passed!
+All checks passed!
 
 🔄 Merging 1 commit to main @ a1b2c3d (no rebase needed)
-  * a1b2c3d (HEAD -> feature-auth) feat(api): Add user authentication endpoints
-   api/auth.py        | 31 +++++++++++++++++++++++++++++++
-   tests/test_auth.py | 14 ++++++++++++++
-   2 files changed, 45 insertions(+)
+   * a1b2c3d (HEAD -> feature-auth) feat(api): Add user authentication endpoints
+    api/auth.py        | 31 +++++++++++++++++++++++++++++++
+    tests/test_auth.py | 14 ++++++++++++++
+    2 files changed, 45 insertions(+)
 ✅ Merged to main (1 commit, 2 files, +45)
 🔄 Removing feature-auth worktree & branch in background
 ```
+<!-- README:end -->
 
 </details>
 
@@ -785,8 +798,7 @@ git config worktrunk.status.feature-x "💬"
 
 **Status appears in the Status column:**
 
-<!-- Output from: tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
-
+<!-- README:snapshot:tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
 ```
   Branch             Status         HEAD±    main↕  Path                 Remote⇅  Commit    Age   Message
 @ main                   ^                          ./test-repo                   b834638e  10mo  Initial commit
@@ -795,6 +807,7 @@ git config worktrunk.status.feature-x "💬"
 + dirty-no-status     !           +1   -1           ./dirty-no-status             b834638e  10mo  Initial commit
 + dirty-with-status    ?∅   🤖                      ./dirty-with-status           b834638e  10mo  Initial commit
 ```
+<!-- README:end -->
 
 The custom emoji appears directly after the git status symbols.
 
@@ -809,8 +822,7 @@ When using Claude:
 - Changes to `💬` when Claude needs input (waiting for permission or idle)
 - Clears the status completely when the session ends
 
-<!-- Output from: tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
-
+<!-- README:snapshot:tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
 ```bash
 $ wt list
   Branch             Status         HEAD±    main↕  Path                 Remote⇅  Commit    Age   Message
@@ -822,6 +834,7 @@ $ wt list
 
 ⚪ Showing 5 worktrees, 1 with changes
 ```
+<!-- README:end -->
 
 **How it works:**
 
@@ -885,8 +898,7 @@ Commands from project hooks and LLM configuration require approval on first run.
 
 **Example approval prompt:**
 
-<!-- Output from: tests/integration_tests/snapshots/integration__integration_tests__approval_pty__approval_prompt_named_commands.snap -->
-
+<!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__approval_pty__approval_prompt_named_commands.snap -->
 ```
 🟡 test-repo needs approval to execute 3 commands:
 
@@ -901,6 +913,7 @@ Commands from project hooks and LLM configuration require approval on first run.
 
 💡 Allow and remember? [y/N]
 ```
+<!-- README:end -->
 
 Use `--force` to bypass prompts (useful for CI/automation).
 
