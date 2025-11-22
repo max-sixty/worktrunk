@@ -12,13 +12,13 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmps6u1c7/test-gitconfig
+    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpyIHHFh/test-gitconfig
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmps6u1c7/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpyIHHFh/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -543,13 +543,18 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '-C+[Change working directory]:path:_files' \
 '--config=[User config file path]:path:_files' \
+'--squash[Force commit squashing]' \
 '--no-squash[Skip commit squashing]' \
+'--commit[Force commit, squash, and rebase]' \
 '--no-commit[Skip commit, squash, and rebase]' \
+'--remove[Force worktree removal after merge]' \
 '--no-remove[Keep worktree after merge]' \
+'--verify[Force running project hooks]' \
 '--no-verify[Skip all project hooks]' \
 '-f[Skip approval prompts]' \
 '--force[Skip approval prompts]' \
 '--tracked-only[Stage tracked files only]' \
+'--no-tracked-only[Stage all files (tracked and untracked)]' \
 '-v[Show commands and debug info]' \
 '--verbose[Show commands and debug info]' \
 '-h[Print help (see more with '\''--help'\'')]' \

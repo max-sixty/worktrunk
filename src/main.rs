@@ -440,20 +440,55 @@ fn main() {
         Commands::Merge {
             target,
             squash,
+            no_squash,
             commit,
+            no_commit,
             remove,
+            no_remove,
             verify,
+            no_verify,
             force,
             tracked_only,
-        } => handle_merge(
-            target.as_deref(),
-            !squash,
-            !commit,
-            !remove,
-            !verify,
-            force,
-            tracked_only,
-        ),
+            no_tracked_only,
+        } => WorktrunkConfig::load()
+            .context("Failed to load config")
+            .and_then(|config| {
+                // Convert paired flags to Option<bool>
+                fn flag_pair(positive: bool, negative: bool) -> Option<bool> {
+                    match (positive, negative) {
+                        (true, _) => Some(true),
+                        (_, true) => Some(false),
+                        _ => None,
+                    }
+                }
+
+                // Get config defaults (positive form: true = do it)
+                let merge_config = config.merge.as_ref();
+                let squash_default = merge_config.and_then(|m| m.squash).unwrap_or(true);
+                let commit_default = merge_config.and_then(|m| m.commit).unwrap_or(true);
+                let remove_default = merge_config.and_then(|m| m.remove).unwrap_or(true);
+                let verify_default = merge_config.and_then(|m| m.verify).unwrap_or(true);
+                let tracked_only_default =
+                    merge_config.and_then(|m| m.tracked_only).unwrap_or(false);
+
+                // CLI flags override config, config overrides defaults
+                let squash_final = flag_pair(squash, no_squash).unwrap_or(squash_default);
+                let commit_final = flag_pair(commit, no_commit).unwrap_or(commit_default);
+                let remove_final = flag_pair(remove, no_remove).unwrap_or(remove_default);
+                let verify_final = flag_pair(verify, no_verify).unwrap_or(verify_default);
+                let tracked_only_final =
+                    flag_pair(tracked_only, no_tracked_only).unwrap_or(tracked_only_default);
+
+                handle_merge(
+                    target.as_deref(),
+                    squash_final,
+                    commit_final,
+                    remove_final,
+                    verify_final,
+                    force,
+                    tracked_only_final,
+                )
+            }),
     };
 
     if let Err(e) = result {

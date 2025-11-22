@@ -61,10 +61,10 @@ impl<'a> MergeCommandCollector<'a> {
 
 pub fn handle_merge(
     target: Option<&str>,
-    no_squash: bool,
-    no_commit: bool,
-    no_remove: bool,
-    no_verify: bool,
+    squash: bool,
+    commit: bool,
+    remove: bool,
+    verify: bool,
     force: bool,
     tracked_only: bool,
 ) -> anyhow::Result<()> {
@@ -74,19 +74,19 @@ pub fn handle_merge(
     let current_branch = env.branch.clone();
 
     // Validate --no-commit: requires clean working tree
-    if no_commit && repo.is_dirty()? {
+    if !commit && repo.is_dirty()? {
         return Err(anyhow::anyhow!("{}", worktrunk::git::uncommitted_changes()));
     }
 
     // Validate --no-commit flag compatibility
-    if no_commit && !no_remove {
+    if !commit && remove {
         return Err(anyhow::anyhow!(format!(
             "{ERROR_EMOJI} {ERROR}--no-commit requires --no-remove{ERROR:#}\n\n{HINT_EMOJI} {HINT}Cannot remove active worktree when skipping commit/rebase{HINT:#}"
         )));
     }
 
     // --no-commit implies --no-squash (validation above ensures --no-remove is already set)
-    let squash_enabled = !no_squash && !no_commit;
+    let squash_enabled = squash && commit;
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
@@ -94,15 +94,15 @@ pub fn handle_merge(
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
-    // When current == target or we're in the main worktree, force --no-remove (can't remove it)
+    // When current == target or we're in the main worktree, disable remove (can't remove it)
     let in_main = !repo.is_in_worktree().unwrap_or(false);
-    let no_remove_effective = no_remove || current_branch == target_branch || in_main;
+    let remove_effective = remove && current_branch != target_branch && !in_main;
 
     // Collect and approve all commands upfront for batch permission request
     let (all_commands, project_id) = MergeCommandCollector {
         repo,
-        no_commit,
-        no_verify,
+        no_commit: !commit,
+        no_verify: !verify,
     }
     .collect()?;
 
@@ -116,14 +116,14 @@ pub fn handle_merge(
     }
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
-    let committed = if !no_commit && repo.is_dirty()? {
+    let committed = if commit && repo.is_dirty()? {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
             let ctx = env.context(force);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
-            options.no_verify = no_verify;
+            options.no_verify = !verify;
             options.tracked_only = tracked_only;
             options.auto_trust = true;
             options.warn_about_untracked = !tracked_only;
@@ -141,7 +141,7 @@ pub fn handle_merge(
         super::standalone::handle_squash(
             Some(&target_branch),
             force,
-            no_verify,
+            !verify,
             true,
             tracked_only,
             !tracked_only,
@@ -151,7 +151,7 @@ pub fn handle_merge(
     };
 
     // Rebase onto target (skip if --no-commit) - track whether rebasing occurred
-    let rebased = if !no_commit {
+    let rebased = if commit {
         super::standalone::handle_rebase(Some(&target_branch))?
     } else {
         false
@@ -159,7 +159,7 @@ pub fn handle_merge(
 
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
-    if !no_verify && let Some(project_config) = repo.load_project_config()? {
+    if verify && let Some(project_config) = repo.load_project_config()? {
         let ctx = env.context(force);
         run_pre_merge_commands(&project_config, &ctx, &target_branch, true)?;
     }
@@ -182,7 +182,7 @@ pub fn handle_merge(
         .unwrap_or_else(|| worktrees.main().path.clone());
 
     // Finish worktree unless --no-remove was specified
-    if !no_remove_effective {
+    if remove_effective {
         // STEP 1: Check for uncommitted changes before attempting cleanup
         // This prevents showing "Cleaning up worktree..." before failing
         repo.ensure_clean_working_tree()?;
@@ -204,7 +204,7 @@ pub fn handle_merge(
         handle_merge_summary_output(None)?;
     }
 
-    if !no_verify {
+    if verify {
         // Execute post-merge commands in the destination worktree
         // This runs after cleanup so the context is clear to the user
         // Create a fresh Repository instance at the destination (the old repo may be invalid)

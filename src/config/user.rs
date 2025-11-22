@@ -75,6 +75,10 @@ pub struct WorktrunkConfig {
     /// Configuration for the `wt list` command
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListConfig>,
+
+    /// Configuration for the `wt merge` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<MergeConfig>,
 }
 
 /// Configuration for commit message generation
@@ -162,6 +166,30 @@ pub struct ListConfig {
     pub remotes: Option<bool>,
 }
 
+/// Configuration for the `wt merge` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct MergeConfig {
+    /// Squash commits when merging (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub squash: Option<bool>,
+
+    /// Create commit after merge (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<bool>,
+
+    /// Remove worktree after merge (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remove: Option<bool>,
+
+    /// Run project hooks (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify: Option<bool>,
+
+    /// Stage tracked files only (default: false)
+    #[serde(rename = "tracked-only", skip_serializing_if = "Option::is_none")]
+    pub tracked_only: Option<bool>,
+}
+
 impl Default for WorktrunkConfig {
     fn default() -> Self {
         Self {
@@ -169,6 +197,7 @@ impl Default for WorktrunkConfig {
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
+            merge: None,
         }
     }
 }

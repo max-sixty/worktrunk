@@ -154,6 +154,16 @@ worktree-path = "../{{ main_worktree }}.{{ branch }}"
 # [list]
 # full = false       # Show CI, conflicts, diffs by default
 # branches = false   # Include branches without worktrees by default
+# remotes = false    # Include remote branches by default
+
+# Merge Command Defaults
+# Configure default behavior for `wt merge`
+# [merge]
+# squash = true          # Squash commits when merging
+# commit = true          # Create commit after merge
+# remove = true          # Remove worktree after merge
+# verify = true          # Run project hooks
+# tracked-only = false   # Stage tracked files only
 
 # Approved Commands
 # Commands approved for automatic execution after switching worktrees
