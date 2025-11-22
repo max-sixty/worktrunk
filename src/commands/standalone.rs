@@ -252,9 +252,6 @@ pub fn handle_squash(
         "{GREEN}Squashed @ {green_dim}{commit_hash}{green_dim:#}{GREEN:#}"
     ))?;
 
-    // Show detailed diffstat of the squashed commit
-    super::show_diffstat(repo, "HEAD~1..HEAD")?;
-
     Ok(true)
 }
 

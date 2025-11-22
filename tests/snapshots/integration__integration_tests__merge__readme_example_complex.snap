@@ -35,16 +35,16 @@ exit_code: 0
 [107m [0m  - Add JWT encoding/decoding with signature verification
 [107m [0m  - Create test suite covering all authentication flows
 ✅ [32mSquashed @ [2m[SHA][0m
-[107m [0m   auth.rs      |  8 [32m++++++++[m
-[107m [0m   auth_test.rs | 17 [32m+++++++++++++++++[m
-[107m [0m   jwt.rs       |  8 [32m++++++++[m
-[107m [0m   3 files changed, 33 insertions(+)
 🔄 [36mRunning pre-merge [1mtest[0m:[0m
 [107m [0m  [1m[34mcargo[0m test[0m
 🔄 [36mRunning pre-merge [1mlint[0m:[0m
 [107m [0m  [1m[34mcargo[0m clippy[0m
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
 [107m [0m  * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature-auth[m[33m)[m feat(auth): Implement JWT authentication system
+[107m [0m   auth.rs      |  8 [32m++++++++[m
+[107m [0m   auth_test.rs | 17 [32m+++++++++++++++++[m
+[107m [0m   jwt.rs       |  8 [32m++++++++[m
+[107m [0m   3 files changed, 33 insertions(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 3 files, [32m+33[0m)
 🔄 [36mRemoving [1m[36mfeature-auth[0m[36m worktree & branch in background[0m
 🔄 [36mRunning post-merge [1minstall[0m:[0m

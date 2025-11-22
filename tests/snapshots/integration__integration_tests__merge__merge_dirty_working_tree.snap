@@ -27,10 +27,10 @@ exit_code: 0
 💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m
 [107m [0m  [1mChanges to dirty.txt[0m
 ✅ [32mCommitted changes @ [2m[SHA][0m
-[107m [0m   dirty.txt | 1 [32m+[m
-[107m [0m   1 file changed, 1 insertion(+)
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
 [107m [0m  * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Changes to dirty.txt
+[107m [0m   dirty.txt | 1 [32m+[m
+[107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 

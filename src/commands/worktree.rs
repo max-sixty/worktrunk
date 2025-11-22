@@ -608,14 +608,8 @@ pub fn handle_push(
         ])?;
         crate::output::gutter(format_with_gutter(&log_output, "", None))?;
 
-        // Show diff statistics only if we didn't already show them after commit/squash
-        let already_showed_diffstat = operations
-            .map(|ops| ops.committed || ops.squashed)
-            .unwrap_or(false);
-
-        if !already_showed_diffstat {
-            super::show_diffstat(&repo, &format!("{}..HEAD", target_branch))?;
-        }
+        // Show diff statistics
+        super::show_diffstat(&repo, &format!("{}..HEAD", target_branch))?;
     }
 
     // Get git common dir for the push
