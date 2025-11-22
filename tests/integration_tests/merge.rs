@@ -794,9 +794,10 @@ fn test_merge_auto_commit_with_llm() {
         .expect("Failed to write file");
 
     // Configure mock LLM command via config file
+    // Use /bin/echo to avoid PATH resolution issues in CI environments
     let worktrunk_config = r#"
 [commit-generation]
-command = "echo"
+command = "/bin/echo"
 args = ["fix: improve auth validation logic"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).expect("Failed to write worktrunk config");
@@ -819,9 +820,10 @@ fn test_merge_auto_commit_and_squash() {
         .expect("Failed to write file");
 
     // Configure mock LLM command via config file
+    // Use /bin/echo to avoid PATH resolution issues in CI environments
     let worktrunk_config = r#"
 [commit-generation]
-command = "echo"
+command = "/bin/echo"
 args = ["fix: update file 1 content"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).expect("Failed to write worktrunk config");
