@@ -12,13 +12,13 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpPPjZB2/test-gitconfig
+    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmprnIggk/test-gitconfig
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpPPjZB2/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmprnIggk/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -306,12 +306,17 @@ complete -c wt -n "__fish_wt_using_subcommand remove" -s v -l verbose -d 'Show c
 complete -c wt -n "__fish_wt_using_subcommand remove" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s C -d 'Change working directory' -r -F
 complete -c wt -n "__fish_wt_using_subcommand merge" -l config -d 'User config file path' -r -F
+complete -c wt -n "__fish_wt_using_subcommand merge" -l squash -d 'Force commit squashing'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-squash -d 'Skip commit squashing'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l commit -d 'Force commit, squash, and rebase'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-commit -d 'Skip commit, squash, and rebase'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l remove -d 'Force worktree removal after merge'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-remove -d 'Keep worktree after merge'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l verify -d 'Force running project hooks'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l no-verify -d 'Skip all project hooks'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s f -l force -d 'Skip approval prompts'
 complete -c wt -n "__fish_wt_using_subcommand merge" -l tracked-only -d 'Stage tracked files only'
+complete -c wt -n "__fish_wt_using_subcommand merge" -l no-tracked-only -d 'Stage all files (tracked and untracked)'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s v -l verbose -d 'Show commands and debug info'
 complete -c wt -n "__fish_wt_using_subcommand merge" -s h -l help -d 'Print help (see more with \'--help\')'
 

@@ -12,13 +12,13 @@ info:
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
-    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpX880pk/test-gitconfig
+    GIT_CONFIG_GLOBAL: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpb2n8Kq/test-gitconfig
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
-    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpX880pk/test-config.toml
+    WORKTRUNK_CONFIG_PATH: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpb2n8Kq/test-config.toml
 ---
 success: true
 exit_code: 0
@@ -761,7 +761,7 @@ _wt() {
             return 0
             ;;
         wt__merge)
-            opts="-f -C -v -h --no-squash --no-commit --no-remove --no-verify --force --tracked-only --config --verbose --help [TARGET]"
+            opts="-f -C -v -h --squash --no-squash --commit --no-commit --remove --no-remove --verify --no-verify --force --tracked-only --no-tracked-only --config --verbose --help [TARGET]"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

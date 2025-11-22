@@ -486,7 +486,8 @@ fn main() {
                 let no_commit_default = merge_config.and_then(|m| m.no_commit).unwrap_or(false);
                 let no_remove_default = merge_config.and_then(|m| m.no_remove).unwrap_or(false);
                 let no_verify_default = merge_config.and_then(|m| m.no_verify).unwrap_or(false);
-                let tracked_only_default = merge_config.and_then(|m| m.tracked_only).unwrap_or(false);
+                let tracked_only_default =
+                    merge_config.and_then(|m| m.tracked_only).unwrap_or(false);
 
                 // CLI flags override config, config overrides defaults
                 let no_squash_final = squash_opt.unwrap_or(no_squash_default);
