@@ -43,7 +43,7 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: ${{ hashFiles('Cargo.lock') }}
+        prefix-key: v0-rust
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (bash, zsh, fish) - Ubuntu
@@ -182,7 +182,7 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: msrv-${{ hashFiles('Cargo.lock') }}
+        prefix-key: v0-msrv
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - uses: baptiste0928/cargo-install@v3
@@ -207,7 +207,7 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: udeps-${{ hashFiles('Cargo.lock') }}
+        prefix-key: v0-udeps
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - uses: baptiste0928/cargo-install@v3
@@ -234,7 +234,7 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
       with:
-        prefix-key: ${{ hashFiles('Cargo.lock') }}
+        prefix-key: v0-bench
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
