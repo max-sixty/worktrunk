@@ -43,7 +43,6 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["derive", "unstable-ext"] }
 clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 config = "0.15"
-console = "0.16"
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 directories = "6.0"

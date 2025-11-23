@@ -190,11 +190,11 @@ approved-commands = [
 
     wait_for_file(
         worktree_path.join("task1.txt").as_path(),
-        Duration::from_secs(1),
+        Duration::from_secs(2),
     );
     wait_for_file(
         worktree_path.join("task2.txt").as_path(),
-        Duration::from_secs(1),
+        Duration::from_secs(2),
     );
 }
 

@@ -794,11 +794,11 @@ fn test_merge_auto_commit_with_llm() {
         .expect("Failed to write file");
 
     // Configure mock LLM command via config file
-    // Use echo for cross-platform consistency
+    // Use sh to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
     let worktrunk_config = r#"
 [commit-generation]
-command = "echo"
-args = ["fix: improve auth validation logic"]
+command = "sh"
+args = ["-c", "cat >/dev/null && echo 'fix: improve auth validation logic'"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).expect("Failed to write worktrunk config");
 
@@ -820,11 +820,11 @@ fn test_merge_auto_commit_and_squash() {
         .expect("Failed to write file");
 
     // Configure mock LLM command via config file
-    // Use echo for cross-platform consistency
+    // Use sh to consume stdin and return a fixed message (must consume stdin for cross-platform compatibility)
     let worktrunk_config = r#"
 [commit-generation]
-command = "echo"
-args = ["fix: update file 1 content"]
+command = "sh"
+args = ["-c", "cat >/dev/null && echo 'fix: update file 1 content'"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).expect("Failed to write worktrunk config");
 
