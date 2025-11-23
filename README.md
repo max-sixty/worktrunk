@@ -799,13 +799,16 @@ git config worktrunk.status.feature-x "💬"
 **Status appears in the Status column:**
 
 <!-- README:snapshot:tests/snapshots/integration__integration_tests__list__with_user_status.snap -->
-```
+```bash
+$ wt list
   Branch             Status         HEAD±    main↕  Path                 Remote⇅  Commit    Age   Message
 @ main                   ^                          ./test-repo                   b834638e  10mo  Initial commit
 + clean-no-status       ∅                           ./clean-no-status             b834638e  10mo  Initial commit
 + clean-with-status     ∅   💬                      ./clean-with-status           b834638e  10mo  Initial commit
 + dirty-no-status     !           +1   -1           ./dirty-no-status             b834638e  10mo  Initial commit
 + dirty-with-status    ?∅   🤖                      ./dirty-with-status           b834638e  10mo  Initial commit
+
+⚪ Showing 5 worktrees, 1 with changes
 ```
 <!-- README:end -->
 
@@ -898,18 +901,18 @@ Commands from project hooks and LLM configuration require approval on first run.
 
 **Example approval prompt:**
 
-<!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__approval_pty__approval_prompt_named_commands.snap -->
+<!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_approval_prompt.snap -->
 ```
 🟡 test-repo needs approval to execute 3 commands:
 
 🔄 post-create install:
-  echo 'Installing dependencies...'
+   echo 'Installing dependencies...'
 
 🔄 post-create build:
-  echo 'Building project...'
+   echo 'Building project...'
 
 🔄 post-create test:
-  echo 'Running tests...'
+   echo 'Running tests...'
 
 💡 Allow and remember? [y/N]
 ```

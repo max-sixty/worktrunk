@@ -30,6 +30,7 @@ pub mod list_pty;
 pub mod merge;
 pub mod post_start_commands;
 pub mod push;
+pub mod readme_sync;
 pub mod remove;
 pub mod security;
 pub mod shell_wrapper;

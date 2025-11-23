@@ -2277,4 +2277,125 @@ fi
         assert_eq!(output.exit_code, 0, "Switch should succeed");
         assert_snapshot!(output.normalized());
     }
+
+    /// README example: approval prompt for post-create commands
+    /// This test captures just the prompt (before responding) to show what users see.
+    ///
+    /// Note: This uses direct PTY execution (not shell wrapper) because interactive prompts
+    /// require direct stdin access. The shell wrapper approach detects non-interactive mode.
+    /// The shell integration hint is truncated from the output.
+    #[test]
+    fn test_readme_example_approval_prompt() {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use std::io::{Read, Write};
+
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Create project config with named post-create commands
+        repo.write_project_config(
+            r#"[post-create-command]
+install = "echo 'Installing dependencies...'"
+build = "echo 'Building project...'"
+test = "echo 'Running tests...'"
+"#,
+        );
+        repo.commit("Add config");
+
+        // Direct PTY execution (not through shell wrapper) for interactive prompt
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 48,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("Failed to open PTY");
+
+        let cargo_bin = get_cargo_bin("wt");
+        let mut cmd = CommandBuilder::new(cargo_bin);
+        cmd.arg("switch");
+        cmd.arg("--create");
+        cmd.arg("test-approval");
+        cmd.cwd(repo.root_path());
+
+        // Set environment
+        cmd.env_clear();
+        cmd.env(
+            "HOME",
+            std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+        );
+        cmd.env(
+            "PATH",
+            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+        );
+        for (key, value) in repo.test_env_vars() {
+            cmd.env(key, value);
+        }
+
+        let mut child = pair
+            .slave
+            .spawn_command(cmd)
+            .expect("Failed to spawn command in PTY");
+        drop(pair.slave);
+
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .expect("Failed to clone PTY reader");
+        let mut writer = pair.master.take_writer().expect("Failed to get PTY writer");
+
+        // Send "n" to decline and complete the command
+        writer
+            .write_all(b"n\n")
+            .expect("Failed to write input to PTY");
+        writer.flush().expect("Failed to flush PTY writer");
+        drop(writer);
+
+        // Read all output
+        let mut buf = String::new();
+        reader
+            .read_to_string(&mut buf)
+            .expect("Failed to read PTY output");
+        child.wait().expect("Failed to wait for child");
+
+        // Normalize: strip ANSI codes and control characters
+        let ansi_regex = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+        let output = ansi_regex
+            .replace_all(&buf, "")
+            .replace("\r\n", "\n")
+            .to_string();
+
+        // Remove ^D and backspaces (macOS PTY artifacts)
+        let ctrl_d_regex = regex::Regex::new(r"\^D\x08+").unwrap();
+        let output = ctrl_d_regex.replace_all(&output, "").to_string();
+
+        // Normalize paths
+        let output = TMPDIR_REGEX.replace_all(&output, "[TMPDIR]").to_string();
+        let output = TMPDIR_PLACEHOLDER_COLLAPSE_REGEX
+            .replace_all(&output, "[TMPDIR]")
+            .to_string();
+
+        assert!(
+            output.contains("needs approval"),
+            "Should show approval prompt"
+        );
+        assert!(
+            output.contains("[y/N]"),
+            "Should show the interactive prompt"
+        );
+
+        // Extract just the prompt portion (from "🟡" to "[y/N]")
+        // This removes the echoed input at the start and anything after the prompt
+        let prompt_start = output.find("🟡").unwrap_or(0);
+        let prompt_end = output.find("[y/N]").map(|i| i + "[y/N]".len());
+        let prompt_only = if let Some(end) = prompt_end {
+            output[prompt_start..end].trim().to_string()
+        } else {
+            output[prompt_start..].trim().to_string()
+        };
+
+        assert_snapshot!(prompt_only);
+    }
 }

@@ -1,0 +1,17 @@
+---
+source: tests/integration_tests/shell_wrapper.rs
+assertion_line: 2396
+expression: prompt_only
+---
+🟡 test-repo needs approval to execute 3 commands:
+
+🔄 post-create install:
+   echo 'Installing dependencies...'
+
+🔄 post-create build:
+   echo 'Building project...'
+
+🔄 post-create test:
+   echo 'Running tests...'
+
+💡 Allow and remember? [y/N]
