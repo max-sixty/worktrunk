@@ -10,13 +10,13 @@
 <!-- [![Downloads](https://img.shields.io/crates/d/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk) -->
 <!-- [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers) -->
 
-Worktrunk is a CLI tool which makes working with git worktrees much more fluid.
-It's designed for those running many concurrent AI coding agents.
+Worktrunk is a CLI tool which handles git worktree mechanics, enabling AI agent
+parallelism.
 
-For context, git worktrees let multiple agents work on a single repo without
-colliding; each agent gets a separate directory with a version of the code. But
-creating worktrees, tracking paths & statuses, cleaning up, etc, is manual.
-Worktrunk offers control, transparency & automation for this workflow.
+git worktrees let multiple agents work on a single repo without colliding; each
+agent gets a separate directory with a version of the code. But creating
+worktrees, tracking paths & statuses, cleaning up, etc, is manual. Worktrunk
+offers control, transparency & automation for this workflow.
 
 ## Demo
 
@@ -80,7 +80,7 @@ See [Shell Integration](#shell-integration) for details.
 
 ## Design Philosophy
 
-Worktrunk is opinionated! Currently the workflow that best optimizes for zero marginal cost of parallel agents:
+Worktrunk is opinionated! It's designed for workflows which are:
 
 - Trunk-based — lots of short-lived worktrees, linear commit histories
 - Local — terminal-based agents, local inner dev loops
@@ -94,7 +94,7 @@ Worktrunk is opinionated! Currently the workflow that best optimizes for zero ma
 - Defaults to "stage everything and squash merge" (but configurable)
 - Extreme UI responsiveness; slow ops can't delay fast ones
 - Pluggable; adopting Worktrunk for a portion of a workflow doesn't require
-  adopting it for everything. standard `git worktree` commands continue working
+  adopting it for everything. Standard `git worktree` commands continue working
   fine!
 
 ## Automation Features
@@ -251,7 +251,9 @@ For manual setup instructions, see `wt config shell --help`.
 
 ## Tips
 
-**Create an alias for an agent** — Start a new agent-in-worktree in a couple of seconds. For example, to create a worktree and immediately start Claude:
+**Create an alias for creating a new worktree + launching an agent** — Start a
+new agent-in-worktree in a couple of seconds. For example, to create a worktree
+and immediately start Claude:
 
 ```bash
 alias wsl='wt switch --create --execute=claude'
