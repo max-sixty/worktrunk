@@ -181,22 +181,20 @@ approved-commands = [
         output
     );
 
-    // Wait for background commands to complete (commands have sleep 0.05 + margin)
-    thread::sleep(Duration::from_millis(150));
-
-    // Verify both background commands ran
+    // Wait for background commands to complete
     let worktree_path = repo
         .root_path()
         .parent()
         .unwrap()
         .join("test-repo.parallel-test");
-    assert!(
-        worktree_path.join("task1.txt").exists(),
-        "Task 1 should have completed"
+
+    wait_for_file(
+        worktree_path.join("task1.txt").as_path(),
+        Duration::from_secs(1),
     );
-    assert!(
-        worktree_path.join("task2.txt").exists(),
-        "Task 2 should have completed"
+    wait_for_file(
+        worktree_path.join("task2.txt").as_path(),
+        Duration::from_secs(1),
     );
 }
 
