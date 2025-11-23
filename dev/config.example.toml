@@ -4,24 +4,6 @@
 #   Windows:       %APPDATA%\worktrunk\config.toml
 #
 # Generate with: wt config create
-#
-# NOTE: This file is the source of truth for default configuration.
-# The commented templates below match src/llm.rs constants:
-# - DEFAULT_TEMPLATE (lines 41-76)
-# - DEFAULT_SQUASH_TEMPLATE (lines 109-118)
-# When changing these constants, update the commented sections here to match.
-
-# Worktree Path Template
-# Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name
-# Branch slashes are replaced with dashes (feature/auth → feature-auth)
-# Paths are relative to the main worktree root (original repository directory)
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-# Alternative: Inside repo (useful for bare repos)
-# worktree-path = ".worktrees/{{ branch }}"
-
-# Alternative: Shared directory for multiple repos
-# worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 
 # Commit Message Generation (Optional)
 # For generating commit messages during merge operations (wt merge)
@@ -35,6 +17,62 @@ args = ["-m", "claude-haiku-4.5"]
 # Install from: https://github.com/sigoden/aichat
 # command = "aichat"
 # args = ["-m", "claude:claude-haiku-4.5"]
+
+# Worktree Path Template
+# Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name
+# Branch slashes are replaced with dashes (feature/auth → feature-auth)
+# Paths are relative to the main worktree root (original repository directory)
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+# Alternative: Inside repo (useful for bare repos)
+# worktree-path = ".worktrees/{{ branch }}"
+
+# Alternative: Shared directory for multiple repos
+# worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
+
+# List Command Defaults
+# Configure default behavior for `wt list`
+[list]
+full = false       # Show CI, conflicts, diffs by default
+branches = false   # Include branches without worktrees by default
+remotes = false    # Include remote branches by default
+
+# Commit Defaults (shared by `wt beta commit`, `wt beta squash`, and `wt merge`)
+[commit]
+stage = "all"          # What to stage: "all", "tracked", or "none"
+
+# Merge Command Defaults
+# Note: `stage` defaults from [commit] section above
+[merge]
+squash = true          # Squash commits when merging
+commit = true          # Create commit after merge
+remove = true          # Remove worktree after merge
+verify = true          # Run project hooks
+
+# Approved Commands
+# Commands approved for automatic execution after switching worktrees
+# Auto-populated when you use: wt switch --execute "command" --force
+[[approved-commands]]
+project = "github.com/user/repo"
+command = "npm install"
+
+# NOTE: For project-specific commands (post-create, post-start, pre-merge, etc.),
+# use a separate PROJECT config file at <repo>/.config/wt.toml
+# See: .config/wt.example.toml for project configuration examples
+
+# Optional: Load template from file (mutually exclusive with 'template')
+# Supports ~ expansion: ~/.config/worktrunk/commit-template.txt
+# template-file = "~/.config/worktrunk/commit-template.txt"
+
+# Optional: Load squash template from file (mutually exclusive with 'squash-template')
+# Supports ~ expansion: ~/.config/worktrunk/squash-template.txt
+# squash-template-file = "~/.config/worktrunk/squash-template.txt"
+
+# Custom Prompt Templates (Advanced)
+# NOTE: The commented templates below match src/llm.rs constants:
+# - DEFAULT_TEMPLATE (lines 41-76)
+# - DEFAULT_SQUASH_TEMPLATE (lines 109-118)
+# When changing these constants, update the commented sections here to match.
 
 # Optional: Custom prompt template (inline) - Uses minijinja syntax
 # Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
@@ -100,10 +138,6 @@ args = ["-m", "claude-haiku-4.5"]
 # - Focus on WHY, not HOW
 # """
 
-# Optional: Load template from file (mutually exclusive with 'template')
-# Supports ~ expansion: ~/.config/worktrunk/commit-template.txt
-# template-file = "~/.config/worktrunk/commit-template.txt"
-
 # Optional: Custom squash commit message template (inline) - Uses minijinja syntax
 # Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}
 # If not specified, uses the default template:
@@ -140,37 +174,3 @@ args = ["-m", "claude-haiku-4.5"]
 # Generate one cohesive commit message that captures the overall change.
 # Use conventional commit format (feat/fix/docs/refactor).
 # """
-
-# Optional: Load squash template from file (mutually exclusive with 'squash-template')
-# Supports ~ expansion: ~/.config/worktrunk/squash-template.txt
-# squash-template-file = "~/.config/worktrunk/squash-template.txt"
-
-# NOTE: For project-specific commands (post-create, post-start, pre-merge, etc.),
-# use a separate PROJECT config file at <repo>/.config/wt.toml
-# See: .config/wt.example.toml for project configuration examples
-
-# List Command Defaults
-# Configure default behavior for `wt list`
-[list]
-full = false       # Show CI, conflicts, diffs by default
-branches = false   # Include branches without worktrees by default
-remotes = false    # Include remote branches by default
-
-# Commit Defaults (shared by `wt beta commit`, `wt beta squash`, and `wt merge`)
-[commit]
-stage = "all"          # What to stage: "all", "tracked", or "none"
-
-# Merge Command Defaults
-# Note: `stage` defaults from [commit] section above
-[merge]
-squash = true          # Squash commits when merging
-commit = true          # Create commit after merge
-remove = true          # Remove worktree after merge
-verify = true          # Run project hooks
-
-# Approved Commands
-# Commands approved for automatic execution after switching worktrees
-# Auto-populated when you use: wt switch --execute "command" --force
-[[approved-commands]]
-project = "github.com/user/repo"
-command = "npm install"

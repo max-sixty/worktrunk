@@ -40,24 +40,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m#   Windows:       %APPDATA%\worktrunk\config.toml[0m
   [2m#[0m
   [2m# Generate with: wt config create[0m
-  [2m#[0m
-  [2m# NOTE: This file is the source of truth for default configuration.[0m
-  [2m# The commented templates below match src/llm.rs constants:[0m
-  [2m# - DEFAULT_TEMPLATE (lines 41-76)[0m
-  [2m# - DEFAULT_SQUASH_TEMPLATE (lines 109-118)[0m
-  [2m# When changing these constants, update the commented sections here to match.[0m
-  [2m[0m
-  [2m# Worktree Path Template[0m
-  [2m# Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name[0m
-  [2m# Branch slashes are replaced with dashes (feature/auth → feature-auth)[0m
-  [2m# Paths are relative to the main worktree root (original repository directory)[0m
-  [2mworktree-path = "../{{ main_worktree }}.{{ branch }}"[0m
-  [2m[0m
-  [2m# Alternative: Inside repo (useful for bare repos)[0m
-  [2m# worktree-path = ".worktrees/{{ branch }}"[0m
-  [2m[0m
-  [2m# Alternative: Shared directory for multiple repos[0m
-  [2m# worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"[0m
   [2m[0m
   [2m# Commit Message Generation (Optional)[0m
   [2m# For generating commit messages during merge operations (wt merge)[0m
@@ -71,6 +53,62 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Install from: https://github.com/sigoden/aichat[0m
   [2m# command = "aichat"[0m
   [2m# args = ["-m", "claude:claude-haiku-4.5"][0m
+  [2m[0m
+  [2m# Worktree Path Template[0m
+  [2m# Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name[0m
+  [2m# Branch slashes are replaced with dashes (feature/auth → feature-auth)[0m
+  [2m# Paths are relative to the main worktree root (original repository directory)[0m
+  [2mworktree-path = "../{{ main_worktree }}.{{ branch }}"[0m
+  [2m[0m
+  [2m# Alternative: Inside repo (useful for bare repos)[0m
+  [2m# worktree-path = ".worktrees/{{ branch }}"[0m
+  [2m[0m
+  [2m# Alternative: Shared directory for multiple repos[0m
+  [2m# worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"[0m
+  [2m[0m
+  [2m# List Command Defaults[0m
+  [2m# Configure default behavior for `wt list`[0m
+  [2m[list][0m
+  [2mfull = false       # Show CI, conflicts, diffs by default[0m
+  [2mbranches = false   # Include branches without worktrees by default[0m
+  [2mremotes = false    # Include remote branches by default[0m
+  [2m[0m
+  [2m# Commit Defaults (shared by `wt beta commit`, `wt beta squash`, and `wt merge`)[0m
+  [2m[commit][0m
+  [2mstage = "all"          # What to stage: "all", "tracked", or "none"[0m
+  [2m[0m
+  [2m# Merge Command Defaults[0m
+  [2m# Note: `stage` defaults from [commit] section above[0m
+  [2m[merge][0m
+  [2msquash = true          # Squash commits when merging[0m
+  [2mcommit = true          # Create commit after merge[0m
+  [2mremove = true          # Remove worktree after merge[0m
+  [2mverify = true          # Run project hooks[0m
+  [2m[0m
+  [2m# Approved Commands[0m
+  [2m# Commands approved for automatic execution after switching worktrees[0m
+  [2m# Auto-populated when you use: wt switch --execute "command" --force[0m
+  [2m[[approved-commands]][0m
+  [2mproject = "github.com/user/repo"[0m
+  [2mcommand = "npm install"[0m
+  [2m[0m
+  [2m# NOTE: For project-specific commands (post-create, post-start, pre-merge, etc.),[0m
+  [2m# use a separate PROJECT config file at <repo>/.config/wt.toml[0m
+  [2m# See: .config/wt.example.toml for project configuration examples[0m
+  [2m[0m
+  [2m# Optional: Load template from file (mutually exclusive with 'template')[0m
+  [2m# Supports ~ expansion: ~/.config/worktrunk/commit-template.txt[0m
+  [2m# template-file = "~/.config/worktrunk/commit-template.txt"[0m
+  [2m[0m
+  [2m# Optional: Load squash template from file (mutually exclusive with 'squash-template')[0m
+  [2m# Supports ~ expansion: ~/.config/worktrunk/squash-template.txt[0m
+  [2m# squash-template-file = "~/.config/worktrunk/squash-template.txt"[0m
+  [2m[0m
+  [2m# Custom Prompt Templates (Advanced)[0m
+  [2m# NOTE: The commented templates below match src/llm.rs constants:[0m
+  [2m# - DEFAULT_TEMPLATE (lines 41-76)[0m
+  [2m# - DEFAULT_SQUASH_TEMPLATE (lines 109-118)[0m
+  [2m# When changing these constants, update the commented sections here to match.[0m
   [2m[0m
   [2m# Optional: Custom prompt template (inline) - Uses minijinja syntax[0m
   [2m# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}[0m
@@ -136,10 +174,6 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# - Focus on WHY, not HOW[0m
   [2m# """[0m
   [2m[0m
-  [2m# Optional: Load template from file (mutually exclusive with 'template')[0m
-  [2m# Supports ~ expansion: ~/.config/worktrunk/commit-template.txt[0m
-  [2m# template-file = "~/.config/worktrunk/commit-template.txt"[0m
-  [2m[0m
   [2m# Optional: Custom squash commit message template (inline) - Uses minijinja syntax[0m
   [2m# Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}[0m
   [2m# If not specified, uses the default template:[0m
@@ -176,39 +210,5 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Generate one cohesive commit message that captures the overall change.[0m
   [2m# Use conventional commit format (feat/fix/docs/refactor).[0m
   [2m# """[0m
-  [2m[0m
-  [2m# Optional: Load squash template from file (mutually exclusive with 'squash-template')[0m
-  [2m# Supports ~ expansion: ~/.config/worktrunk/squash-template.txt[0m
-  [2m# squash-template-file = "~/.config/worktrunk/squash-template.txt"[0m
-  [2m[0m
-  [2m# NOTE: For project-specific commands (post-create, post-start, pre-merge, etc.),[0m
-  [2m# use a separate PROJECT config file at <repo>/.config/wt.toml[0m
-  [2m# See: .config/wt.example.toml for project configuration examples[0m
-  [2m[0m
-  [2m# List Command Defaults[0m
-  [2m# Configure default behavior for `wt list`[0m
-  [2m[list][0m
-  [2mfull = false       # Show CI, conflicts, diffs by default[0m
-  [2mbranches = false   # Include branches without worktrees by default[0m
-  [2mremotes = false    # Include remote branches by default[0m
-  [2m[0m
-  [2m# Commit Defaults (shared by `wt beta commit`, `wt beta squash`, and `wt merge`)[0m
-  [2m[commit][0m
-  [2mstage = "all"          # What to stage: "all", "tracked", or "none"[0m
-  [2m[0m
-  [2m# Merge Command Defaults[0m
-  [2m# Note: `stage` defaults from [commit] section above[0m
-  [2m[merge][0m
-  [2msquash = true          # Squash commits when merging[0m
-  [2mcommit = true          # Create commit after merge[0m
-  [2mremove = true          # Remove worktree after merge[0m
-  [2mverify = true          # Run project hooks[0m
-  [2m[0m
-  [2m# Approved Commands[0m
-  [2m# Commands approved for automatic execution after switching worktrees[0m
-  [2m# Auto-populated when you use: wt switch --execute "command" --force[0m
-  [2m[[approved-commands]][0m
-  [2mproject = "github.com/user/repo"[0m
-  [2mcommand = "npm install"[0m
 
 ----- stderr -----
