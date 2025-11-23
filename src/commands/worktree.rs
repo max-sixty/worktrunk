@@ -526,12 +526,6 @@ pub fn handle_push(
         return Err(merge_commits_found());
     }
 
-    // Configure receive.denyCurrentBranch if needed
-    let current_config = repo.get_config("receive.denyCurrentBranch")?;
-    if current_config.as_deref() != Some("updateInstead") {
-        repo.set_config("receive.denyCurrentBranch", "updateInstead")?;
-    }
-
     // Check for conflicting changes in target worktree (auto-stash safe changes)
     let mut target_worktree_stash =
         repo.prepare_target_worktree(target_worktree_path.as_ref(), &target_branch)?;
@@ -616,8 +610,14 @@ pub fn handle_push(
     let git_common_dir = repo.git_common_dir()?;
 
     // Perform the push
+    // Use --receive-pack to pass config to the receiving end without permanently mutating repo config
     let push_target = format!("HEAD:{}", target_branch);
-    if let Err(e) = repo.run_command(&["push", git_common_dir.to_str().unwrap(), &push_target]) {
+    if let Err(e) = repo.run_command(&[
+        "push",
+        "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
+        git_common_dir.to_str().unwrap(),
+        &push_target,
+    ]) {
         if let Some(stash) = target_worktree_stash.take() {
             stash.restore()?;
         }

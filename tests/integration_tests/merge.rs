@@ -2933,3 +2933,46 @@ fn test_merge_when_default_branch_missing_worktree() {
 
     snapshot_merge("merge_default_branch_missing_worktree", &repo, &[], None);
 }
+
+#[test]
+fn test_merge_does_not_permanently_set_receive_deny_current_branch() {
+    let (repo, feature_wt) = setup_merge_scenario();
+
+    // Explicitly set config to "refuse" - this would block pushes to checked-out branches
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["config", "receive.denyCurrentBranch", "refuse"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to set config");
+
+    // Perform merge - should succeed despite "refuse" setting because we use --receive-pack
+    let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
+    let output = cmd.output().expect("Failed to run merge");
+    assert!(
+        output.status.success(),
+        "Merge should succeed even with receive.denyCurrentBranch=refuse.\n\
+         stdout: {}\n\
+         stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Check config after merge - should still be "refuse" (not permanently changed)
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let after = cmd
+        .args(["config", "receive.denyCurrentBranch"])
+        .current_dir(repo.root_path())
+        .output()
+        .expect("Failed to get config");
+    let after_value = String::from_utf8_lossy(&after.stdout).trim().to_string();
+
+    assert_eq!(
+        after_value, "refuse",
+        "receive.denyCurrentBranch should not be permanently modified by merge.\n\
+         Expected: \"refuse\"\n\
+         Got: {:?}",
+        after_value
+    );
+}
