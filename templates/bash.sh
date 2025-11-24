@@ -73,5 +73,10 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
             _clap_complete_{{ cmd_prefix }}
         fi
     }
-    complete -o nospace -o bashdefault -o nosort -F _wt_lazy_complete {{ cmd_prefix }}
+    # nosort requires Bash 4.4+ (macOS ships with 3.2)
+    if [[ ${BASH_VERSINFO[0]} -gt 4 || (${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -ge 4) ]]; then
+        complete -o nospace -o bashdefault -o nosort -F _wt_lazy_complete {{ cmd_prefix }}
+    else
+        complete -o nospace -o bashdefault -F _wt_lazy_complete {{ cmd_prefix }}
+    fi
 fi
