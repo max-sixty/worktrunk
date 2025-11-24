@@ -181,7 +181,7 @@ Automate tasks at different points in the worktree lifecycle. Configure hooks in
 
 > **Note:** `pre-merge-command` acts as a local CI pipeline. Because it runs after squashing
 > but before pushing to main, and stops the merge on failure, it ensures tests pass before
-> code reaches your trunk. Post-merge hooks run after the merge completes and only log failures.
+> code reaches the trunk. Post-merge hooks run after the merge completes and only log failures.
 
 <!-- README:snapshot:tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_hooks_post_create.snap -->
 ```bash
@@ -281,10 +281,9 @@ setup, `post-start-command` for non-blocking tasks. For example, worktrunk uses
 eliminating cold compiles (see [worktrunk's config](.config/wt.toml)). See
 [Project Hooks](#project-hooks) for details.
 
-**Use `pre-merge-command` as a "local CI"** — Running `wt merge` with pre-merge
-hooks is like having a local CI pipeline. Tests run after squashing but before
-pushing to main, and failures abort the merge. This protects `main` from one
-agent forgetting to run tests, without you having to babysit it.
+**Use `post-merge-command` as a "local CI"** — Running `wt merge` on a worktree
+and gating the merge on tests passing is very freeing — `main` is protected from
+one agent forgetting to run all tests, without you having to babysit it.
 
 **View Claude Code status from `wt list`** — The Claude Code integration shows
 which branches have active sessions in `wt list`. When the agent is working, the
