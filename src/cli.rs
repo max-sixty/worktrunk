@@ -387,7 +387,7 @@ Stored in git config under `worktrunk.status.<branch>`."#
 /// Primitive operations (building blocks for workflows)
 #[derive(Subcommand)]
 pub enum StepCommand {
-    /// Commit changes with LLM message
+    /// Commit changes with LLM commit message
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
@@ -402,7 +402,7 @@ pub enum StepCommand {
         stage: Option<crate::commands::commit::StageMode>,
     },
 
-    /// Squash commits with LLM message
+    /// Squash commits with LLM commit message
     Squash {
         /// Target branch
         ///
@@ -907,12 +907,12 @@ Commit → Squash → Rebase → Pre-merge hooks → Push → Cleanup → Post-m
 
 ### Commit
 
-Uncommitted changes are staged and committed with LLM message.
+Uncommitted changes are staged and committed with LLM commit message.
 Use `--stage=tracked` to stage only tracked files, or `--stage=none` to commit only what's already staged.
 
 ### Squash
 
-Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM-generated commit message.
+Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM commit message.
 Skip with `--no-squash`. Safety backup: `git reflog show refs/wt-backup/<branch>`
 
 ### Rebase

@@ -1974,7 +1974,7 @@ approved-commands = ["echo 'cleanup test'"]
     /// README example: Pre-merge hooks with squash and LLM commit message
     ///
     /// This test demonstrates:
-    /// - Multiple commits being squashed with LLM-generated message
+    /// - Multiple commits being squashed with LLM commit message
     /// - Pre-merge hooks (test, lint) running before merge
     ///
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_pre_merge.snap

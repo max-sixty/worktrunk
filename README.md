@@ -150,7 +150,7 @@ $ wt merge
 ```
 <!-- README:end -->
 
-Use `wt step commit` to commit changes with LLM-generated messages without the full merge workflow.
+Use `wt step commit` to commit changes with LLM commit messages without the full merge workflow.
 
 For more details, including custom prompt templates: `wt config --help`
 
@@ -482,12 +482,12 @@ Commit → Squash → Rebase → Pre-merge hooks → Push → Cleanup → Post-m
 
 ### Commit
 
-Uncommitted changes are staged and committed with LLM message.
+Uncommitted changes are staged and committed with LLM commit message.
 Use `--stage=tracked` to stage only tracked files, or `--stage=none` to commit only what's already staged.
 
 ### Squash
 
-Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM-generated commit message.
+Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM commit message.
 Skip with `--no-squash`. Safety backup: `git reflog show refs/wt-backup/<branch>`
 
 ### Rebase
@@ -854,8 +854,8 @@ wt step — Primitive operations (building blocks for workflows)
 Usage: step <COMMAND>
 
 Commands:
-  commit       Commit changes with LLM message
-  squash       Squash commits with LLM message
+  commit       Commit changes with LLM commit message
+  squash       Squash commits with LLM commit message
   push         Push changes to local target branch
   rebase       Rebase onto target
   post-create  Run post-create hook

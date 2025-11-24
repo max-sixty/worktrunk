@@ -798,7 +798,7 @@ args = ["-c", "cat >/dev/null && echo 'fix: improve auth validation logic'"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
-    // Merge with LLM configured - should auto-commit with LLM message
+    // Merge with LLM configured - should auto-commit with LLM commit message
     snapshot_merge(
         "merge_auto_commit_with_llm",
         &repo,
