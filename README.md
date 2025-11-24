@@ -150,6 +150,8 @@ $ wt merge
 ```
 <!-- README:end -->
 
+Use `wt step commit` to commit changes with LLM-generated messages without the full merge workflow.
+
 For more details, including custom prompt templates: `wt config --help`
 
 ### Project Hooks
