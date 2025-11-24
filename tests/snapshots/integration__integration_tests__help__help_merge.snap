@@ -72,7 +72,7 @@ Use [2m--stage=tracked[0m to stage only tracked files, or [2m--stage=none[0m
 
 ### Squash
 
-Multiple commits are squashed into one with LLM message (like GitHub's "Squash and merge").
+Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM-generated commit message.
 Skip with [2m--no-squash[0m. Safety backup: [2mgit reflog show refs/wt-backup/<branch>[0m
 
 ### Rebase

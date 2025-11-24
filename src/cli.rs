@@ -912,7 +912,7 @@ Use `--stage=tracked` to stage only tracked files, or `--stage=none` to commit o
 
 ### Squash
 
-Multiple commits are squashed into one with LLM message (like GitHub's "Squash and merge").
+Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM-generated commit message.
 Skip with `--no-squash`. Safety backup: `git reflog show refs/wt-backup/<branch>`
 
 ### Rebase
