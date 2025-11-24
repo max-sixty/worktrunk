@@ -161,7 +161,7 @@ Automate tasks at different points in the worktree lifecycle. Configure hooks in
 | Hook                    | When                               | On Failure     |
 | ----------------------- | ---------------------------------- | -------------- |
 | **post-create-command** | After worktree created             | Warn, continue |
-| **post-start-command**  | After success message (background) | Warn, continue |
+| **post-start-command**  | After worktree created (background) | Warn, continue |
 | **pre-commit-command**  | Before squash commit created       | Stop merge     |
 | **pre-merge-command**   | After squash, before push          | Stop merge     |
 | **post-merge-command**  | After successful merge             | Warn, continue |
