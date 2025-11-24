@@ -507,16 +507,19 @@ pub enum Commands {
         after_long_help = r#"## Setup Guide
 
 1. Set up shell integration
+
    ```bash
    wt config shell install
    ```
 
    Or manually add to your shell config:
+
    ```bash
    eval "$(wt config shell init bash)"
    ```
 
 2. (Optional) Create config file
+
    ```bash
    wt config create
    ```
@@ -528,14 +531,16 @@ pub enum Commands {
    Install: `uv tool install -U llm`
    Configure: `llm keys set anthropic`
    Add to config.toml:
+
    ```toml
    [commit-generation]
    command = "llm"
-   ```bash
+   ```
 
 ## LLM Setup Details
 
 For Claude:
+
 ```bash
 llm install llm-anthropic
 llm keys set anthropic
@@ -543,20 +548,23 @@ llm models default claude-3.5-sonnet
 ```
 
 For OpenAI:
+
 ```bash
 llm keys set openai
 ```
 
 Use `wt config list` to view your current configuration.
-Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
+Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
 
 ## Configuration Files
 
 **Global config** (user settings):
+
 - Location: `~/.config/worktrunk/config.toml` (or `WORKTRUNK_CONFIG_PATH`)
 - Run `wt config create --help` to view documented examples
 
 **Project config** (repository hooks):
+
 - Location: `.config/wt.toml` in repository root
 - Contains: post-create, post-start, pre-commit, pre-merge, post-merge hooks
 "#
@@ -635,6 +643,7 @@ Use `--format=json` for structured data. Each object contains two status maps
 with the same fields in the same order as Status Symbols above:
 
 **`status`** - variant names for querying:
+
 - `working_tree`: `{untracked, modified, staged, renamed, deleted}` booleans
 - `branch_state`: `\"\"` | `\"Conflicts\"` | `\"MergeTreeConflicts\"` | `\"MatchesMain\"` | `\"NoCommits\"`
 - `git_operation`: `\"\"` | `\"Rebase\"` | `\"Merge\"`
@@ -703,6 +712,7 @@ jq '.[] | select(.locked != null)'
 - No branch creation
 
 ### Creating New Worktree (`--create`)
+
 1. Creates new branch (defaults to current default branch as base)
 2. Creates worktree in configured location (default: `../{{ main_worktree }}.{{ branch }}`)
 3. Runs post-create hooks sequentially (blocking)
@@ -720,6 +730,7 @@ jq '.[] | select(.locked != null)'
 - Skip with `--no-verify`
 
 ### post-start (parallel, background)
+
 - Spawned after success message shown
 - Typically: dev servers, file watchers, editors
 - Run in background, failures logged but don't block
@@ -735,31 +746,37 @@ See `wt config approvals --help`.
 ## Examples
 
 Switch to existing worktree:
+
 ```bash
 wt switch feature-branch
 ```
 
 Create new worktree from main:
+
 ```bash
 wt switch --create new-feature
 ```
 
 Switch to previous worktree:
+
 ```bash
 wt switch -
 ```
 
 Create from specific base:
+
 ```bash
 wt switch --create hotfix --base production
 ```
 
 Create and run command:
+
 ```bash
 wt switch --create docs --execute "code ."
 ```
 
 Skip hooks during creation:
+
 ```bash
 wt switch --create temp --no-verify
 ```
@@ -767,6 +784,7 @@ wt switch --create temp --no-verify
 ## Shortcuts
 
 Use `@` for current HEAD, `-` for previous, `^` for main:
+
 ```bash
 wt switch @                              # Switch to current branch's worktree
 wt switch -                              # Switch to previous worktree
@@ -830,31 +848,37 @@ Stops any git fsmonitor daemon for the worktree before removal. This prevents or
 ## Examples
 
 Remove current worktree and branch:
+
 ```bash
 wt remove
 ```
 
 Remove specific worktree and branch:
+
 ```bash
 wt remove feature-branch
 ```
 
 Remove worktree but keep branch:
+
 ```bash
 wt remove --no-delete-branch feature-branch
 ```
 
 Remove multiple worktrees:
+
 ```bash
 wt remove old-feature another-branch
 ```
 
 Remove in foreground (blocking):
+
 ```bash
 wt remove --no-background feature-branch
 ```
 
 Switch to default in main:
+
 ```bash
 wt remove  # (when already in main worktree)
 ```"#)]
@@ -917,21 +941,25 @@ See `wt config approvals --help`.
 ## Examples
 
 Basic merge to main:
+
 ```bash
 wt merge
 ```
 
 Merge without squashing:
+
 ```bash
 wt merge --no-squash
 ```
 
 Keep worktree after merging:
+
 ```bash
 wt merge --no-remove
 ```
 
 Skip all hooks:
+
 ```bash
 wt merge --no-verify
 ```"#)]

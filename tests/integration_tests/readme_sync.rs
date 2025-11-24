@@ -212,15 +212,11 @@ fn get_help_output(command: &str, project_root: &Path) -> Result<String, String>
         if let Some(header_pos) = rest.find("\n## ") {
             // Split at first H2 header
             let (synopsis, docs) = rest.split_at(header_pos);
-            format!(
-                "```\n{}{}\n```\n{}",
-                first_line,
-                synopsis,
-                docs.trim_start_matches('\n')
-            )
+            let docs = docs.trim_start_matches('\n');
+            format!("```text\n{}{}\n```\n\n{}", first_line, synopsis, docs)
         } else {
             // No documentation section, wrap everything in code block
-            format!("```\n{}{}\n```", first_line, rest)
+            format!("```text\n{}{}\n```", first_line, rest)
         }
     } else {
         // Single line output

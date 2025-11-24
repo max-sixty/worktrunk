@@ -42,12 +42,15 @@ Global Options:
 [32mSetup Guide[0m
 
 1. Set up shell integration
+
   [2m   wt config shell install[0m
 
    Or manually add to your shell config:
+
   [2m   eval "$(wt config shell init bash)"[0m
 
 2. (Optional) Create config file
+
   [2m   wt config create[0m
 
    This creates ~/.config/worktrunk/config.toml with examples.
@@ -57,29 +60,34 @@ Global Options:
    Install: [2muv tool install -U llm[0m
    Configure: [2mllm keys set anthropic[0m
    Add to config.toml:
+
   [2m   [commit-generation][0m
   [2m   command = "llm"[0m
 
 [32mLLM Setup Details[0m
 
 For Claude:
+
   [2mllm install llm-anthropic[0m
   [2mllm keys set anthropic[0m
   [2mllm models default claude-3.5-sonnet[0m
 
 For OpenAI:
+
   [2mllm keys set openai[0m
 
 Use [2mwt config list[0m to view your current configuration.
-Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
+Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
 
 [32mConfiguration Files[0m
 
 [1mGlobal config[0m (user settings):
+
 - Location: [2m~/.config/worktrunk/config.toml[0m (or [2mWORKTRUNK_CONFIG_PATH[0m)
 - Run [2mwt config create --help[0m to view documented examples
 
 [1mProject config[0m (repository hooks):
+
 - Location: [2m.config/wt.toml[0m in repository root
 - Contains: post-create, post-start, pre-commit, pre-merge, post-merge hooks
 

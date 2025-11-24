@@ -61,6 +61,7 @@ Global Options:
 - No branch creation
 
 ### Creating New Worktree ([2m--create[0m)
+
 1. Creates new branch (defaults to current default branch as base)
 2. Creates worktree in configured location (default: [2m../{{ main_worktree }}.{{ branch }}[0m)
 3. Runs post-create hooks sequentially (blocking)
@@ -78,6 +79,7 @@ Global Options:
 - Skip with [2m--no-verify[0m
 
 ### post-start (parallel, background)
+
 - Spawned after success message shown
 - Typically: dev servers, file watchers, editors
 - Run in background, failures logged but don't block
@@ -93,26 +95,33 @@ See [2mwt config approvals --help[0m.
 [32mExamples[0m
 
 Switch to existing worktree:
+
   [2mwt switch feature-branch[0m
 
 Create new worktree from main:
+
   [2mwt switch --create new-feature[0m
 
 Switch to previous worktree:
+
   [2mwt switch -[0m
 
 Create from specific base:
+
   [2mwt switch --create hotfix --base production[0m
 
 Create and run command:
+
   [2mwt switch --create docs --execute "code ."[0m
 
 Skip hooks during creation:
+
   [2mwt switch --create temp --no-verify[0m
 
 [32mShortcuts[0m
 
 Use [2m@[0m for current HEAD, [2m-[0m for previous, [2m^[0m for main:
+
   [2mwt switch @                              # Switch to current branch's worktree[0m
   [2mwt switch -                              # Switch to previous worktree[0m
   [2mwt switch --create new-feature --base=^  # Branch from main (default)[0m

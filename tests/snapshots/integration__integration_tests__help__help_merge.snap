@@ -100,15 +100,19 @@ See [2mwt config approvals --help[0m.
 [32mExamples[0m
 
 Basic merge to main:
+
   [2mwt merge[0m
 
 Merge without squashing:
+
   [2mwt merge --no-squash[0m
 
 Keep worktree after merging:
+
   [2mwt merge --no-remove[0m
 
 Skip all hooks:
+
   [2mwt merge --no-verify[0m
 
 ----- stderr -----

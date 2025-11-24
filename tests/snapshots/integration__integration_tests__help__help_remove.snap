@@ -71,21 +71,27 @@ Stops any git fsmonitor daemon for the worktree before removal. This prevents or
 [32mExamples[0m
 
 Remove current worktree and branch:
+
   [2mwt remove[0m
 
 Remove specific worktree and branch:
+
   [2mwt remove feature-branch[0m
 
 Remove worktree but keep branch:
+
   [2mwt remove --no-delete-branch feature-branch[0m
 
 Remove multiple worktrees:
+
   [2mwt remove old-feature another-branch[0m
 
 Remove in foreground (blocking):
+
   [2mwt remove --no-background feature-branch[0m
 
 Switch to default in main:
+
   [2mwt remove  # (when already in main worktree)[0m
 
 ----- stderr -----

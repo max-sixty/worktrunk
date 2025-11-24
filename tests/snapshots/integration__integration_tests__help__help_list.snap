@@ -104,6 +104,7 @@ Use [2m--format=json[0m for structured data. Each object contains two status m
 with the same fields in the same order as Status Symbols above:
 
 [1m`status`[0m - variant names for querying:
+
 - [2mworking_tree[0m: [2m{untracked, modified, staged, renamed, deleted}[0m booleans
 - [2mbranch_state[0m: [2m""[0m | [2m"Conflicts"[0m | [2m"MergeTreeConflicts"[0m | [2m"MatchesMain"[0m | [2m"NoCommits"[0m
 - [2mgit_operation[0m: [2m""[0m | [2m"Rebase"[0m | [2m"Merge"[0m

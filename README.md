@@ -305,7 +305,7 @@ instead of duplicating logic:
 <summary><strong><code>wt switch [branch]</code></strong> - Switch to existing worktree or create a new one</summary>
 
 <!-- README:help:wt switch --help-md -->
-```
+```text
 wt switch — Switch to a worktree
 Usage: switch [OPTIONS] <BRANCH>
 
@@ -335,6 +335,7 @@ Options:
           Print help (see a summary with '-h')
 
 ```
+
 ## Operation
 
 ### Switching to Existing Worktree
@@ -344,6 +345,7 @@ Options:
 - No branch creation
 
 ### Creating New Worktree (`--create`)
+
 1. Creates new branch (defaults to current default branch as base)
 2. Creates worktree in configured location (default: `../{{ main_worktree }}.{{ branch }}`)
 3. Runs post-create hooks sequentially (blocking)
@@ -361,6 +363,7 @@ Options:
 - Skip with `--no-verify`
 
 ### post-start (parallel, background)
+
 - Spawned after success message shown
 - Typically: dev servers, file watchers, editors
 - Run in background, failures logged but don't block
@@ -376,31 +379,37 @@ See `wt config approvals --help`.
 ## Examples
 
 Switch to existing worktree:
+
 ```bash
 wt switch feature-branch
 ```
 
 Create new worktree from main:
+
 ```bash
 wt switch --create new-feature
 ```
 
 Switch to previous worktree:
+
 ```bash
 wt switch -
 ```
 
 Create from specific base:
+
 ```bash
 wt switch --create hotfix --base production
 ```
 
 Create and run command:
+
 ```bash
 wt switch --create docs --execute "code ."
 ```
 
 Skip hooks during creation:
+
 ```bash
 wt switch --create temp --no-verify
 ```
@@ -408,6 +417,7 @@ wt switch --create temp --no-verify
 ## Shortcuts
 
 Use `@` for current HEAD, `-` for previous, `^` for main:
+
 ```bash
 wt switch @                              # Switch to current branch's worktree
 wt switch -                              # Switch to previous worktree
@@ -423,7 +433,7 @@ wt remove @                              # Remove current worktree
 <summary><strong><code>wt merge [target]</code></strong> - Merge, push, and cleanup</summary>
 
 <!-- README:help:wt merge --help-md -->
-```
+```text
 wt merge — Merge worktree into target branch
 Usage: merge [OPTIONS] [TARGET]
 
@@ -461,6 +471,7 @@ Options:
           Print help (see a summary with '-h')
 
 ```
+
 ## Operation
 
 Commit → Squash → Rebase → Pre-merge hooks → Push → Cleanup → Post-merge hooks
@@ -501,21 +512,25 @@ See `wt config approvals --help`.
 ## Examples
 
 Basic merge to main:
+
 ```bash
 wt merge
 ```
 
 Merge without squashing:
+
 ```bash
 wt merge --no-squash
 ```
 
 Keep worktree after merging:
+
 ```bash
 wt merge --no-remove
 ```
 
 Skip all hooks:
+
 ```bash
 wt merge --no-verify
 ```
@@ -527,7 +542,7 @@ wt merge --no-verify
 <summary><strong><code>wt remove [worktree]</code></strong> - Remove worktree and branch</summary>
 
 <!-- README:help:wt remove --help-md -->
-```
+```text
 wt remove — Remove worktree and branch
 Usage: remove [OPTIONS] [WORKTREES]...
 
@@ -549,6 +564,7 @@ Options:
           Print help (see a summary with '-h')
 
 ```
+
 ## Operation
 
 Removes worktree directory, git metadata, and branch. Requires clean working tree.
@@ -576,31 +592,37 @@ Stops any git fsmonitor daemon for the worktree before removal. This prevents or
 ## Examples
 
 Remove current worktree and branch:
+
 ```bash
 wt remove
 ```
 
 Remove specific worktree and branch:
+
 ```bash
 wt remove feature-branch
 ```
 
 Remove worktree but keep branch:
+
 ```bash
 wt remove --no-delete-branch feature-branch
 ```
 
 Remove multiple worktrees:
+
 ```bash
 wt remove old-feature another-branch
 ```
 
 Remove in foreground (blocking):
+
 ```bash
 wt remove --no-background feature-branch
 ```
 
 Switch to default in main:
+
 ```bash
 wt remove  # (when already in main worktree)
 ```
@@ -612,7 +634,7 @@ wt remove  # (when already in main worktree)
 <summary><strong><code>wt list</code></strong> - Show all worktrees and branches</summary>
 
 <!-- README:help:wt list --help-md -->
-```
+```text
 wt list — List worktrees and optionally branches
 Usage: list [OPTIONS]
 
@@ -640,6 +662,7 @@ Options:
           Print help (see a summary with '-h')
 
 ```
+
 ## Columns
 
 - **Branch:** Branch name
@@ -694,6 +717,7 @@ Use `--format=json` for structured data. Each object contains two status maps
 with the same fields in the same order as Status Symbols above:
 
 **`status`** - variant names for querying:
+
 - `working_tree`: `{untracked, modified, staged, renamed, deleted}` booleans
 - `branch_state`: `""` | `"Conflicts"` | `"MergeTreeConflicts"` | `"MatchesMain"` | `"NoCommits"`
 - `git_operation`: `""` | `"Rebase"` | `"Merge"`
@@ -731,7 +755,7 @@ jq '.[] | select(.locked != null)'
 <summary><strong><code>wt config</code></strong> - Manage configuration</summary>
 
 <!-- README:help:wt config --help-md -->
-```
+```text
 wt config — Manage configuration and shell integration
 Usage: config <COMMAND>
 
@@ -749,19 +773,23 @@ Options:
           Print help (see a summary with '-h')
 
 ```
+
 ## Setup Guide
 
 1. Set up shell integration
+
    ```bash
    wt config shell install
    ```
 
    Or manually add to your shell config:
+
    ```bash
    eval "$(wt config shell init bash)"
    ```
 
 2. (Optional) Create config file
+
    ```bash
    wt config create
    ```
@@ -773,14 +801,16 @@ Options:
    Install: `uv tool install -U llm`
    Configure: `llm keys set anthropic`
    Add to config.toml:
+
    ```toml
    [commit-generation]
    command = "llm"
-   ```bash
+   ```
 
 ## LLM Setup Details
 
 For Claude:
+
 ```bash
 llm install llm-anthropic
 llm keys set anthropic
@@ -788,20 +818,23 @@ llm models default claude-3.5-sonnet
 ```
 
 For OpenAI:
+
 ```bash
 llm keys set openai
 ```
 
 Use `wt config list` to view your current configuration.
-Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
+Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
 
 ## Configuration Files
 
 **Global config** (user settings):
+
 - Location: `~/.config/worktrunk/config.toml` (or `WORKTRUNK_CONFIG_PATH`)
 - Run `wt config create --help` to view documented examples
 
 **Project config** (repository hooks):
+
 - Location: `.config/wt.toml` in repository root
 - Contains: post-create, post-start, pre-commit, pre-merge, post-merge hooks
 <!-- README:end -->
@@ -812,7 +845,7 @@ Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
 <summary><strong><code>wt step</code></strong> - Building blocks for workflows</summary>
 
 <!-- README:help:wt step --help-md -->
-```
+```text
 wt step — Primitive operations (building blocks for workflows)
 Usage: step <COMMAND>
 
@@ -923,28 +956,6 @@ The most helpful way to contribute:
 - Star the repo / tell friends / post about it
 - Find bugs, file reproducible bug reports
 
-<details>
-<summary>Developing</summary>
-
-### Releases
-
-Use [cargo-release](https://github.com/crate-ci/cargo-release) to publish new versions:
-
-```bash
-cargo install cargo-release
-
-# Bump version, update Cargo.lock, commit, tag, and push
-cargo release patch --execute   # 0.1.0 -> 0.1.1
-cargo release minor --execute   # 0.1.0 -> 0.2.0
-cargo release major --execute   # 0.1.0 -> 1.0.0
-```
-
-This updates Cargo.toml and Cargo.lock, creates a commit and tag, then pushes to GitHub. The tag push triggers GitHub Actions to build binaries, create the release, and publish to crates.io.
-
-Run without `--execute` to preview changes first.
-
-</details>
-
 ## FAQ
 
 <details>
@@ -984,13 +995,13 @@ Use `--force` to bypass prompts (useful for CI/automation).
 <details>
 <summary><strong>How does Worktrunk compare to alternatives?</strong></summary>
 
-#### vs. Branch Switching
+### vs. Branch Switching
 
 `git checkout` forces all work through a single directory. Switching branches means rebuilding artifacts, restarting dev servers, and stashing changes. Only one branch can be active at a time.
 
 Worktrunk gives each branch its own directory with independent build caches, processes, and editor state. Work on multiple branches simultaneously without rebuilding or stashing.
 
-#### vs. Plain `git worktree`
+### vs. Plain `git worktree`
 
 Git's built-in worktree commands work but require manual lifecycle management:
 
@@ -1021,7 +1032,7 @@ What `git worktree` doesn't provide:
 
 Worktrunk adds path management, lifecycle hooks, and `wt list --full` for viewing all worktrees—branches, uncommitted changes, commits ahead/behind, CI status, and conflicts—in a single view.
 
-#### vs. git-machete / git-town
+### vs. git-machete / git-town
 
 Different scopes:
 
@@ -1031,7 +1042,7 @@ Different scopes:
 
 These tools can be used together—run git-machete or git-town inside individual worktrees.
 
-#### vs. Git TUIs (lazygit, gh-dash, etc.)
+### vs. Git TUIs (lazygit, gh-dash, etc.)
 
 Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, runs automation hooks, and aggregates status across branches (`wt list --full`). Use your preferred TUI inside each worktree directory.
 
@@ -1047,5 +1058,27 @@ cargo install worktrunk --no-default-features
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
+
+</details>
+
+<details>
+<summary>Developing</summary>
+
+### Releases
+
+Use [cargo-release](https://github.com/crate-ci/cargo-release) to publish new versions:
+
+```bash
+cargo install cargo-release
+
+# Bump version, update Cargo.lock, commit, tag, and push
+cargo release patch --execute   # 0.1.0 -> 0.1.1
+cargo release minor --execute   # 0.1.0 -> 0.2.0
+cargo release major --execute   # 0.1.0 -> 1.0.0
+```
+
+This updates Cargo.toml and Cargo.lock, creates a commit and tag, then pushes to GitHub. The tag push triggers GitHub Actions to build binaries, create the release, and publish to crates.io.
+
+Run without `--execute` to preview changes first.
 
 </details>
