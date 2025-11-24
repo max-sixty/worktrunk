@@ -120,8 +120,16 @@ pub fn handle_squash(
     }
 
     // Run pre-commit hook unless explicitly skipped
-    if !skip_pre_commit && let Some(project_config) = repo.load_project_config()? {
-        HookPipeline::new(ctx).run_pre_commit(&project_config, Some(&target_branch), auto_trust)?;
+    let project_config = repo.load_project_config()?;
+    let has_pre_commit = project_config
+        .as_ref()
+        .map(|c| c.pre_commit_command.is_some())
+        .unwrap_or(false);
+
+    if skip_pre_commit && has_pre_commit {
+        crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
+    } else if let Some(ref config) = project_config {
+        HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust)?;
     }
 
     // Get merge base with target branch
@@ -141,7 +149,7 @@ pub fn handle_squash(
 
     if commit_count == 0 && has_staged {
         // Just staged changes, no commits - commit them directly (no squashing needed)
-        generator.commit_staged_changes(true)?;
+        generator.commit_staged_changes(true, stage_mode)?;
         return Ok(true);
     }
 
@@ -168,19 +176,25 @@ pub fn handle_squash(
     };
 
     let with_changes = if has_staged {
-        " & working tree changes"
+        match stage_mode {
+            super::commit::StageMode::Tracked => " & tracked changes",
+            _ => " & working tree changes",
+        }
     } else {
         ""
     };
 
-    let squash_progress = if total_stats.is_empty() {
+    // Build parenthesized content: stats only (stage mode is in message text)
+    let parts = total_stats;
+
+    let squash_progress = if parts.is_empty() {
         format!(
             "{CYAN}Squashing {commit_count} {commit_text}{with_changes} into a single commit...{CYAN:#}"
         )
     } else {
         format!(
             "{CYAN}Squashing {commit_count} {commit_text}{with_changes} into a single commit{CYAN:#} ({})...",
-            total_stats.join(", ")
+            parts.join(", ")
         )
     };
     crate::output::progress(squash_progress)?;

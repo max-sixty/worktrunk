@@ -3,8 +3,9 @@ source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - merge
-    - main
+    - step
+    - commit
+    - "--no-verify"
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -16,22 +17,20 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_COMMIT_GENERATION__ARGS: "feat: add file"
+    WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🟡 [33mAuto-staging 1 untracked file:[0m
-[107m [0m  dirty.txt
-🔄 [36mCommitting changes with default message...[0m (1 file, [32m+1[0m, no squashing needed)
+💡 [2mSkipping pre-commit hook (--no-verify)[0m
+🟡 [33mAuto-staging 2 untracked files:[0m
+[107m [0m  .config/
+[107m [0m  file1.txt
+🔄 [36mCommitting changes with default message...[0m (2 files, [32m+2[0m)
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
-[107m [0m  [1mChanges to dirty.txt[0m
+[107m [0m  [1mChanges to wt.toml & file1.txt[0m
 ✅ [32mCommitted changes @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
-[107m [0m  * [SHA] Changes to dirty.txt
-[107m [0m   dirty.txt | 1 [32m+[m
-[107m [0m   1 file changed, 1 insertion(+)
-✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
-🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
 ----- stderr -----

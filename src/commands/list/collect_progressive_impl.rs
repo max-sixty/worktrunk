@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::path::format_path_for_display;
+use worktrunk::styling::eprintln;
 
 use super::ci_status::PrStatus;
 use super::collect::{CellUpdate, detect_worktree_state};

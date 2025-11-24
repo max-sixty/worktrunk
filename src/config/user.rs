@@ -43,6 +43,17 @@ pub enum StageMode {
     None,
 }
 
+impl StageMode {
+    /// Returns the lowercase string representation for CLI display.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StageMode::All => "all",
+            StageMode::Tracked => "tracked",
+            StageMode::None => "none",
+        }
+    }
+}
+
 /// User-level configuration for worktree path formatting and LLM integration.
 ///
 /// This config is stored at `~/.config/worktrunk/config.toml` (or platform equivalent)

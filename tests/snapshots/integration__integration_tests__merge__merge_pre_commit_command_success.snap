@@ -26,7 +26,7 @@ exit_code: 0
 [107m [0m  feature.txt
 🔄 [36mRunning pre-commit:[0m
 [107m [0m  [1m[2m[34mecho[0m [2m[32m'Pre-commit check passed'[0m[0m
-🔄 [36mCommitting with default message...[0m (1 file, [32m+1[0m, no squashing needed)
+🔄 [36mCommitting changes with default message...[0m (1 file, [32m+1[0m, no squashing needed)
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
 [107m [0m  [1mChanges to feature.txt[0m
 ✅ [32mCommitted changes @ [2m[SHA][0m

@@ -2952,3 +2952,307 @@ fn test_merge_does_not_permanently_set_receive_deny_current_branch() {
         after_value
     );
 }
+
+/// Helper to snapshot step squash with env vars
+fn snapshot_step_squash_with_env(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env_vars: &[(&str, &str)],
+) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
+        cmd.arg("squash").args(args);
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+/// Helper to snapshot step commit command
+fn snapshot_step_commit_with_env(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&Path>,
+    env_vars: &[(&str, &str)],
+) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
+        cmd.arg("commit").args(args);
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+#[test]
+fn test_step_squash_with_no_verify_flag() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create a feature worktree with multiple commits
+    let feature_wt = repo.add_worktree("feature", "feature");
+
+    // Add a pre-commit hook so --no-verify has something to skip
+    // Create in feature worktree since worktrees don't share working tree files
+    fs::create_dir_all(feature_wt.join(".config")).expect("Failed to create .config");
+    fs::write(
+        feature_wt.join(".config/wt.toml"),
+        "pre-commit-command = \"echo pre-commit check\"",
+    )
+    .expect("Failed to write wt.toml");
+
+    // Commit the config as part of first commit to avoid untracked file warnings
+    fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", ".config", "file1.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add files");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 1"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    fs::write(feature_wt.join("file2.txt"), "content 2").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file2.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 2"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    snapshot_step_squash_with_env(
+        "step_squash_no_verify",
+        &repo,
+        &["--no-verify"],
+        Some(&feature_wt),
+        &[
+            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
+            (
+                "WORKTRUNK_COMMIT_GENERATION__ARGS",
+                "squash: combined commits",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn test_step_squash_with_stage_tracked_flag() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    let feature_wt = repo.add_worktree("feature", "feature");
+
+    fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file1.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 1"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    fs::write(feature_wt.join("file2.txt"), "content 2").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file2.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 2"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    // Add uncommitted tracked changes
+    fs::write(feature_wt.join("file1.txt"), "updated content").expect("Failed to write file");
+
+    snapshot_step_squash_with_env(
+        "step_squash_stage_tracked",
+        &repo,
+        &["--stage=tracked"],
+        Some(&feature_wt),
+        &[
+            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
+            (
+                "WORKTRUNK_COMMIT_GENERATION__ARGS",
+                "squash: combined commits",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn test_step_squash_with_both_flags() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    let feature_wt = repo.add_worktree("feature", "feature");
+
+    // Add a pre-commit hook so --no-verify has something to skip
+    // Create in feature worktree since worktrees don't share working tree files
+    fs::create_dir_all(feature_wt.join(".config")).expect("Failed to create .config");
+    fs::write(
+        feature_wt.join(".config/wt.toml"),
+        "pre-commit-command = \"echo pre-commit check\"",
+    )
+    .expect("Failed to write wt.toml");
+
+    // Commit the config as part of first commit to avoid untracked file warnings
+    fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", ".config", "file1.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add files");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 1"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    fs::write(feature_wt.join("file2.txt"), "content 2").expect("Failed to write file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file2.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to add file");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 2"])
+        .current_dir(&feature_wt)
+        .output()
+        .expect("Failed to commit");
+
+    fs::write(feature_wt.join("file1.txt"), "updated content").expect("Failed to write file");
+
+    snapshot_step_squash_with_env(
+        "step_squash_both_flags",
+        &repo,
+        &["--no-verify", "--stage=tracked"],
+        Some(&feature_wt),
+        &[
+            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
+            (
+                "WORKTRUNK_COMMIT_GENERATION__ARGS",
+                "squash: combined commits",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn test_step_commit_with_no_verify_flag() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Add a pre-commit hook so --no-verify has something to skip
+    fs::create_dir_all(repo.root_path().join(".config")).expect("Failed to create .config");
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        "pre-commit-command = \"echo pre-commit check\"",
+    )
+    .expect("Failed to write wt.toml");
+
+    fs::write(repo.root_path().join("file1.txt"), "content 1").expect("Failed to write file");
+
+    snapshot_step_commit_with_env(
+        "step_commit_no_verify",
+        &repo,
+        &["--no-verify"],
+        None,
+        &[
+            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
+            ("WORKTRUNK_COMMIT_GENERATION__ARGS", "feat: add file"),
+        ],
+    );
+}
+
+#[test]
+fn test_step_commit_with_stage_tracked_flag() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    fs::write(repo.root_path().join("tracked.txt"), "initial").expect("Failed to write file");
+    repo.commit("add tracked file");
+
+    fs::write(repo.root_path().join("tracked.txt"), "modified").expect("Failed to write file");
+    fs::write(
+        repo.root_path().join("untracked.txt"),
+        "should not be staged",
+    )
+    .expect("Failed to write file");
+
+    snapshot_step_commit_with_env(
+        "step_commit_stage_tracked",
+        &repo,
+        &["--stage=tracked"],
+        None,
+        &[
+            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
+            (
+                "WORKTRUNK_COMMIT_GENERATION__ARGS",
+                "fix: update tracked file",
+            ),
+        ],
+    );
+}
+
+#[test]
+fn test_step_commit_with_both_flags() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Add a pre-commit hook so --no-verify has something to skip
+    fs::create_dir_all(repo.root_path().join(".config")).expect("Failed to create .config");
+    fs::write(
+        repo.root_path().join(".config/wt.toml"),
+        "pre-commit-command = \"echo pre-commit check\"",
+    )
+    .expect("Failed to write wt.toml");
+
+    fs::write(repo.root_path().join("tracked.txt"), "initial").expect("Failed to write file");
+    repo.commit("add tracked file");
+
+    fs::write(repo.root_path().join("tracked.txt"), "modified").expect("Failed to write file");
+
+    snapshot_step_commit_with_env(
+        "step_commit_both_flags",
+        &repo,
+        &["--no-verify", "--stage=tracked"],
+        None,
+        &[
+            ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
+            ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: update file"),
+        ],
+    );
+}
