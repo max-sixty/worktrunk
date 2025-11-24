@@ -318,8 +318,14 @@ approved-commands = [
 
     // Wait for both background commands
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
-    wait_for_file(worktree_path.join("task1.txt").as_path(), Duration::from_secs(5));
-    wait_for_file(worktree_path.join("task2.txt").as_path(), Duration::from_secs(5));
+    wait_for_file(
+        worktree_path.join("task1.txt").as_path(),
+        Duration::from_secs(5),
+    );
+    wait_for_file(
+        worktree_path.join("task2.txt").as_path(),
+        Duration::from_secs(5),
+    );
 }
 
 #[test]
