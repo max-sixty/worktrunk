@@ -2,21 +2,32 @@ use crate::common::{TestRepo, make_snapshot_cmd, resolve_git_common_dir, setup_s
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
 use std::fs;
+use std::path::Path;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // Sleep duration constants for background command tests
 // These allow time for background processes to complete and write output files
 
-/// Short wait for fast commands (simple echo statements)
+/// Short wait for fast commands (simple echo statements) - used when checking for file absence
 const SLEEP_FAST_COMMAND: Duration = Duration::from_millis(100);
 
-/// Standard wait for background commands with sleep/processing
-const SLEEP_BACKGROUND_COMMAND: Duration = Duration::from_millis(200);
-
-/// Extended wait for commands that include explicit sleep in the command itself
-/// (e.g., "sleep 0.1 && echo ..." requires at least 100ms + margin for CI overhead)
-const SLEEP_EXTENDED: Duration = Duration::from_millis(500);
+/// Wait for a file to exist, polling with a timeout
+/// Use this instead of fixed sleeps for background commands to avoid flaky tests
+fn wait_for_file(path: &Path, timeout: Duration) {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!(
+        "File was not created within {:?}: {}",
+        timeout,
+        path.display()
+    );
+}
 
 /// Helper to create snapshot with normalized paths and SHAs
 ///
@@ -267,14 +278,8 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     assert!(log_dir.exists(), "Log directory should be created");
 
     // Wait for the background command to complete
-    thread::sleep(SLEEP_EXTENDED);
-
-    // Verify the background command actually ran
     let output_file = worktree_path.join("background.txt");
-    assert!(
-        output_file.exists(),
-        "Background command should have created output file"
-    );
+    wait_for_file(output_file.as_path(), Duration::from_secs(5));
 }
 
 #[test]
@@ -311,13 +316,10 @@ approved-commands = [
         &["--create", "feature"],
     );
 
-    // Wait for background commands
-    thread::sleep(SLEEP_BACKGROUND_COMMAND);
-
-    // Verify both tasks ran
+    // Wait for both background commands
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
-    assert!(worktree_path.join("task1.txt").exists());
-    assert!(worktree_path.join("task2.txt").exists());
+    wait_for_file(worktree_path.join("task1.txt").as_path(), Duration::from_secs(5));
+    wait_for_file(worktree_path.join("task2.txt").as_path(), Duration::from_secs(5));
 }
 
 #[test]
@@ -358,13 +360,10 @@ approved-commands = [
         "Post-create command should have completed before wt exits"
     );
 
-    // Wait for background command (command has sleep 0.05 + margin)
-    thread::sleep(Duration::from_millis(150));
-
-    // Server file should exist after background task completes
-    assert!(
-        worktree_path.join("server.txt").exists(),
-        "Post-start background command should complete"
+    // Wait for background command with generous timeout for slow CI systems
+    wait_for_file(
+        worktree_path.join("server.txt").as_path(),
+        Duration::from_secs(5),
     );
 }
 
@@ -413,14 +412,11 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
         &["--create", "feature"],
     );
 
-    // Give background command time to complete
-    thread::sleep(SLEEP_FAST_COMMAND);
-
-    // Find and read the log file from the common git directory
+    // Wait for log directory to be created
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt-logs");
-    assert!(log_dir.exists(), "Log directory should exist");
+    wait_for_file(log_dir.as_path(), Duration::from_secs(5));
 
     // Find the log file
     let log_files: Vec<_> = fs::read_dir(&log_dir)
@@ -511,13 +507,14 @@ approved-commands = [
 
     snapshot_switch("post_start_separate_logs", &repo, &["--create", "feature"]);
 
-    // Give background commands time to complete
-    thread::sleep(SLEEP_FAST_COMMAND);
-
-    // Verify we have 3 separate log files in the common git directory
+    // Wait for log directory to be created
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt-logs");
+    wait_for_file(log_dir.as_path(), Duration::from_secs(5));
+
+    // Wait briefly for all log files to be written
+    thread::sleep(Duration::from_millis(100));
     let log_files: Vec<_> = fs::read_dir(&log_dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -606,13 +603,10 @@ approved-commands = ["echo 'Background task' > background.txt"]
         "Execute command should run synchronously"
     );
 
-    // Wait for background command
-    thread::sleep(SLEEP_FAST_COMMAND);
-
-    // Background file should also exist
-    assert!(
-        worktree_path.join("background.txt").exists(),
-        "Post-start command should also run"
+    // Wait for background command to complete
+    wait_for_file(
+        worktree_path.join("background.txt").as_path(),
+        Duration::from_secs(5),
     );
 }
 
@@ -639,16 +633,10 @@ approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 
     snapshot_switch("post_start_complex_shell", &repo, &["--create", "feature"]);
 
-    // Wait for background command
-    thread::sleep(SLEEP_FAST_COMMAND);
-
-    // Verify the piped command worked correctly
+    // Wait for background command to create the file
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
     let filtered_file = worktree_path.join("filtered.txt");
-    assert!(
-        filtered_file.exists(),
-        "Complex shell command should create output file"
-    );
+    wait_for_file(filtered_file.as_path(), Duration::from_secs(5));
 
     let contents = fs::read_to_string(&filtered_file).unwrap();
     assert_snapshot!(contents, @"line2");
@@ -692,16 +680,10 @@ approved-commands = ["""
         &["--create", "feature"],
     );
 
-    // Wait for background command
-    thread::sleep(SLEEP_FAST_COMMAND);
-
-    // Verify the multiline command worked correctly
+    // Wait for background command to create the file
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
     let output_file = worktree_path.join("multiline.txt");
-    assert!(
-        output_file.exists(),
-        "Multiline command should create output file"
-    );
+    wait_for_file(output_file.as_path(), Duration::from_secs(5));
 
     let contents = fs::read_to_string(&output_file).unwrap();
     assert_snapshot!(contents, @r"
@@ -802,16 +784,9 @@ approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
     );
 
     // Wait for background post-start command to complete
-    thread::sleep(SLEEP_BACKGROUND_COMMAND);
-
     let worktree_path = repo.root_path().parent().unwrap().join("test-repo.feature");
     let marker_file = worktree_path.join("post_start_marker.txt");
-
-    // Verify post-start ran on creation
-    assert!(
-        marker_file.exists(),
-        "Post-start command should run when creating new worktree"
-    );
+    wait_for_file(marker_file.as_path(), Duration::from_secs(5));
 
     // Remove the marker file to detect if post-start runs again
     fs::remove_file(&marker_file).unwrap();
