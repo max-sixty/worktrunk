@@ -1,0 +1,69 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - approvals
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config approvals - Manage command approvals
+Usage: wt config approvals [OPTIONS] <COMMAND>
+
+Commands:
+  ask    Store approvals in config
+  clear  Clear approved commands from config
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose
+          Show commands and debug info
+
+[32mHow Approvals Work[0m
+
+Commands from project hooks (.config/wt.toml) and LLM configuration require
+approval on first run. This prevents untrusted projects from running arbitrary
+commands.
+
+[1mApproval flow:[0m
+1. Command is shown with expanded template variables
+2. User approves or denies
+3. Approved commands are saved to user config under [2m[projects."project-id"][0m
+
+[1mWhen re-approval is required:[0m
+- Command template changes (not just variable values)
+- Project ID changes (repository moves)
+
+[1mBypassing prompts:[0m
+- [2m--force[0m flag on individual commands (e.g., [2mwt merge --force[0m)
+- Useful for CI/automation where prompts aren't possible
+
+[32mExamples[0m
+
+Pre-approve all commands for current project:
+  [2mwt config approvals ask[0m
+
+Clear approvals for current project:
+  [2mwt config approvals clear[0m
+
+Clear global approvals:
+  [2mwt config approvals clear --global[0m
+
+----- stderr -----

@@ -332,7 +332,7 @@ fn test_alignment_verification_with_varying_content() {
     repo.clean_cli_env(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
-    let output = cmd.output().expect("Failed to run wt list");
+    let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stderr);
 
     println!("=== RAW OUTPUT ===");
@@ -361,7 +361,7 @@ fn test_alignment_with_unicode_content() {
     repo.clean_cli_env(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
-    let output = cmd.output().expect("Failed to run wt list");
+    let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stderr);
 
     println!("=== RAW OUTPUT WITH UNICODE ===");
@@ -400,7 +400,7 @@ fn test_alignment_with_sparse_columns() {
     repo.clean_cli_env(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
-    let output = cmd.output().expect("Failed to run wt list");
+    let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stderr);
 
     println!("=== RAW OUTPUT WITH SPARSE COLUMNS ===");
@@ -451,7 +451,7 @@ fn test_alignment_real_world_scenario() {
     repo.clean_cli_env(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
-    let output = cmd.output().expect("Failed to run wt list");
+    let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stderr);
 
     println!("=== RAW OUTPUT: Real World Scenario ===");
@@ -486,7 +486,7 @@ fn test_alignment_at_different_terminal_widths() {
             .current_dir(repo.root_path())
             .env("COLUMNS", width.to_string());
 
-        let output = cmd.output().expect("Failed to run wt list");
+        let output = cmd.output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stderr);
 
         println!("{}", stdout);

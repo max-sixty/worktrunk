@@ -13,7 +13,7 @@ struct BareRepoTest {
 
 impl BareRepoTest {
     fn new() -> Self {
-        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = tempfile::TempDir::new().unwrap();
         let bare_repo_path = temp_dir.path().join("test-repo.git");
         let test_config_path = temp_dir.path().join("test-config.toml");
 
@@ -31,7 +31,7 @@ impl BareRepoTest {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .output()
-            .expect("Failed to create bare repo");
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -42,10 +42,7 @@ impl BareRepoTest {
         }
 
         // Canonicalize path
-        test.bare_repo_path = test
-            .bare_repo_path
-            .canonicalize()
-            .expect("Failed to canonicalize bare repo path");
+        test.bare_repo_path = test.bare_repo_path.canonicalize().unwrap();
 
         test
     }
@@ -81,7 +78,7 @@ impl BareRepoTest {
         .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
         .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
 
-        let output = cmd.output().expect("Failed to create worktree");
+        let output = cmd.output().unwrap();
 
         if !output.status.success() {
             panic!(
@@ -91,16 +88,14 @@ impl BareRepoTest {
             );
         }
 
-        worktree_path
-            .canonicalize()
-            .expect("Failed to canonicalize worktree path")
+        worktree_path.canonicalize().unwrap()
     }
 
     /// Create a commit in the specified worktree
     fn commit_in_worktree(&self, worktree_path: &PathBuf, message: &str) {
         // Create a file
         let file_path = worktree_path.join("file.txt");
-        fs::write(&file_path, message).expect("Failed to write file");
+        fs::write(&file_path, message).unwrap();
 
         // Add file
         let output = Command::new("git")
@@ -109,7 +104,7 @@ impl BareRepoTest {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .output()
-            .expect("Failed to add file");
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -132,7 +127,7 @@ impl BareRepoTest {
             .env("GIT_COMMITTER_EMAIL", "test@example.com")
             .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
             .output()
-            .expect("Failed to commit");
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -194,7 +189,7 @@ fn test_bare_repo_list_shows_no_bare_entry() {
     test.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(&main_worktree);
 
-    let output = cmd.output().expect("Failed to run wt list");
+    let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Should only show the main worktree, not the bare repo (table output is on stderr)
@@ -220,7 +215,7 @@ fn test_bare_repo_switch_creates_worktree() {
     cmd.args(["switch", "--create", "feature", "--internal"])
         .current_dir(&main_worktree);
 
-    let output = cmd.output().expect("Failed to run wt switch");
+    let output = cmd.output().unwrap();
 
     if !output.status.success() {
         panic!(
@@ -240,7 +235,7 @@ fn test_bare_repo_switch_creates_worktree() {
         ])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
-        .expect("Failed to list worktrees");
+        .unwrap();
 
     eprintln!(
         "Git worktree list:\n{}",
@@ -269,7 +264,7 @@ fn test_bare_repo_switch_creates_worktree() {
     .env("GIT_CONFIG_GLOBAL", "/dev/null")
     .env("GIT_CONFIG_SYSTEM", "/dev/null");
 
-    let output = cmd.output().expect("Failed to run git worktree list");
+    let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should show 3 entries: bare repo + 2 worktrees
@@ -291,7 +286,7 @@ fn test_bare_repo_switch_with_default_naming() {
     cmd.args(["switch", "--create", "feature", "--internal"])
         .current_dir(&main_worktree);
 
-    let output = cmd.output().expect("Failed to run wt switch");
+    let output = cmd.output().unwrap();
 
     if !output.status.success() {
         panic!(
@@ -328,7 +323,7 @@ fn test_bare_repo_remove_worktree() {
     cmd.args(["remove", "feature", "--no-background", "--internal"])
         .current_dir(&main_worktree);
 
-    let output = cmd.output().expect("Failed to run wt remove");
+    let output = cmd.output().unwrap();
 
     if !output.status.success() {
         panic!(
@@ -364,7 +359,7 @@ fn test_bare_repo_identifies_primary_correctly() {
     test.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(&main_worktree);
 
-    let output = cmd.output().expect("Failed to run wt list");
+    let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // First non-bare worktree (main) should be primary (table output is on stderr)
@@ -389,7 +384,7 @@ fn test_bare_repo_worktree_base_used_for_paths() {
     cmd.args(["switch", "--create", "dev", "--internal"])
         .current_dir(&main_worktree);
 
-    cmd.output().expect("Failed to run wt switch");
+    cmd.output().unwrap();
 
     // Verify path is created as sibling to bare repo (using worktree_base)
     // Default template: ../{{ main_worktree }}.{{ branch }} -> test-repo.git.dev
@@ -427,8 +422,8 @@ fn test_bare_repo_equivalent_to_normal_repo() {
     let config = r#"
 worktree-path = "{{ branch }}"
 "#;
-    fs::write(bare_test.config_path(), config).expect("Failed to write bare config");
-    fs::write(normal_test.test_config_path(), config).expect("Failed to write normal config");
+    fs::write(bare_test.config_path(), config).unwrap();
+    fs::write(normal_test.test_config_path(), config).unwrap();
 
     // List worktrees in both - should show similar structure
     let mut bare_list = wt_command();
@@ -439,10 +434,8 @@ worktree-path = "{{ branch }}"
     normal_test.clean_cli_env(&mut normal_list);
     normal_list.arg("list").current_dir(normal_test.root_path());
 
-    let bare_output = bare_list.output().expect("Failed to list bare worktrees");
-    let normal_output = normal_list
-        .output()
-        .expect("Failed to list normal worktrees");
+    let bare_output = bare_list.output().unwrap();
+    let normal_output = normal_list.output().unwrap();
 
     // Both should show 1 worktree (main/main) - table output is on stderr
     let bare_stderr = String::from_utf8_lossy(&bare_output.stderr);
@@ -466,7 +459,7 @@ fn test_bare_repo_commands_from_bare_directory() {
     test.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(test.bare_repo_path());
 
-    let output = cmd.output().expect("Failed to run wt list from bare repo");
+    let output = cmd.output().unwrap();
 
     if !output.status.success() {
         panic!(
@@ -499,7 +492,7 @@ fn test_bare_repo_merge_workflow() {
     test.configure_wt_cmd(&mut cmd);
     cmd.args(["switch", "--create", "feature", "--internal"])
         .current_dir(&main_worktree);
-    cmd.output().expect("Failed to create feature worktree");
+    cmd.output().unwrap();
 
     // Get feature worktree path (default template: ../{{ main_worktree }}.{{ branch }})
     let bare_name = test.bare_repo_path().file_name().unwrap().to_str().unwrap();
@@ -521,7 +514,7 @@ fn test_bare_repo_merge_workflow() {
     ])
     .current_dir(&feature_worktree);
 
-    let output = cmd.output().expect("Failed to run wt merge");
+    let output = cmd.output().unwrap();
 
     if !output.status.success() {
         panic!(
@@ -551,7 +544,7 @@ fn test_bare_repo_merge_workflow() {
         .args(["-C", main_worktree.to_str().unwrap(), "log", "--oneline"])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
-        .expect("Failed to get git log");
+        .unwrap();
 
     let log = String::from_utf8_lossy(&log_output.stdout);
     assert!(
@@ -581,7 +574,7 @@ fn test_bare_repo_background_logs_location() {
     cmd.args(["remove", "feature", "--internal"])
         .current_dir(&main_worktree);
 
-    let output = cmd.output().expect("Failed to run wt remove");
+    let output = cmd.output().unwrap();
 
     if !output.status.success() {
         panic!(

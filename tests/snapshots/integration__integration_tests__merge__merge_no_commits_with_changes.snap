@@ -23,12 +23,12 @@ exit_code: 0
 ----- stdout -----
 🟡 [33mAuto-staging 1 untracked file:[0m
 [107m [0m  newfile.txt
-🔄 [36mCommitting with default message...[0m (1 file, [32m+1[0m, no squashing needed)
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m
+🔄 [36mCommitting changes with default message...[0m (1 file, [32m+1[0m, no squashing needed)
+💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
 [107m [0m  [1mChanges to newfile.txt[0m
 ✅ [32mCommitted changes @ [2m[SHA][0m
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
-[107m [0m  * [SHA][33m ([m[1;36mHEAD[m[33m -> [m[1;32mno-commits-dirty[m[33m)[m Changes to newfile.txt
+[107m [0m  * [SHA] Changes to newfile.txt
 [107m [0m   newfile.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)

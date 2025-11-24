@@ -110,7 +110,7 @@ impl Repository {
         let _ = self.layout.set(layout);
 
         // Now get() will succeed
-        Ok(self.layout.get().expect("just set"))
+        Ok(self.layout.get().unwrap())
     }
 
     /// Check if this is a bare repository (no working tree).
@@ -311,10 +311,11 @@ impl Repository {
 
     /// Resolve a target branch from an optional override
     ///
-    /// If target is Some, returns it as a String. Otherwise, queries the default branch.
+    /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
+    /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
     pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
-        target.map_or_else(|| self.default_branch(), |b| Ok(b.to_string()))
+        target.map_or_else(|| self.default_branch(), |b| self.resolve_worktree_name(b))
     }
 
     /// Infer the default branch locally (without remote).

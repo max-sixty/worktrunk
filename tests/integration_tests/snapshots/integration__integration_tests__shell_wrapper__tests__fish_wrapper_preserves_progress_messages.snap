@@ -4,4 +4,4 @@ expression: output.normalized()
 ---
 ✅ [32mCreated new worktree for [1m[32mfish-bg[0m[32m from [1m[32mmain[0m[32m at [1m[32m[TMPDIR]/test-repo.fish-bg[0m[0m
 🔄 [36mRunning post-start:[0m
-[107m [0m  [1m[34mecho[0m [32m'fish background task'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'fish background task'[0m[0m

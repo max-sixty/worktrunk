@@ -1,0 +1,215 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - create
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config create - Create global configuration file
+Usage: wt config create [OPTIONS]
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose
+          Show commands and debug info
+
+Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
+
+  [2m# Worktrunk Global Configuration[0m
+  [2m# Location (XDG Base Directory spec):[0m
+  [2m#   macOS/Linux:   ~/.config/worktrunk/config.toml (or $XDG_CONFIG_HOME/worktrunk/config.toml)[0m
+  [2m#   Windows:       %APPDATA%\worktrunk\config.toml[0m
+  [2m#[0m
+  [2m# Generate with: wt config create[0m
+  [2m[0m
+  [2m# Commit Message Generation (Optional)[0m
+  [2m# For generating commit messages during merge operations (wt merge)[0m
+  [2m[commit-generation][0m
+  [2m# Example: Simon Willison's llm CLI (https://github.com/simonw/llm)[0m
+  [2m# Install: pip install llm llm-anthropic[0m
+  [2mcommand = "llm"[0m
+  [2margs = ["-m", "claude-haiku-4.5"][0m
+  [2m[0m
+  [2m# Alternative: AIChat - Rust-based, supports 20+ providers[0m
+  [2m# Install from: https://github.com/sigoden/aichat[0m
+  [2m# command = "aichat"[0m
+  [2m# args = ["-m", "claude:claude-haiku-4.5"][0m
+  [2m[0m
+  [2m# Worktree Path Template[0m
+  [2m# Variables: {{ main_worktree }} = main worktree directory name, {{ branch }} = branch name[0m
+  [2m# Branch slashes are replaced with dashes (feature/auth → feature-auth)[0m
+  [2m# Paths are relative to the main worktree root (original repository directory)[0m
+  [2mworktree-path = "../{{ main_worktree }}.{{ branch }}"[0m
+  [2m[0m
+  [2m# Alternative: Inside repo (useful for bare repos)[0m
+  [2m# worktree-path = ".worktrees/{{ branch }}"[0m
+  [2m[0m
+  [2m# Alternative: Shared directory for multiple repos[0m
+  [2m# worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"[0m
+  [2m[0m
+  [2m# List Command Defaults[0m
+  [2m# Configure default behavior for `wt list`[0m
+  [2m[list][0m
+  [2mfull = false       # Show CI, conflicts, diffs by default[0m
+  [2mbranches = false   # Include branches without worktrees by default[0m
+  [2mremotes = false    # Include remote branches by default[0m
+  [2m[0m
+  [2m# Commit Defaults (shared by `wt step commit`, `wt step squash`, and `wt merge`)[0m
+  [2m[commit][0m
+  [2mstage = "all"          # What to stage: "all", "tracked", or "none"[0m
+  [2m[0m
+  [2m# Merge Command Defaults[0m
+  [2m# Note: `stage` defaults from [commit] section above[0m
+  [2m[merge][0m
+  [2msquash = true          # Squash commits when merging[0m
+  [2mcommit = true          # Create commit after merge[0m
+  [2mremove = true          # Remove worktree after merge[0m
+  [2mverify = true          # Run project hooks[0m
+  [2m[0m
+  [2m# Approved Commands[0m
+  [2m# Commands approved for automatic execution after switching worktrees[0m
+  [2m# Auto-populated when you use: wt switch --execute "command" --force[0m
+  [2m[[approved-commands]][0m
+  [2mproject = "github.com/user/repo"[0m
+  [2mcommand = "npm install"[0m
+  [2m[0m
+  [2m# NOTE: For project-specific commands (post-create, post-start, pre-merge, etc.),[0m
+  [2m# use a separate PROJECT config file at <repo>/.config/wt.toml[0m
+  [2m# See: .config/wt.example.toml for project configuration examples[0m
+  [2m[0m
+  [2m# Optional: Load template from file (mutually exclusive with 'template')[0m
+  [2m# Supports ~ expansion: ~/.config/worktrunk/commit-template.txt[0m
+  [2m# template-file = "~/.config/worktrunk/commit-template.txt"[0m
+  [2m[0m
+  [2m# Optional: Load squash template from file (mutually exclusive with 'squash-template')[0m
+  [2m# Supports ~ expansion: ~/.config/worktrunk/squash-template.txt[0m
+  [2m# squash-template-file = "~/.config/worktrunk/squash-template.txt"[0m
+  [2m[0m
+  [2m# Custom Prompt Templates (Advanced)[0m
+  [2m# NOTE: Templates are synced from src/llm.rs by `cargo test readme_sync`[0m
+  [2m[0m
+  [2m# Optional: Custom prompt template (inline) - Uses minijinja syntax[0m
+  [2m# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}[0m
+  [2m# If not specified, uses the default template shown below:[0m
+  [2m# <!-- DEFAULT_TEMPLATE_START -->[0m
+  [2m# template = """[0m
+  [2m# Format[0m
+  [2m# - First line: <50 chars, present tense, describes WHAT and WHY (not HOW).[0m
+  [2m# - Blank line after first line.[0m
+  [2m# - Optional details with proper line breaks explaining context. Commits with more substantial changes should have more details.[0m
+  [2m# - Return ONLY the formatted message without quotes, code blocks, or preamble.[0m
+  [2m#[0m
+  [2m# Style[0m
+  [2m# - Do not give normative statements or otherwise speculate on why the change was made.[0m
+  [2m# - Broadly match the style of the previous commit messages.[0m
+  [2m#   - For example, if they're in conventional commit format, use conventional commits; if they're not, don't use conventional commits.[0m
+  [2m#[0m
+  [2m# The context contains:[0m
+  [2m# - <git-diff> with the staged changes. This is the ONLY content you should base your message on.[0m
+  [2m# - <git-info> with branch name and recent commit message titles for style reference ONLY. DO NOT use their content to inform your message.[0m
+  [2m#[0m
+  [2m# ---[0m
+  [2m# The following is the context for your task:[0m
+  [2m# ---[0m
+  [2m# <git-diff>[0m
+  [2m# ```[0m
+  [2m# {{ git_diff }}[0m
+  [2m# ```[0m
+  [2m# </git-diff>[0m
+  [2m#[0m
+  [2m# <git-info>[0m
+  [2m#   <current-branch>{{ branch }}</current-branch>[0m
+  [2m# {% if recent_commits %}[0m
+  [2m#   <previous-commit-message-titles>[0m
+  [2m# {% for commit in recent_commits %}[0m
+  [2m#     <previous-commit-message-title>{{ commit }}</previous-commit-message-title>[0m
+  [2m# {% endfor %}[0m
+  [2m#   </previous-commit-message-titles>[0m
+  [2m# {% endif %}[0m
+  [2m# </git-info>[0m
+  [2m# """[0m
+  [2m# <!-- DEFAULT_TEMPLATE_END -->[0m
+  [2m#[0m
+  [2m# Example alternative template with different style:[0m
+  [2m# template = """[0m
+  [2m# Generate a commit message for {{ repo | upper }}.[0m
+  [2m#[0m
+  [2m# Branch: {{ branch }}[0m
+  [2m# {%- if recent_commits %}[0m
+  [2m#[0m
+  [2m# Recent commit style ({{ recent_commits | length }} commits):[0m
+  [2m# {%- for commit in recent_commits %}[0m
+  [2m#   {{ loop.index }}. {{ commit }}[0m
+  [2m# {%- endfor %}[0m
+  [2m# {%- endif %}[0m
+  [2m#[0m
+  [2m# Changes to commit:[0m
+  [2m# ```[0m
+  [2m# {{ git_diff }}[0m
+  [2m# ```[0m
+  [2m#[0m
+  [2m# Requirements:[0m
+  [2m# - Follow the style of recent commits above[0m
+  [2m# - First line under 50 chars[0m
+  [2m# - Focus on WHY, not HOW[0m
+  [2m# """[0m
+  [2m[0m
+  [2m# Optional: Custom squash commit message template (inline) - Uses minijinja syntax[0m
+  [2m# Available variables: {{ commits }}, {{ target_branch }}, {{ branch }}, {{ repo }}[0m
+  [2m# If not specified, uses the default template:[0m
+  [2m# <!-- DEFAULT_SQUASH_TEMPLATE_START -->[0m
+  [2m# squash-template = """[0m
+  [2m# Generate a commit message that combines these changes into one cohesive message. Output only the commit message without any explanation.[0m
+  [2m#[0m
+  [2m# Format[0m
+  [2m# - First line: <50 chars, present tense, describes WHAT and WHY (not HOW).[0m
+  [2m# - Blank line after first line.[0m
+  [2m# - Optional details with proper line breaks explaining context.[0m
+  [2m# - Match the style of the existing commits being squashed (e.g., if they use conventional commits, use conventional commits).[0m
+  [2m#[0m
+  [2m# Squashing commits from {{ branch }} to merge into {{ target_branch }}[0m
+  [2m#[0m
+  [2m# Commits being combined:[0m
+  [2m# {% for commit in commits %}[0m
+  [2m# - {{ commit }}[0m
+  [2m# {% endfor %}[0m
+  [2m# """[0m
+  [2m# <!-- DEFAULT_SQUASH_TEMPLATE_END -->[0m
+  [2m#[0m
+  [2m# Example alternative template:[0m
+  [2m# squash-template = """[0m
+  [2m# Squashing {{ commits | length }} commit(s) from {{ branch }} to {{ target_branch }}.[0m
+  [2m#[0m
+  [2m# {% if commits | length > 1 -%}[0m
+  [2m# Commits being combined:[0m
+  [2m# {%- for c in commits %}[0m
+  [2m#   {{ loop.index }}/{{ loop.length }}: {{ c }}[0m
+  [2m# {%- endfor %}[0m
+  [2m# {%- else -%}[0m
+  [2m# Single commit: {{ commits[0] }}[0m
+  [2m# {%- endif %}[0m
+  [2m#[0m
+  [2m# Generate one cohesive commit message that captures the overall change.[0m
+  [2m# Use conventional commit format (feat/fix/docs/refactor).[0m
+  [2m# """[0m
+
+----- stderr -----

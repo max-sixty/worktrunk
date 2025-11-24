@@ -19,76 +19,79 @@ Usage: wt remove [OPTIONS] [WORKTREES]...
 
 Arguments:
   [WORKTREES]...
-      Worktree or branch (@ for current)
+          Worktree or branch (@ for current)
 
 Options:
-  --no-delete-branch           
-      Keep branch after removal
+      --no-delete-branch
+          Keep branch after removal
 
   -D, --force-delete
-      Delete unmerged branches
+          Delete unmerged branches
 
-  --no-background              
-      Run removal in foreground
+      --no-background
+          Run removal in foreground
 
   -h, --help
-      Print help (see a summary with '-h')
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
-      Change working directory
+          Working directory for this command
 
-  --config <path>          
-      User config file path
+      --config <path>
+          User config file path
 
   -v, --verbose
-      Show commands and debug info
+          Show commands and debug info
 
-[38;5;10mOperation[39m
+[32mOperation[0m
 
-Removes worktree directory, git metadata, and branch. Requires clean working 
-tree.
+Removes worktree directory, git metadata, and branch. Requires clean working tree.
 
-No arguments (remove current)
+### No arguments (remove current)
 
 - Removes current worktree and switches to main worktree
 - In main worktree: switches to default branch
 
-By name (remove specific)
+### By name (remove specific)
 
 - Removes specified worktree(s) and branches
 - Current worktree removed last (switches to main first)
 
-Background removal (default)
+### Background removal (default)
 
 - Returns immediately so you can continue working
-- Logs: .git/wt-logs/{branch}-remove.log
-- Use --no-background for foreground (blocking)
+- Logs: [2m.git/wt-logs/{branch}-remove.log[0m
+- Use [2m--no-background[0m for foreground (blocking)
 
-Cleanup
+### Cleanup
 
-Stops any git fsmonitor daemon for the worktree before removal. This prevents 
-orphaned processes when using builtin fsmonitor (core.fsmonitor=true). No effect
-on Watchman users.
+Stops any git fsmonitor daemon for the worktree before removal. This prevents orphaned processes when using builtin fsmonitor ([2mcore.fsmonitor=true[0m). No effect on Watchman users.
 
-[38;5;10mExamples[39m
+[32mExamples[0m
 
 Remove current worktree and branch:
-wt remove
+
+  [2mwt remove[0m
 
 Remove specific worktree and branch:
-wt remove feature-branch
+
+  [2mwt remove feature-branch[0m
 
 Remove worktree but keep branch:
-wt remove --no-delete-branch feature-branch
+
+  [2mwt remove --no-delete-branch feature-branch[0m
 
 Remove multiple worktrees:
-wt remove old-feature another-branch
+
+  [2mwt remove old-feature another-branch[0m
 
 Remove in foreground (blocking):
-wt remove --no-background feature-branch
+
+  [2mwt remove --no-background feature-branch[0m
 
 Switch to default in main:
-wt remove  # (when already in main worktree)
+
+  [2mwt remove  # (when already in main worktree)[0m
 
 ----- stderr -----

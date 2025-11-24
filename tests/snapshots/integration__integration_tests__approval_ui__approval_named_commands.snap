@@ -12,10 +12,10 @@ exit_code: 1
 🟡 [33m[1m[33mtest-repo[0m[33m needs approval to execute [1m[33m3[0m[33m commands:[0m
 
 🔄 post-create [1minstall[0m:
-[107m [0m  [1m[34mecho[0m [32m'Installing dependencies...'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Installing dependencies...'[0m[0m
 
 🔄 post-create [1mbuild[0m:
-[107m [0m  [1m[34mecho[0m [32m'Building project...'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Building project...'[0m[0m
 
 🔄 post-create [1mtest[0m:
-[107m [0m  [1m[34mecho[0m [32m'Running tests...'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Running tests...'[0m[0m

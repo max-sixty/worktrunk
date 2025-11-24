@@ -1,0 +1,31 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - merge
+    - ^
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
+[107m [0m  * [SHA] Add feature file
+[107m [0m   feature.txt | 1 [32m+[m
+[107m [0m   1 file changed, 1 insertion(+)
+✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
+🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
+
+----- stderr -----

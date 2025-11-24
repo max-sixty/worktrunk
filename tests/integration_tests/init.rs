@@ -72,37 +72,3 @@ fn test_init_invalid_shell() {
         ");
     });
 }
-
-#[cfg(unix)]
-#[test]
-fn test_fish_no_duplicate_base_completion() {
-    // Verify that the fish completion doesn't have duplicate entries for --base
-    let repo = TestRepo::new();
-    let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
-    cmd.arg("config")
-        .arg("shell")
-        .arg("init")
-        .arg("fish")
-        .current_dir(repo.root_path());
-
-    let output = cmd
-        .output()
-        .expect("Failed to run wt config shell init fish");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Count how many lines contain "complete -c wt" and "-l base"
-    let base_completions: Vec<&str> = stdout
-        .lines()
-        .filter(|line| line.contains("complete -c wt") && line.contains("-l base"))
-        .collect();
-
-    // Should only have one completion for --base (from clap's static generation)
-    assert_eq!(
-        base_completions.len(),
-        1,
-        "Expected exactly 1 completion for --base, but found {}:\n{}",
-        base_completions.len(),
-        base_completions.join("\n")
-    );
-}

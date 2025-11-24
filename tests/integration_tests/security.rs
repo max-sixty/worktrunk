@@ -261,7 +261,7 @@ fn test_branch_name_is_directive_not_executed() {
     cmd.args(["branch", malicious_branch])
         .current_dir(repo.root_path());
 
-    let result = cmd.output().expect("Failed to run git branch");
+    let result = cmd.output().unwrap();
 
     if !result.status.success() {
         // Git rejected the malicious branch name
@@ -304,7 +304,7 @@ fn test_branch_name_with_newline_directive_not_executed() {
     cmd.args(["branch", malicious_branch])
         .current_dir(repo.root_path());
 
-    let result = cmd.output().expect("Failed to run git branch");
+    let result = cmd.output().unwrap();
 
     if !result.status.success() {
         return;
@@ -382,7 +382,7 @@ fn test_path_with_directive_not_executed() {
     let malicious_dir = repo
         .root_path()
         .join("__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked5");
-    std::fs::create_dir_all(&malicious_dir).expect("Failed to create malicious directory");
+    std::fs::create_dir_all(&malicious_dir).unwrap();
 
     let settings = setup_snapshot_settings(&repo);
 
@@ -417,7 +417,7 @@ fn test_branch_name_with_cd_directive_not_executed() {
     cmd.args(["branch", malicious_branch])
         .current_dir(repo.root_path());
 
-    let result = cmd.output().expect("Failed to run git branch");
+    let result = cmd.output().unwrap();
 
     if !result.status.success() {
         // Git rejected it - that's fine, nothing to test
@@ -490,7 +490,7 @@ fn test_execute_flag_with_directive_like_branch_name() {
     cmd.args(["branch", malicious_branch])
         .current_dir(repo.root_path());
 
-    let result = cmd.output().expect("Failed to run git branch");
+    let result = cmd.output().unwrap();
 
     if !result.status.success() {
         // Git rejected the branch name

@@ -19,105 +19,113 @@ Usage: wt switch [OPTIONS] <BRANCH>
 
 Arguments:
   <BRANCH>
-      Branch, path, '@' (HEAD), '-' (previous), or '^' (main)
+          Branch, path, '@' (HEAD), '-' (previous), or '^' (main)
 
 Options:
   -c, --create
-      Create a new branch
+          Create a new branch
 
   -b, --base <BASE>
-      Base branch                
-                                 
-      Defaults to default branch.
+          Base branch
+          
+          Defaults to default branch.
 
   -x, --execute <EXECUTE>
-      Command to run after switch
+          Command to run after switch
 
   -f, --force
-      Skip approval prompts
+          Skip approval prompts
 
-  --no-verify               
-      Skip all project hooks
+      --no-verify
+          Skip all project hooks
 
   -h, --help
-      Print help (see a summary with '-h')
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
-      Change working directory
+          Working directory for this command
 
-  --config <path>          
-      User config file path
+      --config <path>
+          User config file path
 
   -v, --verbose
-      Show commands and debug info
+          Show commands and debug info
 
-[38;5;10mOperation[39m
+[32mOperation[0m
 
-Switching to Existing Worktree
+### Switching to Existing Worktree
 
 - If worktree exists for branch, changes directory via shell integration
 - No hooks run
 - No branch creation
 
-Creating New Worktree (--create)
+### Creating New Worktree ([2m--create[0m)
+
 1. Creates new branch (defaults to current default branch as base)
-2. Creates worktree in configured location (default: 
-../{{ main_worktree }}.{{ branch }})
+2. Creates worktree in configured location (default: [2m../{{ main_worktree }}.{{ branch }}[0m)
 3. Runs post-create hooks sequentially (blocking)
 4. Shows success message
 5. Spawns post-start hooks in background (non-blocking)
 6. Changes directory to new worktree via shell integration
 
-[38;5;10mHooks[39m
+[32mHooks[0m
 
-post-create (sequential, blocking)
+### post-create (sequential, blocking)
 
 - Run after worktree creation, before success message
-- Typically: npm install, cargo build, setup tasks
+- Typically: [2mnpm install[0m, [2mcargo build[0m, setup tasks
 - Failures block the operation
-- Skip with --no-verify
+- Skip with [2m--no-verify[0m
 
-post-start (parallel, background)
+### post-start (parallel, background)
+
 - Spawned after success message shown
 - Typically: dev servers, file watchers, editors
 - Run in background, failures logged but don't block
-- Logs: .git/wt-logs/{branch}-post-start-{name}.log
-- Skip with --no-verify
+- Logs: [2m.git/wt-logs/{branch}-post-start-{name}.log[0m
+- Skip with [2m--no-verify[0m
 
-Template variables: {{ repo }}, {{ branch }}, {{ worktree }}, {{ repo_root }}
+[1mTemplate variables:[0m [2m{{ repo }}[0m, [2m{{ branch }}[0m, [2m{{ worktree }}[0m, [2m{{ repo_root }}[0m
 
-Security: Commands from project hooks require approval on first run.
-Approvals are saved to user config. Use --force to bypass prompts.
-See wt config approvals --help.
+[1mSecurity:[0m Commands from project hooks require approval on first run.
+Approvals are saved to user config. Use [2m--force[0m to bypass prompts.
+See [2mwt config approvals --help[0m.
 
-[38;5;10mExamples[39m
+[32mExamples[0m
 
 Switch to existing worktree:
-wt switch feature-branch
+
+  [2mwt switch feature-branch[0m
 
 Create new worktree from main:
-wt switch --create new-feature
+
+  [2mwt switch --create new-feature[0m
 
 Switch to previous worktree:
-wt switch -
+
+  [2mwt switch -[0m
 
 Create from specific base:
-wt switch --create hotfix --base production
+
+  [2mwt switch --create hotfix --base production[0m
 
 Create and run command:
-wt switch --create docs --execute "code ."
+
+  [2mwt switch --create docs --execute "code ."[0m
 
 Skip hooks during creation:
-wt switch --create temp --no-verify
 
-[38;5;10mShortcuts[39m
+  [2mwt switch --create temp --no-verify[0m
 
-Use @ for current HEAD, - for previous, ^ for main:
-wt switch @                              # Switch to current branch's worktree
-wt switch -                              # Switch to previous worktree        
-wt switch --create new-feature --base=^  # Branch from main (default)         
-wt switch --create bugfix --base=@       # Branch from current HEAD           
-wt remove @                              # Remove current worktree            
+[32mShortcuts[0m
+
+Use [2m@[0m for current HEAD, [2m-[0m for previous, [2m^[0m for main:
+
+  [2mwt switch @                              # Switch to current branch's worktree[0m
+  [2mwt switch -                              # Switch to previous worktree[0m
+  [2mwt switch --create new-feature --base=^  # Branch from main (default)[0m
+  [2mwt switch --create bugfix --base=@       # Branch from current HEAD[0m
+  [2mwt remove @                              # Remove current worktree[0m
 
 ----- stderr -----

@@ -3,7 +3,7 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
 🔄 [36mRunning pre-merge [1mcheck1[0m:[0m
-[107m [0m  [1m[34m[WORKSPACE]/tests/fixtures/mixed-output.sh[0m check1 3[0m
+[107m [0m  [1m[2m[34m[WORKSPACE]/tests/fixtures/mixed-output.sh[0m check1 3[0m
 [check1] stdout line 1
 [check1] stderr line 1
 [check1] stdout line 2
@@ -13,7 +13,7 @@ expression: output.normalized()
 [check1] stdout complete
 [check1] stderr complete
 🔄 [36mRunning pre-merge [1mcheck2[0m:[0m
-[107m [0m  [1m[34m[WORKSPACE]/tests/fixtures/mixed-output.sh[0m check2 3[0m
+[107m [0m  [1m[2m[34m[WORKSPACE]/tests/fixtures/mixed-output.sh[0m check2 3[0m
 [check2] stdout line 1
 [check2] stderr line 1
 [check2] stdout line 2
@@ -23,7 +23,7 @@ expression: output.normalized()
 [check2] stdout complete
 [check2] stderr complete
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m[HASH][0m[0m (no commit/squash/rebase needed)
-[107m [0m  * [33m[HASH][m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature[m[33m)[m Add feature
+[107m [0m  * [33m[HASH][m Add feature
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)

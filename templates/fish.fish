@@ -127,9 +127,6 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
         return $result
     end
 
-    # Register Clap-based completions (auto-updates after wt upgrades)
-    set -l _wt_completion_script (COMPLETE=fish $_WORKTRUNK_CMD 2>/dev/null | string collect)
-    if test -n "$_wt_completion_script"
-        eval $_wt_completion_script
-    end
+    # Completions are loaded from ~/.config/fish/completions/wt.fish
+    # Install with: wt config shell install
 end

@@ -9,38 +9,6 @@ use worktrunk::styling::{
     CYAN, CYAN_BOLD, GREEN, GREEN_BOLD, WARNING, WARNING_BOLD, format_with_gutter,
 };
 
-/// Format message for switch operation (mode-specific via output system)
-fn format_switch_message(result: &SwitchResult, branch: &str) -> (String, bool) {
-    match result {
-        SwitchResult::AlreadyAt(path) => {
-            // Note: output::info() adds the INFO_EMOJI automatically
-            let bold = worktrunk::styling::AnstyleStyle::new().bold();
-            (
-                format!(
-                    "Already on worktree for {bold}{branch}{bold:#} at {bold}{}{bold:#}",
-                    format_path_for_display(path)
-                ),
-                true, // is_info
-            )
-        }
-        SwitchResult::Existing(path) => {
-            // created_branch=false means we switched to existing worktree
-            (format_switch_success(branch, path, false, None), false)
-        }
-        SwitchResult::Created {
-            path,
-            created_branch,
-            base_branch,
-        } => {
-            // Pass through whether we created a new branch and the base branch
-            (
-                format_switch_success(branch, path, *created_branch, base_branch.as_deref()),
-                false,
-            )
-        }
-    }
-}
-
 /// Get flag acknowledgment note for remove messages
 fn get_flag_note(no_delete_branch: bool, force_delete: bool, branch_deleted: bool) -> &'static str {
     if no_delete_branch {
@@ -104,30 +72,63 @@ fn format_remove_message(
 /// Shell integration hint message (without emoji - hint() adds it automatically)
 fn shell_integration_hint() -> String {
     use worktrunk::styling::HINT;
-    format!("{HINT}To enable automatic cd, run: wt config shell install{HINT:#}")
+    format!("{HINT}Run `wt config shell install` to enable automatic cd{HINT:#}")
 }
 
 /// Handle output for a switch operation
+///
+/// `is_directive_mode` indicates whether shell integration is active (via --internal flag).
+/// When false, we show warnings for operations that can't complete without shell integration.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch: &str,
     has_execute_command: bool,
+    is_directive_mode: bool,
 ) -> anyhow::Result<()> {
     // Set target directory for command execution
     super::change_directory(result.path())?;
 
-    // Show message (success or info based on result)
-    let (message, is_info) = format_switch_message(result, branch);
-    if is_info {
-        super::info(message)?;
-    } else {
-        super::success(message)?;
-    }
-
-    // If no execute command provided: show shell integration hint
-    // (suppressed in directive mode since user already has integration)
-    if !has_execute_command {
-        super::shell_integration_hint(shell_integration_hint())?;
+    // Show message based on result type and mode
+    match result {
+        SwitchResult::AlreadyAt(path) => {
+            // Already at target - show info, no hint needed
+            let bold = worktrunk::styling::AnstyleStyle::new().bold();
+            super::info(format!(
+                "Already on worktree for {bold}{branch}{bold:#} at {bold}{}{bold:#}",
+                format_path_for_display(path)
+            ))?;
+        }
+        SwitchResult::Existing(path) => {
+            if is_directive_mode || has_execute_command {
+                // Shell integration active or --execute provided - show success
+                super::success(format_switch_success(branch, path, false, None))?;
+            } else {
+                // No shell integration - show warning that we can't cd
+                let bold = worktrunk::styling::AnstyleStyle::new().bold();
+                super::warning(format!(
+                    "{WARNING}Worktree for {bold}{branch}{bold:#}{WARNING} at {bold}{}{bold:#}{WARNING}; cannot cd (no shell integration){WARNING:#}",
+                    format_path_for_display(path)
+                ))?;
+                super::shell_integration_hint(shell_integration_hint())?;
+            }
+        }
+        SwitchResult::Created {
+            path,
+            created_branch,
+            base_branch,
+        } => {
+            // Creation succeeded - show success
+            super::success(format_switch_success(
+                branch,
+                path,
+                *created_branch,
+                base_branch.as_deref(),
+            ))?;
+            // Show hint if no shell integration and no --execute
+            if !is_directive_mode && !has_execute_command {
+                super::shell_integration_hint(shell_integration_hint())?;
+            }
+        }
     }
 
     // Flush output (important for directive mode)

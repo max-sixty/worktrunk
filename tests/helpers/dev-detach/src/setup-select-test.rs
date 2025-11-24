@@ -20,13 +20,13 @@ fn main() {
     // Create temp directory in /tmp
     let temp_base = std::env::temp_dir().join("wt-select-test");
     if temp_base.exists() {
-        fs::remove_dir_all(&temp_base).expect("Failed to clean old test directory");
+        fs::remove_dir_all(&temp_base).unwrap();
     }
-    fs::create_dir(&temp_base).expect("Failed to create temp directory");
+    fs::create_dir(&temp_base).unwrap();
 
     let root = temp_base.join("test-repo");
-    fs::create_dir(&root).expect("Failed to create repo directory");
-    let root = root.canonicalize().expect("Failed to canonicalize path");
+    fs::create_dir(&root).unwrap();
+    let root = root.canonicalize().unwrap();
 
     // Initialize git repo
     git(&root, &["init", "-b", "main"]);
@@ -39,7 +39,7 @@ fn main() {
             root.join(format!("file{}.txt", i)),
             format!("content {}", i),
         )
-        .expect("Failed to write file");
+        .unwrap();
         git(&root, &["add", "."]);
         git(&root, &["commit", "-m", &format!("Main commit {}", i)]);
     }
@@ -52,7 +52,7 @@ fn main() {
         for line in 1..=100 {
             content.push_str(&format!("Line {} of feature file {}\n", line, i));
         }
-        fs::write(root.join(format!("feature{}.txt", i)), content).expect("Failed to write file");
+        fs::write(root.join(format!("feature{}.txt", i)), content).unwrap();
         git(&root, &["add", "."]);
         git(
             &root,
@@ -90,28 +90,26 @@ fn main() {
         // Add commits to this branch via its worktree
         for j in 1..=*num_commits {
             let file_content = format!("Content for {} commit {}\n", branch_name, j);
-            fs::write(wt_path.join(format!("file{}.txt", j)), file_content)
-                .expect("Failed to write file");
+            fs::write(wt_path.join(format!("file{}.txt", j)), file_content).unwrap();
             let mut cmd = Command::new("git");
             git_env(&mut cmd);
             cmd.args(["add", "."])
                 .current_dir(&wt_path)
                 .output()
-                .expect("Failed to git add");
+                .unwrap();
 
             let mut cmd = Command::new("git");
             git_env(&mut cmd);
             cmd.args(["commit", "-m", &format!("{} commit {}", branch_name, j)])
                 .current_dir(&wt_path)
                 .output()
-                .expect("Failed to git commit");
+                .unwrap();
         }
     }
 
     // Add uncommitted changes to feature worktree
-    let feature_wt = feature_wt.canonicalize().expect("Failed to canonicalize");
-    fs::write(feature_wt.join("uncommitted.txt"), "uncommitted changes")
-        .expect("Failed to write uncommitted file");
+    let feature_wt = feature_wt.canonicalize().unwrap();
+    fs::write(feature_wt.join("uncommitted.txt"), "uncommitted changes").unwrap();
 
     // Create some branches without worktrees
     git(&root, &["branch", "no-worktree-1", "main"]);
@@ -173,11 +171,7 @@ fn git_env(cmd: &mut Command) {
 fn git(repo: &PathBuf, args: &[&str]) {
     let mut cmd = Command::new("git");
     git_env(&mut cmd);
-    let output = cmd
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .expect("Failed to execute git command");
+    let output = cmd.args(args).current_dir(repo).output().unwrap();
 
     if !output.status.success() {
         eprintln!("Git command failed: git {}", args.join(" "));

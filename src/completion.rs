@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
+use std::io;
 
 use clap::Command;
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate, ValueCompleter};
-use clap_complete::env::CompleteEnv;
+use clap_complete::env::{CompleteEnv, EnvCompleter};
 
 use crate::cli;
 use crate::display::format_relative_time_short;
 use worktrunk::git::{BranchCategory, Repository};
+use worktrunk::shell::Shell;
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
 pub fn maybe_handle_env_completion() -> bool {
@@ -25,6 +27,32 @@ pub fn maybe_handle_env_completion() -> bool {
 
     CONTEXT.with(|ctx| ctx.borrow_mut().take());
     handled
+}
+
+/// Generate completion script for explicit `wt config shell completions <shell>` command
+pub fn generate_completions(shell: Shell) -> io::Result<()> {
+    generate_completions_to_writer(shell, &mut io::stdout())
+}
+
+/// Generate completion script to a writer (for writing to files)
+pub fn generate_completions_to_writer(shell: Shell, writer: &mut dyn io::Write) -> io::Result<()> {
+    let completer = std::env::current_exe()?;
+    let completer = completer.to_string_lossy();
+    let var = "COMPLETE";
+
+    // Use the shell-specific EnvCompleter to write the registration script
+    // Parameters: var, name (shell context), bin (user display - same as name), completer (binary path)
+    match shell {
+        Shell::Bash => {
+            clap_complete::env::Bash.write_registration(var, "wt", "wt", &completer, writer)
+        }
+        Shell::Zsh => {
+            clap_complete::env::Zsh.write_registration(var, "wt", "wt", &completer, writer)
+        }
+        Shell::Fish => {
+            clap_complete::env::Fish.write_registration(var, "wt", "wt", &completer, writer)
+        }
+    }
 }
 
 /// Branch completion without additional context filtering (e.g., --base, merge target).

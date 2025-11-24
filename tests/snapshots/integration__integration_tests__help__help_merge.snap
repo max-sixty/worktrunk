@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/help.rs
+assertion_line: 16
 info:
   program: wt
   args:
@@ -19,98 +20,100 @@ Usage: wt merge [OPTIONS] [TARGET]
 
 Arguments:
   [TARGET]
-      Target branch              
-                                 
-      Defaults to default branch.
+          Target branch
+          
+          Defaults to default branch.
 
 Options:
-  --no-squash              
-      Skip commit squashing
+      --no-squash
+          Skip commit squashing
 
-  --no-commit                        
-      Skip commit, squash, and rebase
+      --no-commit
+          Skip commit, squash, and rebase
 
-  --no-remove                  
-      Keep worktree after merge
+      --no-remove
+          Keep worktree after merge
 
-  --no-verify               
-      Skip all project hooks
+      --no-verify
+          Skip all project hooks
 
   -f, --force
-      Skip approval prompts
+          Skip approval prompts
 
-  --stage <STAGE>                                   
-      What to stage before committing [default: all]
+      --stage <STAGE>
+          What to stage before committing [default: all]
 
-      Possible values:                                                       
-      - all:     Stage everything: untracked files + unstaged tracked changes
-      - tracked: Stage tracked changes only (like git add -u)                
-      - none:    Stage nothing, commit only what's already in the index      
+          Possible values:
+          - all:     Stage everything: untracked files + unstaged tracked changes
+          - tracked: Stage tracked changes only (like git add -u)
+          - none:    Stage nothing, commit only what's already in the index
 
   -h, --help
-      Print help (see a summary with '-h')
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
-      Change working directory
+          Working directory for this command
 
-  --config <path>          
-      User config file path
+      --config <path>
+          User config file path
 
   -v, --verbose
-      Show commands and debug info
+          Show commands and debug info
 
-[38;5;10mOperation[39m
+[32mOperation[0m
 
 Commit → Squash → Rebase → Pre-merge hooks → Push → Cleanup → Post-merge hooks
 
-Commit
+### Commit
 
-Uncommitted changes are staged and committed with LLM message.
-Use --stage=tracked to stage only tracked files, or --stage=none to commit only 
-what's already staged.
+Uncommitted changes are staged and committed with LLM commit message.
+Use [2m--stage=tracked[0m to stage only tracked files, or [2m--stage=none[0m to commit only what's already staged.
 
-Squash
+### Squash
 
-Multiple commits are squashed into one with LLM message.
-Skip with --no-squash. Safety backup: git reflog show refs/wt-backup/<branch>
+Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM commit message.
+Skip with [2m--no-squash[0m. Safety backup: [2mgit reflog show refs/wt-backup/<branch>[0m
 
-Rebase
+### Rebase
 
 Branch is rebased onto target. Conflicts abort the merge immediately.
 
-Hooks
+### Hooks
 
 Pre-merge commands run after rebase (failures abort). Post-merge commands
-run after cleanup (failures logged). Skip all with --no-verify.
+run after cleanup (failures logged). Skip all with [2m--no-verify[0m.
 
-Push
+### Push
 
 Fast-forward push to local target branch. Non-fast-forward pushes are rejected.
 
-Cleanup
+### Cleanup
 
-Worktree and branch are removed. Skip with --no-remove.
+Worktree and branch are removed. Skip with [2m--no-remove[0m.
 
-Template variables: {{ repo }}, {{ branch }}, {{ worktree }}, {{ repo_root }}, 
-{{ target }}
+[1mTemplate variables:[0m [2m{{ repo }}[0m, [2m{{ branch }}[0m, [2m{{ worktree }}[0m, [2m{{ repo_root }}[0m, [2m{{ target }}[0m
 
-Security: Commands from project hooks require approval on first run.
-Approvals are saved to user config. Use --force to bypass prompts.
-See wt config approvals --help.
+[1mSecurity:[0m Commands from project hooks require approval on first run.
+Approvals are saved to user config. Use [2m--force[0m to bypass prompts.
+See [2mwt config approvals --help[0m.
 
-[38;5;10mExamples[39m
+[32mExamples[0m
 
 Basic merge to main:
-wt merge
+
+  [2mwt merge[0m
 
 Merge without squashing:
-wt merge --no-squash
+
+  [2mwt merge --no-squash[0m
 
 Keep worktree after merging:
-wt merge --no-remove
+
+  [2mwt merge --no-remove[0m
 
 Skip all hooks:
-wt merge --no-verify
+
+  [2mwt merge --no-verify[0m
 
 ----- stderr -----

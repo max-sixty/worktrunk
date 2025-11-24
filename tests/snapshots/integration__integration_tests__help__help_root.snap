@@ -8,6 +8,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
 success: true
 exit_code: 0
@@ -25,27 +26,21 @@ Commands:
 
 Options:
   -h, --help
-      Print help (see a summary with '-h')
+          Print help (see a summary with '-h')
 
   -V, --version
-      Print version
+          Print version
 
 Global Options:
   -C <path>
-      Change working directory
+          Working directory for this command
 
-  --config <path>          
-      User config file path
+      --config <path>
+          User config file path
 
   -v, --verbose
-      Show commands and debug info
+          Show commands and debug info
 
--C <path>: Run as if started in <path> instead of current directory.
-
---config <path>: Override user config file location. Without this flag,
-config is loaded from (in order of precedence):
-1. WORKTRUNK_CONFIG_PATH environment variable
-2. ~/.config/worktrunk/config.toml (Linux/macOS) or 
-%APPDATA%\worktrunk\config.toml (Windows)
+See [2mwt config --help[0m for configuration file locations and setup.
 
 ----- stderr -----

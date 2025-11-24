@@ -8,9 +8,7 @@
 # systems may capture functions but not environment variables.
 wt_exec() {
     # Disable job control notifications in zsh (prevents "[1] 12345" / "[1] + done" messages)
-    # Zsh prints these when background jobs start/complete in interactive shells
-    # Note: Bash also prints these, but `set +m` doesn't work within functions to suppress them
-    # Bash notifications are less intrusive (completion message only at next prompt vs inline)
+    # For bash, this is handled at the backgrounding site using fd redirection
     if [[ -n "${ZSH_VERSION:-}" ]]; then
         setopt LOCAL_OPTIONS NO_MONITOR
     fi
@@ -46,8 +44,17 @@ wt_exec() {
 
     # Run worktrunk in background, piping stdout to FIFO
     # (stderr stays attached to TTY for child process colors/progress)
-    command "${_WORKTRUNK_CMD:-{{ cmd_prefix }}}" "$@" >"$fifo_path" &
-    runner_pid=$!
+    # For bash, redirect stderr for the { & } to suppress job notifications,
+    # but keep command's stderr on the original fd
+    if [[ -n "${BASH_VERSION:-}" ]]; then
+        exec 9>&2
+        { command "${_WORKTRUNK_CMD:-{{ cmd_prefix }}}" "$@" >"$fifo_path" 2>&9 & } 2>/dev/null
+        runner_pid=$!
+        exec 9>&-
+    else
+        command "${_WORKTRUNK_CMD:-{{ cmd_prefix }}}" "$@" >"$fifo_path" &
+        runner_pid=$!
+    fi
 
     # Parse directives as they stream in
     while IFS= read -r -d '' chunk || [[ -n "$chunk" ]]; do

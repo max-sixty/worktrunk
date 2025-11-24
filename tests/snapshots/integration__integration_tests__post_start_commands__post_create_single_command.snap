@@ -23,9 +23,9 @@ success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mRunning post-create:[0m
-[107m [0m  [1m[34mecho[0m [32m'Setup complete'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Setup complete'[0m[0m
 ✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
-💡 [2mTo enable automatic cd, run: wt config shell install[0m
+💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
 [0mSetup complete

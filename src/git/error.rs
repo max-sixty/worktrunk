@@ -164,23 +164,14 @@ pub fn conflicting_changes(files: &[String], worktree_path: &Path) -> anyhow::Er
 }
 
 /// Not fast-forward error
-pub fn not_fast_forward(
-    target_branch: &str,
-    commits_formatted: &str,
-    files_formatted: &str,
-) -> anyhow::Error {
+pub fn not_fast_forward(target_branch: &str, commits_formatted: &str) -> anyhow::Error {
     let mut msg = format!(
-        "{ERROR_EMOJI} {ERROR}Can't push to local {ERROR_BOLD}{target_branch}{ERROR_BOLD:#}{ERROR} branch: it has newer commits{ERROR:#}\n"
+        "{ERROR_EMOJI} {ERROR}Can't push to local {ERROR_BOLD}{target_branch}{ERROR_BOLD:#}{ERROR} branch: it has newer commits{ERROR:#}"
     );
 
     if !commits_formatted.is_empty() {
         msg.push('\n');
-        msg.push_str(commits_formatted);
-    }
-
-    if !files_formatted.is_empty() {
-        msg.push('\n');
-        msg.push_str(files_formatted);
+        msg.push_str(&format_with_gutter(commits_formatted, "", None));
     }
 
     msg.push_str(&format!(

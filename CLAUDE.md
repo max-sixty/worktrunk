@@ -71,7 +71,6 @@ Keep the first line of flag and argument descriptions brief—aim for 3-6 words.
 
 **Bad examples (too verbose):**
 - `/// Auto-approve project commands without saving approvals.`
-- `/// Run as if worktrunk was started in <path> instead of the current working directory`
 - `/// Show CI status, conflict detection, and complete diff statistics`
 
 The help text should be scannable. Users reading `wt switch --help` need to quickly understand what each flag does without parsing long sentences.
@@ -169,6 +168,13 @@ Six canonical message patterns with their emojis:
    - **Dimmed**: Supplementary metadata
 
 **Every user-facing message requires either an emoji or a gutter** for consistent visual separation.
+
+### Blank Line Principles
+
+- **No leading/trailing blanks** - Start immediately, end cleanly
+- **One blank after blocks** - Separate multi-line content (gutter blocks, sections)
+- **One blank after prompts** - Separate user input from results
+- **Never double blanks** - One blank line maximum between elements
 
 ### stdout vs stderr: Separation by Mode
 

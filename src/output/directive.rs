@@ -37,136 +37,69 @@
 
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI};
+
+use super::traits::OutputHandler;
 
 /// Directive output mode for shell integration
 ///
 /// Outputs NUL-terminated directives for shell wrapper to parse and execute.
 ///
 /// See module-level documentation for protocol details.
-pub struct DirectiveOutput;
+pub struct DirectiveOutput {
+    /// Cached stderr handle
+    stderr: io::Stderr,
+}
 
 impl DirectiveOutput {
     pub fn new() -> Self {
-        Self
+        Self {
+            stderr: io::stderr(),
+        }
+    }
+}
+
+impl OutputHandler for DirectiveOutput {
+    fn write_message_line(&mut self, line: &str) -> io::Result<()> {
+        writeln!(self.stderr, "{line}")?;
+        self.stderr.flush()
     }
 
-    pub fn success(&mut self, message: String) -> io::Result<()> {
-        // Success messages go to stderr for real-time streaming (not buffered by shell wrapper)
-        writeln!(io::stderr(), "{SUCCESS_EMOJI} {message}")?;
-        io::stderr().flush()
+    fn gutter(&mut self, content: String) -> io::Result<()> {
+        // Gutter content is pre-formatted with its own newlines
+        write!(self.stderr, "{content}")?;
+        self.stderr.flush()
     }
 
-    pub fn progress(&mut self, message: String) -> io::Result<()> {
-        // Progress messages go to stderr for real-time streaming (not buffered by shell wrapper)
-        writeln!(io::stderr(), "{PROGRESS_EMOJI} {message}")?;
-        io::stderr().flush()
-    }
-
-    pub fn hint(&mut self, message: String) -> io::Result<()> {
-        // Hint messages go to stderr for real-time streaming (not buffered by shell wrapper)
-        writeln!(io::stderr(), "{HINT_EMOJI} {message}")?;
-        io::stderr().flush()
-    }
-
-    pub fn shell_integration_hint(&mut self, _message: String) -> io::Result<()> {
+    fn shell_integration_hint(&mut self, _message: String) -> io::Result<()> {
         // Shell integration hints are suppressed in directive mode
         // When users run through shell wrapper, they already have integration
         Ok(())
     }
 
-    pub fn info(&mut self, message: String) -> io::Result<()> {
-        // Info messages go to stderr for real-time streaming (not buffered by shell wrapper)
-        writeln!(io::stderr(), "{INFO_EMOJI} {message}")?;
-        io::stderr().flush()
-    }
-
-    pub fn warning(&mut self, message: String) -> io::Result<()> {
-        // Warning messages go to stderr for real-time streaming (not buffered by shell wrapper)
-        writeln!(io::stderr(), "{WARNING_EMOJI} {message}")?;
-        io::stderr().flush()
-    }
-
-    pub fn error(&mut self, message: String) -> io::Result<()> {
-        use worktrunk::styling::{ERROR, ERROR_EMOJI};
-        // Error messages go to stderr; add emoji and styling if not already present
-        if message.starts_with(ERROR_EMOJI) {
-            writeln!(io::stderr(), "{message}")?;
-        } else {
-            writeln!(io::stderr(), "{ERROR_EMOJI} {ERROR}{message}{ERROR:#}")?;
-        }
-        io::stderr().flush()
-    }
-
     #[cfg(unix)]
-    pub fn blank_line(&mut self) -> io::Result<()> {
+    fn blank_line(&mut self) -> io::Result<()> {
         // Blank lines are only meaningful in interactive mode; no-op here to avoid empty directives
         Ok(())
     }
 
-    pub fn gutter(&mut self, content: String) -> io::Result<()> {
-        // Gutter content goes to stderr for real-time streaming (not buffered by shell wrapper)
-        write!(io::stderr(), "{content}")?;
-        io::stderr().flush()
-    }
+    // Note: raw() uses the default which calls write_message_line() -> stderr
+    // This is correct for directive mode where stdout is reserved for directives
 
-    pub fn raw(&mut self, content: String) -> io::Result<()> {
-        // Raw output without emoji decoration - for structured data like JSON
-        // In directive mode, even JSON goes to stderr (stdout is reserved for directives)
-        use worktrunk::styling::eprintln;
-        eprintln!("{content}");
-        io::stderr().flush()
-    }
-
-    pub fn raw_terminal(&mut self, content: String) -> io::Result<()> {
-        // Raw output to stderr - for table output
-        // In directive mode, this is the same as raw() since everything goes to stderr
-        use worktrunk::styling::eprintln;
-        eprintln!("{content}");
-        io::stderr().flush()
-    }
-
-    pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
+    fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         write!(io::stdout(), "__WORKTRUNK_CD__{}\0", path.display())?;
         io::stdout().flush()
     }
 
-    pub fn execute(&mut self, command: String) -> anyhow::Result<()> {
+    fn execute(&mut self, command: String) -> anyhow::Result<()> {
         write!(io::stdout(), "__WORKTRUNK_EXEC__{}\0", command)?;
         io::stdout().flush()?;
         Ok(())
     }
 
-    pub fn flush(&mut self) -> io::Result<()> {
-        io::stdout().flush()?;
-        io::stderr().flush()
-    }
-
-    pub fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
-        // In directive mode, flush both streams before showing stderr prompt
-        // Since messages now go to stderr, no NUL needed - just ensure everything is flushed
-        io::stdout().flush()?;
-        io::stderr().flush()
-    }
-
-    pub fn terminate_output(&mut self) -> io::Result<()> {
+    fn terminate_output(&mut self) -> io::Result<()> {
         // Write NUL terminator to separate command output from subsequent directives
         write!(io::stdout(), "\0")?;
         io::stdout().flush()
-    }
-
-    /// Format a switch success message for directive mode
-    ///
-    /// Directive mode mirrors the interactive wording ("at {path}") so the
-    /// shell wrapper and direct CLI output stay consistent.
-    pub fn format_switch_success(
-        &self,
-        branch: &str,
-        path: &Path,
-        created_branch: bool,
-        base_branch: Option<&str>,
-    ) -> String {
-        super::format_switch_success_message(branch, path, created_branch, base_branch)
     }
 }
 

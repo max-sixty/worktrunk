@@ -2,9 +2,10 @@
 
 # Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
 if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
-    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # Use WORKTRUNK_BIN if set, otherwise resolve binary path
+    # Must resolve BEFORE defining shell function, so lazy completion can call binary directly
     # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/{{ cmd_prefix }}
-    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-{{ cmd_prefix }}}"
+    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-$(command -v {{ cmd_prefix }})}"
 
 {{ posix_shim }}
 
@@ -12,7 +13,7 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
     {{ cmd_prefix }}() {
         # Initialize _WORKTRUNK_CMD if not set (e.g., after shell snapshot restore)
         if [[ -z "$_WORKTRUNK_CMD" ]]; then
-            _WORKTRUNK_CMD="${WORKTRUNK_BIN:-{{ cmd_prefix }}}"
+            _WORKTRUNK_CMD="${WORKTRUNK_BIN:-$(command -v {{ cmd_prefix }})}"
         fi
 
         local use_source=false
@@ -52,8 +53,6 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
         return $result
     }
 
-    # Register Clap-based completions (auto-updates after wt upgrades)
-    if completion_script=$(COMPLETE=bash "$_WORKTRUNK_CMD" 2>/dev/null); then
-        eval "$completion_script"
-    fi
+    # Completions are loaded from ~/.local/share/bash-completion/completions/wt
+    # Install with: wt config shell install
 fi

@@ -14,6 +14,19 @@ use super::model::{
 };
 use worktrunk::git::LineDiff;
 
+/// Compute style for branch/path based on worktree state
+fn position_style(is_current: bool, is_main: bool, default: Style) -> Style {
+    if is_current {
+        CURRENT.bold()
+    } else if is_main {
+        Style::new()
+            .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
+            .bold()
+    } else {
+        default
+    }
+}
+
 impl DiffDisplayConfig {
     fn format_plain(&self, positive: usize, negative: usize) -> Option<String> {
         if !self.always_show_zeros && positive == 0 && negative == 0 {
@@ -402,30 +415,12 @@ impl LayoutConfig {
                 }
                 ColumnKind::Branch => {
                     // Show actual branch name
-                    let style = if is_current {
-                        CURRENT.bold()
-                    } else if is_main {
-                        Style::new()
-                            .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
-                            .bold()
-                    } else {
-                        dim
-                    };
-                    cell.push_styled(branch, style);
+                    cell.push_styled(branch, position_style(is_current, is_main, dim));
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Path => {
                     // Show actual path
-                    let style = if is_current {
-                        CURRENT.bold()
-                    } else if is_main {
-                        Style::new()
-                            .fg_color(Some(Color::Ansi(AnsiColor::Cyan)))
-                            .bold()
-                    } else {
-                        dim
-                    };
-                    cell.push_styled(&shortened_path, style);
+                    cell.push_styled(&shortened_path, position_style(is_current, is_main, dim));
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Commit => {

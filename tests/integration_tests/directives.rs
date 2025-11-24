@@ -133,26 +133,25 @@ fn test_merge_internal_no_remove() {
     cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to add worktree");
+        .unwrap();
 
     // Create a feature worktree and make a commit
     let feature_wt = repo.add_worktree("feature", "feature");
-    std::fs::write(feature_wt.join("feature.txt"), "feature content")
-        .expect("Failed to write file");
+    std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "feature.txt"])
         .current_dir(&feature_wt)
         .output()
-        .expect("Failed to add file");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Add feature file"])
         .current_dir(&feature_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     let mut settings = setup_snapshot_settings(&repo);
     // Normalize SHA in output
@@ -188,26 +187,25 @@ fn test_merge_internal_remove() {
     cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to add worktree");
+        .unwrap();
 
     // Create a feature worktree and make a commit
     let feature_wt = repo.add_worktree("feature", "feature");
-    std::fs::write(feature_wt.join("feature.txt"), "feature content")
-        .expect("Failed to write file");
+    std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "feature.txt"])
         .current_dir(&feature_wt)
         .output()
-        .expect("Failed to add file");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Add feature file"])
         .current_dir(&feature_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     let mut settings = setup_snapshot_settings(&repo);
     // Normalize SHA and path in output

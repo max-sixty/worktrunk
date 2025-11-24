@@ -1,13 +1,12 @@
 ---
 source: tests/integration_tests/shell_wrapper.rs
-assertion_line: 2278
 expression: output.normalized()
 ---
 🔄 [36mRunning post-create [1minstall[0m:[0m
-[107m [0m  [1m[34muv[0m sync[0m
+[107m [0m  [1m[2m[34muv[0m sync[0m
 
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
 ✅ [32mCreated new worktree for [1m[32mfeature-x[0m[32m from [1m[32mmain[0m[32m at [1m[32m[TMPDIR]/test-repo.feature-x[0m[0m
 🔄 [36mRunning post-start [1mdev[0m:[0m
-[107m [0m  [1m[34muv[0m run dev[0m
+[107m [0m  [1m[2m[34muv[0m run dev[0m

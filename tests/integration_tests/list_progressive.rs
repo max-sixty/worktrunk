@@ -33,9 +33,7 @@ fn test_list_progressive_rendering_basic() {
     );
 
     // Verify progressive filling: dots should decrease over time
-    output
-        .verify_progressive_filling()
-        .expect("Progressive filling verification failed");
+    output.verify_progressive_filling().unwrap();
 
     // Verify table header appears in initial output
     assert!(
@@ -131,9 +129,7 @@ fn test_list_progressive_dots_decrease() {
     );
 
     // Use canonical verification method
-    output
-        .verify_progressive_filling()
-        .expect("Progressive filling verification failed");
+    output.verify_progressive_filling().unwrap();
 }
 
 #[test]
@@ -237,9 +233,7 @@ fn test_list_progressive_many_worktrees() {
     }
 
     // Verify progressive filling happened
-    output
-        .verify_progressive_filling()
-        .expect("Should show progressive data filling");
+    output.verify_progressive_filling().unwrap();
 }
 
 /// Test that we can capture output even for fast commands

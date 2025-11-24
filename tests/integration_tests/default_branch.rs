@@ -11,9 +11,7 @@ fn test_get_default_branch_with_origin_head() {
     assert!(repo.has_origin_head());
 
     // Test that we can get the default branch
-    let branch = Repository::at(repo.root_path())
-        .default_branch()
-        .expect("Failed to get default branch");
+    let branch = Repository::at(repo.root_path()).default_branch().unwrap();
     assert_eq!(branch, "main");
 }
 
@@ -28,9 +26,7 @@ fn test_get_default_branch_without_origin_head() {
     assert!(!repo.has_origin_head());
 
     // Should still work by querying remote
-    let branch = Repository::at(repo.root_path())
-        .default_branch()
-        .expect("Failed to get default branch");
+    let branch = Repository::at(repo.root_path()).default_branch().unwrap();
     assert_eq!(branch, "main");
 
     // Verify that origin/HEAD is now cached
@@ -48,15 +44,11 @@ fn test_get_default_branch_caches_result() {
     assert!(!repo.has_origin_head());
 
     // First call queries remote and caches
-    Repository::at(repo.root_path())
-        .default_branch()
-        .expect("Failed to get default branch");
+    Repository::at(repo.root_path()).default_branch().unwrap();
     assert!(repo.has_origin_head());
 
     // Second call uses cache (fast path)
-    let branch = Repository::at(repo.root_path())
-        .default_branch()
-        .expect("Failed to get default branch on second call");
+    let branch = Repository::at(repo.root_path()).default_branch().unwrap();
     assert_eq!(branch, "main");
 }
 
@@ -74,8 +66,8 @@ fn test_get_default_branch_no_remote() {
     let inferred_branch = result.unwrap();
     let current_branch = Repository::at(repo.root_path())
         .current_branch()
-        .expect("Failed to get current branch")
-        .expect("Should have a current branch");
+        .unwrap()
+        .unwrap();
     assert_eq!(inferred_branch, current_branch);
 }
 
@@ -86,9 +78,7 @@ fn test_get_default_branch_with_custom_remote() {
     repo.setup_custom_remote("upstream", "main");
 
     // Test that we can get the default branch from a custom remote
-    let branch = Repository::at(repo.root_path())
-        .default_branch()
-        .expect("Failed to get default branch");
+    let branch = Repository::at(repo.root_path()).default_branch().unwrap();
     assert_eq!(branch, "main");
 }
 
@@ -99,9 +89,7 @@ fn test_primary_remote_detects_custom_remote() {
     repo.setup_custom_remote("upstream", "develop");
 
     // Test that primary_remote detects the custom remote name
-    let remote = Repository::at(repo.root_path())
-        .primary_remote()
-        .expect("Failed to get primary remote");
+    let remote = Repository::at(repo.root_path()).primary_remote().unwrap();
     assert_eq!(remote, "upstream");
 }
 
@@ -114,16 +102,8 @@ fn test_branch_exists_with_custom_remote() {
     let git_repo = Repository::at(repo.root_path());
 
     // Should find the branch on the custom remote
-    assert!(
-        git_repo
-            .branch_exists("main")
-            .expect("Failed to check branch")
-    );
+    assert!(git_repo.branch_exists("main").unwrap());
 
     // Should not find non-existent branch
-    assert!(
-        !git_repo
-            .branch_exists("nonexistent")
-            .expect("Failed to check branch")
-    );
+    assert!(!git_repo.branch_exists("nonexistent").unwrap());
 }

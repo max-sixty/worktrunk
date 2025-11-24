@@ -294,8 +294,8 @@ fn test_complete_list_command() {
 }
 
 #[test]
-fn test_init_fish_includes_no_file_flag() {
-    // Test that fish init wires Clap-based completions into the template
+fn test_init_fish_references_completion_location() {
+    // Test that fish init references the completion file location
     let mut cmd = wt_command();
     let output = cmd
         .arg("config")
@@ -308,14 +308,14 @@ fn test_init_fish_includes_no_file_flag() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Ensure we embed the COMPLETE=fish registration snippet
+    // Verify completions are loaded from native fish completions directory
     assert!(
-        stdout.contains("COMPLETE=fish $_WORKTRUNK_CMD"),
-        "Fish template should call wt with COMPLETE=fish"
+        stdout.contains("~/.config/fish/completions/wt.fish"),
+        "Fish template should reference native completion location"
     );
     assert!(
-        stdout.contains("eval $_wt_completion_script"),
-        "Fish template should eval the Clap completion script"
+        stdout.contains("wt config shell install"),
+        "Fish template should mention install command"
     );
 }
 

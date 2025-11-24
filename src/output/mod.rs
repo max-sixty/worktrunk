@@ -59,11 +59,12 @@ pub mod directive;
 pub mod global;
 pub mod handlers;
 pub mod interactive;
+mod traits;
 
 // Re-export the public API
 pub use global::{
-    OutputMode, change_directory, error, execute, flush, flush_for_stderr_prompt, gutter, hint,
-    info, initialize, progress, raw, raw_terminal, shell_integration_hint, success,
+    OutputMode, blank, change_directory, error, execute, flush, flush_for_stderr_prompt, gutter,
+    hint, info, initialize, progress, raw, raw_terminal, shell_integration_hint, success,
     terminate_output, warning,
 };
 

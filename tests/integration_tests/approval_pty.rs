@@ -36,7 +36,7 @@ fn exec_in_pty_with_input(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .expect("Failed to open PTY");
+        .unwrap();
 
     // Spawn the command inside the PTY
     let mut cmd = CommandBuilder::new(command);
@@ -49,7 +49,7 @@ fn exec_in_pty_with_input(
     cmd.env_clear();
     cmd.env(
         "HOME",
-        std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+        home::home_dir().unwrap().to_string_lossy().to_string(),
     );
     cmd.env(
         "PATH",
@@ -61,34 +61,24 @@ fn exec_in_pty_with_input(
         cmd.env(key, value);
     }
 
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
-        .expect("Failed to spawn command in PTY");
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
 
     // Get reader and writer for the PTY master
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .expect("Failed to clone PTY reader");
-    let mut writer = pair.master.take_writer().expect("Failed to get PTY writer");
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let mut writer = pair.master.take_writer().unwrap();
 
     // Write input to the PTY (simulating user typing)
-    writer
-        .write_all(input.as_bytes())
-        .expect("Failed to write input to PTY");
-    writer.flush().expect("Failed to flush PTY writer");
+    writer.write_all(input.as_bytes()).unwrap();
+    writer.flush().unwrap();
     drop(writer); // Close writer so command sees EOF
 
     // Read all output
     let mut buf = String::new();
-    reader
-        .read_to_string(&mut buf)
-        .expect("Failed to read PTY output");
+    reader.read_to_string(&mut buf).unwrap();
 
     // Wait for child to exit
-    let exit_status = child.wait().expect("Failed to wait for child");
+    let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
 
     (buf, exit_code)

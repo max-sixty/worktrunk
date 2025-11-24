@@ -20,7 +20,7 @@
 //! $ wt switch my-feature
 //! Created new branch and worktree for 'my-feature' at /path/to/worktree
 //!
-//! To enable automatic cd, run: wt config shell
+//! Run `wt config shell install` to enable automatic cd
 //!
 //! $ pwd
 //! /original/directory  # ← User is still here!
@@ -495,41 +495,18 @@ pub fn handle_push(
                 "--color=always",
                 "--graph",
                 "--oneline",
-                "--decorate",
                 &format!("HEAD..{}", target_branch),
             ])?
             .trim()
             .to_string();
 
-        // Get formatted diff stat (full terminal width - no gutter in error display)
-        let term_width = crate::display::get_terminal_width();
-        let files_formatted = repo
-            .run_command(&[
-                "diff",
-                "--color=always",
-                "--stat",
-                &format!("--stat-width={}", term_width),
-                &format!("HEAD...{}", target_branch),
-            ])?
-            .trim_end()
-            .to_string();
-
-        bail!(
-            "{}",
-            not_fast_forward(&target_branch, &commits_formatted, &files_formatted)
-        );
+        bail!("{}", not_fast_forward(&target_branch, &commits_formatted));
     }
 
     // Check for merge commits unless allowed
     let has_merge_commits = repo.has_merge_commits(&target_branch, "HEAD")?;
     if !allow_merge_commits && has_merge_commits {
         return Err(merge_commits_found());
-    }
-
-    // Configure receive.denyCurrentBranch if needed
-    let current_config = repo.get_config("receive.denyCurrentBranch")?;
-    if current_config.as_deref() != Some("updateInstead") {
-        repo.set_config("receive.denyCurrentBranch", "updateInstead")?;
     }
 
     // Check for conflicting changes in target worktree (auto-stash safe changes)
@@ -603,7 +580,6 @@ pub fn handle_push(
             "--color=always",
             "--graph",
             "--oneline",
-            "--decorate",
             &format!("{}..HEAD", target_branch),
         ])?;
         crate::output::gutter(format_with_gutter(&log_output, "", None))?;
@@ -616,8 +592,14 @@ pub fn handle_push(
     let git_common_dir = repo.git_common_dir()?;
 
     // Perform the push
+    // Use --receive-pack to pass config to the receiving end without permanently mutating repo config
     let push_target = format!("HEAD:{}", target_branch);
-    if let Err(e) = repo.run_command(&["push", git_common_dir.to_str().unwrap(), &push_target]) {
+    if let Err(e) = repo.run_command(&[
+        "push",
+        "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
+        git_common_dir.to_str().unwrap(),
+        &push_target,
+    ]) {
         if let Some(stash) = target_worktree_stash.take() {
             stash.restore()?;
         }
@@ -644,7 +626,14 @@ pub fn handle_push(
             summary_parts.join(", ")
         ))?;
     } else {
-        // No commits to push - for merge workflow context, acknowledge operations that didn't happen
+        // No commits to push - show current HEAD commit info
+        let head_sha = repo
+            .run_command(&["rev-parse", "--short", "HEAD"])?
+            .trim()
+            .to_string();
+        let green_dim = GREEN.dimmed();
+
+        // For merge workflow context, acknowledge operations that didn't happen
         let note = if let Some(ops) = operations {
             let mut notes = Vec::new();
             if !ops.committed && !ops.squashed {
@@ -654,17 +643,17 @@ pub fn handle_push(
                 notes.push("no rebase needed");
             }
             if notes.is_empty() {
-                String::new()
+                "already up to date".to_string()
             } else {
-                format!(" ({})", notes.join(", "))
+                notes.join(", ")
             }
         } else {
             // Standalone push - no merge workflow context
-            String::new()
+            "already up to date".to_string()
         };
 
         crate::output::success(format!(
-            "{GREEN}{verb} {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN:#}{note}"
+            "{GREEN}{verb} {GREEN_BOLD}{target_branch}{GREEN_BOLD:#}{GREEN} @ {green_dim}{head_sha}{green_dim:#} ({note}){GREEN:#}"
         ))?;
     }
 

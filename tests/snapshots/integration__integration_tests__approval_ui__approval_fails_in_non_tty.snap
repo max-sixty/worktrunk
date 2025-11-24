@@ -30,4 +30,4 @@ exit_code: 1
 🟡 [33m[1m[33mtest-repo[0m[33m needs approval to execute [1m[33m1[0m[33m command:[0m
 
 🔄 post-create:
-[107m [0m  [1m[34mecho[0m [32m'test command'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'test command'[0m[0m

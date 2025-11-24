@@ -120,16 +120,13 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
             &file_path,
             format!("{} content", filename.trim_end_matches(".txt")),
         )
-        .expect("Failed to write file");
+        .unwrap();
 
         let mut cmd = Command::new("git");
         repo.configure_git_cmd(&mut cmd);
         cmd.env("GIT_AUTHOR_DATE", time);
         cmd.env("GIT_COMMITTER_DATE", time);
-        cmd.args(["add", "."])
-            .current_dir(path)
-            .output()
-            .expect("Failed to git add");
+        cmd.args(["add", "."]).current_dir(path).output().unwrap();
 
         let mut cmd = Command::new("git");
         repo.configure_git_cmd(&mut cmd);
@@ -138,7 +135,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
         cmd.args(["commit", "-m", &format!("Commit at {}", time_short)])
             .current_dir(path)
             .output()
-            .expect("Failed to git commit");
+            .unwrap();
     }
 
     // 1. Create feature-current (01:00) - we'll run test from here
@@ -191,7 +188,7 @@ fn create_branch(repo: &TestRepo, branch_name: &str) {
     cmd.args(["branch", branch_name])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 }
 
 /// Helper to push a branch to origin (creating a remote branch)
@@ -201,7 +198,7 @@ fn push_branch(repo: &TestRepo, branch_name: &str) {
     cmd.args(["push", "origin", branch_name])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to push branch to origin");
+        .unwrap();
 }
 
 #[test]
@@ -381,7 +378,7 @@ fn test_list_with_remotes_flag() {
     cmd.args(["branch", "-D", "remote-feature-1", "remote-feature-2"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to delete local branches");
+        .unwrap();
 
     // Should show:
     // - main worktree (primary)
@@ -411,7 +408,7 @@ fn test_list_with_remotes_and_branches() {
     cmd.args(["branch", "-D", "remote-only-1", "remote-only-2"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to delete branches");
+        .unwrap();
 
     // Should show:
     // - main worktree
@@ -440,7 +437,7 @@ fn test_list_with_remotes_filters_existing_worktrees() {
     cmd.args(["branch", "-D", "remote-only"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to delete branch");
+        .unwrap();
 
     // Should show:
     // - main worktree
@@ -460,35 +457,32 @@ fn test_list_json_with_display_fields() {
 
     // Make commits in the feature worktree
     let feature_path = repo.worktree_path("feature-ahead");
-    std::fs::write(feature_path.join("feature.txt"), "feature content")
-        .expect("Failed to write file");
+    std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(feature_path)
         .output()
-        .expect("Failed to git add");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Feature commit 1"])
         .current_dir(feature_path)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "--allow-empty", "-m", "Feature commit 2"])
         .current_dir(feature_path)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     // Add uncommitted changes to show working_diff_display
-    std::fs::write(feature_path.join("uncommitted.txt"), "uncommitted")
-        .expect("Failed to write file");
-    std::fs::write(feature_path.join("feature.txt"), "modified content")
-        .expect("Failed to write file");
+    std::fs::write(feature_path.join("uncommitted.txt"), "uncommitted").unwrap();
+    std::fs::write(feature_path.join("feature.txt"), "modified content").unwrap();
 
     // Create another feature that will be behind after main advances
     repo.add_worktree("feature-behind", "feature-behind");
@@ -527,7 +521,7 @@ fn test_list_with_upstream_tracking() {
     cmd.args(["push", "-u", "origin", "in-sync"])
         .current_dir(&in_sync_wt)
         .output()
-        .expect("Failed to push in-sync");
+        .unwrap();
 
     // Scenario 2: Branch ahead of remote (should show ↑2)
     let ahead_wt = repo.add_worktree("ahead", "ahead");
@@ -536,107 +530,107 @@ fn test_list_with_upstream_tracking() {
     cmd.args(["push", "-u", "origin", "ahead"])
         .current_dir(&ahead_wt)
         .output()
-        .expect("Failed to push ahead");
+        .unwrap();
 
     // Make 2 commits ahead
-    std::fs::write(ahead_wt.join("ahead1.txt"), "ahead 1").expect("Failed to write");
+    std::fs::write(ahead_wt.join("ahead1.txt"), "ahead 1").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&ahead_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Ahead commit 1"])
         .current_dir(&ahead_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
-    std::fs::write(ahead_wt.join("ahead2.txt"), "ahead 2").expect("Failed to write");
+    std::fs::write(ahead_wt.join("ahead2.txt"), "ahead 2").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&ahead_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Ahead commit 2"])
         .current_dir(&ahead_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     // Scenario 3: Branch behind remote (should show ↓1)
     let behind_wt = repo.add_worktree("behind", "behind");
-    std::fs::write(behind_wt.join("behind.txt"), "behind").expect("Failed to write");
+    std::fs::write(behind_wt.join("behind.txt"), "behind").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&behind_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Behind commit"])
         .current_dir(&behind_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["push", "-u", "origin", "behind"])
         .current_dir(&behind_wt)
         .output()
-        .expect("Failed to push");
+        .unwrap();
     // Reset local to one commit behind
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["reset", "--hard", "HEAD~1"])
         .current_dir(&behind_wt)
         .output()
-        .expect("Failed to reset");
+        .unwrap();
 
     // Scenario 4: Branch both ahead and behind (should show ↑1 ↓1)
     let diverged_wt = repo.add_worktree("diverged", "diverged");
-    std::fs::write(diverged_wt.join("diverged.txt"), "diverged").expect("Failed to write");
+    std::fs::write(diverged_wt.join("diverged.txt"), "diverged").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Diverged remote commit"])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["push", "-u", "origin", "diverged"])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to push");
+        .unwrap();
     // Reset and make different commit
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["reset", "--hard", "HEAD~1"])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to reset");
-    std::fs::write(diverged_wt.join("different.txt"), "different").expect("Failed to write");
+        .unwrap();
+    std::fs::write(diverged_wt.join("different.txt"), "different").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Diverged local commit"])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     // Scenario 5: Branch without upstream (should show blank)
     repo.add_worktree("no-upstream", "no-upstream");
@@ -688,7 +682,7 @@ fn test_list_with_user_status() {
     cmd.args(["config", "worktrunk.status.clean-with-status", "💬"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     // Worktree with both git status and user status
     let dirty_wt = repo.add_worktree("dirty-with-status", "dirty-with-status");
@@ -699,14 +693,14 @@ fn test_list_with_user_status() {
     cmd.args(["config", "worktrunk.status.dirty-with-status", "🤖"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     // Add uncommitted changes
-    std::fs::write(dirty_wt.join("new.txt"), "content").expect("Failed to write file");
+    std::fs::write(dirty_wt.join("new.txt"), "content").unwrap();
 
     // Worktree with git status only (no user status)
     let dirty_no_status_wt = repo.add_worktree("dirty-no-status", "dirty-no-status");
-    std::fs::write(dirty_no_status_wt.join("file.txt"), "content").expect("Failed to write file");
+    std::fs::write(dirty_no_status_wt.join("file.txt"), "content").unwrap();
 
     // Worktree with neither (control)
     repo.add_worktree("clean-no-status", "clean-no-status");
@@ -728,7 +722,7 @@ fn test_list_json_with_user_status() {
     cmd.args(["config", "worktrunk.status.with-status", "🔧"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     // Worktree without user status
     repo.add_worktree("without-status", "without-status");
@@ -748,7 +742,7 @@ fn test_list_branch_only_with_status() {
     cmd.args(["branch", "branch-only"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     // Set branch-keyed status for the branch-only entry
     let mut cmd = Command::new("git");
@@ -756,7 +750,7 @@ fn test_list_branch_only_with_status() {
     cmd.args(["config", "worktrunk.status.branch-only", "🌿"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set branch status");
+        .unwrap();
 
     // Use --branches flag to show branch-only entries
     snapshot_list_with_branches("branch_only_with_status", &repo);
@@ -775,7 +769,7 @@ fn test_list_user_status_with_special_characters() {
     cmd.args(["config", "worktrunk.status.emoji", "🔄"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     // Test with compound emoji (multi-codepoint)
     repo.add_worktree("multi", "multi");
@@ -785,7 +779,7 @@ fn test_list_user_status_with_special_characters() {
     cmd.args(["config", "worktrunk.status.multi", "👨‍💻"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     snapshot_list("user_status_special_chars", &repo);
 }
@@ -810,47 +804,47 @@ fn test_readme_example_simple_list() {
             feature_x.join(format!("file{}.txt", i)),
             format!("content {}", i),
         )
-        .expect("Failed to write file");
+        .unwrap();
         let mut cmd = Command::new("git");
         repo.configure_git_cmd(&mut cmd);
         cmd.args(["add", &format!("file{}.txt", i)])
             .current_dir(&feature_x)
             .output()
-            .expect("Failed to add");
+            .unwrap();
         let mut cmd = Command::new("git");
         repo.configure_git_cmd(&mut cmd);
         cmd.args(["commit", "-m", &format!("Add file {}", i)])
             .current_dir(&feature_x)
             .output()
-            .expect("Failed to commit");
+            .unwrap();
     }
     // Add unstaged changes (+5 -2 lines)
     std::fs::write(
         feature_x.join("modified.txt"),
         "line1\nline2\nline3\nline4\nline5\n",
     )
-    .expect("Failed to write");
+    .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "modified.txt"])
         .current_dir(&feature_x)
         .output()
-        .expect("Failed to add");
+        .unwrap();
 
     // bugfix-y: 1 commit ahead, clean tree
-    std::fs::write(bugfix_y.join("bugfix.txt"), "fix content").expect("Failed to write file");
+    std::fs::write(bugfix_y.join("bugfix.txt"), "fix content").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "bugfix.txt"])
         .current_dir(&bugfix_y)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Fix bug"])
         .current_dir(&bugfix_y)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     snapshot_list("readme_example_simple_list", &repo);
 }
@@ -925,23 +919,23 @@ fn test_list_task_dag_full_with_diffs() {
 
     // Create worktree with changes
     let feature_a = repo.add_worktree("feature-a", "feature-a");
-    std::fs::write(feature_a.join("new.txt"), "content").expect("Failed to write file");
+    std::fs::write(feature_a.join("new.txt"), "content").unwrap();
 
     // Create another worktree with commits
     let feature_b = repo.add_worktree("feature-b", "feature-b");
-    std::fs::write(feature_b.join("file.txt"), "test").expect("Failed to write file");
+    std::fs::write(feature_b.join("file.txt"), "test").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&feature_b)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Test commit"])
         .current_dir(&feature_b)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     snapshot_list_task_dag_full("task_dag_full_with_diffs", &repo);
 }
@@ -959,7 +953,7 @@ fn test_list_task_dag_with_upstream() {
     cmd.args(["push", "-u", "origin", "in-sync"])
         .current_dir(&in_sync)
         .output()
-        .expect("Failed to push");
+        .unwrap();
 
     // Branch ahead
     let ahead = repo.add_worktree("ahead", "ahead");
@@ -968,20 +962,17 @@ fn test_list_task_dag_with_upstream() {
     cmd.args(["push", "-u", "origin", "ahead"])
         .current_dir(&ahead)
         .output()
-        .expect("Failed to push");
-    std::fs::write(ahead.join("ahead.txt"), "ahead").expect("Failed to write");
+        .unwrap();
+    std::fs::write(ahead.join("ahead.txt"), "ahead").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&ahead)
-        .output()
-        .expect("Failed to add");
+    cmd.args(["add", "."]).current_dir(&ahead).output().unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Ahead commit"])
         .current_dir(&ahead)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     snapshot_list_task_dag_full("task_dag_with_upstream", &repo);
 }
@@ -1061,11 +1052,11 @@ fn test_list_progressive_vs_buffered_identical_data() {
     // Run both modes with JSON output to compare data (not formatting)
     let progressive_output = list_snapshots::command_progressive_json(&repo)
         .output()
-        .expect("Progressive JSON command failed");
+        .unwrap();
 
     let buffered_output = list_snapshots::command_no_progressive_json(&repo)
         .output()
-        .expect("Buffered JSON command failed");
+        .unwrap();
 
     // Both should succeed
     assert!(
@@ -1080,10 +1071,9 @@ fn test_list_progressive_vs_buffered_identical_data() {
     );
 
     // Parse JSON outputs
-    let progressive_json: serde_json::Value = serde_json::from_slice(&progressive_output.stdout)
-        .expect("Invalid JSON from progressive mode");
-    let buffered_json: serde_json::Value =
-        serde_json::from_slice(&buffered_output.stdout).expect("Invalid JSON from buffered mode");
+    let progressive_json: serde_json::Value =
+        serde_json::from_slice(&progressive_output.stdout).unwrap();
+    let buffered_json: serde_json::Value = serde_json::from_slice(&buffered_output.stdout).unwrap();
 
     // The JSON data should be identical (ignoring display fields which may have formatting differences)
     // Compare the structured data to ensure both modes collect the same information
@@ -1114,7 +1104,7 @@ fn test_list_error_shows_worktree_context() {
 
     // Delete the worktree directory manually to trigger an error
     // (but keep the git metadata, so git worktree list still shows it)
-    std::fs::remove_dir_all(&feature_wt).expect("Failed to remove worktree directory");
+    std::fs::remove_dir_all(&feature_wt).unwrap();
 
     // Run list command and expect an error
     let mut cmd = wt_command();
@@ -1122,7 +1112,7 @@ fn test_list_error_shows_worktree_context() {
     repo.configure_mock_commands(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
-    let output = cmd.output().expect("Failed to run command");
+    let output = cmd.output().unwrap();
 
     // Should fail with non-zero exit code
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1182,7 +1172,7 @@ fn test_list_large_diffs_alignment() {
         .map(|i| format!("line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(large_wt.join("large.txt"), &large_content).expect("Failed to write file");
+    std::fs::write(large_wt.join("large.txt"), &large_content).unwrap();
 
     // Commit it
     let mut cmd = Command::new("git");
@@ -1190,31 +1180,31 @@ fn test_list_large_diffs_alignment() {
     cmd.args(["add", "."])
         .current_dir(&large_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Add 100 lines"])
         .current_dir(&large_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     // Add large uncommitted changes (both added and deleted lines)
     // Add a new file with many lines
-    std::fs::write(large_wt.join("uncommitted.txt"), &large_content).expect("Failed to write file");
+    std::fs::write(large_wt.join("uncommitted.txt"), &large_content).unwrap();
 
     // Modify the existing file to create deletions
     let modified_content = (1..=50)
         .map(|i| format!("modified line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(large_wt.join("large.txt"), &modified_content).expect("Failed to write file");
+    std::fs::write(large_wt.join("large.txt"), &modified_content).unwrap();
 
     // Add another new file with many lines
     let another_large = (1..=80)
         .map(|i| format!("another line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(large_wt.join("another.txt"), &another_large).expect("Failed to write file");
+    std::fs::write(large_wt.join("another.txt"), &another_large).unwrap();
 
     // Set user status
     let mut cmd = Command::new("git");
@@ -1222,11 +1212,11 @@ fn test_list_large_diffs_alignment() {
     cmd.args(["config", "worktrunk.status.feature-changes", "🤖"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     // Worktree with short name to show gap before Status column
     let short_wt = repo.add_worktree("fix", "fix");
-    std::fs::write(short_wt.join("quick.txt"), "quick fix").expect("Failed to write file");
+    std::fs::write(short_wt.join("quick.txt"), "quick fix").unwrap();
 
     // Set user status for short branch
     let mut cmd = Command::new("git");
@@ -1234,7 +1224,7 @@ fn test_list_large_diffs_alignment() {
     cmd.args(["config", "worktrunk.status.fix", "💬"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     // Worktree with diverged status and working tree changes
     let diverged_wt = repo.add_worktree("diverged", "diverged");
@@ -1244,26 +1234,26 @@ fn test_list_large_diffs_alignment() {
         .map(|i| format!("diverged line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(diverged_wt.join("test.txt"), &diverged_content).expect("Failed to write file");
+    std::fs::write(diverged_wt.join("test.txt"), &diverged_content).unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to add");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Diverged commit"])
         .current_dir(&diverged_wt)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     // Add uncommitted changes
     let modified_diverged = (1..=40)
         .map(|i| format!("modified diverged line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(diverged_wt.join("test.txt"), &modified_diverged).expect("Failed to write file");
+    std::fs::write(diverged_wt.join("test.txt"), &modified_diverged).unwrap();
 
     // Set user status
     let mut cmd = Command::new("git");
@@ -1271,7 +1261,7 @@ fn test_list_large_diffs_alignment() {
     cmd.args(["config", "worktrunk.status.diverged", "💬"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to set user status");
+        .unwrap();
 
     snapshot_list("large_diffs_alignment", &repo);
 }
@@ -1290,35 +1280,35 @@ fn test_list_status_column_padding_with_emoji() {
         .map(|i| format!("original line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(wli_seq.join("main.txt"), &initial_content).expect("write failed");
+    std::fs::write(wli_seq.join("main.txt"), &initial_content).unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&wli_seq)
         .output()
-        .expect("add failed");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Initial content"])
         .current_dir(&wli_seq)
         .output()
-        .expect("commit failed");
+        .unwrap();
 
     // Modify to create desired diff: remove ~111 lines, add different content
     let modified_content = (1..=89)
         .map(|i| format!("original line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(wli_seq.join("main.txt"), &modified_content).expect("write failed");
+    std::fs::write(wli_seq.join("main.txt"), &modified_content).unwrap();
 
     // Add new file with ~164 lines to get +164
     let new_content = (1..=164)
         .map(|i| format!("new line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(wli_seq.join("new.txt"), &new_content).expect("write failed");
+    std::fs::write(wli_seq.join("new.txt"), &new_content).unwrap();
 
     // Set user status emoji 🤖
     let mut cmd = Command::new("git");
@@ -1326,25 +1316,25 @@ fn test_list_status_column_padding_with_emoji() {
     cmd.args(["config", "worktrunk.status.wli-sequence", "🤖"])
         .current_dir(repo.root_path())
         .output()
-        .expect("config failed");
+        .unwrap();
 
     // Create "pr-link" worktree with different status (fewer symbols, same emoji type)
     let pr_link = repo.add_worktree("pr-link", "pr-link");
 
     // Commit to make it ahead
-    std::fs::write(pr_link.join("pr.txt"), "pr content").expect("write failed");
+    std::fs::write(pr_link.join("pr.txt"), "pr content").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&pr_link)
         .output()
-        .expect("add failed");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "PR commit"])
         .current_dir(&pr_link)
         .output()
-        .expect("commit failed");
+        .unwrap();
 
     // Set same emoji type
     let mut cmd = Command::new("git");
@@ -1352,30 +1342,30 @@ fn test_list_status_column_padding_with_emoji() {
     cmd.args(["config", "worktrunk.status.pr-link", "🤖"])
         .current_dir(repo.root_path())
         .output()
-        .expect("config failed");
+        .unwrap();
 
     // Create "main-symbol" with different emoji
     let main_sym = repo.add_worktree("main-symbol", "main-symbol");
-    std::fs::write(main_sym.join("sym.txt"), "symbol").expect("write failed");
+    std::fs::write(main_sym.join("sym.txt"), "symbol").unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "."])
         .current_dir(&main_sym)
         .output()
-        .expect("add failed");
+        .unwrap();
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Symbol commit"])
         .current_dir(&main_sym)
         .output()
-        .expect("commit failed");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", "worktrunk.status.main-symbol", "💬"])
         .current_dir(repo.root_path())
         .output()
-        .expect("config failed");
+        .unwrap();
 
     snapshot_list("status_column_padding_emoji", &repo);
 }

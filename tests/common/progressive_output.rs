@@ -42,7 +42,7 @@
 //!     // Verify progressive filling behavior
 //!     assert_eq!(output.exit_code, 0);
 //!     assert!(output.stages.len() > 1, "Should capture multiple stages");
-//!     output.verify_progressive_filling().expect("Dots should decrease over time");
+//!     output.verify_progressive_filling().unwrap();
 //!
 //!     // Verify header appears immediately
 //!     assert!(output.initial().visible_text().contains("Branch"));
@@ -72,7 +72,7 @@
 //!
 //! **Verify progressive data filling:**
 //! ```rust,ignore
-//! output.verify_progressive_filling().expect("Dots should decrease");
+//! output.verify_progressive_filling().unwrap();
 //! // Or manually:
 //! let dots = output.dots_per_stage();
 //! assert!(dots[0] > dots[dots.len() - 1]);
@@ -188,12 +188,12 @@ pub struct ProgressiveOutput {
 impl ProgressiveOutput {
     /// Get the initial snapshot (what appeared first)
     pub fn initial(&self) -> &OutputSnapshot {
-        self.stages.first().expect("No snapshots captured")
+        self.stages.first().unwrap()
     }
 
     /// Get the final snapshot (complete output)
     pub fn final_snapshot(&self) -> &OutputSnapshot {
-        self.stages.last().expect("No snapshots captured")
+        self.stages.last().unwrap()
     }
 
     /// Get the final visible text (convenience for final_snapshot().visible_text())
@@ -206,7 +206,7 @@ impl ProgressiveOutput {
         self.stages
             .iter()
             .min_by_key(|s| s.timestamp.abs_diff(target))
-            .expect("No snapshots captured")
+            .unwrap()
     }
 
     /// Get snapshots at regular intervals (useful for showing progression)
@@ -366,10 +366,7 @@ pub fn capture_progressive_output(
     );
 
     // Read output and capture snapshots
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .expect("Failed to clone PTY reader (master pseudo-terminal)");
+    let mut reader = pair.master.try_clone_reader().unwrap();
 
     let mut snapshots = Vec::new();
     let mut last_snapshot_time = Instant::now();
@@ -495,7 +492,7 @@ fn configure_pty_environment(cmd: &mut CommandBuilder, repo: &TestRepo) {
     // Basic environment
     cmd.env(
         "HOME",
-        std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+        home::home_dir().unwrap().to_string_lossy().to_string(),
     );
     cmd.env(
         "PATH",

@@ -19,9 +19,9 @@ fn test_approval_saves_to_disk() {
         .approve_command_to(
             "github.com/test/repo".to_string(),
             "test command".to_string(),
-            &config_path,
+            Some(&config_path),
         )
-        .expect("Failed to save approval");
+        .unwrap();
 
     // Verify the config was written to the isolated path
     assert!(
@@ -59,14 +59,14 @@ fn test_duplicate_approvals_not_saved_twice() {
         .approve_command_to(
             "github.com/test/repo".to_string(),
             "test".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .ok();
     config
         .approve_command_to(
             "github.com/test/repo".to_string(),
             "test".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .ok();
 
@@ -110,21 +110,21 @@ fn test_multiple_project_approvals() {
         .approve_command_to(
             "github.com/user1/repo1".to_string(),
             "npm install".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .unwrap();
     config
         .approve_command_to(
             "github.com/user2/repo2".to_string(),
             "cargo build".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .unwrap();
     config
         .approve_command_to(
             "github.com/user1/repo1".to_string(),
             "npm test".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .unwrap();
 
@@ -143,10 +143,7 @@ fn test_multiple_project_approvals() {
     args = []
 
     [projects."github.com/user1/repo1"]
-    approved-commands = [
-        "npm install",
-        "npm test",
-    ]
+    approved-commands = ["npm install", "npm test"]
 
     [projects."github.com/user2/repo2"]
     approved-commands = ["cargo build"]
@@ -160,9 +157,9 @@ fn test_isolated_config_safety() {
     let config_path = temp_dir.path().join("isolated.toml");
 
     // Read user's actual config before test (if it exists)
-    use directories::ProjectDirs;
-    let user_config_path = if let Some(proj_dirs) = ProjectDirs::from("", "", "worktrunk") {
-        proj_dirs.config_dir().join("config.toml")
+    use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+    let user_config_path = if let Ok(strategy) = choose_base_strategy() {
+        strategy.config_dir().join("worktrunk").join("config.toml")
     } else {
         // Fallback for platforms where config dir can't be determined
         std::env::var("HOME")
@@ -182,7 +179,7 @@ fn test_isolated_config_safety() {
         .approve_command_to(
             "github.com/safety-test/repo".to_string(),
             "THIS SHOULD NOT APPEAR IN USER CONFIG".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .unwrap();
 
@@ -249,7 +246,7 @@ fn test_force_flag_saves_to_new_config_file() {
         .approve_command_to(
             "github.com/test/nested".to_string(),
             "test command".to_string(),
-            &config_path,
+            Some(&config_path),
         )
         .unwrap();
 
@@ -268,6 +265,68 @@ fn test_force_flag_saves_to_new_config_file() {
     [projects."github.com/test/nested"]
     approved-commands = ["test command"]
     "#);
+}
+
+/// Test that saving config preserves TOML comments
+///
+/// When a user has a config file with comments and we save an approval,
+/// all their comments should be preserved. This test verifies the behavior.
+#[test]
+fn test_saving_approval_preserves_toml_comments() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    // Create a config file with comments
+    let initial_content = r#"# User preferences for worktrunk
+# These comments should be preserved after saving
+
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+# LLM commit generation settings
+[commit-generation]
+command = "llm"  # inline comment should also be preserved
+args = ["-s"]
+
+# Per-project settings below
+"#;
+    fs::write(&config_path, initial_content).unwrap();
+
+    // Load the config manually by deserializing from TOML
+    // (bypasses WorktrunkConfig::load() which requires WORKTRUNK_CONFIG_PATH)
+    let toml_str = fs::read_to_string(&config_path).unwrap();
+    let mut config: WorktrunkConfig = toml::from_str(&toml_str).unwrap();
+
+    // Add an approval and save back to the same file
+    config
+        .approve_command_to(
+            "github.com/test/repo".to_string(),
+            "npm install".to_string(),
+            Some(&config_path),
+        )
+        .unwrap();
+
+    // Read back the saved config
+    let saved_content = fs::read_to_string(&config_path).unwrap();
+
+    // Verify comments are preserved
+    assert!(
+        saved_content.contains("# User preferences for worktrunk"),
+        "Top-level comment was lost. Saved content:\n{saved_content}"
+    );
+    assert!(
+        saved_content.contains("# LLM commit generation settings"),
+        "Section comment was lost. Saved content:\n{saved_content}"
+    );
+    assert!(
+        saved_content.contains("# inline comment should also be preserved"),
+        "Inline comment was lost. Saved content:\n{saved_content}"
+    );
+
+    // Verify the approval was also saved
+    assert!(
+        saved_content.contains("npm install"),
+        "Approval was not saved. Saved content:\n{saved_content}"
+    );
 }
 
 /// Test that permission errors when saving config are handled gracefully
@@ -322,7 +381,7 @@ fn test_permission_error_prevents_save() {
     let result = config.approve_command_to(
         "github.com/test/readonly".to_string(),
         "test command".to_string(),
-        &config_path,
+        Some(&config_path),
     );
 
     // Restore write permissions so temp_dir can be cleaned up

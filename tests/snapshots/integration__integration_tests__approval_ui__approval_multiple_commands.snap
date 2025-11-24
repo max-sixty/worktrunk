@@ -12,13 +12,13 @@ exit_code: 1
 🟡 [33m[1m[33mtest-repo[0m[33m needs approval to execute [1m[33m4[0m[33m commands:[0m
 
 🔄 post-create:
-[107m [0m  [1m[34mecho[0m [32m'Branch: test-nested-branch'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Branch: test-nested-branch'[0m[0m
 
 🔄 post-create:
-[107m [0m  [1m[34mecho[0m [32m'Worktree: [REPO].test-nested-branch'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Worktree: [REPO].test-nested-branch'[0m[0m
 
 🔄 post-create:
-[107m [0m  [1m[34mecho[0m [32m'Repo: test-repo'[0m[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Repo: test-repo'[0m[0m
 
 🔄 post-create:
-[107m [0m  [1m[34mcd[0m [REPO].test-nested-branch [36m&&[0m [1m[34mpwd[0m[0m
+[107m [0m  [1m[2m[34mcd[0m [REPO].test-nested-branch [2m[36m&&[0m [1m[2m[34mpwd[0m[0m

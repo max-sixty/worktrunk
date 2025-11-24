@@ -145,7 +145,10 @@ pub fn handle_merge(
 
     // Rebase onto target (skip if --no-commit) - track whether rebasing occurred
     let rebased = if commit {
-        super::standalone::handle_rebase(Some(&target_branch))?
+        matches!(
+            super::standalone::handle_rebase(Some(&target_branch))?,
+            super::standalone::RebaseResult::Rebased
+        )
     } else {
         false
     };

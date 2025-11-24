@@ -15,8 +15,8 @@ const SLEEP_FAST_COMMAND: Duration = Duration::from_millis(100);
 const SLEEP_BACKGROUND_COMMAND: Duration = Duration::from_millis(200);
 
 /// Extended wait for commands that include explicit sleep in the command itself
-/// (e.g., "sleep 0.1 && echo ..." requires at least 100ms + margin)
-const SLEEP_EXTENDED: Duration = Duration::from_millis(250);
+/// (e.g., "sleep 0.1 && echo ..." requires at least 100ms + margin for CI overhead)
+const SLEEP_EXTENDED: Duration = Duration::from_millis(500);
 
 /// Helper to create snapshot with normalized paths and SHAs
 ///
@@ -213,7 +213,7 @@ approved-commands = [
         "info.txt should have been created in the worktree"
     );
 
-    let contents = fs::read_to_string(&info_file).expect("Failed to read info.txt");
+    let contents = fs::read_to_string(&info_file).unwrap();
 
     // Verify that template variables were actually expanded
     assert!(
@@ -424,7 +424,7 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
 
     // Find the log file
     let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .expect("Failed to read log dir")
+        .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("log"))
@@ -437,7 +437,7 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
         log_files
     );
 
-    let log_contents = fs::read_to_string(&log_files[0]).expect("Failed to read log file");
+    let log_contents = fs::read_to_string(&log_files[0]).unwrap();
 
     // Verify both stdout and stderr were captured
     assert_snapshot!(log_contents, @r"
@@ -519,7 +519,7 @@ approved-commands = [
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt-logs");
     let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .expect("Failed to read log dir")
+        .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("log"))
         .collect();
@@ -534,7 +534,7 @@ approved-commands = [
     // Read all log files and verify no cross-contamination
     let mut found_outputs = vec![false, false, false];
     for entry in log_files {
-        let contents = fs::read_to_string(entry.path()).expect("Failed to read log file");
+        let contents = fs::read_to_string(entry.path()).unwrap();
         let count_task1 = contents.matches("TASK1_OUTPUT").count();
         let count_task2 = contents.matches("TASK2_OUTPUT").count();
         let count_task3 = contents.matches("TASK3_OUTPUT").count();
@@ -650,7 +650,7 @@ approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
         "Complex shell command should create output file"
     );
 
-    let contents = fs::read_to_string(&filtered_file).expect("Failed to read filtered.txt");
+    let contents = fs::read_to_string(&filtered_file).unwrap();
     assert_snapshot!(contents, @"line2");
 }
 
@@ -703,7 +703,7 @@ approved-commands = ["""
         "Multiline command should create output file"
     );
 
-    let contents = fs::read_to_string(&output_file).expect("Failed to read multiline.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
     assert_snapshot!(contents, @r"
     first line
     second line
@@ -761,7 +761,7 @@ approved-commands = ["""
         "Control structure command should create result file"
     );
 
-    let contents = fs::read_to_string(&result_file).expect("Failed to read result.txt");
+    let contents = fs::read_to_string(&result_file).unwrap();
     assert_snapshot!(contents, @"File does not exist");
 }
 
@@ -814,7 +814,7 @@ approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
     );
 
     // Remove the marker file to detect if post-start runs again
-    fs::remove_file(&marker_file).expect("Failed to remove marker file");
+    fs::remove_file(&marker_file).unwrap();
 
     // Second: Switch to EXISTING worktree - post-start should NOT run
     snapshot_switch("post_start_skip_existing", &repo, &["feature"]);

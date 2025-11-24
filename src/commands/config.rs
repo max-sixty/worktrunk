@@ -8,8 +8,31 @@ use worktrunk::styling::{
     format_toml, print, println,
 };
 
-/// Example configuration file content
+/// Example configuration file content (displayed in help with values uncommented)
 const CONFIG_EXAMPLE: &str = include_str!("../../dev/config.example.toml");
+
+/// Comment out all non-comment, non-empty lines for writing to disk
+fn comment_out_config(content: &str) -> String {
+    let has_trailing_newline = content.ends_with('\n');
+    let result = content
+        .lines()
+        .map(|line| {
+            // Comment out non-empty lines that aren't already comments
+            if !line.is_empty() && !line.starts_with('#') {
+                format!("# {}", line)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if has_trailing_newline {
+        format!("{}\n", result)
+    } else {
+        result
+    }
+}
 
 /// Handle the config create command
 pub fn handle_config_create() -> anyhow::Result<()> {
@@ -25,6 +48,9 @@ pub fn handle_config_create() -> anyhow::Result<()> {
         );
         println!();
         println!("{HINT_EMOJI} {HINT}Use 'wt config list' to view existing configuration{HINT:#}");
+        println!(
+            "{HINT_EMOJI} {HINT}Use 'wt config create --help' for config format reference{HINT:#}"
+        );
         return Ok(());
     }
 
@@ -34,8 +60,9 @@ pub fn handle_config_create() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to create config directory: {}", e))?;
     }
 
-    // Write the example config
-    std::fs::write(&config_path, CONFIG_EXAMPLE).context("Failed to write config file")?;
+    // Write the example config with all values commented out
+    let commented_config = comment_out_config(CONFIG_EXAMPLE);
+    std::fs::write(&config_path, commented_config).context("Failed to write config file")?;
 
     // Success message
     let green_bold = GREEN.bold();

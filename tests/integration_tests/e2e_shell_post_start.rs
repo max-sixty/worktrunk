@@ -33,12 +33,12 @@ fn test_shell_integration_post_start_background(#[case] shell: &str) {
 
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
         r#"post-start-command = "sleep 0.05 && echo 'Background task done' > bg_marker.txt""#,
     )
-    .expect("Failed to write config");
+    .unwrap();
 
     repo.commit("Add post-start config");
 
@@ -51,7 +51,7 @@ fn test_shell_integration_post_start_background(#[case] shell: &str) {
 approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"]
 "#,
     )
-    .expect("Failed to write user config");
+    .unwrap();
 
     let init_code = generate_init_code(&repo, shell);
     let bin_path = wt_bin_dir();
@@ -98,7 +98,7 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
 
     // Check for log files
     let log_files: Vec<_> = fs::read_dir(&log_dir)
-        .expect("Failed to read log dir")
+        .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
@@ -117,7 +117,7 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
     );
 
     let marker_file = worktree_path.join("bg_marker.txt");
-    let content = fs::read_to_string(&marker_file).expect("Failed to read marker file");
+    let content = fs::read_to_string(&marker_file).unwrap();
     assert!(
         content.contains("Background task done"),
         "Expected background task output, got: {}",
@@ -133,7 +133,7 @@ fn test_bash_shell_integration_post_start_parallel() {
 
     // Create project config with multiple background commands
     let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
         r#"[post-start-command]
@@ -141,7 +141,7 @@ task1 = "sleep 0.05 && echo 'Task 1' > task1.txt"
 task2 = "sleep 0.05 && echo 'Task 2' > task2.txt"
 "#,
     )
-    .expect("Failed to write config");
+    .unwrap();
 
     repo.commit("Add multiple post-start commands");
 
@@ -157,7 +157,7 @@ approved-commands = [
 ]
 "#,
     )
-    .expect("Failed to write test config");
+    .unwrap();
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
@@ -206,12 +206,12 @@ fn test_bash_shell_integration_post_create_blocks() {
 
     // Create project config with blocking command
     let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
         r#"post-create-command = "echo 'Setup done' > setup.txt""#,
     )
-    .expect("Failed to write config");
+    .unwrap();
 
     repo.commit("Add post-create command");
 
@@ -224,7 +224,7 @@ fn test_bash_shell_integration_post_create_blocks() {
 approved-commands = ["echo 'Setup done' > setup.txt"]
 "#,
     )
-    .expect("Failed to write test config");
+    .unwrap();
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
@@ -261,7 +261,7 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
         "Setup file should exist immediately after wt returns (post-create is blocking)"
     );
 
-    let content = fs::read_to_string(&setup_file).expect("Failed to read setup file");
+    let content = fs::read_to_string(&setup_file).unwrap();
     assert!(
         content.contains("Setup done"),
         "Expected setup output, got: {}",
@@ -278,14 +278,14 @@ fn test_fish_shell_integration_post_start_background() {
 
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
         r#"[post-start-command]
 fish_bg = "sleep 0.05 && echo 'Fish background done' > fish_bg.txt"
 "#,
     )
-    .expect("Failed to write config");
+    .unwrap();
 
     repo.commit("Add fish background command");
 
@@ -298,7 +298,7 @@ fish_bg = "sleep 0.05 && echo 'Fish background done' > fish_bg.txt"
 approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
 "#,
     )
-    .expect("Failed to write test config");
+    .unwrap();
 
     let init_code = generate_init_code(&repo, "fish");
     let bin_path = wt_bin_dir();
@@ -346,7 +346,7 @@ approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
         "Fish background command should have created fish_bg.txt"
     );
 
-    let content = fs::read_to_string(&marker_file).expect("Failed to read marker file");
+    let content = fs::read_to_string(&marker_file).unwrap();
     assert!(
         content.contains("Fish background done"),
         "Expected fish background output, got: {}",

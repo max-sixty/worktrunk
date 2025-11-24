@@ -1,0 +1,44 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - status
+    - unset
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config status unset - Clear status emoji
+Usage: wt config status unset [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]
+          Branch or "*" for all
+          
+          [default: ]
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose
+          Show commands and debug info
+
+Removes status marker from branch(es). Use [2m*[0m to clear all statuses.
+
+----- stderr -----

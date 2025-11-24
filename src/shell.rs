@@ -1,10 +1,21 @@
 use askama::Template;
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::path::PathBuf;
+
+/// Get the user's home directory or return an error
+fn home_dir() -> Result<PathBuf, std::io::Error> {
+    home::home_dir().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Could not determine home directory",
+        )
+    })
+}
 
 /// Supported shells
 ///
 /// Currently supported: bash, fish, zsh
-#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum Shell {
     Bash,
@@ -30,22 +41,16 @@ pub enum Shell {
 }
 
 impl Shell {
-    /// Returns true if this shell supports completion generation
-    pub fn supports_completion(&self) -> bool {
-        matches!(self, Self::Bash | Self::Fish | Self::Zsh)
-    }
-
     /// Returns the standard config file paths for this shell
     ///
     /// Returns paths in order of preference. The first existing file should be used.
-    /// For Fish, the cmd_prefix is used to name the conf.d file.
-    pub fn config_paths(&self, cmd_prefix: &str) -> Vec<PathBuf> {
-        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+    pub fn config_paths(&self) -> Result<Vec<PathBuf>, std::io::Error> {
+        let home = home_dir()?;
 
-        match self {
+        Ok(match self {
             Self::Bash => {
-                // Use .bash_profile - canonical location for login shell initialization
-                vec![home.join(".bash_profile")]
+                // Use .bashrc - sourced by interactive shells (login shells should source .bashrc)
+                vec![home.join(".bashrc")]
             }
             Self::Zsh => {
                 let zdotdir = std::env::var("ZDOTDIR")
@@ -55,12 +60,11 @@ impl Shell {
             }
             Self::Fish => {
                 // For fish, we write to conf.d/ which is auto-sourced
-                // Use cmd_prefix in the filename
                 vec![
                     home.join(".config")
                         .join("fish")
                         .join("conf.d")
-                        .join(format!("{}.fish", cmd_prefix)),
+                        .join("wt.fish"),
                 ]
             } // Disabled shells - uncomment when ready to support
               // Self::Nushell => {
@@ -94,24 +98,60 @@ impl Shell {
               // Self::Xonsh => {
               //     vec![home.join(".xonshrc")]
               // }
-        }
+        })
+    }
+
+    /// Returns the path to the native completion directory for this shell
+    ///
+    /// These are the standard locations where shells look for lazy-loaded completions:
+    /// - Bash: `~/.local/share/bash-completion/completions/`
+    /// - Zsh: `~/.zfunc/` (for manual setup only; install uses lazy compdef)
+    /// - Fish: `~/.config/fish/completions/`
+    pub fn completion_path(&self) -> Result<PathBuf, std::io::Error> {
+        let home = home_dir()?;
+
+        // Use etcetera for XDG-compliant paths when available
+        let strategy = choose_base_strategy().ok();
+
+        Ok(match self {
+            Self::Bash => {
+                // XDG_DATA_HOME defaults to ~/.local/share
+                let data_home = strategy
+                    .as_ref()
+                    .map(|s| s.data_dir())
+                    .unwrap_or_else(|| home.join(".local").join("share"));
+                data_home
+                    .join("bash-completion")
+                    .join("completions")
+                    .join("wt")
+            }
+            Self::Zsh => home.join(".zfunc").join("_wt"),
+            Self::Fish => {
+                // XDG_CONFIG_HOME defaults to ~/.config
+                let config_home = strategy
+                    .as_ref()
+                    .map(|s| s.config_dir())
+                    .unwrap_or_else(|| home.join(".config"));
+                config_home.join("fish").join("completions").join("wt.fish")
+            }
+        })
     }
 
     /// Returns the line to add to the config file for shell integration
     ///
     /// All shells use a conditional wrapper to avoid errors when the command doesn't exist.
-    pub fn config_line(&self, cmd_prefix: &str) -> String {
+    pub fn config_line(&self) -> String {
         match self {
             Self::Bash | Self::Zsh => {
                 format!(
-                    "if command -v {} >/dev/null 2>&1; then eval \"$(command {} config shell init {})\"; fi",
-                    cmd_prefix, cmd_prefix, self
+                    "if command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init {})\"; fi",
+                    self
                 )
             }
             Self::Fish => {
                 format!(
-                    "if type -q {}; command {} config shell init {} | source; end",
-                    cmd_prefix, cmd_prefix, self
+                    "if type -q wt; command wt config shell init {} | source; end",
+                    self
                 )
             } // Disabled shells - uncomment when ready to support
               // Self::Oil => {
@@ -155,11 +195,11 @@ impl Shell {
     ///
     /// This function is prefix-agnostic - it detects integration patterns regardless
     /// of what cmd_prefix was used during configuration (wt, worktree, etc).
-    pub fn is_integration_configured() -> Option<PathBuf> {
+    pub fn is_integration_configured() -> Result<Option<PathBuf>, std::io::Error> {
         use std::fs;
         use std::io::{BufRead, BufReader};
 
-        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+        let home = home_dir()?;
 
         // Check common shell config files for integration patterns
         let config_files = vec![
@@ -199,7 +239,7 @@ impl Shell {
                     if (trimmed.starts_with("eval \"$(") || trimmed.starts_with("eval '$("))
                         && trimmed.contains(" init ")
                     {
-                        return Some(path);
+                        return Ok(Some(path));
                     }
                 }
             }
@@ -220,64 +260,55 @@ impl Shell {
                         && content.contains("switch")
                         && content.contains("__WORKTRUNK_CD__")
                     {
-                        return Some(path);
+                        return Ok(Some(path));
                     }
                 }
             }
         }
 
-        None
+        Ok(None)
     }
 
     /// Returns a summary of what the shell integration does for display in confirmation
     ///
     /// This just returns the same as config_line since we want to show the exact wrapper
-    pub fn integration_summary(&self, cmd_prefix: &str) -> String {
-        self.config_line(cmd_prefix)
+    pub fn integration_summary(&self) -> String {
+        self.config_line()
     }
 }
 
 /// Shell integration configuration
 pub struct ShellInit {
     pub shell: Shell,
-    pub cmd_prefix: String,
 }
 
 impl ShellInit {
-    pub fn new(shell: Shell, cmd_prefix: String) -> Self {
-        Self { shell, cmd_prefix }
+    pub fn new(shell: Shell) -> Self {
+        Self { shell }
     }
 
     /// Generate shell integration code
     pub fn generate(&self) -> Result<String, askama::Error> {
         match self.shell {
             Shell::Bash => {
-                let posix_shim = PosixDirectivesTemplate {
-                    cmd_prefix: &self.cmd_prefix,
-                }
-                .render()?;
+                let posix_shim = PosixDirectivesTemplate { cmd_prefix: "wt" }.render()?;
                 let template = BashTemplate {
                     shell_name: self.shell.to_string(),
-                    cmd_prefix: &self.cmd_prefix,
+                    cmd_prefix: "wt",
                     posix_shim: &posix_shim,
                 };
                 template.render()
             }
             Shell::Zsh => {
-                let posix_shim = PosixDirectivesTemplate {
-                    cmd_prefix: &self.cmd_prefix,
-                }
-                .render()?;
+                let posix_shim = PosixDirectivesTemplate { cmd_prefix: "wt" }.render()?;
                 let template = ZshTemplate {
-                    cmd_prefix: &self.cmd_prefix,
+                    cmd_prefix: "wt",
                     posix_shim: &posix_shim,
                 };
                 template.render()
             }
             Shell::Fish => {
-                let template = FishTemplate {
-                    cmd_prefix: &self.cmd_prefix,
-                };
+                let template = FishTemplate { cmd_prefix: "wt" };
                 template.render()
             } // Disabled shells - uncomment when ready to support
               // Shell::Oil => {

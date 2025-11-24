@@ -3,7 +3,7 @@ source: tests/integration_tests/push.rs
 info:
   program: wt
   args:
-    - beta
+    - step
     - push
     - main
   env:
@@ -20,12 +20,11 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
-exit_code: 2
+exit_code: 1
 ----- stdout -----
+❌ [31mCan't push to local [1m[31mmain[0m[31m branch: it has newer commits[0m
+[107m [0m  * [SHA] Main commit
+
+💡 [2mUse 'wt merge' to rebase your changes onto main[0m
 
 ----- stderr -----
-[1m[31merror:[0m unrecognized subcommand '[1m[33mpush[0m'
-
-[1m[32mUsage:[0m [1m[36mwt beta[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
-
-For more information, try '[1m[36m--help[0m'.

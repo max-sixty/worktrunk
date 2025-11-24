@@ -46,10 +46,8 @@ fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
         output
     );
 
-    let after_switch =
-        extract_pwd_marker(&output, "__PWD_AFTER_SWITCH__").expect("Missing switch marker");
-    let after_remove =
-        extract_pwd_marker(&output, "__PWD_AFTER_REMOVE__").expect("Missing remove marker");
+    let after_switch = extract_pwd_marker(&output, "__PWD_AFTER_SWITCH__").unwrap();
+    let after_remove = extract_pwd_marker(&output, "__PWD_AFTER_REMOVE__").unwrap();
 
     assert!(
         after_switch.contains("combo-branch"),
@@ -133,10 +131,8 @@ fn test_bash_shell_integration_switch_existing_worktree() {
     );
 
     let output = execute_shell_script(&repo, "bash", &script);
-    let after_create =
-        extract_pwd_marker(&output, "__AFTER_CREATE__").expect("missing create marker");
-    let after_existing =
-        extract_pwd_marker(&output, "__AFTER_EXISTING__").expect("missing existing marker");
+    let after_create = extract_pwd_marker(&output, "__AFTER_CREATE__").unwrap();
+    let after_existing = extract_pwd_marker(&output, "__AFTER_EXISTING__").unwrap();
 
     assert!(
         after_create.contains("existing-branch"),

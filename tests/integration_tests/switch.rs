@@ -79,14 +79,14 @@ fn test_switch_create_with_remote_branch_only() {
     cmd.args(["branch", "remote-feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["push", "origin", "remote-feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to push to remote");
+        .unwrap();
 
     // Delete the local branch
     let mut cmd = Command::new("git");
@@ -94,7 +94,7 @@ fn test_switch_create_with_remote_branch_only() {
     cmd.args(["branch", "-D", "remote-feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to delete local branch");
+        .unwrap();
 
     // Now we have origin/remote-feature but no local remote-feature
     // This should succeed with --create (previously would fail)
@@ -187,7 +187,7 @@ fn test_switch_error_missing_worktree_directory() {
     let wt_path = repo.add_worktree("missing-wt", "missing-wt");
 
     // Remove the worktree directory (but leave it registered in git)
-    std::fs::remove_dir_all(&wt_path).expect("Failed to remove worktree directory");
+    std::fs::remove_dir_all(&wt_path).unwrap();
 
     // Try to switch to the missing worktree (should fail)
     snapshot_switch("switch_error_missing_directory", &repo, &["missing-wt"]);
@@ -284,7 +284,7 @@ fn test_switch_no_config_commands_skips_post_start_commands() {
 
     // Create project config with a command that would create a file
     let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::create_dir_all(&config_dir).unwrap();
 
     let create_file_cmd = "echo 'marker' > marker.txt";
 
@@ -292,13 +292,13 @@ fn test_switch_no_config_commands_skips_post_start_commands() {
         config_dir.join("wt.toml"),
         format!(r#"post-start-commands = ["{}"]"#, create_file_cmd),
     )
-    .expect("Failed to write config");
+    .unwrap();
 
     repo.commit("Add config");
 
     // Pre-approve the command
     let user_config_dir = temp_home.path().join(".config/worktrunk");
-    fs::create_dir_all(&user_config_dir).expect("Failed to create user config dir");
+    fs::create_dir_all(&user_config_dir).unwrap();
     fs::write(
         user_config_dir.join("config.toml"),
         format!(
@@ -310,7 +310,7 @@ approved-commands = ["{}"]
             create_file_cmd
         ),
     )
-    .expect("Failed to write user config");
+    .unwrap();
 
     // With --no-hooks, the post-start command should be skipped
     snapshot_switch_with_home(
@@ -352,12 +352,12 @@ fn test_switch_no_config_commands_with_force() {
 
     // Create project config with a command
     let config_dir = repo.root_path().join(".config");
-    fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
+    fs::create_dir_all(&config_dir).unwrap();
     fs::write(
         config_dir.join("wt.toml"),
         r#"post-start-commands = ["echo 'test'"]"#,
     )
-    .expect("Failed to write config");
+    .unwrap();
 
     repo.commit("Add config");
 
@@ -417,14 +417,14 @@ fn test_switch_previous_branch() {
     cmd.args(["branch", "feature-a"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create feature-a");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["branch", "feature-b"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create feature-b");
+        .unwrap();
 
     // Use wt switch to establish worktrunk.history
     snapshot_switch("switch_previous_branch_first", &repo, &["feature-a"]);
@@ -454,14 +454,14 @@ fn test_switch_previous_branch_with_worktrunk_history() {
     cmd.args(["branch", "feature-x"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create feature-x");
+        .unwrap();
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["branch", "feature-y"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create feature-y");
+        .unwrap();
 
     // Use wt switch to switch to feature-x (this records history)
     snapshot_switch(
@@ -497,7 +497,7 @@ fn test_switch_main_branch() {
     cmd.args(["branch", "feature-a"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create feature-a");
+        .unwrap();
 
     // Switch to feature-a first
     snapshot_switch("switch_main_branch_to_feature", &repo, &["feature-a"]);

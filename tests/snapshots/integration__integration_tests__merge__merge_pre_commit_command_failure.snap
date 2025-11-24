@@ -25,7 +25,7 @@ exit_code: 1
 🟡 [33mAuto-staging 1 untracked file:[0m
 [107m [0m  feature.txt
 🔄 [36mRunning pre-commit:[0m
-[107m [0m  [1m[34mexit[0m 1[0m
+[107m [0m  [1m[2m[34mexit[0m 1[0m
 ❌ [31mpre-commit command failed: exit status: 1[0m
 
 💡 [2mUse --no-verify to skip pre-commit commands[0m

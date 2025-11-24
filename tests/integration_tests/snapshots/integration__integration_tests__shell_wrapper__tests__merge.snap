@@ -2,5 +2,5 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-✅ [32mMerged to [1m[32mmain[0m[0m (no new commits, no rebase needed)
+✅ [32mMerged to [1m[32mmain[0m[32m @ [2m[32m[HASH][0m (no new commits, no rebase needed)[0m
 ✅ [32mWorktree preserved (--no-remove)[0m

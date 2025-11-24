@@ -152,10 +152,7 @@ impl Serialize for CommandConfig {
         // At this point, all commands must have names (from Named TOML format)
         let mut map = serializer.serialize_map(Some(self.commands.len()))?;
         for cmd in &self.commands {
-            let key = cmd
-                .name
-                .as_ref()
-                .expect("named format requires all commands to have names");
+            let key = cmd.name.as_ref().unwrap();
             map.serialize_entry(key, &cmd.template)?;
         }
         map.end()

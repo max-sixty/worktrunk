@@ -245,7 +245,7 @@ fn test_completion_validation() {
         .arg("init")
         .arg("fish")
         .output()
-        .expect("Failed to generate fish completion");
+        .unwrap();
 
     let bash_output = wt_command()
         .arg("config")
@@ -253,7 +253,7 @@ fn test_completion_validation() {
         .arg("init")
         .arg("bash")
         .output()
-        .expect("Failed to generate bash completion");
+        .unwrap();
 
     let zsh_output = wt_command()
         .arg("config")
@@ -261,7 +261,7 @@ fn test_completion_validation() {
         .arg("init")
         .arg("zsh")
         .output()
-        .expect("Failed to generate zsh completion");
+        .unwrap();
 
     assert!(fish_output.status.success());
     assert!(bash_output.status.success());

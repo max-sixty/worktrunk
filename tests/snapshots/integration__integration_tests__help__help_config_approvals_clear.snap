@@ -1,0 +1,44 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - approvals
+    - clear
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config approvals clear - Clear approved commands from config
+Usage: wt config approvals clear [OPTIONS]
+
+Options:
+  -g, --global
+          Clear global approvals
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose
+          Show commands and debug info
+
+Removes saved approvals, requiring re-approval on next command run.
+
+By default, clears approvals for the current project. Use [2m--global[0m to clear
+all approvals across all projects.
+
+----- stderr -----

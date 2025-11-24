@@ -9,6 +9,7 @@ fn check_output_system_usage() {
         "src/commands/merge.rs",
         "src/commands/list/mod.rs",
         "src/commands/list/collect.rs",
+        "src/commands/list/collect_progressive_impl.rs",
     ];
     let forbidden_tokens = ["print!", "println!", "eprint!", "eprintln!"];
     let allowed_substrings = ["spacing_test.rs", "command_approval.rs"];
@@ -23,6 +24,10 @@ fn check_output_system_usage() {
 
         let contents = fs::read_to_string(&full_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", relative_path));
+
+        // Check if file imports the correct anstream-wrapped macros from worktrunk::styling
+        let has_styling_import = contents.contains("use worktrunk::styling::")
+            && (contents.contains("eprintln") || contents.contains("println"));
 
         'line: for (idx, line) in contents.lines().enumerate() {
             for token in forbidden_tokens {
@@ -39,6 +44,11 @@ fn check_output_system_usage() {
                         .map(|comment_pos| comment_pos <= pos)
                         .unwrap_or(false)
                     {
+                        continue 'line;
+                    }
+
+                    // Allow if file imports the correct macro from worktrunk::styling
+                    if has_styling_import && (token == "eprintln!" || token == "println!") {
                         continue 'line;
                     }
 

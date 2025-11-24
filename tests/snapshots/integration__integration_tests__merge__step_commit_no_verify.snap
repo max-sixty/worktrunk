@@ -1,0 +1,36 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - step
+    - commit
+    - "--no-verify"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1761609600"
+    WORKTRUNK_COMMIT_GENERATION__ARGS: "feat: add file"
+    WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+💡 [2mSkipping pre-commit hook (--no-verify)[0m
+🟡 [33mAuto-staging 2 untracked files:[0m
+[107m [0m  .config/
+[107m [0m  file1.txt
+🔄 [36mCommitting changes with default message...[0m (2 files, [32m+2[0m)
+💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
+[107m [0m  [1mChanges to wt.toml & file1.txt[0m
+✅ [32mCommitted changes @ [2m[SHA][0m
+
+----- stderr -----

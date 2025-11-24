@@ -27,98 +27,68 @@ Commands:
 
 Options:
   -h, --help
-      Print help (see a summary with '-h')
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
-      Change working directory
+          Working directory for this command
 
-  --config <path>          
-      User config file path
+      --config <path>
+          User config file path
 
   -v, --verbose
-      Show commands and debug info
+          Show commands and debug info
 
-SETUP GUIDE:
+[32mSetup Guide[0m
 
 1. Set up shell integration
 
-   wt config shell install
+  [2m   wt config shell install[0m
 
    Or manually add to your shell config:
-   eval "$(wt config shell init bash)"
+
+  [2m   eval "$(wt config shell init bash)"[0m
 
 2. (Optional) Create config file
 
-   wt config create
+  [2m   wt config create[0m
 
    This creates ~/.config/worktrunk/config.toml with examples.
 
 3. (Optional) Enable LLM commit messages
 
-   Install: uv tool install -U llm
-   Configure: llm keys set anthropic
+   Install: [2muv tool install -U llm[0m
+   Configure: [2mllm keys set anthropic[0m
    Add to config.toml:
- [commit-generation]
- command = "llm"    
 
-LLM SETUP DETAILS:
+  [2m   [commit-generation][0m
+  [2m   command = "llm"[0m
+
+[32mLLM Setup Details[0m
 
 For Claude:
-   llm install llm-anthropic
-   llm keys set anthropic
-   llm models default claude-3.5-sonnet
+
+  [2mllm install llm-anthropic[0m
+  [2mllm keys set anthropic[0m
+  [2mllm models default claude-3.5-sonnet[0m
 
 For OpenAI:
-   llm keys set openai
 
-Use 'wt config list' to view your current configuration
-Docs: https://llm.datasette.io/ | https://github.com/sigoden/aichat
+  [2mllm keys set openai[0m
 
-CONFIGURATION FILES:
+Use [2mwt config list[0m to view your current configuration.
+Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
 
-Global config (loaded in order of precedence):
-1. WORKTRUNK_CONFIG_PATH environment variable
-2. ~/.config/worktrunk/config.toml (Linux/macOS)
-   %APPDATA%\worktrunk\config.toml (Windows)
+[32mConfiguration Files[0m
 
-Global config contents:
-- worktree-path: Path template (see CUSTOM WORKTREE PATHS below)
-- [list]: Default display options for 'wt list'
-- [commit-generation]: LLM command and prompt templates
-- [projects."project-id"]: Per-project approved commands (auto-populated)
+[1mGlobal config[0m (user settings):
 
-Project config (.config/wt.toml in repository root):
-- [post-create-command]: Commands after worktree creation
-- [post-start-command]: Background commands after creation
-- [pre-commit-command]: Validation before committing
-- [pre-merge-command]: Validation before merge
-- [post-merge-command]: Cleanup after merge
+- Location: [2m~/.config/worktrunk/config.toml[0m (or [2mWORKTRUNK_CONFIG_PATH[0m)
+- Run [2mwt config create --help[0m to view documented examples
 
-CUSTOM WORKTREE PATHS:
+[1mProject config[0m (repository hooks):
 
-By default, worktrees live as siblings to the main repo:
-
-  myapp/               # main worktree
-  myapp.feature-x/     # secondary worktree
-  myapp.bugfix-y/      # secondary worktree
-
-Customize the pattern in ~/.config/worktrunk/config.toml:
-
-  # Inside the repo (keeps everything contained)
-  worktree-path = ".worktrees/{{ branch }}"
-
-  # Shared directory with multiple repos
-  worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
-
-Available variables: {{ main_worktree }}, {{ branch }}, {{ repo }}
-Default: "../{{ main_worktree }}.{{ branch }}"
-
-CUSTOM PROMPT TEMPLATES:
-
-Customize commit message prompts using minijinja templates.
-Available variables: diff, files, commits, commit_count, branch, target.
-Run 'wt config create' to generate example config with template examples.
-Docs: https://docs.rs/minijinja/latest/minijinja/syntax/
+- Location: [2m.config/wt.toml[0m in repository root
+- Contains: post-create, post-start, pre-commit, pre-merge, post-merge hooks
 
 ----- stderr -----

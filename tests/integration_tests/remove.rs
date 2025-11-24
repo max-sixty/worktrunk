@@ -48,7 +48,7 @@ fn test_remove_switch_to_default() {
     cmd.args(["switch", "-c", "feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     snapshot_remove("remove_switch_to_default", &repo, &[], None);
 }
@@ -83,8 +83,7 @@ fn test_remove_dirty_working_tree() {
     let repo = setup_remove_repo();
 
     // Create a dirty file
-    std::fs::write(repo.root_path().join("dirty.txt"), "uncommitted changes")
-        .expect("Failed to create file");
+    std::fs::write(repo.root_path().join("dirty.txt"), "uncommitted changes").unwrap();
 
     snapshot_remove("remove_dirty_working_tree", &repo, &[], None);
 }
@@ -147,8 +146,7 @@ fn test_remove_by_name_dirty_target() {
     let worktree_path = repo.add_worktree("feature-dirty", "feature-dirty");
 
     // Create a dirty file in the target worktree
-    std::fs::write(worktree_path.join("dirty.txt"), "uncommitted changes")
-        .expect("Failed to create file");
+    std::fs::write(worktree_path.join("dirty.txt"), "uncommitted changes").unwrap();
 
     // Try to remove it by name from main repo
     snapshot_remove(
@@ -203,16 +201,15 @@ fn test_remove_branch_not_fully_merged() {
     let worktree_path = repo.add_worktree("feature-unmerged", "feature-unmerged");
 
     // Add a commit to the feature branch that's not in main
-    std::fs::write(worktree_path.join("feature.txt"), "new feature")
-        .expect("Failed to create file");
+    std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
     repo.git_command(&["add", "feature.txt"])
         .current_dir(&worktree_path)
         .output()
-        .expect("Failed to stage file");
+        .unwrap();
     repo.git_command(&["commit", "-m", "Add feature"])
         .current_dir(&worktree_path)
         .output()
-        .expect("Failed to commit");
+        .unwrap();
 
     // Try to remove it from the main repo
     // Branch deletion should fail but worktree removal should succeed

@@ -26,8 +26,8 @@ exit_code: 0
 ----- stdout -----
 ✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
 🔄 [36mRunning post-start:[0m
-[107m [0m  [1m[34mecho[0m [32m'Background task'[0m [36m>[0m background.txt[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Background task'[0m [2m[36m>[0m background.txt[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [1m[34mecho[0m [32m'Execute flag'[0m [36m>[0m execute.txt[0m
+[107m [0m  [1m[2m[34mecho[0m [2m[32m'Execute flag'[0m [2m[36m>[0m execute.txt[0m
 
 ----- stderr -----

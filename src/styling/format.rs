@@ -138,6 +138,37 @@ pub fn format_with_gutter(content: &str, left_margin: &str, max_width: Option<us
     output
 }
 
+/// Wrap content lines for gutter display
+fn wrap_content_for_gutter(content: &str, left_margin: &str) -> Vec<String> {
+    let term_width = get_terminal_width();
+    let left_margin_width = left_margin.width();
+    let available_width = term_width.saturating_sub(3 + left_margin_width);
+
+    let mut wrapped_lines = Vec::new();
+    for line in content.lines() {
+        let wrapped = wrap_text_at_width(line, available_width);
+        wrapped_lines.extend(wrapped);
+    }
+    wrapped_lines
+}
+
+/// Format wrapped lines with plain gutter (no syntax highlighting)
+#[cfg(not(feature = "syntax-highlighting"))]
+fn format_wrapped_lines_plain(wrapped_lines: &[String], left_margin: &str) -> String {
+    let gutter = super::GUTTER;
+    let dimmed = anstyle::Style::new().dimmed();
+    let mut output = String::new();
+
+    for line in wrapped_lines {
+        output.push_str(&format!("{left_margin}{gutter} {gutter:#}  "));
+        output.push_str(&format!("{dimmed}{line}{dimmed:#}"));
+        output.push_str(&format!("{}", anstyle::Reset));
+        output.push('\n');
+    }
+
+    output
+}
+
 /// Formats bash/shell commands with syntax highlighting and gutter
 ///
 /// Similar to `format_with_gutter` but applies bash syntax highlighting using tree-sitter.
@@ -154,17 +185,7 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     let gutter = super::GUTTER;
     let mut output = String::new();
 
-    // Calculate available width for wrapping
-    let term_width = get_terminal_width();
-    let left_margin_width = left_margin.width();
-    let available_width = term_width.saturating_sub(3 + left_margin_width);
-
-    // Wrap lines at word boundaries
-    let mut wrapped_lines = Vec::new();
-    for line in content.lines() {
-        let wrapped = wrap_text_at_width(line, available_width);
-        wrapped_lines.extend(wrapped);
-    }
+    let wrapped_lines = wrap_content_for_gutter(content, left_margin);
 
     // Set up tree-sitter bash highlighting
     let highlight_names = vec![
@@ -257,29 +278,6 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
 /// It provides the same gutter formatting without tree-sitter dependencies.
 #[cfg(not(feature = "syntax-highlighting"))]
 pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
-    let gutter = super::GUTTER;
-    let mut output = String::new();
-
-    // Calculate available width for wrapping
-    let term_width = get_terminal_width();
-    let left_margin_width = left_margin.width();
-    let available_width = term_width.saturating_sub(3 + left_margin_width);
-
-    // Wrap lines at word boundaries
-    let mut wrapped_lines = Vec::new();
-    for line in content.lines() {
-        let wrapped = wrap_text_at_width(line, available_width);
-        wrapped_lines.extend(wrapped);
-    }
-
-    // Process each wrapped line with plain gutter (no syntax highlighting)
-    for line in &wrapped_lines {
-        output.push_str(&format!("{left_margin}{gutter} {gutter:#}  "));
-        output.push_str(line);
-        // Ensure all styles are reset at end of line to prevent leaking into child process output
-        output.push_str(&format!("{}", anstyle::Reset));
-        output.push('\n');
-    }
-
-    output
+    let wrapped_lines = wrap_content_for_gutter(content, left_margin);
+    format_wrapped_lines_plain(&wrapped_lines, left_margin)
 }

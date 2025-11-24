@@ -48,7 +48,7 @@ fn test_list_config_branches_enabled() {
     cmd.args(["branch", "feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     let temp_home = TempDir::new().unwrap();
 
@@ -88,7 +88,7 @@ fn test_list_config_cli_override() {
     cmd.args(["branch", "feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     let temp_home = TempDir::new().unwrap();
 
@@ -131,7 +131,7 @@ fn test_list_config_full_and_branches() {
     cmd.args(["branch", "feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     let temp_home = TempDir::new().unwrap();
 
@@ -172,7 +172,7 @@ fn test_list_no_config() {
     cmd.args(["branch", "feature"])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to create branch");
+        .unwrap();
 
     let temp_home = TempDir::new().unwrap();
 

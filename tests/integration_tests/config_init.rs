@@ -31,6 +31,7 @@ fn test_config_init_already_exists() {
         ⚪ Global config already exists: [1m~/.config/worktrunk/config.toml[0m
 
         💡 [2mUse 'wt config list' to view existing configuration[0m
+        💡 [2mUse 'wt config create --help' for config format reference[0m
 
         ----- stderr -----
         ");

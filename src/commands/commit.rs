@@ -74,15 +74,24 @@ impl<'a> CommitGenerator<'a> {
         Ok(())
     }
 
-    pub fn commit_staged_changes(&self, show_no_squash_note: bool) -> anyhow::Result<()> {
+    pub fn commit_staged_changes(
+        &self,
+        show_no_squash_note: bool,
+        stage_mode: StageMode,
+    ) -> anyhow::Result<()> {
         let repo = Repository::current();
 
         let stats_parts = repo.diff_stats_summary(&["diff", "--staged", "--shortstat"]);
 
+        let changes_type = match stage_mode {
+            StageMode::Tracked => "tracked changes",
+            _ => "changes",
+        };
+
         let action = if self.config.is_configured() {
-            "Generating commit message and committing..."
+            format!("Generating commit message and committing {changes_type}...")
         } else {
-            "Committing with default message..."
+            format!("Committing {changes_type} with default message...")
         };
 
         let mut parts = vec![];
@@ -127,11 +136,17 @@ impl<'a> CommitGenerator<'a> {
 /// Commit uncommitted changes with the shared commit pipeline.
 impl CommitOptions<'_> {
     pub fn commit(self) -> anyhow::Result<()> {
-        if !self.no_verify
-            && let Some(project_config) = self.ctx.repo.load_project_config()?
-        {
+        let project_config = self.ctx.repo.load_project_config()?;
+        let has_pre_commit = project_config
+            .as_ref()
+            .map(|c| c.pre_commit_command.is_some())
+            .unwrap_or(false);
+
+        if self.no_verify && has_pre_commit {
+            crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
+        } else if let Some(ref config) = project_config {
             let pipeline = HookPipeline::new(*self.ctx);
-            pipeline.run_pre_commit(&project_config, self.target_branch, self.auto_trust)?;
+            pipeline.run_pre_commit(config, self.target_branch, self.auto_trust)?;
         }
 
         if self.warn_about_untracked && self.stage_mode == StageMode::All {
@@ -160,6 +175,6 @@ impl CommitOptions<'_> {
         }
 
         CommitGenerator::new(&self.ctx.config.commit_generation)
-            .commit_staged_changes(self.show_no_squash_note)
+            .commit_staged_changes(self.show_no_squash_note, self.stage_mode)
     }
 }

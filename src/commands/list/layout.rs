@@ -132,7 +132,7 @@
 //! for candidate in candidates {
 //!     if candidate.spec.kind == ColumnKind::Message {
 //!         // Special handling: flexible width (min 20, preferred 50)
-//!     } else if let Some(ideal) = ideal_for_column(candidate.spec, ...) {
+//!     } else if let Some(ideal) = candidate.spec.kind.ideal(...) {
 //!         if let allocated = try_allocate(&mut remaining, ideal.width, ...) {
 //!             pending.push(PendingColumn { spec: candidate.spec, width: allocated, format: ideal.format });
 //!         }
@@ -321,6 +321,32 @@ impl ColumnKind {
             ColumnKind::Message => true,
         }
     }
+
+    fn ideal(
+        self,
+        widths: &ColumnWidths,
+        max_path_width: usize,
+        commit_width: usize,
+    ) -> Option<ColumnIdeal> {
+        match self {
+            ColumnKind::Gutter => ColumnIdeal::text(2), // Fixed width: symbol (1 char) + space (1 char)
+            ColumnKind::Branch => ColumnIdeal::text(widths.branch),
+            ColumnKind::Status => ColumnIdeal::text(widths.status),
+            ColumnKind::Path => ColumnIdeal::text(max_path_width),
+            ColumnKind::Time => ColumnIdeal::text(widths.time),
+            ColumnKind::CiStatus => ColumnIdeal::text(widths.ci_status),
+            ColumnKind::Commit => ColumnIdeal::text(commit_width),
+            ColumnKind::Message => None,
+            ColumnKind::WorkingDiff => {
+                ColumnIdeal::diff(widths.working_diff, ColumnKind::WorkingDiff)
+            }
+            ColumnKind::AheadBehind => {
+                ColumnIdeal::diff(widths.ahead_behind, ColumnKind::AheadBehind)
+            }
+            ColumnKind::BranchDiff => ColumnIdeal::diff(widths.branch_diff, ColumnKind::BranchDiff),
+            ColumnKind::Upstream => ColumnIdeal::diff(widths.upstream, ColumnKind::Upstream),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -402,28 +428,6 @@ struct PendingColumn<'a> {
     spec: &'a ColumnSpec,
     width: usize,
     format: ColumnFormat,
-}
-
-fn ideal_for_column(
-    spec: &ColumnSpec,
-    widths: &ColumnWidths,
-    max_path_width: usize,
-    commit_width: usize,
-) -> Option<ColumnIdeal> {
-    match spec.kind {
-        ColumnKind::Gutter => ColumnIdeal::text(2), // Fixed width: symbol (1 char) + space (1 char)
-        ColumnKind::Branch => ColumnIdeal::text(widths.branch),
-        ColumnKind::Status => ColumnIdeal::text(widths.status),
-        ColumnKind::Path => ColumnIdeal::text(max_path_width),
-        ColumnKind::Time => ColumnIdeal::text(widths.time),
-        ColumnKind::CiStatus => ColumnIdeal::text(widths.ci_status),
-        ColumnKind::Commit => ColumnIdeal::text(commit_width),
-        ColumnKind::Message => None,
-        ColumnKind::WorkingDiff => ColumnIdeal::diff(widths.working_diff, ColumnKind::WorkingDiff),
-        ColumnKind::AheadBehind => ColumnIdeal::diff(widths.ahead_behind, ColumnKind::AheadBehind),
-        ColumnKind::BranchDiff => ColumnIdeal::diff(widths.branch_diff, ColumnKind::BranchDiff),
-        ColumnKind::Upstream => ColumnIdeal::diff(widths.upstream, ColumnKind::Upstream),
-    }
 }
 
 /// Build pre-allocated column width estimates.
@@ -574,7 +578,9 @@ fn allocate_columns_with_priority(
         }
 
         // For non-message columns
-        let Some(ideal) = ideal_for_column(spec, &metadata.widths, max_path_width, commit_width)
+        let Some(ideal) = spec
+            .kind
+            .ideal(&metadata.widths, max_path_width, commit_width)
         else {
             continue;
         };

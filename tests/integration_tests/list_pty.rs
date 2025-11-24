@@ -27,7 +27,7 @@ fn exec_wt_list_in_pty(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .expect("Failed to open PTY");
+        .unwrap();
 
     // Spawn wt list inside the PTY
     let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));
@@ -41,7 +41,7 @@ fn exec_wt_list_in_pty(
     cmd.env_clear();
     cmd.env(
         "HOME",
-        std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+        home::home_dir().unwrap().to_string_lossy().to_string(),
     );
     cmd.env(
         "PATH",
@@ -63,17 +63,11 @@ fn exec_wt_list_in_pty(
         cmd.env(key, value);
     }
 
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
-        .expect("Failed to spawn command in PTY");
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
 
     // Get reader for the PTY master
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .expect("Failed to clone PTY reader");
+    let mut reader = pair.master.try_clone_reader().unwrap();
 
     // Read output with timeout to handle progressive rendering
     let mut buf = Vec::new();
@@ -104,7 +98,7 @@ fn exec_wt_list_in_pty(
     }
 
     // Wait for child to exit
-    let exit_status = child.wait().expect("Failed to wait for child");
+    let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
 
     let output = String::from_utf8_lossy(&buf).to_string();
@@ -136,20 +130,20 @@ fn test_list_pty_status_column_padding_with_emoji() {
         .map(|i| format!("original line {}", i))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(wli_seq.join("main.txt"), &initial_content).expect("write failed");
+    std::fs::write(wli_seq.join("main.txt"), &initial_content).unwrap();
 
     let mut cmd = std::process::Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "main.txt"])
         .current_dir(&wli_seq)
         .output()
-        .expect("git add failed");
+        .unwrap();
 
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Initial content"])
         .current_dir(&wli_seq)
         .output()
-        .expect("git commit failed");
+        .unwrap();
 
     // Modify to create large diff: +164, -111 (roughly)
     let modified_content = (1..=253)
@@ -162,57 +156,57 @@ fn test_list_pty_status_column_padding_with_emoji() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(wli_seq.join("main.txt"), &modified_content).expect("write failed");
+    std::fs::write(wli_seq.join("main.txt"), &modified_content).unwrap();
 
     // Add untracked and modified files for Status symbols
-    std::fs::write(wli_seq.join("untracked.txt"), "new file").expect("write untracked failed");
+    std::fs::write(wli_seq.join("untracked.txt"), "new file").unwrap();
 
     // Set user status emoji for wli-sequence
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", "worktrunk.status.wli-sequence", "🤖"])
         .current_dir(repo.root_path())
         .output()
-        .expect("config set failed");
+        .unwrap();
 
     // Create pr-link worktree with emoji
     let pr_link = repo.add_worktree("pr-link", "pr-link");
-    std::fs::write(pr_link.join("pr.txt"), "PR commit").expect("write failed");
+    std::fs::write(pr_link.join("pr.txt"), "PR commit").unwrap();
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "pr.txt"])
         .current_dir(&pr_link)
         .output()
-        .expect("git add failed");
+        .unwrap();
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "PR commit"])
         .current_dir(&pr_link)
         .output()
-        .expect("git commit failed");
+        .unwrap();
 
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", "worktrunk.status.pr-link", "🤖"])
         .current_dir(repo.root_path())
         .output()
-        .expect("config set failed");
+        .unwrap();
 
     // Create main-symbol worktree with emoji
     let main_symbol = repo.add_worktree("main-symbol", "main-symbol");
-    std::fs::write(main_symbol.join("symbol.txt"), "Symbol commit").expect("write failed");
+    std::fs::write(main_symbol.join("symbol.txt"), "Symbol commit").unwrap();
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["add", "symbol.txt"])
         .current_dir(&main_symbol)
         .output()
-        .expect("git add failed");
+        .unwrap();
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["commit", "-m", "Symbol commit"])
         .current_dir(&main_symbol)
         .output()
-        .expect("git commit failed");
+        .unwrap();
 
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", "worktrunk.status.main-symbol", "💬"])
         .current_dir(repo.root_path())
         .output()
-        .expect("config set failed");
+        .unwrap();
 
     // Run wt list in PTY
     let env_vars = vec![(

@@ -56,3 +56,58 @@ fn help_remove() {
 fn help_merge() {
     snapshot_help("help_merge", &["merge", "--help"]);
 }
+
+#[test]
+fn help_config_create() {
+    snapshot_help("help_config_create", &["config", "create", "--help"]);
+}
+
+#[test]
+fn help_config_list() {
+    snapshot_help("help_config_list", &["config", "list", "--help"]);
+}
+
+#[test]
+fn help_config_refresh_cache() {
+    snapshot_help(
+        "help_config_refresh_cache",
+        &["config", "refresh-cache", "--help"],
+    );
+}
+
+#[test]
+fn help_config_status_set() {
+    snapshot_help(
+        "help_config_status_set",
+        &["config", "status", "set", "--help"],
+    );
+}
+
+#[test]
+fn help_config_status_unset() {
+    snapshot_help(
+        "help_config_status_unset",
+        &["config", "status", "unset", "--help"],
+    );
+}
+
+#[test]
+fn help_config_approvals() {
+    snapshot_help("help_config_approvals", &["config", "approvals", "--help"]);
+}
+
+#[test]
+fn help_config_approvals_ask() {
+    snapshot_help(
+        "help_config_approvals_ask",
+        &["config", "approvals", "ask", "--help"],
+    );
+}
+
+#[test]
+fn help_config_approvals_clear() {
+    snapshot_help(
+        "help_config_approvals_clear",
+        &["config", "approvals", "clear", "--help"],
+    );
+}

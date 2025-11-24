@@ -3,7 +3,7 @@ source: tests/integration_tests/push.rs
 info:
   program: wt
   args:
-    - beta
+    - step
     - push
     - main
   env:
@@ -19,13 +19,15 @@ info:
     SOURCE_DATE_EPOCH: "1761609600"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
-success: false
-exit_code: 2
+success: true
+exit_code: 0
 ----- stdout -----
+🔄 [36mStashing changes in [1m[36m[REPO][0m[36m...[0m
+🔄 [36mPushing 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m
+[107m [0m  * [SHA] Add feature file
+[107m [0m   feature.txt | 1 [32m+[m
+[107m [0m   1 file changed, 1 insertion(+)
+🔄 [36mRestoring stashed changes in [1m[36m[REPO][0m[36m...[0m
+✅ [32mPushed to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 
 ----- stderr -----
-[1m[31merror:[0m unrecognized subcommand '[1m[33mpush[0m'
-
-[1m[32mUsage:[0m [1m[36mwt beta[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
-
-For more information, try '[1m[36m--help[0m'.

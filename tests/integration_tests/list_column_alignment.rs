@@ -34,8 +34,7 @@ fn test_status_column_alignment_with_header() {
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "beta", &[], None);
-        cmd.arg("list");
+        let mut cmd = make_snapshot_cmd(&repo, "list", &[], None);
         assert_cmd_snapshot!("status_column_alignment_check", cmd);
     });
 }
@@ -87,8 +86,7 @@ fn test_status_column_width_consistency() {
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "beta", &[], None);
-        cmd.arg("list");
+        let mut cmd = make_snapshot_cmd(&repo, "list", &[], None);
         assert_cmd_snapshot!("status_column_width_consistency", cmd);
     });
 }

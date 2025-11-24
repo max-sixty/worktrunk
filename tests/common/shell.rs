@@ -15,7 +15,7 @@ use std::process::Command;
 /// being deleted after the lock is released. In practice, this is not an issue
 /// in the test environment.
 fn get_dev_detach_bin() -> PathBuf {
-    let manifest_dir = std::env::current_dir().expect("Failed to get current directory");
+    let manifest_dir = std::env::current_dir().unwrap();
     let bin_path = manifest_dir.join("target/debug/dev-detach");
 
     // Lock file ensures only one process builds at a time
@@ -41,7 +41,7 @@ fn get_dev_detach_bin() -> PathBuf {
         let status = Command::new("cargo")
             .args(["build", "-p", "dev-detach", "--quiet"])
             .status()
-            .expect("Failed to execute cargo build");
+            .unwrap();
 
         if !status.success() {
             panic!("Failed to build dev-detach binary");
@@ -172,7 +172,7 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
         );
     }
 
-    String::from_utf8(output.stdout).expect("Invalid UTF-8 in output")
+    String::from_utf8(output.stdout).unwrap()
 }
 
 /// Generate `wt config shell init <shell>` output for the repo.
@@ -184,9 +184,9 @@ pub fn generate_init_code(repo: &TestRepo, shell: &str) -> String {
         .args(["config", "shell", "init", shell])
         .current_dir(repo.root_path())
         .output()
-        .expect("Failed to generate init code");
+        .unwrap();
 
-    let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8 in init code");
+    let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() && stdout.trim().is_empty() {

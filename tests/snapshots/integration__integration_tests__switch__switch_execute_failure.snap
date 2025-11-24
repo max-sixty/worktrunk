@@ -26,7 +26,7 @@ exit_code: 1
 ----- stdout -----
 ✅ [32mCreated new worktree for [1m[32mfail-test[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].fail-test[0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [1m[34mexit[0m 1[0m
+[107m [0m  [1m[2m[34mexit[0m 1[0m
 ❌ [31mexit status: 1[0m
 
 ----- stderr -----

@@ -92,9 +92,9 @@ fn test_clear_approvals_with_approvals() {
         .approve_command_to(
             project_id,
             "echo 'test'".to_string(),
-            repo.test_config_path(),
+            Some(repo.test_config_path()),
         )
-        .expect("Failed to save approval");
+        .unwrap();
 
     // Now clear approvals
     snapshot_clear_approvals("clear_approvals_with_approvals", &repo, &[]);
@@ -122,9 +122,9 @@ fn test_clear_approvals_global_with_approvals() {
         .approve_command_to(
             project_id,
             "echo 'test'".to_string(),
-            repo.test_config_path(),
+            Some(repo.test_config_path()),
         )
-        .expect("Failed to save approval");
+        .unwrap();
 
     // Now clear all global approvals
     snapshot_clear_approvals(
@@ -148,14 +148,14 @@ fn test_clear_approvals_after_clear() {
         .approve_command_to(
             project_id.clone(),
             "echo 'test'".to_string(),
-            repo.test_config_path(),
+            Some(repo.test_config_path()),
         )
-        .expect("Failed to save approval");
+        .unwrap();
 
     // Clear approvals
     let mut cmd = make_snapshot_cmd(&repo, "config", &[], None);
     cmd.arg("approvals").arg("clear");
-    cmd.output().expect("Failed to clear approvals");
+    cmd.output().unwrap();
 
     // Try to clear again (should show "no approvals")
     snapshot_clear_approvals("clear_approvals_after_clear", &repo, &[]);
@@ -182,23 +182,23 @@ lint = "echo 'third'"
         .approve_command_to(
             project_id.clone(),
             "echo 'first'".to_string(),
-            repo.test_config_path(),
+            Some(repo.test_config_path()),
         )
-        .expect("Failed to save approval");
+        .unwrap();
     config
         .approve_command_to(
             project_id.clone(),
             "echo 'second'".to_string(),
-            repo.test_config_path(),
+            Some(repo.test_config_path()),
         )
-        .expect("Failed to save approval");
+        .unwrap();
     config
         .approve_command_to(
             project_id,
             "echo 'third'".to_string(),
-            repo.test_config_path(),
+            Some(repo.test_config_path()),
         )
-        .expect("Failed to save approval");
+        .unwrap();
 
     // Now clear approvals (should show count of 3)
     snapshot_clear_approvals("clear_approvals_multiple_approvals", &repo, &[]);

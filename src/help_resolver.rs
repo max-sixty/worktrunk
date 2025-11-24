@@ -57,9 +57,7 @@ fn extract_subcommand_path(
 /// Navigate to a subcommand by following a path
 fn navigate_to_command<'a>(mut cmd: &'a mut Command, path: &[String]) -> &'a mut Command {
     for name in path {
-        cmd = cmd
-            .find_subcommand_mut(name)
-            .expect("subcommand should exist if it was in the path");
+        cmd = cmd.find_subcommand_mut(name).unwrap();
     }
     cmd
 }

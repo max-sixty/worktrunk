@@ -199,6 +199,22 @@ pub struct ListData {
 }
 
 impl ListItem {
+    /// Create a ListItem for a branch (not a worktree)
+    pub(crate) fn new_branch(head: String, branch: String) -> Self {
+        Self {
+            head,
+            branch: Some(branch),
+            commit: None,
+            counts: None,
+            branch_diff: None,
+            upstream: None,
+            pr_status: None,
+            status_symbols: None,
+            display: DisplayFields::default(),
+            kind: ItemKind::Branch,
+        }
+    }
+
     pub fn branch_name(&self) -> &str {
         self.branch.as_deref().unwrap_or("(detached)")
     }
@@ -272,8 +288,9 @@ impl ListItem {
 /// Main branch divergence state
 ///
 /// Represents relationship to the main/primary branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum MainDivergence {
+    #[strum(serialize = "")]
     /// Up to date with main branch
     #[default]
     None,
@@ -309,11 +326,27 @@ impl serde::Serialize for MainDivergence {
     }
 }
 
+impl MainDivergence {
+    /// Compute divergence state from ahead/behind counts.
+    ///
+    /// Note: This cannot produce `IsMain` - that variant is set explicitly
+    /// when the worktree is on the main branch.
+    pub fn from_counts(ahead: usize, behind: usize) -> Self {
+        match (ahead, behind) {
+            (0, 0) => Self::None,
+            (_, 0) => Self::Ahead,
+            (0, _) => Self::Behind,
+            _ => Self::Diverged,
+        }
+    }
+}
+
 /// Upstream/remote divergence state
 ///
 /// Represents relationship to the remote tracking branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum UpstreamDivergence {
+    #[strum(serialize = "")]
     /// Up to date with remote
     #[default]
     None,
@@ -346,6 +379,18 @@ impl serde::Serialize for UpstreamDivergence {
     }
 }
 
+impl UpstreamDivergence {
+    /// Compute divergence state from ahead/behind counts.
+    pub fn from_counts(ahead: usize, behind: usize) -> Self {
+        match (ahead, behind) {
+            (0, 0) => Self::None,
+            (_, 0) => Self::Ahead,
+            (0, _) => Self::Behind,
+            _ => Self::Diverged,
+        }
+    }
+}
+
 /// Combined branch and operation state
 ///
 /// Represents the primary state of a branch/worktree in a single position.
@@ -356,8 +401,9 @@ impl serde::Serialize for UpstreamDivergence {
 /// 4. MergeTreeConflicts (⚠) - potential problem
 /// 5. MatchesMain (≡) - removable
 /// 6. NoCommits (∅) - removable
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum BranchOpState {
+    #[strum(serialize = "")]
     /// Normal working branch
     #[default]
     None,
@@ -715,31 +761,10 @@ impl serde::Serialize for StatusSymbols {
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("StatusSymbols", 2)?;
 
-        // Status variant names
-        let branch_op_state_variant = match self.branch_op_state {
-            BranchOpState::None => "",
-            BranchOpState::Conflicts => "Conflicts",
-            BranchOpState::Rebase => "Rebase",
-            BranchOpState::Merge => "Merge",
-            BranchOpState::MergeTreeConflicts => "MergeTreeConflicts",
-            BranchOpState::MatchesMain => "MatchesMain",
-            BranchOpState::NoCommits => "NoCommits",
-        };
-
-        let main_divergence_variant = match self.main_divergence {
-            MainDivergence::None => "",
-            MainDivergence::IsMain => "IsMain",
-            MainDivergence::Ahead => "Ahead",
-            MainDivergence::Behind => "Behind",
-            MainDivergence::Diverged => "Diverged",
-        };
-
-        let upstream_divergence_variant = match self.upstream_divergence {
-            UpstreamDivergence::None => "",
-            UpstreamDivergence::Ahead => "Ahead",
-            UpstreamDivergence::Behind => "Behind",
-            UpstreamDivergence::Diverged => "Diverged",
-        };
+        // Status variant names (derived via strum::IntoStaticStr)
+        let branch_op_state_variant: &'static str = self.branch_op_state.into();
+        let main_divergence_variant: &'static str = self.main_divergence.into();
+        let upstream_divergence_variant: &'static str = self.upstream_divergence.into();
 
         // Worktree state: ⎇ = Branch, ⌫ = Prunable, ⊠ = Locked
         let worktree_state_variant = if self.worktree_state.contains('⌫') {

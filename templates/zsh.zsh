@@ -2,9 +2,10 @@
 
 # Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
 if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
-    # Use WORKTRUNK_BIN if set, otherwise default to '{{ cmd_prefix }}'
+    # Use WORKTRUNK_BIN if set, otherwise resolve binary path
+    # Must resolve BEFORE defining shell function, so lazy completion can call binary directly
     # This allows testing development builds: export WORKTRUNK_BIN=./target/debug/{{ cmd_prefix }}
-    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-{{ cmd_prefix }}}"
+    _WORKTRUNK_CMD="${WORKTRUNK_BIN:-$(command -v {{ cmd_prefix }})}"
 
 {{ posix_shim }}
 
@@ -12,7 +13,7 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
     {{ cmd_prefix }}() {
         # Initialize _WORKTRUNK_CMD if not set (e.g., after shell snapshot restore)
         if [[ -z "$_WORKTRUNK_CMD" ]]; then
-            _WORKTRUNK_CMD="${WORKTRUNK_BIN:-{{ cmd_prefix }}}"
+            _WORKTRUNK_CMD="${WORKTRUNK_BIN:-$(command -v {{ cmd_prefix }})}"
         fi
 
         local use_source=false
@@ -52,10 +53,24 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
         return $result
     }
 
-    # Register Clap-based completions (auto-updates after wt upgrades)
+    # Lazy completions via compdef - no fpath setup needed
+    # Regenerates on first TAB in each shell session
     if (( $+functions[compdef] )); then
-        local completion_script
-        completion_script=$(COMPLETE=zsh "$_WORKTRUNK_CMD" 2>/dev/null)
-        eval "$completion_script"
+        _{{ cmd_prefix }}_lazy_complete() {
+            # Load dynamic completion script once
+            unfunction _{{ cmd_prefix }}_lazy_complete 2>/dev/null || true
+
+            # Generate & eval the real completer from the binary
+            local _script
+            _script="$(COMPLETE=zsh "$_WORKTRUNK_CMD" 2>/dev/null)" || return
+            eval "$_script"
+
+            # Delegate to clap's generated function
+            if (( $+functions[_clap_dynamic_completer_{{ cmd_prefix }}] )); then
+                _clap_dynamic_completer_{{ cmd_prefix }} "$@"
+            fi
+        }
+
+        compdef _{{ cmd_prefix }}_lazy_complete {{ cmd_prefix }}
     fi
 fi

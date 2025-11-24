@@ -23,13 +23,13 @@ success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mRunning post-create:[0m
-[107m [0m  [1m[35mif[0m [ ! -f test.txt ]; [1m[35mthen[0m[1m[35m[0m[0m
-[107m [0m    [1m[34mecho[0m [32m'File does not exist'[0m [36m>[0m result.txt[0m
-[107m [0m  [1m[34melse[0m[0m
-[107m [0m    [1m[34mecho[0m [32m'File exists'[0m [36m>[0m result.txt[0m
-[107m [0m  [1m[34mfi[0m[0m
+[107m [0m  [1m[2m[35mif[0m [ ! -f test.txt ]; [1m[2m[35mthen[0m[1m[2m[35m[0m[0m
+[107m [0m    [1m[2m[34mecho[0m [2m[32m'File does not exist'[0m [2m[36m>[0m result.txt[0m
+[107m [0m  [1m[2m[34melse[0m[0m
+[107m [0m    [1m[2m[34mecho[0m [2m[32m'File exists'[0m [2m[36m>[0m result.txt[0m
+[107m [0m  [1m[2m[34mfi[0m[0m
 ✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
-💡 [2mTo enable automatic cd, run: wt config shell install[0m
+💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
 [0m

@@ -18,125 +18,119 @@ wt list - List worktrees and optionally branches
 Usage: wt list [OPTIONS]
 
 Options:
-  --format <FORMAT>              
-      Output format (table, json)
-                                 
-      [default: table]           
+      --format <FORMAT>
+          Output format (table, json)
+          
+          [default: table]
 
-  --branches                            
-      Include branches without worktrees
+      --branches
+          Include branches without worktrees
 
-  --remotes                  
-      Include remote branches
+      --remotes
+          Include remote branches
 
-  --full                       
-      Show CI, conflicts, diffs
+      --full
+          Show CI, conflicts, diffs
 
-  --progressive                                                                                                                             
-      Show fast info immediately, update with slow info                                                                                     
-                                                                                                                                            
-      Displays local data (branches, paths, status) first, then updates with                                                                
-remote data (CI, upstream) as it arrives. Auto-enabled for TTY.                                                                             
+      --progressive
+          Show fast info immediately, update with slow info
+          
+          Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
   -h, --help
-      Print help (see a summary with '-h')
+          Print help (see a summary with '-h')
 
 Global Options:
   -C <path>
-      Change working directory
+          Working directory for this command
 
-  --config <path>          
-      User config file path
+      --config <path>
+          User config file path
 
   -v, --verbose
-      Show commands and debug info
+          Show commands and debug info
 
-[38;5;10mColumns[39m
+[32mColumns[0m
 
-- Branch: Branch name
-- Status: Quick status symbols (see STATUS SYMBOLS below)
-- HEAD±: Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
-- main↕: Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
-- main…± (--full): Line diffs in commits ahead of main (+added -deleted)
-- Path: Worktree directory location
-- Remote⇅: Commits ahead↑/behind↓ relative to tracking branch (e.g. 
-origin/branch)
-- CI (--full): CI pipeline status (tries PR/MR checks first, falls back to 
-branch workflows)
-  - [32m●[0m passed (green) - All checks passed
-  - [34m●[0m running (blue) - Checks in progress
-  - [31m●[0m failed (red) - Checks failed
-  - [33m●[0m conflicts (yellow) - Merge conflicts with base
-  - [90m●[0m no-ci (gray) - PR/MR or workflow found but no checks configured
-  - (blank) - No PR/MR or workflow found, or gh/glab CLI unavailable
+- [1mBranch:[0m Branch name
+- [1mStatus:[0m Quick status symbols (see Status Symbols below)
+- [1mHEAD±:[0m Uncommitted changes vs HEAD (+added -deleted lines, staged + unstaged)
+- [1mmain↕:[0m Commit count ahead↑/behind↓ relative to main (commits in HEAD vs main)
+- [1mmain…±[0m ([2m--full[0m): Line diffs in commits ahead of main (+added -deleted)
+- [1mPath:[0m Worktree directory location
+- [1mRemote⇅:[0m Commits ahead↑/behind↓ relative to tracking branch (e.g. [2morigin/branch[0m)
+- [1mCI[0m ([2m--full[0m): CI pipeline status (tries PR/MR checks first, falls back to branch workflows)
+  - [2m●[0m [1mpassed[0m (green) - All checks passed
+  - [2m●[0m [1mrunning[0m (blue) - Checks in progress
+  - [2m●[0m [1mfailed[0m (red) - Checks failed
+  - [2m●[0m [1mconflicts[0m (yellow) - Merge conflicts with base
+  - [2m●[0m [1mno-ci[0m (gray) - PR/MR or workflow found but no checks configured
+  - (blank) - No PR/MR or workflow found, or [2mgh[0m/[2mglab[0m CLI unavailable
   - (dimmed) - Stale: unpushed local changes differ from PR/MR head
-- Commit: Short commit hash (8 chars)
-- Age: Time since last commit (relative)
-- Message: Last commit message (truncated)
+- [1mCommit:[0m Short commit hash (8 chars)
+- [1mAge:[0m Time since last commit (relative)
+- [1mMessage:[0m Last commit message (truncated)
 
-[38;5;10mStatus Symbols[39m
+[32mStatus Symbols[0m
 
-Order: ?!+»✘ ✖⚠≡∅ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠
+Order: [2m?!+»✘ ✖⚠≡∅ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠[0m
 
-- [36m?[0m Untracked files present
-- [36m![0m Modified files (unstaged changes)
-- [36m+[0m Staged files (ready to commit)
-- [36m»[0m Renamed files
-- [36m✘[0m Deleted files
-- [31m✖[0m Merge conflicts - unresolved conflicts in working tree (fix before 
-continuing)
-- [33m⚠[0m Would conflict - merging into main would fail
+- [2m?[0m Untracked files present
+- [2m![0m Modified files (unstaged changes)
+- [2m+[0m Staged files (ready to commit)
+- [2m»[0m Renamed files
+- [2m✘[0m Deleted files
+- [2m✖[0m [1mMerge conflicts[0m - unresolved conflicts in working tree (fix before continuing)
+- [2m⚠[0m [1mWould conflict[0m - merging into main would fail
 - [2m≡[0m Working tree matches main (identical contents, regardless of commit history)
 - [2m∅[0m No commits (no commits ahead AND no uncommitted changes)
-- [33m↻[0m Rebase in progress
-- [33m⋈[0m Merge in progress
-- ↑ Ahead of main branch
-- ↓ Behind main branch
-- ↕ Diverged (both ahead and behind main)
-- ⇡ Ahead of remote tracking branch
-- ⇣ Behind remote tracking branch
-- ⇅ Diverged (both ahead and behind remote)
-- ⎇ Branch indicator (shown for branches without worktrees)
-- ⌫ Prunable worktree (directory missing, can be pruned)
-- [33m⊠[0m Locked worktree (protected from auto-removal)
+- [2m↻[0m Rebase in progress
+- [2m⋈[0m Merge in progress
+- [2m↑[0m Ahead of main branch
+- [2m↓[0m Behind main branch
+- [2m↕[0m Diverged (both ahead and behind main)
+- [2m⇡[0m Ahead of remote tracking branch
+- [2m⇣[0m Behind remote tracking branch
+- [2m⇅[0m Diverged (both ahead and behind remote)
+- [2m⎇[0m Branch indicator (shown for branches without worktrees)
+- [2m⌫[0m Prunable worktree (directory missing, can be pruned)
+- [2m⊠[0m Locked worktree (protected from auto-removal)
 
-Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).
+*Rows are dimmed when no unique work (≡ matches main OR ∅ no commits).*
 
-[38;5;10mJSON Output[39m
+[32mJSON Output[0m
 
-Use --format=json for structured data. Each object contains two status maps
-with the same fields in the same order as STATUS SYMBOLS above:
+Use [2m--format=json[0m for structured data. Each object contains two status maps
+with the same fields in the same order as Status Symbols above:
 
-status - variant names for querying:
-- working_tree: {untracked, modified, staged, renamed, deleted} booleans
-- branch_state: "" | "Conflicts" | "MergeTreeConflicts" | "MatchesMain" | 
-"NoCommits"
-- git_operation: "" | "Rebase" | "Merge"
-- main_divergence: "" | "Ahead" | "Behind" | "Diverged"
-- upstream_divergence: "" | "Ahead" | "Behind" | "Diverged"
-- user_status: string (optional)
+[1m`status`[0m - variant names for querying:
 
-status_symbols - Unicode symbols for display (same fields, plus worktree_attrs: 
-⎇/⌫/⊠)
+- [2mworking_tree[0m: [2m{untracked, modified, staged, renamed, deleted}[0m booleans
+- [2mbranch_state[0m: [2m""[0m | [2m"Conflicts"[0m | [2m"MergeTreeConflicts"[0m | [2m"MatchesMain"[0m | [2m"NoCommits"[0m
+- [2mgit_operation[0m: [2m""[0m | [2m"Rebase"[0m | [2m"Merge"[0m
+- [2mmain_divergence[0m: [2m""[0m | [2m"Ahead"[0m | [2m"Behind"[0m | [2m"Diverged"[0m
+- [2mupstream_divergence[0m: [2m""[0m | [2m"Ahead"[0m | [2m"Behind"[0m | [2m"Diverged"[0m
+- [2muser_status[0m: string (optional)
 
-Note: locked and prunable are top-level fields on worktree objects, not in 
-status.
+[1m`status_symbols`[0m - Unicode symbols for display (same fields, plus [2mworktree_attrs[0m: ⎇/⌫/⊠)
 
-Query examples:
+Note: [2mlocked[0m and [2mprunable[0m are top-level fields on worktree objects, not in status.
 
-  # Find worktrees with conflicts
-  jq '.[] | select(.status.branch_state == "Conflicts")'
+[1mQuery examples:[0m
 
-  # Find worktrees with untracked files
-  jq '.[] | select(.status.working_tree.untracked)'
-
-  # Find worktrees in rebase or merge
-  jq '.[] | select(.status.git_operation != "")'
-
-  # Get branches ahead of main
-  jq '.[] | select(.status.main_divergence == "Ahead")'
-
-  # Find locked worktrees
-  jq '.[] | select(.locked != null)'
+  [2m# Find worktrees with conflicts[0m
+  [2mjq '.[] | select(.status.branch_state == "Conflicts")'[0m
+  [2m[0m
+  [2m# Find worktrees with untracked files[0m
+  [2mjq '.[] | select(.status.working_tree.untracked)'[0m
+  [2m[0m
+  [2m# Find worktrees in rebase or merge[0m
+  [2mjq '.[] | select(.status.git_operation != "")'[0m
+  [2m[0m
+  [2m# Get branches ahead of main[0m
+  [2mjq '.[] | select(.status.main_divergence == "Ahead")'[0m
+  [2m[0m
+  [2m# Find locked worktrees[0m
+  [2mjq '.[] | select(.locked != null)'[0m
 
 ----- stderr -----

@@ -15,18 +15,16 @@ fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: b
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().expect("Failed to spawn command");
+        let mut child = cmd.spawn().unwrap();
 
         // Write approval response
         {
-            let stdin = child.stdin.as_mut().expect("Failed to get stdin");
+            let stdin = child.stdin.as_mut().unwrap();
             let response = if approve { b"y\n" } else { b"n\n" };
-            stdin.write_all(response).expect("Failed to write to stdin");
+            stdin.write_all(response).unwrap();
         }
 
-        let output = child
-            .wait_with_output()
-            .expect("Failed to wait for command");
+        let output = child.wait_with_output().unwrap();
 
         // Use insta snapshot for combined output
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -143,7 +141,7 @@ fn test_force_flag_does_not_save_approvals() {
         .arg("test-force")
         .arg("--force")
         .current_dir(repo.root_path());
-    cmd.output().expect("Failed to remove worktree");
+    cmd.output().unwrap();
 
     // Run again WITHOUT --force - should prompt
     snapshot_approval(
@@ -206,7 +204,7 @@ approved-commands = ["echo 'Second command'"]
             project_id
         ),
     )
-    .expect("Failed to write test config");
+    .unwrap();
 
     snapshot_approval(
         "decline_approval_skips_only_unapproved",
@@ -248,18 +246,16 @@ fn snapshot_run_hook(test_name: &str, repo: &TestRepo, hook_type: &str, approve:
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().expect("Failed to spawn command");
+        let mut child = cmd.spawn().unwrap();
 
         // Write approval response
         {
-            let stdin = child.stdin.as_mut().expect("Failed to get stdin");
+            let stdin = child.stdin.as_mut().unwrap();
             let response = if approve { b"y\n" } else { b"n\n" };
-            stdin.write_all(response).expect("Failed to write to stdin");
+            stdin.write_all(response).unwrap();
         }
 
-        let output = child
-            .wait_with_output()
-            .expect("Failed to wait for command");
+        let output = child.wait_with_output().unwrap();
 
         // Use insta snapshot for combined output
         let stdout = String::from_utf8_lossy(&output.stdout);

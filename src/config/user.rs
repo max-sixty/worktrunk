@@ -43,6 +43,17 @@ pub enum StageMode {
     None,
 }
 
+impl StageMode {
+    /// Returns the lowercase string representation for CLI display.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StageMode::All => "all",
+            StageMode::Tracked => "tracked",
+            StageMode::None => "none",
+        }
+    }
+}
+
 /// User-level configuration for worktree path formatting and LLM integration.
 ///
 /// This config is stored at `~/.config/worktrunk/config.toml` (or platform equivalent)
@@ -99,7 +110,7 @@ pub struct WorktrunkConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListConfig>,
 
-    /// Configuration for the `wt beta commit` command (also used by merge)
+    /// Configuration for the `wt step commit` command (also used by merge)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<CommitConfig>,
 
@@ -193,7 +204,7 @@ pub struct ListConfig {
     pub remotes: Option<bool>,
 }
 
-/// Configuration for the `wt beta commit` command
+/// Configuration for the `wt step commit` command
 ///
 /// Also used by `wt merge` for shared settings like `stage`.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
@@ -334,31 +345,16 @@ impl WorktrunkConfig {
 
     /// Add an approved command and save to config file
     pub fn approve_command(&mut self, project: String, command: String) -> Result<(), ConfigError> {
-        // Don't add duplicates
-        if self.is_command_approved(&project, &command) {
-            return Ok(());
-        }
-
-        self.projects
-            .entry(project)
-            .or_default()
-            .approved_commands
-            .push(command);
-        self.save()
+        self.approve_command_to(project, command, None)
     }
 
     /// Add an approved command and save to a specific config file (for testing)
-    ///
-    /// This is the same as `approve_command()` but saves to an explicit path
-    /// instead of the default user config location. Use this in tests to avoid
-    /// polluting the user's actual config.
     pub fn approve_command_to(
         &mut self,
         project: String,
         command: String,
-        config_path: &std::path::Path,
+        config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
-        // Don't add duplicates
         if self.is_command_approved(&project, &command) {
             return Ok(());
         }
@@ -368,97 +364,78 @@ impl WorktrunkConfig {
             .or_default()
             .approved_commands
             .push(command);
-        self.save_to(config_path)
+        self.save_impl(config_path)
     }
 
     /// Revoke an approved command and save to config file
-    ///
-    /// Removes the specified command from the project's approved commands list.
-    /// If this results in an empty project entry, the project is removed entirely.
     pub fn revoke_command(&mut self, project: &str, command: &str) -> Result<(), ConfigError> {
+        self.revoke_command_to(project, command, None)
+    }
+
+    /// Revoke an approved command and save to a specific config file (for testing)
+    #[doc(hidden)]
+    pub fn revoke_command_to(
+        &mut self,
+        project: &str,
+        command: &str,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), ConfigError> {
         if let Some(project_config) = self.projects.get_mut(project) {
             let len_before = project_config.approved_commands.len();
             project_config.approved_commands.retain(|c| c != command);
             let changed = len_before != project_config.approved_commands.len();
 
-            // Clean up empty project entries
             if project_config.approved_commands.is_empty() {
                 self.projects.remove(project);
             }
 
             if changed {
-                self.save()?;
+                self.save_impl(config_path)?;
             }
         }
         Ok(())
     }
 
     /// Remove all approvals for a project and save to config file
-    ///
-    /// Removes the entire project entry from the configuration.
     pub fn revoke_project(&mut self, project: &str) -> Result<(), ConfigError> {
-        if self.projects.remove(project).is_some() {
-            self.save()?;
-        }
-        Ok(())
-    }
-
-    /// Revoke an approved command and save to a specific config file (for testing)
-    ///
-    /// This is the same as `revoke_command()` but saves to an explicit path
-    /// instead of the default user config location. Use this in tests to avoid
-    /// polluting the user's actual config.
-    #[doc(hidden)]
-    pub fn revoke_command_to(
-        &mut self,
-        project: &str,
-        command: &str,
-        config_path: &std::path::Path,
-    ) -> Result<(), ConfigError> {
-        if let Some(project_config) = self.projects.get_mut(project) {
-            let len_before = project_config.approved_commands.len();
-            project_config.approved_commands.retain(|c| c != command);
-            let changed = len_before != project_config.approved_commands.len();
-
-            // Clean up empty project entries
-            if project_config.approved_commands.is_empty() {
-                self.projects.remove(project);
-            }
-
-            if changed {
-                self.save_to(config_path)?;
-            }
-        }
-        Ok(())
+        self.revoke_project_to(project, None)
     }
 
     /// Remove all approvals for a project and save to a specific config file (for testing)
-    ///
-    /// This is the same as `revoke_project()` but saves to an explicit path
-    /// instead of the default user config location. Use this in tests to avoid
-    /// polluting the user's actual config.
     #[doc(hidden)]
     pub fn revoke_project_to(
         &mut self,
         project: &str,
-        config_path: &std::path::Path,
+        config_path: Option<&std::path::Path>,
     ) -> Result<(), ConfigError> {
         if self.projects.remove(project).is_some() {
-            self.save_to(config_path)?;
+            self.save_impl(config_path)?;
         }
         Ok(())
     }
 
     /// Save the current configuration to the default config file location
     pub fn save(&self) -> Result<(), ConfigError> {
-        let config_path = get_config_path()
-            .ok_or_else(|| ConfigError::Message("Could not determine config path".to_string()))?;
-        self.save_to(&config_path)
+        self.save_impl(None)
+    }
+
+    /// Internal save implementation that handles both default and custom paths
+    fn save_impl(&self, config_path: Option<&std::path::Path>) -> Result<(), ConfigError> {
+        match config_path {
+            Some(path) => self.save_to(path),
+            None => {
+                let path = get_config_path().ok_or_else(|| {
+                    ConfigError::Message("Could not determine config path".to_string())
+                })?;
+                self.save_to(&path)
+            }
+        }
     }
 
     /// Save the current configuration to a specific file path
     ///
     /// Use this in tests to save to a temporary location instead of the user's config.
+    /// Preserves comments and formatting in the existing file when possible.
     pub fn save_to(&self, config_path: &std::path::Path) -> Result<(), ConfigError> {
         // Create parent directory if it doesn't exist
         if let Some(parent) = config_path.parent() {
@@ -467,8 +444,49 @@ impl WorktrunkConfig {
             })?;
         }
 
-        let toml_string = toml::to_string_pretty(self)
-            .map_err(|e| ConfigError::Message(format!("Failed to serialize config: {}", e)))?;
+        // If file exists, use toml_edit to preserve comments and formatting
+        let toml_string = if config_path.exists() {
+            let existing_content = std::fs::read_to_string(config_path)
+                .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+
+            let mut doc: toml_edit::DocumentMut = existing_content
+                .parse()
+                .map_err(|e| ConfigError::Message(format!("Failed to parse config file: {}", e)))?;
+
+            // Only update the projects section - that's the only thing we modify programmatically
+            // Ensure projects table exists
+            if !doc.contains_key("projects") {
+                doc["projects"] = toml_edit::Item::Table(toml_edit::Table::new());
+            }
+
+            if let Some(projects) = doc["projects"].as_table_mut() {
+                // Remove stale projects
+                let stale: Vec<_> = projects
+                    .iter()
+                    .filter(|(k, _)| !self.projects.contains_key(*k))
+                    .map(|(k, _)| k.to_string())
+                    .collect();
+                for key in stale {
+                    projects.remove(&key);
+                }
+
+                // Add/update projects
+                for (project_id, project_config) in &self.projects {
+                    if !projects.contains_key(project_id) {
+                        projects[project_id] = toml_edit::Item::Table(toml_edit::Table::new());
+                    }
+                    let commands: toml_edit::Array =
+                        project_config.approved_commands.iter().collect();
+                    projects[project_id]["approved-commands"] = toml_edit::value(commands);
+                }
+            }
+
+            doc.to_string()
+        } else {
+            // No existing file, create from scratch
+            toml::to_string_pretty(self)
+                .map_err(|e| ConfigError::Message(format!("Failed to serialize config: {}", e)))?
+        };
 
         std::fs::write(config_path, toml_string)
             .map_err(|e| ConfigError::Message(format!("Failed to write config file: {}", e)))?;

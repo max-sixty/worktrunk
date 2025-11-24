@@ -1,0 +1,48 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - status
+    - set
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt config status set - Set status emoji for branch
+Usage: wt config status set [OPTIONS] <VALUE>
+
+Arguments:
+  <VALUE>
+          Status emoji to display
+
+Options:
+      --branch <BRANCH>
+          Target branch (defaults to current)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose
+          Show commands and debug info
+
+Sets a custom status marker that appears in [2mwt list[0m output.
+
+Use emojis or short text to indicate work state (e.g., 🚧 WIP, ✅ ready, 🔒 blocked).
+Stored in git config under [2mworktrunk.status.<branch>[0m.
+
+----- stderr -----

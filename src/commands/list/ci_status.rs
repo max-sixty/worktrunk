@@ -1,5 +1,29 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::process::Command;
+
+/// Configure command to disable color output
+fn disable_color_output(cmd: &mut Command) {
+    cmd.env_remove("CLICOLOR_FORCE");
+    cmd.env_remove("GH_FORCE_TTY");
+    cmd.env("NO_COLOR", "1");
+    cmd.env("CLICOLOR", "0");
+}
+
+/// Check if a CLI tool is available
+fn tool_available(tool: &str, args: &[&str]) -> bool {
+    Command::new(tool)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Parse JSON output from CLI tools
+fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -> Option<T> {
+    serde_json::from_slice(stdout)
+        .map_err(|e| log::warn!("Failed to parse {} JSON for {}: {}", command, branch, e))
+        .ok()
+}
 
 /// CI status from GitHub/GitLab checks
 /// Matches the statusline.sh color scheme:
@@ -115,14 +139,7 @@ impl PrStatus {
             "state,headRefOid,mergeStateStatus,statusCheckRollup,url",
         ]);
 
-        // Remove environment variables that force color output
-        cmd.env_remove("CLICOLOR_FORCE");
-        cmd.env_remove("GH_FORCE_TTY");
-        cmd.env("NO_COLOR", "1");
-        cmd.env("CLICOLOR", "0");
-
-        // Always set working directory and let gh auto-detect the repo
-        // This handles forks correctly (gh will detect upstream repo from git context)
+        disable_color_output(&mut cmd);
         cmd.current_dir(repo_root);
 
         let output = match cmd.output() {
@@ -140,17 +157,7 @@ impl PrStatus {
         }
 
         // gh pr list returns an array, take the first (and only) item
-        let pr_list: Vec<GitHubPrInfo> = match serde_json::from_slice(&output.stdout) {
-            Ok(list) => list,
-            Err(e) => {
-                log::warn!(
-                    "Failed to parse gh pr list JSON for branch {}: {}",
-                    branch,
-                    e
-                );
-                return None;
-            }
-        };
+        let pr_list: Vec<GitHubPrInfo> = parse_json(&output.stdout, "gh pr list", branch)?;
         let pr_info = pr_list.first()?;
 
         // Only process open PRs
@@ -180,13 +187,7 @@ impl PrStatus {
     }
 
     fn detect_gitlab(branch: &str, local_head: &str) -> Option<Self> {
-        // Check if glab is available
-        if !Command::new("glab")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
+        if !tool_available("glab", &["--version"]) {
             return None;
         }
 
@@ -212,17 +213,7 @@ impl PrStatus {
             return None;
         }
 
-        let mr_info: GitLabMrInfo = match serde_json::from_slice(&output.stdout) {
-            Ok(info) => info,
-            Err(e) => {
-                log::warn!(
-                    "Failed to parse glab mr view JSON for branch {}: {}",
-                    branch,
-                    e
-                );
-                return None;
-            }
-        };
+        let mr_info: GitLabMrInfo = parse_json(&output.stdout, "glab mr view", branch)?;
 
         // Only process open MRs
         if mr_info.state != "opened" {
@@ -255,14 +246,8 @@ impl PrStatus {
     }
 
     fn detect_github_workflow(branch: &str, local_head: &str, repo_root: &str) -> Option<Self> {
-        // Check if gh is available and authenticated
         // Note: We don't log auth failures here since detect_github already logged them
-        if !Command::new("gh")
-            .args(["auth", "status"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
+        if !tool_available("gh", &["auth", "status"]) {
             return None;
         }
 
@@ -279,16 +264,7 @@ impl PrStatus {
             "status,conclusion,headSha",
         ]);
 
-        // Remove environment variables that force color output even when piped
-        // CLICOLOR_FORCE and GH_FORCE_TTY override NO_COLOR and TTY detection
-        cmd.env_remove("CLICOLOR_FORCE");
-        cmd.env_remove("GH_FORCE_TTY");
-        // Request no color output
-        cmd.env("NO_COLOR", "1");
-        cmd.env("CLICOLOR", "0");
-
-        // Always set working directory and let gh auto-detect the repo
-        // This handles forks correctly (gh will detect upstream repo from git context)
+        disable_color_output(&mut cmd);
         cmd.current_dir(repo_root);
 
         let output = match cmd.output() {
@@ -305,17 +281,7 @@ impl PrStatus {
             return None;
         }
 
-        let runs: Vec<GitHubWorkflowRun> = match serde_json::from_slice(&output.stdout) {
-            Ok(runs) => runs,
-            Err(e) => {
-                log::warn!(
-                    "Failed to parse gh run list JSON for branch {}: {}",
-                    branch,
-                    e
-                );
-                return None;
-            }
-        };
+        let runs: Vec<GitHubWorkflowRun> = parse_json(&output.stdout, "gh run list", branch)?;
         let run = runs.first()?;
 
         // Check if the workflow run matches our local HEAD commit
@@ -337,13 +303,7 @@ impl PrStatus {
     }
 
     fn detect_gitlab_pipeline(branch: &str, local_head: &str) -> Option<Self> {
-        // Check if glab is available
-        if !Command::new("glab")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
+        if !tool_available("glab", &["--version"]) {
             return None;
         }
 
@@ -370,18 +330,7 @@ impl PrStatus {
             return None;
         }
 
-        // Parse JSON output
-        let pipelines: Vec<GitLabPipelineList> = match serde_json::from_slice(&output.stdout) {
-            Ok(pipelines) => pipelines,
-            Err(e) => {
-                log::warn!(
-                    "Failed to parse glab ci list JSON for branch {}: {}",
-                    branch,
-                    e
-                );
-                return None;
-            }
-        };
+        let pipelines: Vec<GitLabPipeline> = parse_json(&output.stdout, "glab ci list", branch)?;
         let pipeline = pipelines.first()?;
 
         // Check if the pipeline matches our local HEAD commit
@@ -501,49 +450,25 @@ impl GitLabMrInfo {
 #[derive(Debug, Deserialize)]
 struct GitLabPipeline {
     status: Option<String>,
+    /// Only present in `glab ci list` output, not in MR view embedded pipeline
+    #[serde(default)]
+    sha: Option<String>,
 }
 
-/// GitLab pipeline from `glab ci list --output json`
-#[derive(Debug, Deserialize)]
-struct GitLabPipelineList {
-    status: Option<String>,
-    sha: Option<String>,
+fn parse_gitlab_status(status: Option<&str>) -> CiStatus {
+    match status {
+        Some(
+            "running" | "pending" | "preparing" | "waiting_for_resource" | "created" | "scheduled",
+        ) => CiStatus::Running,
+        Some("failed" | "canceled" | "manual") => CiStatus::Failed,
+        Some("success") => CiStatus::Passed,
+        Some("skipped") | None => CiStatus::NoCI,
+        _ => CiStatus::NoCI,
+    }
 }
 
 impl GitLabPipeline {
     fn ci_status(&self) -> CiStatus {
-        match self.status.as_deref() {
-            Some(
-                "running"
-                | "pending"
-                | "preparing"
-                | "waiting_for_resource"
-                | "created"
-                | "scheduled",
-            ) => CiStatus::Running,
-            Some("failed" | "canceled" | "manual") => CiStatus::Failed,
-            Some("success") => CiStatus::Passed,
-            Some("skipped") | None => CiStatus::NoCI,
-            _ => CiStatus::NoCI,
-        }
-    }
-}
-
-impl GitLabPipelineList {
-    fn ci_status(&self) -> CiStatus {
-        match self.status.as_deref() {
-            Some(
-                "running"
-                | "pending"
-                | "preparing"
-                | "waiting_for_resource"
-                | "created"
-                | "scheduled",
-            ) => CiStatus::Running,
-            Some("failed" | "canceled" | "manual") => CiStatus::Failed,
-            Some("success") => CiStatus::Passed,
-            Some("skipped") | None => CiStatus::NoCI,
-            _ => CiStatus::NoCI,
-        }
+        parse_gitlab_status(self.status.as_deref())
     }
 }

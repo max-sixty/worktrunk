@@ -2,11 +2,10 @@
 
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{
-    HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI, println, stderr, stdout,
-};
+use worktrunk::styling::{println, stderr, stdout};
 
 use super::handlers::execute_streaming;
+use super::traits::OutputHandler;
 
 /// Interactive output mode for human users
 ///
@@ -15,108 +14,52 @@ use super::handlers::execute_streaming;
 pub struct InteractiveOutput {
     /// Target directory for command execution (set by change_directory)
     target_dir: Option<std::path::PathBuf>,
+    /// Cached stdout handle
+    stdout: io::Stdout,
 }
 
 impl InteractiveOutput {
     pub fn new() -> Self {
-        Self { target_dir: None }
-    }
-
-    pub fn success(&mut self, message: String) -> io::Result<()> {
-        // Success messages automatically include the ✅ emoji
-        println!("{SUCCESS_EMOJI} {message}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn progress(&mut self, message: String) -> io::Result<()> {
-        // Progress messages automatically include the 🔄 emoji
-        println!("{PROGRESS_EMOJI} {message}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn hint(&mut self, message: String) -> io::Result<()> {
-        // Hint messages automatically include the 💡 emoji
-        println!("{HINT_EMOJI} {message}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn shell_integration_hint(&mut self, message: String) -> io::Result<()> {
-        // Shell integration hints work the same as regular hints in interactive mode
-        println!("{HINT_EMOJI} {message}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn info(&mut self, message: String) -> io::Result<()> {
-        // Info messages automatically include the ⚪ emoji
-        println!("{INFO_EMOJI} {message}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn warning(&mut self, message: String) -> io::Result<()> {
-        // Warning messages automatically include the 🟡 emoji
-        println!("{WARNING_EMOJI} {message}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn error(&mut self, message: String) -> io::Result<()> {
-        use worktrunk::styling::{ERROR, ERROR_EMOJI};
-        // Add emoji and styling if not already present
-        if message.starts_with(ERROR_EMOJI) {
-            println!("{message}");
-        } else {
-            println!("{ERROR_EMOJI} {ERROR}{message}{ERROR:#}");
+        Self {
+            target_dir: None,
+            stdout: io::stdout(),
         }
-        stdout().flush()?;
-        Ok(())
+    }
+}
+
+impl OutputHandler for InteractiveOutput {
+    fn write_message_line(&mut self, line: &str) -> io::Result<()> {
+        // Use styled println for proper color detection
+        println!("{line}");
+        self.stdout.flush()
+    }
+
+    fn gutter(&mut self, content: String) -> io::Result<()> {
+        // Gutter content is pre-formatted with its own newlines
+        write!(self.stdout, "{content}")?;
+        self.stdout.flush()
+    }
+
+    fn shell_integration_hint(&mut self, message: String) -> io::Result<()> {
+        // Shell integration hints work the same as regular hints in interactive mode
+        self.hint(message)
     }
 
     #[cfg(unix)]
-    pub fn blank_line(&mut self) -> io::Result<()> {
+    fn blank_line(&mut self) -> io::Result<()> {
         // Ensure subsequent output starts on a fresh line after interactive UIs like skim
         println!();
         stdout().flush()
     }
 
-    pub fn gutter(&mut self, content: String) -> io::Result<()> {
-        // Gutter content has its own visual structure - just print it
-        use worktrunk::styling::print;
-        print!("{content}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn raw(&mut self, content: String) -> io::Result<()> {
-        // Raw output without emoji decoration - for structured data like JSON
-        println!("{content}");
-        stdout().flush()?;
-        Ok(())
-    }
-
-    pub fn raw_terminal(&mut self, content: String) -> io::Result<()> {
-        // Raw output to stderr - for table output that should match progressive bars stream
-        // TODO: This split between raw() and raw_terminal() is messy. Consider unifying
-        // the output system to have a clearer separation between structured data (JSON)
-        // and terminal UI (tables, progress bars).
-        use worktrunk::styling::eprintln;
-        eprintln!("{content}");
-        stderr().flush()?;
-        Ok(())
-    }
-
-    pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
+    fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         // In interactive mode, we can't actually change directory
         // Just store the target for execute commands
         self.target_dir = Some(path.to_path_buf());
         Ok(())
     }
 
-    pub fn execute(&mut self, command: String) -> anyhow::Result<()> {
+    fn execute(&mut self, command: String) -> anyhow::Result<()> {
         // Execute command in the target directory with streaming output
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
 
@@ -136,34 +79,15 @@ impl InteractiveOutput {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> io::Result<()> {
-        stdout().flush()?;
-        stderr().flush()?;
-        Ok(())
-    }
-
-    pub fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
+    fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
         // In interactive mode, flush both streams before stderr prompt
         stdout().flush()?;
         stderr().flush()
     }
 
-    pub fn terminate_output(&mut self) -> io::Result<()> {
+    fn terminate_output(&mut self) -> io::Result<()> {
         // No-op in interactive mode - no NUL terminators needed
         Ok(())
-    }
-
-    /// Format a switch success message for interactive mode
-    ///
-    /// In interactive mode, we can't actually change directories, so we say "at {path}"
-    pub fn format_switch_success(
-        &self,
-        branch: &str,
-        path: &Path,
-        created_branch: bool,
-        base_branch: Option<&str>,
-    ) -> String {
-        super::format_switch_success_message(branch, path, created_branch, base_branch)
     }
 }
 

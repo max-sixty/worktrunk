@@ -26,9 +26,17 @@ use worktrunk::styling::INFO_EMOJI;
 
 use super::ci_status::PrStatus;
 use super::model::{
-    AheadBehind, BranchDiffTotals, BranchOpState, CommitDetails, ItemKind, ListItem,
-    MainDivergence, StatusSymbols, UpstreamDivergence, UpstreamStatus,
+    AheadBehind, BranchDiffTotals, BranchOpState, CommitDetails, DisplayFields, ItemKind, ListItem,
+    MainDivergence, StatusSymbols, UpstreamDivergence, UpstreamStatus, WorktreeData,
 };
+
+/// Context for status symbol computation during cell updates
+struct StatusContext {
+    has_merge_tree_conflicts: bool,
+    user_status: Option<String>,
+    working_tree_symbols: Option<String>,
+    has_conflicts: bool,
+}
 
 /// Cell update messages sent as each git operation completes.
 /// These enable progressive rendering - update UI as data arrives.
@@ -115,51 +123,14 @@ pub(super) fn detect_worktree_state(repo: &Repository) -> Option<String> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DivergenceKind {
-    None,
-    Ahead,
-    Behind,
-    Diverged,
-}
-
-fn classify_divergence(ahead: usize, behind: usize) -> DivergenceKind {
-    match (ahead, behind) {
-        (0, 0) => DivergenceKind::None,
-        (a, 0) if a > 0 => DivergenceKind::Ahead,
-        (0, b) if b > 0 => DivergenceKind::Behind,
-        _ => DivergenceKind::Diverged,
-    }
-}
-
-/// Compute main branch divergence state from ahead/behind counts.
-fn compute_main_divergence(ahead: usize, behind: usize) -> MainDivergence {
-    match classify_divergence(ahead, behind) {
-        DivergenceKind::None => MainDivergence::None,
-        DivergenceKind::Ahead => MainDivergence::Ahead,
-        DivergenceKind::Behind => MainDivergence::Behind,
-        DivergenceKind::Diverged => MainDivergence::Diverged,
-    }
-}
-
-/// Compute upstream divergence state from ahead/behind counts.
-fn compute_upstream_divergence(ahead: usize, behind: usize) -> UpstreamDivergence {
-    match classify_divergence(ahead, behind) {
-        DivergenceKind::None => UpstreamDivergence::None,
-        DivergenceKind::Ahead => UpstreamDivergence::Ahead,
-        DivergenceKind::Behind => UpstreamDivergence::Behind,
-        DivergenceKind::Diverged => UpstreamDivergence::Diverged,
-    }
-}
-
 fn compute_divergences(
     counts: &AheadBehind,
     upstream: &UpstreamStatus,
 ) -> (MainDivergence, UpstreamDivergence) {
-    let main_divergence = compute_main_divergence(counts.ahead, counts.behind);
+    let main_divergence = MainDivergence::from_counts(counts.ahead, counts.behind);
     let (upstream_ahead, upstream_behind) =
         upstream.active().map(|(_, a, b)| (a, b)).unwrap_or((0, 0));
-    let upstream_divergence = compute_upstream_divergence(upstream_ahead, upstream_behind);
+    let upstream_divergence = UpstreamDivergence::from_counts(upstream_ahead, upstream_behind);
 
     (main_divergence, upstream_divergence)
 }
@@ -315,13 +286,17 @@ fn compute_item_status_symbols(
 fn drain_cell_updates(
     rx: chan::Receiver<CellUpdate>,
     items: &mut [ListItem],
-    mut on_update: impl FnMut(usize, &mut ListItem, bool, Option<String>, Option<&str>, bool),
+    mut on_update: impl FnMut(usize, &mut ListItem, &StatusContext),
 ) {
     // Temporary storage for data needed by status_symbols computation
-    let mut merge_tree_conflicts_map: Vec<Option<bool>> = vec![None; items.len()];
-    let mut user_status_map: Vec<Option<Option<String>>> = vec![None; items.len()];
-    let mut working_tree_symbols_map: Vec<Option<String>> = vec![None; items.len()];
-    let mut has_conflicts_map: Vec<Option<bool>> = vec![None; items.len()];
+    let mut status_contexts: Vec<StatusContext> = (0..items.len())
+        .map(|_| StatusContext {
+            has_merge_tree_conflicts: false,
+            user_status: None,
+            working_tree_symbols: None,
+            has_conflicts: false,
+        })
+        .collect();
 
     // Process cell updates as they arrive
     while let Ok(update) = rx.recv() {
@@ -351,16 +326,16 @@ fn drain_cell_updates(
                     data.working_tree_diff = Some(working_tree_diff);
                     data.working_tree_diff_with_main = Some(working_tree_diff_with_main);
                 }
-                // Store temporarily for status_symbols computation
-                working_tree_symbols_map[item_idx] = Some(working_tree_symbols);
-                has_conflicts_map[item_idx] = Some(has_conflicts);
+                // Store for status_symbols computation
+                status_contexts[item_idx].working_tree_symbols = Some(working_tree_symbols);
+                status_contexts[item_idx].has_conflicts = has_conflicts;
             }
             CellUpdate::MergeTreeConflicts {
                 item_idx,
                 has_merge_tree_conflicts,
             } => {
-                // Store temporarily for status_symbols computation
-                merge_tree_conflicts_map[item_idx] = Some(has_merge_tree_conflicts);
+                // Store for status_symbols computation
+                status_contexts[item_idx].has_merge_tree_conflicts = has_merge_tree_conflicts;
             }
             CellUpdate::WorktreeState {
                 item_idx,
@@ -374,8 +349,8 @@ fn drain_cell_updates(
                 item_idx,
                 user_status,
             } => {
-                // Store temporarily for status_symbols computation
-                user_status_map[item_idx] = Some(user_status);
+                // Store for status_symbols computation
+                status_contexts[item_idx].user_status = user_status;
             }
             CellUpdate::Upstream { item_idx, upstream } => {
                 items[item_idx].upstream = Some(upstream);
@@ -390,18 +365,7 @@ fn drain_cell_updates(
         }
 
         // Invoke rendering callback (progressive mode re-renders rows, buffered mode does nothing)
-        let has_merge_tree_conflicts = merge_tree_conflicts_map[item_idx].unwrap_or(false);
-        let user_status = user_status_map[item_idx].clone().unwrap_or(None);
-        let working_tree_symbols = working_tree_symbols_map[item_idx].as_deref();
-        let has_conflicts = has_conflicts_map[item_idx].unwrap_or(false);
-        on_update(
-            item_idx,
-            &mut items[item_idx],
-            has_merge_tree_conflicts,
-            user_status,
-            working_tree_symbols,
-            has_conflicts,
-        );
+        on_update(item_idx, &mut items[item_idx], &status_contexts[item_idx]);
     }
 }
 
@@ -522,10 +486,9 @@ pub fn collect(
     };
 
     // Initialize worktree items with identity fields and None for computed fields
-    let mut all_items: Vec<super::model::ListItem> = sorted_worktrees
+    let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
-        .map(|wt| super::model::ListItem {
-            // Common fields
+        .map(|wt| ListItem {
             head: wt.head.clone(),
             branch: wt.branch.clone(),
             commit: None,
@@ -534,51 +497,28 @@ pub fn collect(
             upstream: None,
             pr_status: None,
             status_symbols: None,
-            display: super::model::DisplayFields::default(),
-            // Type-specific data
-            kind: super::model::ItemKind::Worktree(Box::new(
-                super::model::WorktreeData::from_worktree(wt, wt.path == main_worktree.path),
-            )),
+            display: DisplayFields::default(),
+            kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(
+                wt,
+                wt.path == main_worktree.path,
+            ))),
         })
         .collect();
 
-    // Initialize branch items with identity fields and None for computed fields
+    // Initialize branch items (local and remote)
     let branch_start_idx = all_items.len();
-    for (branch_name, commit_sha) in &branches_without_worktrees {
-        all_items.push(super::model::ListItem {
-            // Common fields
-            head: commit_sha.clone(),
-            branch: Some(branch_name.clone()),
-            commit: None,
-            counts: None,
-            branch_diff: None,
-            upstream: None,
-            pr_status: None,
-            status_symbols: None,
-            display: super::model::DisplayFields::default(),
-            // Type-specific data
-            kind: super::model::ItemKind::Branch,
-        });
-    }
+    all_items.extend(
+        branches_without_worktrees
+            .iter()
+            .map(|(name, sha)| ListItem::new_branch(sha.clone(), name.clone())),
+    );
 
-    // Initialize remote branch items with identity fields and None for computed fields
     let remote_start_idx = all_items.len();
-    for (branch_name, commit_sha) in &remote_branches {
-        all_items.push(super::model::ListItem {
-            // Common fields
-            head: commit_sha.clone(),
-            branch: Some(branch_name.clone()),
-            commit: None,
-            counts: None,
-            branch_diff: None,
-            upstream: None,
-            pr_status: None,
-            status_symbols: None,
-            display: super::model::DisplayFields::default(),
-            // Type-specific data
-            kind: super::model::ItemKind::Branch,
-        });
-    }
+    all_items.extend(
+        remote_branches
+            .iter()
+            .map(|(name, sha)| ListItem::new_branch(sha.clone(), name.clone())),
+    );
 
     // Calculate layout from items (worktrees, local branches, and remote branches)
     let layout = super::layout::calculate_layout_from_basics(&all_items, show_full, fetch_ci);
@@ -586,8 +526,14 @@ pub fn collect(
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = super::layout::get_safe_list_width();
 
-    // Build initial footer message
-    let total_cells = all_items.len() * layout.columns.len();
+    // Create collection options
+    let options = super::collect_progressive_impl::CollectOptions {
+        fetch_ci,
+        check_merge_tree_conflicts,
+    };
+
+    // Counter for total cells - incremented as spawns are queued
+    let cell_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let num_worktrees = all_items
         .iter()
         .filter(|item| item.worktree_data().is_some())
@@ -631,8 +577,7 @@ pub fn collect(
             })
             .collect();
 
-        let initial_footer =
-            format!("{INFO_EMOJI} {dim}{footer_base} (0/{total_cells} cells loaded){dim:#}");
+        let initial_footer = format!("{INFO_EMOJI} {dim}{footer_base} (loading...){dim:#}");
 
         Some(ProgressiveTable::new(
             layout.format_header_line(),
@@ -655,16 +600,11 @@ pub fn collect(
     // Create channel for cell updates
     let (tx, rx) = chan::unbounded();
 
-    // Create collection options
-    let options = super::collect_progressive_impl::CollectOptions {
-        fetch_ci,
-        check_merge_tree_conflicts,
-    };
-
     // Spawn worktree collection in background thread
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worktrees = tx.clone();
     let default_branch_clone = default_branch.clone();
+    let cell_count_wt = cell_count.clone();
     std::thread::spawn(move || {
         sorted_worktrees_clone
             .par_iter()
@@ -678,56 +618,51 @@ pub fn collect(
                     &default_branch_clone,
                     &options,
                     tx_worktrees.clone(),
+                    &cell_count_wt,
                 );
             });
     });
 
-    // Spawn branch collection in background thread (if requested)
-    if show_branches {
-        let branches_clone = branches_without_worktrees.clone();
+    // Spawn branch collection in background thread (local + remote)
+    if show_branches || show_remotes {
+        // Combine local and remote branches with their item indices
+        let mut all_branches: Vec<(usize, String, String)> = Vec::new();
+        if show_branches {
+            all_branches.extend(
+                branches_without_worktrees
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (name, sha))| (branch_start_idx + idx, name.clone(), sha.clone())),
+            );
+        }
+        if show_remotes {
+            all_branches.extend(
+                remote_branches
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (name, sha))| (remote_start_idx + idx, name.clone(), sha.clone())),
+            );
+        }
+
         let main_path = main_worktree.path.clone();
         let tx_branches = tx.clone();
         let default_branch_clone = default_branch.clone();
+        let cell_count_br = cell_count.clone();
         std::thread::spawn(move || {
-            branches_clone
+            all_branches
                 .par_iter()
-                .enumerate()
-                .for_each(|(idx, (branch_name, commit_sha))| {
-                    let item_idx = branch_start_idx + idx;
+                .for_each(|(item_idx, branch_name, commit_sha)| {
                     super::collect_progressive_impl::collect_branch_progressive(
                         branch_name,
                         commit_sha,
                         &main_path,
-                        item_idx,
+                        *item_idx,
                         &default_branch_clone,
                         &options,
                         tx_branches.clone(),
+                        &cell_count_br,
                     );
                 });
-        });
-    }
-
-    // Spawn remote branch collection in background thread (if requested)
-    if show_remotes {
-        let remote_branches_clone = remote_branches.clone();
-        let main_path = main_worktree.path.clone();
-        let tx_remote = tx.clone();
-        let default_branch_clone = default_branch.clone();
-        std::thread::spawn(move || {
-            remote_branches_clone.par_iter().enumerate().for_each(
-                |(idx, (branch_name, commit_sha))| {
-                    let item_idx = remote_start_idx + idx;
-                    super::collect_progressive_impl::collect_branch_progressive(
-                        branch_name,
-                        commit_sha,
-                        &main_path,
-                        item_idx,
-                        &default_branch_clone,
-                        &options,
-                        tx_remote.clone(),
-                    );
-                },
-            );
         });
     }
 
@@ -738,59 +673,51 @@ pub fn collect(
     let mut completed_cells = 0;
 
     // Drain cell updates with conditional progressive rendering
-    drain_cell_updates(
-        rx,
-        &mut all_items,
-        |item_idx,
-         item,
-         has_merge_tree_conflicts,
-         user_status,
-         working_tree_symbols,
-         has_conflicts| {
-            // Compute/recompute status symbols as data arrives (both modes)
-            // This is idempotent and updates status as new data (like upstream) arrives
-            let item_default_branch = if item.is_main() {
-                None
-            } else {
-                Some(default_branch.as_str())
-            };
-            compute_item_status_symbols(
-                item,
-                item_default_branch,
-                has_merge_tree_conflicts,
-                user_status,
-                working_tree_symbols,
-                has_conflicts,
+    drain_cell_updates(rx, &mut all_items, |item_idx, item, ctx| {
+        // Compute/recompute status symbols as data arrives (both modes)
+        // This is idempotent and updates status as new data (like upstream) arrives
+        let item_default_branch = if item.is_main() {
+            None
+        } else {
+            Some(default_branch.as_str())
+        };
+        compute_item_status_symbols(
+            item,
+            item_default_branch,
+            ctx.has_merge_tree_conflicts,
+            ctx.user_status.clone(),
+            ctx.working_tree_symbols.as_deref(),
+            ctx.has_conflicts,
+        );
+
+        // Progressive mode only: update UI
+        if let Some(ref mut table) = progressive_table {
+            use anstyle::Style;
+            let dim = Style::new().dimmed();
+
+            completed_cells += 1;
+            let total_cells = cell_count.load(std::sync::atomic::Ordering::Relaxed);
+
+            // Update footer progress
+            let footer_msg = format!(
+                "{INFO_EMOJI} {dim}{footer_base} ({completed_cells}/{total_cells} cells loaded){dim:#}"
             );
+            if let Err(e) = table.update_footer(footer_msg) {
+                log::debug!("Progressive footer update failed: {}", e);
+            }
 
-            // Progressive mode only: update UI
-            if let Some(ref mut table) = progressive_table {
-                use anstyle::Style;
-                let dim = Style::new().dimmed();
+            // Re-render the row with caching (now includes status if computed)
+            let rendered = layout.format_list_item_line(item, current_worktree_path.as_ref());
 
-                completed_cells += 1;
-
-                // Update footer progress
-                let footer_msg = format!(
-                    "{INFO_EMOJI} {dim}{footer_base} ({completed_cells}/{total_cells} cells loaded){dim:#}"
-                );
-                if let Err(e) = table.update_footer(footer_msg) {
-                    log::debug!("Progressive footer update failed: {}", e);
-                }
-
-                // Re-render the row with caching (now includes status if computed)
-                let rendered = layout.format_list_item_line(item, current_worktree_path.as_ref());
-
-                // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
-                if rendered != last_rendered_lines[item_idx] {
-                    last_rendered_lines[item_idx] = rendered.clone();
-                    if let Err(e) = table.update_row(item_idx, rendered) {
-                        log::debug!("Progressive row update failed: {}", e);
-                    }
+            // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
+            if rendered != last_rendered_lines[item_idx] {
+                last_rendered_lines[item_idx] = rendered.clone();
+                if let Err(e) = table.update_row(item_idx, rendered) {
+                    log::debug!("Progressive row update failed: {}", e);
                 }
             }
-        },
-    );
+        }
+    });
 
     // Finalize progressive table or render buffered output
     if let Some(mut table) = progressive_table {

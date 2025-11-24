@@ -15,8 +15,7 @@ struct PromptContext<'a> {
 
 /// Default template for commit message prompts
 ///
-/// TODO: Generate config.example.toml dynamically to keep templates in sync.
-/// Currently this constant must be manually copied to config.example.toml (lines 41-76).
+/// Synced to dev/config.example.toml by `cargo test readme_sync`
 const DEFAULT_TEMPLATE: &str = r#"Format
 - First line: <50 chars, present tense, describes WHAT and WHY (not HOW).
 - Blank line after first line.
@@ -55,8 +54,7 @@ The following is the context for your task:
 
 /// Default template for squash commit message prompts
 ///
-/// TODO: Generate config.example.toml dynamically to keep templates in sync.
-/// Currently this constant must be manually copied to config.example.toml (lines 110-125).
+/// Synced to dev/config.example.toml by `cargo test readme_sync`
 const DEFAULT_SQUASH_TEMPLATE: &str = r#"Generate a commit message that combines these changes into one cohesive message. Output only the commit message without any explanation.
 
 Format

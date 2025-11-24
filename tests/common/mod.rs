@@ -115,14 +115,12 @@ pub struct TestRepo {
 impl TestRepo {
     /// Create a new test repository with isolated git environment
     pub fn new() -> Self {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_dir = TempDir::new().unwrap();
         // Create main repo as a subdirectory so worktrees can be siblings
         let root = temp_dir.path().join("test-repo");
-        std::fs::create_dir(&root).expect("Failed to create main repo directory");
+        std::fs::create_dir(&root).unwrap();
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
-        let root = root
-            .canonicalize()
-            .expect("Failed to canonicalize temp path");
+        let root = root.canonicalize().unwrap();
 
         // Create isolated config path for this test
         let test_config_path = temp_dir.path().join("test-config.toml");
@@ -133,7 +131,7 @@ impl TestRepo {
             &git_config_path,
             "[advice]\n\tmergeConflict = false\n\tresolveConflict = false\n",
         )
-        .expect("Failed to write git config");
+        .unwrap();
 
         let repo = Self {
             temp_dir,
@@ -151,7 +149,7 @@ impl TestRepo {
         cmd.args(["init", "-b", "main"])
             .current_dir(&repo.root)
             .output()
-            .expect("Failed to init git repo");
+            .unwrap();
 
         // Configure git user
         let mut cmd = Command::new("git");
@@ -159,14 +157,14 @@ impl TestRepo {
         cmd.args(["config", "user.name", "Test User"])
             .current_dir(&repo.root)
             .output()
-            .expect("Failed to set user.name");
+            .unwrap();
 
         let mut cmd = Command::new("git");
         repo.configure_git_cmd(&mut cmd);
         cmd.args(["config", "user.email", "test@example.com"])
             .current_dir(&repo.root)
             .output()
-            .expect("Failed to set user.email");
+            .unwrap();
 
         repo
     }
@@ -285,13 +283,13 @@ impl TestRepo {
     /// Write project-specific config (`.config/wt.toml`) under the repo root.
     pub fn write_project_config(&self, contents: &str) {
         let config_dir = self.root_path().join(".config");
-        std::fs::create_dir_all(&config_dir).expect("Failed to create .config dir");
-        std::fs::write(config_dir.join("wt.toml"), contents).expect("Failed to write wt.toml");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("wt.toml"), contents).unwrap();
     }
 
     /// Overwrite the isolated WORKTRUNK_CONFIG_PATH used during tests.
     pub fn write_test_config(&self, contents: &str) {
-        std::fs::write(&self.test_config_path, contents).expect("Failed to write test config");
+        std::fs::write(&self.test_config_path, contents).unwrap();
     }
 
     /// Get the path to a named worktree
@@ -305,15 +303,13 @@ impl TestRepo {
     pub fn commit(&self, message: &str) {
         // Create a file to ensure there's something to commit
         let file_path = self.root.join("file.txt");
-        std::fs::write(&file_path, message).expect("Failed to write file");
+        std::fs::write(&file_path, message).unwrap();
 
-        self.git_command(&["add", "."])
-            .output()
-            .expect("Failed to git add");
+        self.git_command(&["add", "."]).output().unwrap();
 
         self.git_command(&["commit", "-m", message])
             .output()
-            .expect("Failed to git commit");
+            .unwrap();
     }
 
     /// Create a commit with a custom message (useful for testing malicious messages)
@@ -325,15 +321,13 @@ impl TestRepo {
             .unwrap()
             .as_nanos();
         let file_path = self.root.join(format!("file-{}.txt", timestamp));
-        std::fs::write(&file_path, "content").expect("Failed to write file");
+        std::fs::write(&file_path, "content").unwrap();
 
-        self.git_command(&["add", "."])
-            .output()
-            .expect("Failed to git add");
+        self.git_command(&["add", "."]).output().unwrap();
 
         self.git_command(&["commit", "-m", message])
             .output()
-            .expect("Failed to git commit");
+            .unwrap();
     }
 
     /// Add a worktree with the given name and branch
@@ -353,7 +347,7 @@ impl TestRepo {
             ])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to execute git worktree add");
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -364,9 +358,7 @@ impl TestRepo {
         }
 
         // Canonicalize worktree path to match what git returns
-        let canonical_path = worktree_path
-            .canonicalize()
-            .expect("Failed to canonicalize worktree path");
+        let canonical_path = worktree_path.canonicalize().unwrap();
         self.worktrees
             .insert(name.to_string(), canonical_path.clone());
         canonical_path
@@ -384,7 +376,7 @@ impl TestRepo {
         cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
             .current_dir(self.root_path())
             .output()
-            .expect("Failed to add worktree");
+            .unwrap();
         main_wt
     }
 
@@ -397,7 +389,7 @@ impl TestRepo {
             .args(["rev-parse", "HEAD"])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to get HEAD SHA");
+            .unwrap();
 
         let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -406,7 +398,7 @@ impl TestRepo {
         cmd.args(["checkout", "--detach", &sha])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to detach HEAD");
+            .unwrap();
     }
 
     /// Lock a worktree with an optional reason
@@ -422,10 +414,7 @@ impl TestRepo {
 
         let mut cmd = Command::new("git");
         self.configure_git_cmd(&mut cmd);
-        cmd.args(&args)
-            .current_dir(&self.root)
-            .output()
-            .expect("Failed to lock worktree");
+        cmd.args(&args).current_dir(&self.root).output().unwrap();
     }
 
     /// Create a bare remote repository and set it as origin
@@ -445,19 +434,17 @@ impl TestRepo {
     pub fn setup_custom_remote(&mut self, remote_name: &str, default_branch: &str) {
         // Create bare remote repository
         let remote_path = self.temp_dir.path().join(format!("{}.git", remote_name));
-        std::fs::create_dir(&remote_path).expect("Failed to create remote directory");
+        std::fs::create_dir(&remote_path).unwrap();
 
         let mut cmd = Command::new("git");
         self.configure_git_cmd(&mut cmd);
         cmd.args(["init", "--bare", "--initial-branch", default_branch])
             .current_dir(&remote_path)
             .output()
-            .expect("Failed to init bare remote");
+            .unwrap();
 
         // Canonicalize remote path
-        let remote_path = remote_path
-            .canonicalize()
-            .expect("Failed to canonicalize remote path");
+        let remote_path = remote_path.canonicalize().unwrap();
 
         // Add as remote
         let mut cmd = Command::new("git");
@@ -465,7 +452,7 @@ impl TestRepo {
         cmd.args(["remote", "add", remote_name, remote_path.to_str().unwrap()])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to add remote");
+            .unwrap();
 
         // Push current branch to remote
         let mut cmd = Command::new("git");
@@ -473,7 +460,7 @@ impl TestRepo {
         cmd.args(["push", "-u", remote_name, default_branch])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to push to remote");
+            .unwrap();
 
         // Set remote/HEAD to point to the default branch
         let mut cmd = Command::new("git");
@@ -496,7 +483,7 @@ impl TestRepo {
         cmd.args(["remote", "set-head", "origin", "--delete"])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to clear origin/HEAD");
+            .unwrap();
     }
 
     /// Check if origin/HEAD is set
@@ -507,7 +494,7 @@ impl TestRepo {
             .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to check origin/HEAD");
+            .unwrap();
         output.status.success()
     }
 
@@ -534,7 +521,7 @@ impl TestRepo {
             .args(["branch", "--show-current"])
             .current_dir(&self.root)
             .output()
-            .expect("Failed to get current branch");
+            .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
@@ -551,7 +538,7 @@ impl TestRepo {
     /// This prevents CI detection from blocking tests with network calls.
     pub fn setup_mock_gh(&mut self) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
-        std::fs::create_dir(&mock_bin).expect("Failed to create mock bin directory");
+        std::fs::create_dir(&mock_bin).unwrap();
 
         // Create mock gh script
         let gh_script = mock_bin.join("gh");
@@ -576,14 +563,13 @@ case "$1" in
 esac
 "#,
         )
-        .expect("Failed to write mock gh script");
+        .unwrap();
 
         // Make executable
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755))
-                .expect("Failed to make gh script executable");
+            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         // Create mock glab script (fails immediately)
@@ -595,13 +581,12 @@ esac
 exit 1
 "#,
         )
-        .expect("Failed to write mock glab script");
+        .unwrap();
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755))
-                .expect("Failed to make glab script executable");
+            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         self.mock_bin_path = Some(mock_bin);
@@ -621,8 +606,7 @@ exit 1
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
             paths.insert(0, mock_bin.clone());
-            let new_path =
-                std::env::join_paths(paths).expect("Failed to join PATH components for tests");
+            let new_path = std::env::join_paths(paths).unwrap();
             cmd.env("PATH", new_path);
         }
     }
@@ -809,7 +793,7 @@ pub fn make_snapshot_cmd(
 /// The common git directory path
 pub fn resolve_git_common_dir(worktree_path: &Path) -> PathBuf {
     let repo = worktrunk::git::Repository::at(worktree_path);
-    repo.git_common_dir().expect("Failed to get git common dir")
+    repo.git_common_dir().unwrap()
 }
 
 /// Validates ANSI escape sequences for the specific nested reset pattern that causes color leaks

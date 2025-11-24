@@ -374,7 +374,8 @@ pub fn handle_select() -> anyhow::Result<()> {
         blank_line()?;
 
         // Show success message (show shell integration hint if not configured)
-        handle_switch_output(&result, &resolved_branch, false)?;
+        // select is always interactive (TUI), so is_directive_mode is false
+        handle_switch_output(&result, &resolved_branch, false, false)?;
     }
 
     Ok(())
