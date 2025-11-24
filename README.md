@@ -246,7 +246,7 @@ switch` & `wt merge`/`wt remove`. To add automatic setup to shell config files
 (Bash, Zsh, and Fish):
 
 ```bash
-wt config shell
+wt config shell install
 ```
 
 For manual setup instructions, see `wt config shell --help`.
