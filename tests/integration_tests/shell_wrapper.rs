@@ -155,6 +155,37 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
         .unwrap_or_else(|_| panic!("wt config shell init {} produced invalid UTF-8", shell))
 }
 
+/// Generate shell completions script for the given shell
+fn generate_completions(repo: &TestRepo, shell: &str) -> String {
+    let wt_bin = get_cargo_bin("wt");
+
+    let mut cmd = Command::new(&wt_bin);
+    cmd.arg("config").arg("shell").arg("completions").arg(shell);
+
+    // Configure environment
+    repo.clean_cli_env(&mut cmd);
+
+    let output = cmd
+        .output()
+        .unwrap_or_else(|_| panic!("Failed to run wt config shell completions {}", shell));
+
+    if !output.status.success() {
+        panic!(
+            "wt config shell completions {} failed with exit code: {:?}\nOutput:\n{}",
+            shell,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    String::from_utf8(output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "wt config shell completions {} produced invalid UTF-8",
+            shell
+        )
+    })
+}
+
 /// Quote a shell argument if it contains special characters
 fn quote_arg(arg: &str) -> String {
     if arg.contains(' ') || arg.contains(';') || arg.contains('\'') {
@@ -1562,19 +1593,22 @@ approved-commands = ["echo 'bash background'"]
 
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "bash");
+        let completions_script = generate_completions(&repo, "bash");
 
-        // Script that sources wrapper and checks if completion is registered
+        // Script that sources wrapper, completions, and checks if completion is registered
         let script = format!(
             r#"
             export WORKTRUNK_BIN='{}'
             export WORKTRUNK_CONFIG_PATH='{}'
+            {}
             {}
             # Check if wt completion is registered
             complete -p wt 2>/dev/null && echo "__COMPLETION_REGISTERED__" || echo "__NO_COMPLETION__"
             "#,
             wt_bin.display(),
             repo.test_config_path().display(),
-            wrapper_script
+            wrapper_script,
+            completions_script
         );
 
         let final_script = format!("( {} ) 2>&1", script);
@@ -1601,12 +1635,14 @@ approved-commands = ["echo 'bash background'"]
 
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "fish");
+        let completions_script = generate_completions(&repo, "fish");
 
-        // Script that sources wrapper and checks if completion is registered
+        // Script that sources wrapper, completions, and checks if completion is registered
         let script = format!(
             r#"
             set -x WORKTRUNK_BIN '{}'
             set -x WORKTRUNK_CONFIG_PATH '{}'
+            {}
             {}
             # Check if wt completions are registered
             if complete -c wt 2>/dev/null | grep -q .
@@ -1617,7 +1653,8 @@ approved-commands = ["echo 'bash background'"]
             "#,
             wt_bin.display(),
             repo.test_config_path().display(),
-            wrapper_script
+            wrapper_script,
+            completions_script
         );
 
         let final_script = format!("begin\n{}\nend 2>&1", script);
