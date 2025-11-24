@@ -15,8 +15,8 @@ const SLEEP_FAST_COMMAND: Duration = Duration::from_millis(100);
 const SLEEP_BACKGROUND_COMMAND: Duration = Duration::from_millis(200);
 
 /// Extended wait for commands that include explicit sleep in the command itself
-/// (e.g., "sleep 0.1 && echo ..." requires at least 100ms + margin)
-const SLEEP_EXTENDED: Duration = Duration::from_millis(250);
+/// (e.g., "sleep 0.1 && echo ..." requires at least 100ms + margin for CI overhead)
+const SLEEP_EXTENDED: Duration = Duration::from_millis(500);
 
 /// Helper to create snapshot with normalized paths and SHAs
 ///
