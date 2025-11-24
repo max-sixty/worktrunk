@@ -298,7 +298,7 @@ instead of duplicating logic:
 ```
 
 **Use `^` as shorthand for the default branch** — Works everywhere: `wt switch ^`,
-`wt merge ^`, `--base=^`. Similarly, `@` for current branch and `-` for previous (e.g., `wt switch --create hotfix --base=@`).
+`wt merge ^`, `--base=^`. Similarly, `@` for current branch and `-` for previous (e.g., `wt switch --create hotfix --base=@` creates a worktree based on the current commit rather than the default branch).
 
 ## All Commands
 
