@@ -191,7 +191,7 @@ Skip confirmation prompt:
 wt config shell install --force
 ```"#)]
     Install {
-        /// Shell to install (default: auto-detect)
+        /// Shell to install (default: all)
         #[arg(value_enum)]
         shell: Option<Shell>,
 
@@ -202,6 +202,39 @@ wt config shell install --force
         /// Command name
         #[arg(long, default_value = DEFAULT_COMMAND_NAME)]
         command_name: String,
+    },
+
+    /// Remove shell integration from config files
+    #[command(after_long_help = r#"## Removal
+
+Removes shell integration lines from config files:
+```bash
+wt config shell uninstall
+```
+
+Remove from specific shell only:
+```bash
+wt config shell uninstall zsh
+```
+
+Skip confirmation prompt:
+```bash
+wt config shell uninstall --force
+```
+
+## Version Tolerance
+
+Detects various forms of the integration pattern regardless of:
+- Command prefix (wt, worktree, etc.)
+- Minor syntax variations between versions"#)]
+    Uninstall {
+        /// Shell to uninstall (default: all)
+        #[arg(value_enum)]
+        shell: Option<Shell>,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
     },
 }
 

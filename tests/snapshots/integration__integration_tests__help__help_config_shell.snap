@@ -19,8 +19,9 @@ wt config shell - Shell integration setup
 Usage: wt config shell [OPTIONS] <COMMAND>
 
 Commands:
-  init     Generate shell integration code
-  install  Write shell integration to config files
+  init       Generate shell integration code
+  install    Write shell integration to config files
+  uninstall  Remove shell integration from config files
 
 Options:
   -h, --help

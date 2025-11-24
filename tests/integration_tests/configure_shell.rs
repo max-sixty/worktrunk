@@ -36,7 +36,7 @@ fn test_configure_shell_with_yes() {
         💡 [2mfish ~/.config/fish/conf.d (not found)[0m
         ✅ Configured 1 shell
 
-        💡 [2mRestart your shell or run: source ~/.zshrc[0m
+        💡 [2mRestart shell or run: source ~/.zshrc[0m
 
         ----- stderr -----
         "#);
@@ -79,7 +79,7 @@ fn test_configure_shell_specific_shell() {
 
         ✅ Configured 1 shell
 
-        💡 [2mRestart your shell or run: source ~/.zshrc[0m
+        💡 [2mRestart shell or run: source ~/.zshrc[0m
 
         ----- stderr -----
         "#);
@@ -162,7 +162,7 @@ fn test_configure_shell_fish() {
 
         ✅ Configured 1 shell
 
-        💡 [2mRestart your shell or run: source ~/.config/fish/conf.d/wt.fish[0m
+        💡 [2mRestart shell or run: source ~/.config/fish/conf.d/wt.fish[0m
 
         ----- stderr -----
         ");
@@ -249,7 +249,7 @@ fn test_configure_shell_multiple_configs() {
         💡 [2mfish ~/.config/fish/conf.d (not found)[0m
         ✅ Configured 2 shells
 
-        💡 [2mRestart your shell or run: source ~/.zshrc[0m
+        💡 [2mRestart shell or run: source ~/.zshrc[0m
 
         ----- stderr -----
         "#);
@@ -312,7 +312,7 @@ fn test_configure_shell_mixed_states() {
         💡 [2mfish ~/.config/fish/conf.d (not found)[0m
         ✅ Configured 1 shell
 
-        💡 [2mRestart your shell or run: source ~/.zshrc[0m
+        💡 [2mRestart shell or run: source ~/.zshrc[0m
 
         ----- stderr -----
         "#);
@@ -331,5 +331,274 @@ fn test_configure_shell_mixed_states() {
     assert!(
         zsh_content.contains("eval \"$(command wt config shell init zsh)\""),
         "Zsh config should be updated"
+    );
+}
+
+/// Test `wt config shell uninstall` removes shell integration
+#[test]
+fn test_uninstall_shell() {
+    let repo = TestRepo::new();
+    let temp_home = TempDir::new().unwrap();
+
+    // Create a fake .zshrc file with wt integration
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @r#"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+        ✅ Removed from [1mzsh[0m ~/.zshrc
+        [107m [0m  [1m[2m[35mif[0m [1m[2m[34mcommand[0m [2m[36m-v[0m wt [2m[36m>[0m/dev/null [2m[33m2[0m>&1; [1m[2m[35mthen[0m [1m[2m[34meval[0m [2m[32m"$([1m[2m[34mcommand[0m wt config shell init zsh)"[0m; [1m[2m[35mfi[0m[0m
+        💡 [2mNo bash integration in ~/.bashrc[0m
+        💡 [2mNo fish integration in ~/.config/fish/conf.d/wt.fish[0m
+
+        ✅ Removed shell integration from 1 shell
+
+        💡 [2mRestart shell to complete uninstall[0m
+
+        ----- stderr -----
+        "#);
+    });
+
+    // Verify the file no longer contains the integration
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !content.contains("wt config shell init"),
+        "Integration should be removed"
+    );
+    assert!(
+        content.contains("# Existing config"),
+        "Other content should be preserved"
+    );
+}
+
+/// Test `wt config shell uninstall` with multiple shells
+#[test]
+fn test_uninstall_shell_multiple() {
+    let repo = TestRepo::new();
+    let temp_home = TempDir::new().unwrap();
+
+    // Create multiple shell configs with wt integration
+    let bash_config_path = temp_home.path().join(".bashrc");
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &bash_config_path,
+        "# Bash config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init bash)\"; fi\n",
+    )
+    .unwrap();
+    fs::write(
+        &zshrc_path,
+        "# Zsh config\nif command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+    )
+    .unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @r#"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+        ✅ Removed from [1mbash[0m ~/.bashrc
+        [107m [0m  [1m[2m[35mif[0m [1m[2m[34mcommand[0m [2m[36m-v[0m wt [2m[36m>[0m/dev/null [2m[33m2[0m>&1; [1m[2m[35mthen[0m [1m[2m[34meval[0m [2m[32m"$([1m[2m[34mcommand[0m wt config shell init bash)"[0m; [1m[2m[35mfi[0m[0m
+        ✅ Removed from [1mzsh[0m ~/.zshrc
+        [107m [0m  [1m[2m[35mif[0m [1m[2m[34mcommand[0m [2m[36m-v[0m wt [2m[36m>[0m/dev/null [2m[33m2[0m>&1; [1m[2m[35mthen[0m [1m[2m[34meval[0m [2m[32m"$([1m[2m[34mcommand[0m wt config shell init zsh)"[0m; [1m[2m[35mfi[0m[0m
+        💡 [2mNo fish integration in ~/.config/fish/conf.d/wt.fish[0m
+
+        ✅ Removed shell integration from 2 shells
+
+        💡 [2mRestart shell to complete uninstall[0m
+
+        ----- stderr -----
+        "#);
+    });
+
+    // Verify both files no longer contain the integration
+    let bash_content = fs::read_to_string(&bash_config_path).unwrap();
+    assert!(
+        !bash_content.contains("wt config shell init"),
+        "Bash integration should be removed"
+    );
+
+    let zsh_content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !zsh_content.contains("wt config shell init"),
+        "Zsh integration should be removed"
+    );
+}
+
+/// Test `wt config shell uninstall` when not installed
+#[test]
+fn test_uninstall_shell_not_found() {
+    let repo = TestRepo::new();
+    let temp_home = TempDir::new().unwrap();
+
+    // Create a fake .zshrc file without wt integration
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(&zshrc_path, "# Existing config\n").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("zsh")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @r"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+        🟡 No shell integration found in ~/.zshrc
+
+        ----- stderr -----
+        ");
+    });
+}
+
+/// Test `wt config shell uninstall` for Fish (deletes file)
+#[test]
+fn test_uninstall_shell_fish() {
+    let repo = TestRepo::new();
+    let temp_home = TempDir::new().unwrap();
+
+    // Create fish conf.d directory with wt.fish
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let fish_config = conf_d.join("wt.fish");
+    fs::write(
+        &fish_config,
+        "if type -q wt; command wt config shell init fish | source; end\n",
+    )
+    .unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("fish")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd, @r"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+        ✅ Removed from [1mfish[0m ~/.config/fish/conf.d/wt.fish
+        [107m [0m  [1m[2m[34mwt.fish[0m[0m
+
+        ✅ Removed shell integration from 1 shell
+
+        💡 [2mRestart shell to complete uninstall[0m
+
+        ----- stderr -----
+        ");
+    });
+
+    // Verify the fish config file was deleted
+    assert!(!fish_config.exists(), "Fish config file should be deleted");
+}
+
+/// Test install and then uninstall roundtrip
+#[test]
+fn test_install_uninstall_roundtrip() {
+    let repo = TestRepo::new();
+    let temp_home = TempDir::new().unwrap();
+
+    // Create initial config file
+    let zshrc_path = temp_home.path().join(".zshrc");
+    fs::write(
+        &zshrc_path,
+        "# Existing config\nexport PATH=$HOME/bin:$PATH\n",
+    )
+    .unwrap();
+
+    // First install
+    {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("zsh")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        let output = cmd.output().expect("Failed to execute command");
+        assert!(output.status.success(), "Install should succeed");
+    }
+
+    // Verify installed
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(content.contains("wt config shell init zsh"));
+
+    // Then uninstall
+    {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("uninstall")
+            .arg("zsh")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        let output = cmd.output().expect("Failed to execute command");
+        assert!(output.status.success(), "Uninstall should succeed");
+    }
+
+    // Verify uninstalled but other content preserved
+    let content = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        !content.contains("wt config shell init"),
+        "Integration should be removed"
+    );
+    assert!(
+        content.contains("# Existing config"),
+        "Comment should be preserved"
+    );
+    assert!(
+        content.contains("export PATH=$HOME/bin:$PATH"),
+        "PATH export should be preserved"
     );
 }

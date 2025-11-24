@@ -28,7 +28,7 @@ use commands::{
     handle_config_refresh_cache, handle_config_status_set, handle_config_status_unset,
     handle_configure_shell, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
     handle_squash, handle_standalone_ask_approvals, handle_standalone_clear_approvals,
-    handle_standalone_commit, handle_standalone_run_hook, handle_switch,
+    handle_standalone_commit, handle_standalone_run_hook, handle_switch, handle_unconfigure_shell,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -300,11 +300,78 @@ fn main() {
 
                                 if let Some(path) = current_shell_path {
                                     crate::output::hint(format!(
-                                        "Restart your shell or run: source {path}"
+                                        "Restart shell or run: source {path}"
                                     ))?;
                                 }
                             } else {
                                 crate::output::success("All shells already configured")?;
+                            }
+                            Ok(())
+                        })
+                }
+                ConfigShellCommand::Uninstall { shell, force } => {
+                    let explicit_shell = shell.is_some();
+                    handle_unconfigure_shell(shell, force)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                        .and_then(|scan_result| {
+                            use worktrunk::styling::format_bash_with_gutter;
+
+                            let changes_count = scan_result.results.len();
+
+                            // Show results
+                            for result in &scan_result.results {
+                                let bold = Style::new().bold();
+                                let shell = result.shell;
+                                let path = format_path_for_display(&result.path);
+
+                                crate::output::success(format!(
+                                    "{} {bold}{shell}{bold:#} {path}",
+                                    result.action.description(),
+                                ))?;
+                                crate::output::gutter(format_bash_with_gutter(
+                                    &result.removed_line,
+                                    "",
+                                ))?;
+                            }
+
+                            // Show not found - warning if explicit shell, hint if auto-scan
+                            for (shell, path) in &scan_result.not_found {
+                                let path = format_path_for_display(path);
+                                if explicit_shell {
+                                    crate::output::warning(format!(
+                                        "No shell integration found in {path}"
+                                    ))?;
+                                } else {
+                                    crate::output::hint(format!(
+                                        "No {shell} integration in {path}"
+                                    ))?;
+                                }
+                            }
+
+                            // Exit with info if nothing was found
+                            if changes_count == 0 {
+                                if scan_result.not_found.is_empty() {
+                                    crate::output::blank()?;
+                                    crate::output::hint("No shell integration found to remove")?;
+                                }
+                                return Ok(());
+                            }
+
+                            // Summary
+                            crate::output::blank()?;
+                            let plural = if changes_count == 1 { "" } else { "s" };
+                            crate::output::success(format!(
+                                "Removed shell integration from {changes_count} shell{plural}"
+                            ))?;
+                            crate::output::blank()?;
+
+                            // Hint about restarting shell
+                            let current_shell = std::env::var("SHELL")
+                                .ok()
+                                .and_then(|s| s.rsplit('/').next().map(String::from));
+
+                            if current_shell.is_some() {
+                                crate::output::hint("Restart shell to complete uninstall")?;
                             }
                             Ok(())
                         })

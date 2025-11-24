@@ -12,9 +12,43 @@ pub struct ConfigureResult {
     pub config_line: String,
 }
 
+pub struct UninstallResult {
+    pub shell: Shell,
+    pub path: PathBuf,
+    pub action: UninstallAction,
+    pub removed_line: String,
+}
+
+pub struct UninstallScanResult {
+    pub results: Vec<UninstallResult>,
+    pub not_found: Vec<(Shell, PathBuf)>,
+}
+
 pub struct ScanResult {
     pub configured: Vec<ConfigureResult>,
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
+}
+
+#[derive(Debug, PartialEq)]
+pub enum UninstallAction {
+    Removed,
+    WouldRemove,
+}
+
+impl UninstallAction {
+    pub fn description(&self) -> &str {
+        match self {
+            UninstallAction::Removed => "Removed from",
+            UninstallAction::WouldRemove => "Will remove from",
+        }
+    }
+
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            UninstallAction::Removed => SUCCESS_EMOJI,
+            UninstallAction::WouldRemove => PROGRESS_EMOJI,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -371,8 +405,7 @@ fn configure_fish_file(
 
 fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> {
     use anstyle::Style;
-    use std::io::Write;
-    use worktrunk::styling::{INFO_EMOJI, eprint, eprintln};
+    use worktrunk::styling::{eprint, eprintln};
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
     // In directive mode, flushes both stdout (directives) and stderr (messages)
@@ -402,6 +435,15 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
         eprintln!(); // Blank line after each shell block
     }
 
+    prompt_yes_no()
+}
+
+/// Prompt user for yes/no confirmation, returns true if user confirms
+fn prompt_yes_no() -> Result<bool, String> {
+    use anstyle::Style;
+    use std::io::Write;
+    use worktrunk::styling::{INFO_EMOJI, eprint, eprintln};
+
     let bold = Style::new().bold();
     eprint!("{INFO_EMOJI} Proceed? {bold}[y/N]{bold:#} ");
     io::stderr().flush().map_err(|e| e.to_string())?;
@@ -411,9 +453,202 @@ fn prompt_for_confirmation(results: &[ConfigureResult]) -> Result<bool, String> 
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
-    // Blank line after user input to separate from results
     eprintln!();
 
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
+}
+
+// Pattern detection for shell integration
+fn has_integration_pattern(content: &str) -> bool {
+    let lower = content.to_lowercase();
+    lower.contains("wt init") || lower.contains("wt config shell init")
+}
+
+fn is_integration_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.starts_with('#')
+        && has_integration_pattern(trimmed)
+        && (trimmed.contains("eval") || trimmed.contains("source") || trimmed.contains("if "))
+}
+
+pub fn handle_unconfigure_shell(
+    shell_filter: Option<Shell>,
+    skip_confirmation: bool,
+) -> Result<UninstallScanResult, String> {
+    // First, do a dry-run to see what would be changed
+    let preview = scan_for_uninstall(shell_filter, true)?;
+
+    // If nothing to do, return early
+    if preview.results.is_empty() {
+        return Ok(preview);
+    }
+
+    // Show what will be done and ask for confirmation (unless --force flag is used)
+    if !skip_confirmation && !prompt_for_uninstall_confirmation(&preview.results)? {
+        return Err("Cancelled by user".to_string());
+    }
+
+    // User confirmed (or --force flag was used), now actually apply the changes
+    scan_for_uninstall(shell_filter, false)
+}
+
+fn scan_for_uninstall(
+    shell_filter: Option<Shell>,
+    dry_run: bool,
+) -> Result<UninstallScanResult, String> {
+    let shells = if let Some(shell) = shell_filter {
+        vec![shell]
+    } else {
+        vec![Shell::Bash, Shell::Zsh, Shell::Fish]
+    };
+
+    let mut results = Vec::new();
+    let mut not_found = Vec::new();
+
+    for shell in shells {
+        let paths = shell
+            .config_paths("wt")
+            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
+
+        // For Fish, check for wt.fish specifically (delete entire file)
+        if matches!(shell, Shell::Fish) {
+            if let Some(fish_path) = paths.first() {
+                if fish_path.exists() {
+                    if dry_run {
+                        results.push(UninstallResult {
+                            shell,
+                            path: fish_path.clone(),
+                            action: UninstallAction::WouldRemove,
+                            removed_line: "wt.fish".to_string(),
+                        });
+                    } else {
+                        fs::remove_file(fish_path).map_err(|e| {
+                            format!(
+                                "Failed to remove {}: {}",
+                                format_path_for_display(fish_path),
+                                e
+                            )
+                        })?;
+                        results.push(UninstallResult {
+                            shell,
+                            path: fish_path.clone(),
+                            action: UninstallAction::Removed,
+                            removed_line: "wt.fish".to_string(),
+                        });
+                    }
+                } else {
+                    not_found.push((shell, fish_path.clone()));
+                }
+            }
+            continue;
+        }
+
+        // For Bash/Zsh, scan config files
+        let mut found = false;
+
+        for path in &paths {
+            if !path.exists() {
+                continue;
+            }
+
+            match uninstall_from_file(shell, path, dry_run) {
+                Ok(Some(result)) => {
+                    results.push(result);
+                    found = true;
+                    break; // Only process first matching file per shell
+                }
+                Ok(None) => {} // No integration found in this file
+                Err(e) => return Err(e),
+            }
+        }
+
+        if !found && let Some(first_path) = paths.first() {
+            not_found.push((shell, first_path.clone()));
+        }
+    }
+
+    Ok(UninstallScanResult { results, not_found })
+}
+
+fn uninstall_from_file(
+    shell: Shell,
+    path: &Path,
+    dry_run: bool,
+) -> Result<Option<UninstallResult>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let integration_lines: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| is_integration_line(line))
+        .map(|(i, line)| (i, *line))
+        .collect();
+
+    if integration_lines.is_empty() {
+        return Ok(None);
+    }
+
+    // Use the first matching line for display
+    let removed_line = integration_lines[0].1.trim().to_string();
+
+    if dry_run {
+        return Ok(Some(UninstallResult {
+            shell,
+            path: path.to_path_buf(),
+            action: UninstallAction::WouldRemove,
+            removed_line,
+        }));
+    }
+
+    // Remove matching lines
+    let indices_to_remove: std::collections::HashSet<usize> =
+        integration_lines.iter().map(|(i, _)| *i).collect();
+    let new_lines: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !indices_to_remove.contains(i))
+        .map(|(_, line)| *line)
+        .collect();
+
+    let new_content = new_lines.join("\n");
+    // Preserve trailing newline if original had one
+    let new_content = if content.ends_with('\n') {
+        format!("{}\n", new_content)
+    } else {
+        new_content
+    };
+
+    fs::write(path, new_content)
+        .map_err(|e| format!("Failed to write {}: {}", format_path_for_display(path), e))?;
+
+    Ok(Some(UninstallResult {
+        shell,
+        path: path.to_path_buf(),
+        action: UninstallAction::Removed,
+        removed_line,
+    }))
+}
+
+fn prompt_for_uninstall_confirmation(results: &[UninstallResult]) -> Result<bool, String> {
+    use anstyle::Style;
+    use worktrunk::styling::eprintln;
+
+    crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
+
+    for result in results {
+        let bold = Style::new().bold();
+        let shell = result.shell;
+        let path = format_path_for_display(&result.path);
+
+        eprintln!(
+            "{} {} {bold}{shell}{bold:#} {bold}{path}{bold:#}",
+            result.action.emoji(),
+            result.action.description(),
+        );
+    }
+
+    prompt_yes_no()
 }
