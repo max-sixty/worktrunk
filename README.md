@@ -818,7 +818,7 @@ For Claude:
 ```bash
 llm install llm-anthropic
 llm keys set anthropic
-llm models default claude-3.5-sonnet
+llm models default claude-sonnet-4-5
 ```
 
 For OpenAI:
