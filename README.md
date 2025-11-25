@@ -11,7 +11,7 @@
 <!-- [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers) -->
 
 Worktrunk is a CLI tool which handles the mechanics of git worktrees. It's
-designed to allow starting many parallels agents, overseeing them, and merging
+designed to allow starting many parallel agents, overseeing them, and merging
 their work.
 
 Git worktrees let multiple agents work on a single repo without colliding; each
@@ -96,11 +96,11 @@ Worktrunk is opinionated! It's designed for workflows which are:
 ...and that means...
 
 - Maximum automation: LLM commit messages, lifecycle hooks, Claude Code hooks
-  - A robust "auto-merge when 'local-CI' passes" approach
+  - A robust "auto-merge when *local-CI* passes" approach
 - A small surface area: three core commands
 - 1:1 mapping between worktree and branch, worktrees are addressed by their branch
 - Sibling layout: worktrees live at `repo.feature-x/` (path template configurable)
-- Defaults to "stage everything and squash merge" (but configurable)
+- Defaults to "stage everything and squash merge" (configurable)
 - Extreme UI responsiveness; slow ops can't delay fast ones
 - Pluggable; adopting Worktrunk for a portion of a workflow doesn't require
   adopting it for everything. Standard `git worktree` commands continue working
@@ -287,9 +287,9 @@ launches Claude Code in that directory.
 messages during merge. See [LLM Commit Messages](#llm-commit-messages).
 
 **Automate startup with hooks** — Use `post-create` for environment
-setup, `post-start` for non-blocking tasks. For example, worktrunk uses
+setup, `post-start` for non-blocking tasks. For example, `worktrunk` uses
 `post-start` to bootstrap build caches from main via copy-on-write,
-eliminating cold compiles (see [worktrunk's config](.config/wt.toml)). See
+eliminating cold compiles (see [`worktrunk`'s config](.config/wt.toml)). See
 [Project Hooks](#project-hooks) for details.
 
 **Use `pre-merge` as a "local CI"** — Running `wt merge` with pre-merge
@@ -707,8 +707,8 @@ Options:
   - `●` **failed** (red) - Checks failed
   - `●` **conflicts** (yellow) - Merge conflicts with base
   - `●` **no-ci** (gray) - PR/MR or workflow found but no checks configured
-  - (blank) - No PR/MR or workflow found, or `gh`/`glab` CLI unavailable
-  - (dimmed) - Stale: unpushed local changes differ from PR/MR head
+  - **(blank)** - No PR/MR or workflow found, or `gh`/`glab` CLI unavailable
+  - **(dimmed)** - Stale: unpushed local changes differ from PR/MR head
 - **Commit:** Short commit hash (8 chars)
 - **Age:** Time since last commit (relative)
 - **Message:** Last commit message (truncated)
@@ -854,7 +854,7 @@ For Claude:
 ```console
 llm install llm-anthropic
 llm keys set anthropic
-llm models default claude-3.5-sonnet
+llm models default claude-sonnet-4-5-20250929
 ```
 
 For OpenAI:
