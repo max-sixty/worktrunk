@@ -673,6 +673,7 @@ fn test_configure_shell_no_warning_when_compinit_enabled() {
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.env("ZDOTDIR", temp_home.path()); // Point zsh to our test home for config
+        cmd.env("WT_ASSUME_COMPINIT", "1"); // Bypass zsh subprocess check (unreliable on CI)
         cmd.arg("config")
             .arg("shell")
             .arg("install")

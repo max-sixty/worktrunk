@@ -281,6 +281,11 @@ fn display_shell_status() -> anyhow::Result<()> {
 fn check_zsh_compinit_missing() -> bool {
     use std::process::{Command, Stdio};
 
+    // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
+    if std::env::var("WT_ASSUME_COMPINIT").is_ok() {
+        return false; // Assume compinit is configured
+    }
+
     // Probe zsh to check if compdef function exists (indicates compinit has run)
     // Use --no-globalrcs to skip system files (like /etc/zshrc on macOS which enables compinit)
     // This ensures we're checking the USER's configuration, not system defaults

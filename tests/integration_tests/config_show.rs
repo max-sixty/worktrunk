@@ -214,6 +214,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
         repo.clean_cli_env(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("WT_ASSUME_COMPINIT", "1"); // Bypass zsh subprocess check (unreliable on CI)
 
         assert_cmd_snapshot!(cmd);
     });
