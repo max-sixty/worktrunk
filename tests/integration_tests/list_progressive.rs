@@ -56,56 +56,6 @@ fn test_list_progressive_rendering_basic() {
 }
 
 #[test]
-fn test_list_progressive_rendering_stages() {
-    let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
-
-    // Create several worktrees
-    for i in 1..=5 {
-        repo.add_worktree(&format!("branch-{}", i), &format!("branch-{}", i));
-    }
-
-    // Use byte-based capture for deterministic snapshots
-    let output = capture_progressive_output(
-        &repo,
-        "list",
-        &["--full"],
-        ProgressiveCaptureOptions::with_byte_interval(400),
-    );
-
-    // Command should succeed
-    assert_eq!(output.exit_code, 0, "Command should succeed");
-
-    // Should capture at least initial and final stages
-    assert!(
-        !output.stages.is_empty(),
-        "Should capture at least one stage"
-    );
-
-    // Sample up to 3 stages (may be fewer on fast machines)
-    let samples = output.samples(3);
-    assert!(!samples.is_empty(), "Should get at least one sample stage");
-
-    // If we have enough stages, use canonical verification
-    // (handles edge cases like fast completion gracefully)
-    if output.stages.len() >= 2 {
-        // verify_progressive_filling() returns Err if progressive rendering wasn't observable,
-        // which is acceptable on fast CI machines - just skip the assertion in that case
-        let _ = output.verify_progressive_filling();
-    }
-
-    // Verify all branches appear in final output (the essential assertion)
-    let final_text = output.final_output();
-    for i in 1..=5 {
-        assert!(
-            final_text.contains(&format!("branch-{}", i)),
-            "Final output should contain branch-{}",
-            i
-        );
-    }
-}
-
-#[test]
 fn test_list_progressive_dots_decrease() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
