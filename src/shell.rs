@@ -436,6 +436,11 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
+    // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
+    if std::env::var("WT_ASSUME_COMPINIT").is_ok() {
+        return Some(true); // Assume compinit is configured
+    }
+
     // Probe command: check if compdef function exists (proof compinit ran).
     // We use unique markers (__WT_COMPINIT_*) to avoid false matches from any
     // output the user's zshrc might produce during startup.
