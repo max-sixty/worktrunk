@@ -1,0 +1,31 @@
+---
+source: tests/integration_tests/select.rs
+expression: normalized
+---
+>                                                           │                                                       3/4
+    Branch           Status         HEAD±    main↕  Path    │No uncommitted changes
+  @ main                 ^                          ./test..│
+> + active-worktree     ∅                           ./acti..│
+    orphan-branch       ∅  ⎇                              ..│
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │
+                                                            │

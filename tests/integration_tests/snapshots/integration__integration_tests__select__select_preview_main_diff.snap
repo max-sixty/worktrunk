@@ -1,0 +1,31 @@
+---
+source: tests/integration_tests/select.rs
+expression: normalized
+---
+> eature                                                    │1: HEAD± | 2: history | 3: main…±                     1/30
+    Branch   Status         HEAD±    main↕  Path         Rem│ctrl-u/d: scroll | ctrl-p: preview
+> + feature      ↑                  ↑2      ./feature     ..│
+                                                            │ feature_code.rs | 6 ++++++
+                                                            │ tests.rs        | 4 ++++
+                                                            │ 2 files changed, 10 insertions(+)
+                                                            │
+                                                            │
+                                                            │diff --git a/feature_code.rs b/feature_code.rs
+                                                            │new file mode 100644
+                                                            │index 0000000..b8bd34c
+                                                            │--- /dev/null
+                                                            │+++ b/feature_code.rs
+                                                            │@@ -0,0 +1,6 @@
+                                                            │+fn new_feature() {
+                                                            │+    println!("This is a new feature!");
+                                                            │+    let x = 42;
+                                                            │+    let y = x * 2;
+                                                            │+    println!("Result: {}", y);
+                                                            │+}
+                                                            │diff --git a/tests.rs b/tests.rs
+                                                            │new file mode 100644
+                                                            │index 0000000..f71e4d6
+                                                            │--- /dev/null
+                                                            │+++ b/tests.rs
+                                                            │@@ -0,0 +1,4 @@
+                                                            │+#[test]

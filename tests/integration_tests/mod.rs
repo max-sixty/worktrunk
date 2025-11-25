@@ -33,6 +33,7 @@ pub mod push;
 pub mod readme_sync;
 pub mod remove;
 pub mod security;
+pub mod select;
 pub mod shell_wrapper;
 pub mod spacing_edge_cases;
 pub mod switch;
