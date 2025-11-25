@@ -410,6 +410,16 @@ impl MainDivergence {
             _ => Self::Diverged,
         }
     }
+
+    /// Returns styled symbol (dimmed), or None for None variant.
+    pub fn styled(&self) -> Option<String> {
+        use worktrunk::styling::HINT;
+        if *self == Self::None {
+            None
+        } else {
+            Some(format!("{HINT}{self}{HINT:#}"))
+        }
+    }
 }
 
 /// Upstream/remote divergence state
@@ -458,6 +468,16 @@ impl UpstreamDivergence {
             (_, 0) => Self::Ahead,
             (0, _) => Self::Behind,
             _ => Self::Diverged,
+        }
+    }
+
+    /// Returns styled symbol (dimmed), or None for None variant.
+    pub fn styled(&self) -> Option<String> {
+        use worktrunk::styling::HINT;
+        if *self == Self::None {
+            None
+        } else {
+            Some(format!("{HINT}{self}{HINT:#}"))
         }
     }
 }
@@ -662,39 +682,29 @@ impl StatusSymbols {
         // - Yellow (WARNING): Potential conflicts, git operations, locked/prunable (active/stuck states)
         // - Cyan: Working tree changes (activity)
         // - Dimmed (HINT): Branch state symbols that indicate removability + divergence arrows (low urgency)
-        let (branch_op_state_str, has_branch_op_state) = match self.branch_op_state.styled() {
-            Some(s) => (s, true),
-            None => (String::new(), false),
-        };
-        let main_divergence_str = if self.main_divergence != MainDivergence::None {
-            format!("{HINT}{}{HINT:#}", self.main_divergence)
-        } else {
-            String::new()
-        };
-        let upstream_divergence_str = if self.upstream_divergence != UpstreamDivergence::None {
-            format!("{HINT}{}{HINT:#}", self.upstream_divergence)
-        } else {
-            String::new()
-        };
+        let (branch_op_state_str, has_branch_op_state) = self
+            .branch_op_state
+            .styled()
+            .map_or((String::new(), false), |s| (s, true));
+        let (main_divergence_str, has_main_divergence) = self
+            .main_divergence
+            .styled()
+            .map_or((String::new(), false), |s| (s, true));
+        let (upstream_divergence_str, has_upstream_divergence) = self
+            .upstream_divergence
+            .styled()
+            .map_or((String::new(), false), |s| (s, true));
         // Working tree symbols split into 3 fixed columns for vertical alignment
-        let has_staged = self.working_tree.contains('+');
-        let has_modified = self.working_tree.contains('!');
-        let has_untracked = self.working_tree.contains('?');
-        let staged_str = if has_staged {
-            format!("{CYAN}+{CYAN:#}")
-        } else {
-            String::new()
+        let style_working = |sym: char| -> (String, bool) {
+            if self.working_tree.contains(sym) {
+                (format!("{CYAN}{sym}{CYAN:#}"), true)
+            } else {
+                (String::new(), false)
+            }
         };
-        let modified_str = if has_modified {
-            format!("{CYAN}!{CYAN:#}")
-        } else {
-            String::new()
-        };
-        let untracked_str = if has_untracked {
-            format!("{CYAN}?{CYAN:#}")
-        } else {
-            String::new()
-        };
+        let (staged_str, has_staged) = style_working('+');
+        let (modified_str, has_modified) = style_working('!');
+        let (untracked_str, has_untracked) = style_working('?');
         let worktree_state_str = if !self.worktree_state.is_empty() {
             // Branch indicator (⎇) is informational (dimmed), worktree attrs (⌫⊠) are warnings (yellow)
             if self.worktree_state == "⎇" {
@@ -725,12 +735,12 @@ impl StatusSymbols {
             (
                 PositionMask::MAIN_DIVERGENCE,
                 main_divergence_str,
-                self.main_divergence != MainDivergence::None,
+                has_main_divergence,
             ),
             (
                 PositionMask::UPSTREAM_DIVERGENCE,
                 upstream_divergence_str,
-                self.upstream_divergence != UpstreamDivergence::None,
+                has_upstream_divergence,
             ),
             (
                 PositionMask::WORKTREE_STATE,

@@ -87,7 +87,6 @@ fn format_directory_fish_style(path: &str) -> String {
         path.to_string()
     };
 
-    // Handle absolute paths - preserve leading /
     let is_absolute = path.starts_with('/');
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
 
@@ -95,42 +94,21 @@ fn format_directory_fish_style(path: &str) -> String {
         return path;
     }
 
-    if parts.len() == 1 {
-        // Single component - return as-is with leading / if absolute
-        return if is_absolute {
-            format!("/{}", parts[0])
-        } else {
-            parts[0].to_string()
-        };
-    }
-
     let mut result = String::new();
-
-    // Add leading / for absolute paths
     if is_absolute {
         result.push('/');
     }
 
     for (i, part) in parts.iter().enumerate() {
-        let is_last = i == parts.len() - 1;
-        let is_first = i == 0;
+        if i > 0 {
+            result.push('/');
+        }
 
-        if is_first && *part == "~" {
-            result.push('~');
-        } else if is_last {
-            // Keep full name for last component
-            if !is_first {
-                result.push('/');
-            }
+        // Keep ~ and last component full, abbreviate others to first char
+        if (i == 0 && *part == "~") || i == parts.len() - 1 {
             result.push_str(part);
-        } else {
-            // Abbreviate to first character
-            if !is_first {
-                result.push('/');
-            }
-            if let Some(c) = part.chars().next() {
-                result.push(c);
-            }
+        } else if let Some(c) = part.chars().next() {
+            result.push(c);
         }
     }
 
@@ -155,13 +133,12 @@ pub fn run(claude_code: bool) -> Result<()> {
         )
     };
 
-    // Build output parts
-    let mut parts: Vec<String> = Vec::new();
+    // Build output string
+    let mut output = String::new();
 
     // Directory (claude-code mode only)
     if claude_code {
-        let formatted_dir = format_directory_fish_style(&cwd.display().to_string());
-        parts.push(formatted_dir);
+        output = format_directory_fish_style(&cwd.display().to_string());
     }
 
     // Git status
@@ -169,25 +146,21 @@ pub fn run(claude_code: bool) -> Result<()> {
     if repo.git_dir().is_ok()
         && let Some(status_line) = get_git_status(&repo, &cwd)?
     {
-        parts.push(status_line);
+        if !output.is_empty() {
+            output.push_str("  ");
+        }
+        output.push_str(&status_line);
     }
 
     // Model name (claude-code mode only)
     if let Some(model) = model_name {
-        // Use " | " as separator before model name
-        if !parts.is_empty() {
-            let last = parts.pop().unwrap();
-            parts.push(format!("{last}  | {model}"));
-        } else {
-            parts.push(format!("| {model}"));
-        }
+        output.push_str("  | ");
+        output.push_str(&model);
     }
 
     // Output with ANSI reset prefix
-    if !parts.is_empty() {
-        let output = parts.join("  ");
+    if !output.is_empty() {
         if claude_code {
-            // Reset any prior formatting, add leading space for visual separation
             let reset = anstyle::Reset;
             print!("{reset} {output}");
         } else {
