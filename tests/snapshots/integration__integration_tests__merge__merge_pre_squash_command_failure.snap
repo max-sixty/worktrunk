@@ -23,7 +23,7 @@ success: false
 exit_code: 1
 ----- stdout -----
 🔄 [36mRunning pre-commit:[0m
-[107m [0m  [1m[2m[34mexit[0m 1[0m
+[107m [0m  [90m[1m[2m[34mexit[90m 1[0m
 ❌ [31mpre-commit command failed: exit status: 1[0m
 
 💡 [2mUse --no-verify to skip pre-commit commands[0m

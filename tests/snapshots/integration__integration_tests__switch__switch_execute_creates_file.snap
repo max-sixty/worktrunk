@@ -16,6 +16,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
@@ -26,6 +27,6 @@ exit_code: 0
 ----- stdout -----
 ✅ [32mCreated new worktree for [1m[32mfile-test[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].file-test[0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'test content'[0m [2m[36m>[0m test.txt[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'test content'[90m [2m[36m>[90m test.txt[0m
 
 ----- stderr -----

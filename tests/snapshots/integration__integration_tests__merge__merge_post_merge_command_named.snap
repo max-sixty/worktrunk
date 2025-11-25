@@ -29,9 +29,9 @@ exit_code: 0
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 🔄 [36mRunning post-merge [1mnotify[0m:[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'Merge to main complete'[0m [2m[36m>[0m notify.txt[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'Merge to main complete'[90m [2m[36m>[90m notify.txt[0m
 🔄 [36mRunning post-merge [1mdeploy[0m:[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'Deploying branch feature'[0m [2m[36m>[0m deploy.txt[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'Deploying branch feature'[90m [2m[36m>[90m deploy.txt[0m
 
 ----- stderr -----
 [0m[0m

@@ -183,6 +183,9 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
     let gutter = super::GUTTER;
+    // Use gray (BrightBlack) for visible dimming of unhighlighted content
+    let base_style = super::GRAY;
+    let reset = anstyle::Reset;
     let mut output = String::new();
 
     let wrapped_lines = wrap_content_for_gutter(content, left_margin);
@@ -229,12 +232,14 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
 
     // Process each wrapped line
     for line in &wrapped_lines {
-        output.push_str(&format!("{left_margin}{gutter} {gutter:#}  "));
+        // Start line with gutter and base gray style for unhighlighted content
+        output.push_str(&format!("{left_margin}{gutter} {gutter:#}  {base_style}"));
 
         // Highlight this line
         let Ok(highlights) = highlighter.highlight(&config, line.as_bytes(), None, |_| None) else {
-            // Fallback: just print plain text if highlighting fails
+            // Fallback: just print plain text if highlighting fails (already gray)
             output.push_str(line);
+            output.push_str(&format!("{reset}"));
             output.push('\n');
             continue;
         };
@@ -244,13 +249,13 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
         for event in highlights {
             match event.unwrap() {
                 HighlightEvent::Source { start, end } => {
-                    // Output the text for this source region
+                    // Output the text for this source region (inherits current style)
                     if let Ok(text) = std::str::from_utf8(&line_bytes[start..end]) {
                         output.push_str(text);
                     }
                 }
                 HighlightEvent::HighlightStart(idx) => {
-                    // Start of a highlighted region - apply style
+                    // Start of a highlighted region - apply style (includes dimmed)
                     if let Some(name) = highlight_names.get(idx.0)
                         && let Some(style) = bash_token_style(name)
                     {
@@ -258,14 +263,14 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
                     }
                 }
                 HighlightEvent::HighlightEnd => {
-                    // End of highlighted region - reset style
-                    output.push_str(&format!("{}", anstyle::Reset));
+                    // End of highlighted region - return to base gray style
+                    output.push_str(&format!("{base_style}"));
                 }
             }
         }
 
-        // Ensure all styles are reset at end of line to prevent leaking into child process output
-        output.push_str(&format!("{}", anstyle::Reset));
+        // Full reset at end of line to prevent leaking into child process output
+        output.push_str(&format!("{reset}"));
         output.push('\n');
     }
 

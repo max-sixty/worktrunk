@@ -33,5 +33,5 @@ exit 7
 ----- stderr -----
 ✅ [32mCreated new worktree for [1m[32moutput-exit-test[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].output-exit-test[0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'doing work'[0m[0m
-[107m [0m  [1m[2m[34mexit[0m 7[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'doing work'[90m[0m
+[107m [0m  [90m[1m[2m[34mexit[90m 7[0m

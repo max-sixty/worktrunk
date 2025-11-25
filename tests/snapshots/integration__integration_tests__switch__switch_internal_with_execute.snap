@@ -33,5 +33,5 @@ echo 'line2'
 ----- stderr -----
 ✅ [32mCreated new worktree for [1m[32mexec-internal[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].exec-internal[0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'line1'[0m[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'line2'[0m[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'line1'[90m[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'line2'[90m[0m

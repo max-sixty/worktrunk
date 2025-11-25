@@ -10,7 +10,7 @@ expression: output.normalized()
 [107m [0m  Includes comprehensive test coverage and input validation.
 ✅ [32mSquashed @ [2m[32m[HASH][0m[0m
 🔄 [36mRunning pre-merge [1mtest[0m:[0m
-[107m [0m  [1m[2m[34muv[0m run pytest[0m
+[107m [0m  [90m[1m[2m[34muv[90m run pytest[0m
 
 ============================= test session starts ==============================
 collected 3 items
@@ -22,7 +22,7 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 ============================== 3 passed in 0.8s ===============================
 
 🔄 [36mRunning pre-merge [1mlint[0m:[0m
-[107m [0m  [1m[2m[34muv[0m run ruff check[0m
+[107m [0m  [90m[1m[2m[34muv[90m run ruff check[0m
 
 All checks passed!
 

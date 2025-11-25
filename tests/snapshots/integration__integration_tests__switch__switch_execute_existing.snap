@@ -15,6 +15,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1761609600"
@@ -25,6 +26,6 @@ exit_code: 0
 ----- stdout -----
 ✅ [32mSwitched to worktree for [1m[32mexisting-exec[0m[32m at [1m[32m[WORKTREE_EXISTING_EXEC][0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'existing worktree'[0m [2m[36m>[0m existing.txt[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'existing worktree'[90m [2m[36m>[90m existing.txt[0m
 
 ----- stderr -----

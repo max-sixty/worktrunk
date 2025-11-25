@@ -31,9 +31,9 @@ exit_code: 0
 [107m [0m  Includes comprehensive test coverage and input validation.
 ✅ [32mSquashed @ [2m[SHA][0m
 🔄 [36mRunning pre-merge [1mtest[0m:[0m
-[107m [0m  [1m[2m[34muv[0m run pytest[0m
+[107m [0m  [90m[1m[2m[34muv[90m run pytest[0m
 🔄 [36mRunning pre-merge [1mlint[0m:[0m
-[107m [0m  [1m[2m[34muv[0m run ruff check[0m
+[107m [0m  [90m[1m[2m[34muv[90m run ruff check[0m
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
 [107m [0m  * [SHA] feat(api): Add user authentication endpoints
 [107m [0m   api/auth.py        | 31 [32m+++++++++++++++++++++++++++++++[m

@@ -29,7 +29,7 @@ exit_code: 1
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 🔄 [36mRunning post-merge:[0m
-[107m [0m  [1m[2m[34mexit[0m 1[0m
+[107m [0m  [90m[1m[2m[34mexit[90m 1[0m
 🟡 [33mCommand failed: exit status: 1[0m
 ❌ [31mpost-merge command failed: exit status: 1[0m
 

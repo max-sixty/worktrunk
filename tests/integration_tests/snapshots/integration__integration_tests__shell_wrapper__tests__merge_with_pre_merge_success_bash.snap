@@ -3,13 +3,13 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
 🔄 [36mRunning pre-merge [1mformat[0m:[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'✓ Code formatting check passed'[0m[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'✓ Code formatting check passed'[90m[0m
 ✓ Code formatting check passed
 🔄 [36mRunning pre-merge [1mlint[0m:[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'✓ Linting passed - no warnings'[0m[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'✓ Linting passed - no warnings'[90m[0m
 ✓ Linting passed - no warnings
 🔄 [36mRunning pre-merge [1mtest[0m:[0m
-[107m [0m  [1m[2m[34mecho[0m [2m[32m'✓ All 47 tests passed in 2.3s'[0m[0m
+[107m [0m  [90m[1m[2m[34mecho[90m [2m[32m'✓ All 47 tests passed in 2.3s'[90m[0m
 ✓ All 47 tests passed in 2.3s
 🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m[HASH][0m[0m (no commit/squash/rebase needed)
 [107m [0m  * [33m[HASH][m Add feature
