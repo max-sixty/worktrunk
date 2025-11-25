@@ -86,11 +86,11 @@ fn test_list_progressive_rendering_stages() {
     let samples = output.samples(3);
     assert!(!samples.is_empty(), "Should get at least one sample stage");
 
-    // If we have enough stages, use canonical verification
-    // (handles edge cases like fast completion gracefully)
+    // Best-effort verification: progressive rendering may complete too quickly to observe on
+    // fast CI machines. Other tests (test_list_progressive_rendering_basic,
+    // test_list_progressive_dots_decrease) provide strict verification with .unwrap();
+    // this test focuses on final output correctness.
     if output.stages.len() >= 2 {
-        // verify_progressive_filling() returns Err if progressive rendering wasn't observable,
-        // which is acceptable on fast CI machines - just skip the assertion in that case
         let _ = output.verify_progressive_filling();
     }
 
