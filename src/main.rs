@@ -32,10 +32,9 @@ use commands::{
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
-#[cfg(unix)]
-use cli::BetaCommand;
 use cli::{
-    ApprovalsCommand, Cli, Commands, ConfigCommand, ConfigShellCommand, StatusAction, StepCommand,
+    ApprovalsCommand, BetaCommand, Cli, Commands, ConfigCommand, ConfigShellCommand, StatusAction,
+    StepCommand,
 };
 use worktrunk::HookType;
 
