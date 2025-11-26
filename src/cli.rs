@@ -476,7 +476,7 @@ pub enum StepCommand {
 /// Experimental commands
 #[derive(Subcommand)]
 pub enum BetaCommand {
-    /// Interactive worktree selector with diff preview
+    /// Interactive worktree selector
     ///
     /// Toggle preview tabs with 1/2/3 keys.
     #[cfg(unix)]

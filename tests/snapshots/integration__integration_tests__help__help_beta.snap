@@ -21,7 +21,7 @@ wt beta - Experimental commands
 Usage: wt beta [OPTIONS] <COMMAND>
 
 Commands:
-  select      Interactive worktree selector with diff preview
+  select      Interactive worktree selector
   statusline  Single-line status for shell prompts
 
 Options:
