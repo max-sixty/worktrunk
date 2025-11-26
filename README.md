@@ -10,9 +10,7 @@
 <!-- [![Downloads](https://img.shields.io/crates/d/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk) -->
 <!-- [![Stars](https://img.shields.io/github/stars/max-sixty/worktrunk?style=for-the-badge&logo=github)](https://github.com/max-sixty/worktrunk/stargazers) -->
 
-Worktrunk is a CLI for managing Git worktrees in workflows with parallel AI coding agents. It encapsulates the worktree lifecycle, project setup hooks, and status tracking into a small set of explicit commands.
-
-It's designed for developers who use terminal-based agents such as Claude Code, Amp, aider, Codex CLI, and Gemini CLI, with each agent in its own short‑lived branch and directory.
+Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. Worktrees give each agent an isolated branch and directory; Worktrunk adds branch-based navigation, lifecycle hooks, and unified status. The goal is to make spinning up a new AI "developer" for a task feel as routine as `git switch`.
 
 ## Demo
 
