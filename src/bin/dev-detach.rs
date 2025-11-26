@@ -6,13 +6,13 @@
 //!
 //! Usage: dev-detach \<command\> [args...]
 
-use std::{env, process};
+use std::process;
 
 fn main() {
     #[cfg(unix)]
     {
         use nix::unistd::{execvp, setsid};
-        use std::ffi::CString;
+        use std::{env, ffi::CString};
 
         if let Err(e) = setsid() {
             eprintln!("dev-detach: setsid failed: {e}");
