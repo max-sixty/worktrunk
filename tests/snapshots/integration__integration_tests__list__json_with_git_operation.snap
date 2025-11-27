@@ -15,7 +15,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
+    "head_sha": "[SHA]",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Main conflicting changes",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
+    "head_sha": "[SHA]",
     "branch": "feature",
     "timestamp": 0,
     "commit_message": "Main conflicting changes",

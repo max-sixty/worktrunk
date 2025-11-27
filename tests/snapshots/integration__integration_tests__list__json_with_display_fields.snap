@@ -15,7 +15,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "a27cd57d20a6211799da676e70edefa5152f99fe",
+    "head_sha": "[SHA]",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Main commit 2",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "f16cd37915d5ee93903252f5cf877c76c54f3d50",
+    "head_sha": "[SHA]",
     "branch": "feature-ahead",
     "timestamp": 0,
     "commit_message": "Feature commit 2",
@@ -125,7 +125,7 @@ exit_code: 0
     "working_diff_display": "/u001b[32m+1/u001b[0m /u001b[31m-1/u001b[0m"
   },
   {
-    "head_sha": "6c3da84215d400bf6e05a7f9cd1efcfbd825b9e9",
+    "head_sha": "[SHA]",
     "branch": "feature-behind",
     "timestamp": 0,
     "commit_message": "Initial commit on main",

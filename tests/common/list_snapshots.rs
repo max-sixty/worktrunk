@@ -34,7 +34,7 @@ pub fn standard_settings(repo: &TestRepo) -> Settings {
 
 pub fn json_settings(repo: &TestRepo) -> Settings {
     let mut settings = base_settings(repo);
-    settings.add_filter(r#""head": "[0-9a-f]{40}""#, r#""head": "[SHA]""#);
+    settings.add_filter(r#""head_sha": "[0-9a-f]{40}""#, r#""head_sha": "[SHA]""#);
     settings.add_filter(r#""timestamp": \d+"#, r#""timestamp": 0"#);
     settings.add_filter(r"\\u001b\[32m", "[GREEN]");
     settings.add_filter(r"\\u001b\[31m", "[RED]");

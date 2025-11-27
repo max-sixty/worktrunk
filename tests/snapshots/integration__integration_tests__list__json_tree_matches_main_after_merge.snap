@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "133d1f05a73a1478707f3438625069c7ebd8eb27",
+    "head_sha": "[SHA]",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Same content on main",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "d78d130165cc11f6df39113ded5bbf1c16f8ebc3",
+    "head_sha": "[SHA]",
     "branch": "feature-merged",
     "timestamp": 0,
     "commit_message": "Merge main into feature",

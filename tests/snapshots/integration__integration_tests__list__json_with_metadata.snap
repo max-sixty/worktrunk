@@ -15,7 +15,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
+    "head_sha": "[SHA]",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Initial commit",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
+    "head_sha": "[SHA]",
     "branch": "feature-detached",
     "timestamp": 0,
     "commit_message": "Initial commit",
@@ -125,7 +125,7 @@ exit_code: 0
     "is_main": false
   },
   {
-    "head_sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
+    "head_sha": "[SHA]",
     "branch": "locked-feature",
     "timestamp": 0,
     "commit_message": "Initial commit",
