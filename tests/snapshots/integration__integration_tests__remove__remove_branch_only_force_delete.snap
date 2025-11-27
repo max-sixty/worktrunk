@@ -16,14 +16,14 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-⚪ [90mNo worktree found for branch feature-force[0m
-✅ [32mRemoved branch [1m[32mfeature-force[0m[0m (--force-delete)
 
 ----- stderr -----
+⚪ [90mNo worktree found for branch feature-force[0m
+✅ [32mRemoved branch [1m[32mfeature-force[0m[0m (--force-delete)

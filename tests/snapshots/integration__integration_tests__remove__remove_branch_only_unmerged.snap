@@ -22,8 +22,8 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-⚪ [90mNo worktree found for branch feature-unmerged[0m
-🟡 [33mCould not delete branch [1m[33mfeature-unmerged[0m[0m
 
 ----- stderr -----
+⚪ [90mNo worktree found for branch feature-unmerged[0m
+🟡 [33mCould not delete branch [1m[33mfeature-unmerged[0m[0m
 [107m [0m  error: the branch 'feature-unmerged' is not fully merged

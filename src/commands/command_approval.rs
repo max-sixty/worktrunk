@@ -7,8 +7,8 @@ use anyhow::Context;
 use worktrunk::config::{Command, WorktrunkConfig};
 use worktrunk::git::GitError;
 use worktrunk::styling::{
-    AnstyleStyle, HINT_EMOJI, INFO_EMOJI, WARNING, WARNING_BOLD, WARNING_EMOJI, eprint, eprintln,
-    format_bash_with_gutter, stderr,
+    AnstyleStyle, HINT, HINT_EMOJI, INFO_EMOJI, WARNING, WARNING_BOLD, WARNING_EMOJI, eprint,
+    eprintln, format_bash_with_gutter, stderr,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -66,7 +66,9 @@ pub fn approve_command_batch(
 
         if updated && let Err(e) = fresh_config.save() {
             let _ = output::warning(format!("Failed to save command approval: {e}"));
-            let _ = output::hint("Approval will be requested again next time.");
+            let _ = output::hint(format!(
+                "{HINT}Approval will be requested again next time.{HINT:#}"
+            ));
         }
     }
 

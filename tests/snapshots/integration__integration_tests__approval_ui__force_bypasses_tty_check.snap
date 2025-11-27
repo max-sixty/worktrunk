@@ -24,10 +24,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mRunning post-create:[0m
-✅ [32mCreated new worktree for [1m[32mtest-force-tty[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].test-force-tty[0m[0m
-💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
+🔄 [36mRunning post-create:[0m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test command'[0m[2m[0m
 [0mtest command
+✅ [32mCreated new worktree for [1m[32mtest-force-tty[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].test-force-tty[0m[0m
+💡 [2mRun `wt config shell install` to enable automatic cd[0m

@@ -15,15 +15,17 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🟡 [33m--base flag is only used with --create, ignoring[0m
-⚪ Already on worktree for [1mmain[0m at [1m[REPO][0m
 
 ----- stderr -----
+🟡 [33m--base flag is only used with --create, ignoring[0m
+⚪ Already on worktree for [1mmain[0m at [1m[REPO][0m

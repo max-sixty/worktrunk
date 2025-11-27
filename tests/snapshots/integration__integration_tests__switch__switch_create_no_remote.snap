@@ -14,15 +14,17 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
-💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
+✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
+💡 [2mRun `wt config shell install` to enable automatic cd[0m

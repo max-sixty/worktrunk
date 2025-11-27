@@ -5,7 +5,7 @@ use std::process;
 use worktrunk::config::{WorktrunkConfig, set_config_path};
 use worktrunk::git::{Repository, exit_code, is_command_not_approved, set_base_path};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{format_with_gutter, println};
+use worktrunk::styling::{HINT, format_with_gutter, println};
 
 mod cli;
 mod commands;
@@ -294,7 +294,7 @@ fn main() {
                             for (shell, path) in &scan_result.skipped {
                                 let path = format_path_for_display(path);
                                 crate::output::hint(format!(
-                                    "Skipped {bold}{shell}{bold:#}; {path} not found"
+                                    "{HINT}Skipped {bold}{shell}{bold:#}; {path} not found{HINT:#}"
                                 ))?;
                             }
 
@@ -343,11 +343,11 @@ fn main() {
                                     // Fish auto-sources from conf.d, so just say "Restart shell"
                                     // Bash/Zsh can source directly for immediate activation
                                     if matches!(result.shell, worktrunk::shell::Shell::Fish) {
-                                        crate::output::hint("Restart shell to activate")?;
+                                        crate::output::hint(format!("{HINT}Restart shell to activate{HINT:#}"))?;
                                     } else {
                                         let path = format_path_for_display(&result.path);
                                         crate::output::hint(format!(
-                                            "Restart shell or run: source {path}"
+                                            "{HINT}Restart shell or run: source {path}{HINT:#}"
                                         ))?;
                                     }
                                 }
@@ -409,7 +409,7 @@ fn main() {
                                         ))?;
                                     } else {
                                         crate::output::hint(format!(
-                                            "No {shell} {what} in {path}"
+                                            "{HINT}No {shell} {what} in {path}{HINT:#}"
                                         ))?;
                                     }
                                 }
@@ -429,7 +429,7 @@ fn main() {
                                         ))?;
                                     } else {
                                         crate::output::hint(format!(
-                                            "No {shell} completions in {path}"
+                                            "{HINT}No {shell} completions in {path}{HINT:#}"
                                         ))?;
                                     }
                                 }
@@ -439,9 +439,9 @@ fn main() {
                                 if total_changes == 0 {
                                     if all_not_found == 0 {
                                         crate::output::blank()?;
-                                        crate::output::hint(
-                                            "No shell integration found to remove",
-                                        )?;
+                                        crate::output::hint(format!(
+                                            "{HINT}No shell integration found to remove{HINT:#}"
+                                        ))?;
                                     }
                                     return Ok(());
                                 }
@@ -465,7 +465,7 @@ fn main() {
                                 });
 
                                 if current_shell_affected {
-                                    crate::output::hint("Restart shell to complete uninstall")?;
+                                    crate::output::hint(format!("{HINT}Restart shell to complete uninstall{HINT:#}"))?;
                                 }
                                 Ok(())
                             })
@@ -781,25 +781,23 @@ fn main() {
     let _ = output::terminate_output();
 
     if let Err(e) = result {
-        // Route through output system to respect mode:
-        // - Interactive mode: errors go to stdout
-        // - Directive mode: errors go to stderr
+        use worktrunk::styling::{ERROR, ERROR_EMOJI};
 
-        // Check if it's a typed GitError - use its styled output
+        // GitError and WorktrunkError produce styled messages
         if let Some(git_err) = e.downcast_ref::<worktrunk::git::GitError>() {
-            let _ = output::error(git_err.styled());
+            let _ = output::print(git_err.styled());
+        } else if let Some(wt_err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
+            let _ = output::print(wt_err.to_string());
         } else {
-            // Anyhow error - multi-line errors from external commands get gutter formatting.
-            // We detect this by checking if context was added: e.to_string() != root_cause means
-            // the error was wrapped with .context(), so the root cause is raw external output.
+            // Anyhow error - format with emoji/styling, multi-line gets gutter
             let msg = e.to_string();
             let root_cause = e.root_cause().to_string();
             let has_context = msg != root_cause;
             if has_context && root_cause.contains('\n') {
-                let _ = output::error(msg);
+                let _ = output::print(format!("{ERROR_EMOJI} {ERROR}{msg}{ERROR:#}"));
                 let _ = output::gutter(format_with_gutter(&root_cause, "", None));
             } else {
-                let _ = output::error(msg);
+                let _ = output::print(format!("{ERROR_EMOJI} {ERROR}{msg}{ERROR:#}"));
             }
         }
 

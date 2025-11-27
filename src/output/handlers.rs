@@ -140,7 +140,7 @@ fn format_remove_worktree_message(
     }
 }
 
-/// Shell integration hint message (without emoji - hint() adds it automatically)
+/// Shell integration hint message (with HINT styling - emoji added by shell_integration_hint())
 fn shell_integration_hint() -> String {
     use worktrunk::styling::HINT;
     format!("{HINT}Run `wt config shell install` to enable automatic cd{HINT:#}")

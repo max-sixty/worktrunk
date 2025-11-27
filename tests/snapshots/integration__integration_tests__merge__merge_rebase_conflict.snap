@@ -22,9 +22,9 @@ info:
 success: false
 exit_code: 1
 ----- stdout -----
-🔄 [36mRebasing onto [1m[36mmain[0m[36m...[0m
 
 ----- stderr -----
+🔄 [36mRebasing onto [1m[36mmain[0m[36m...[0m
 ❌ [31mRebase onto [1m[31mmain[0m[31m incomplete[0m
 [107m [0m  Rebasing (1/1)
 [107m [0m  error: could not apply c661874... Update shared.txt in feature

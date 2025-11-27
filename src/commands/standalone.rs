@@ -1,7 +1,7 @@
 use anyhow::Context;
 use worktrunk::HookType;
 use worktrunk::git::Repository;
-use worktrunk::styling::{AnstyleStyle, CYAN, CYAN_BOLD, GREEN_BOLD, format_with_gutter};
+use worktrunk::styling::{AnstyleStyle, CYAN, CYAN_BOLD, GREEN_BOLD, HINT, format_with_gutter};
 
 use super::commit::{CommitGenerator, CommitOptions};
 use super::context::CommandEnv;
@@ -141,7 +141,9 @@ pub fn handle_squash(
         .unwrap_or(false);
 
     if skip_pre_commit && has_pre_commit {
-        crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
+        crate::output::hint(format!(
+            "{HINT}Skipping pre-commit hook (--no-verify){HINT:#}"
+        ))?;
     } else if let Some(ref config) = project_config {
         HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust)?;
     }
@@ -219,7 +221,7 @@ pub fn handle_squash(
         let (sha, _restore_cmd) = repo.create_safety_backup(&backup_message)?;
         use worktrunk::styling::AnstyleStyle;
         let dim = AnstyleStyle::new().dimmed();
-        crate::output::hint(format!("Backup created @ {dim}{sha}{dim:#}"))?;
+        crate::output::hint(format!("{HINT}Backup created @ {dim}{sha}{dim:#}{HINT:#}"))?;
     }
 
     // Get commit subjects for the squash message

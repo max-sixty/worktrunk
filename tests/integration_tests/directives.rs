@@ -112,9 +112,9 @@ fn test_remove_without_internal() {
         success: true
         exit_code: 0
         ----- stdout -----
-        🔄 [36mRemoving [1m[36mmain[0m[36m worktree & branch in background[0m
 
         ----- stderr -----
+        🔄 [36mRemoving [1m[36mmain[0m[36m worktree & branch in background[0m
         ");
     });
 }

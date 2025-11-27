@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{ERROR, ERROR_EMOJI, eprintln, println, stderr, stdout};
+use worktrunk::styling::{eprintln, stderr};
 
 #[cfg(not(unix))]
 use super::handlers::execute_streaming;
@@ -15,40 +15,32 @@ use super::traits::OutputHandler;
 pub struct InteractiveOutput {
     /// Target directory for command execution (set by change_directory)
     target_dir: Option<std::path::PathBuf>,
-    /// Cached stdout handle
-    stdout: io::Stdout,
 }
 
 impl InteractiveOutput {
     pub fn new() -> Self {
-        Self {
-            target_dir: None,
-            stdout: io::stdout(),
-        }
+        Self { target_dir: None }
     }
 }
 
 impl OutputHandler for InteractiveOutput {
     fn write_message_line(&mut self, line: &str) -> io::Result<()> {
-        // Use styled println for proper color detection
-        println!("{line}");
-        self.stdout.flush()
-    }
-
-    fn error(&mut self, message: String) -> io::Result<()> {
-        // Errors go to stderr in all modes (Unix convention)
-        if message.starts_with(ERROR_EMOJI) {
-            eprintln!("{message}");
-        } else {
-            eprintln!("{ERROR_EMOJI} {ERROR}{message}{ERROR:#}");
-        }
+        // All messages go to stderr (stdout reserved for data like JSON)
+        eprintln!("{line}");
         stderr().flush()
     }
 
     fn gutter(&mut self, content: String) -> io::Result<()> {
-        // Gutter content is diagnostic/informational, not data - goes to stderr
+        // Gutter uses write! (no newline) rather than writeln!
         write!(stderr(), "{content}")?;
         stderr().flush()
+    }
+
+    fn raw(&mut self, content: String) -> io::Result<()> {
+        // JSON and structured data go to stdout for piping
+        use worktrunk::styling::println;
+        println!("{content}");
+        io::stdout().flush()
     }
 
     fn shell_integration_hint(&mut self, message: String) -> io::Result<()> {
@@ -95,8 +87,7 @@ impl OutputHandler for InteractiveOutput {
     }
 
     fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
-        // In interactive mode, flush both streams before stderr prompt
-        stdout().flush()?;
+        // All messages go to stderr, so just flush stderr
         stderr().flush()
     }
 

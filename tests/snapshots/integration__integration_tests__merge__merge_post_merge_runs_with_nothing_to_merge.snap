@@ -23,10 +23,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+
+----- stderr -----
 ⚪ Already up to date with [1mmain[0m (no new commits, no rebase needed)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 🔄 [36mRunning post-merge:[0m
-
------ stderr -----
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt[0m
 [0m

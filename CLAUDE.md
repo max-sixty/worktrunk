@@ -177,15 +177,27 @@ All styling uses the **anstyle ecosystem** for composable, auto-detecting termin
 
 Six canonical message patterns with their emojis:
 
-1. **Progress**: 🔄 + cyan text (operations in progress)
-2. **Success**: ✅ + green text (successful completion)
-3. **Errors**: ❌ + red text (failures, invalid states)
-4. **Warnings**: 🟡 + yellow text (non-blocking issues)
-5. **Hints**: 💡 + dimmed text (actionable suggestions, tips for user)
-   - Keep hints uniformly dimmed - don't use `HINT_BOLD` for emphasis (bold+dim renders inconsistently across terminals)
-6. **Info**: ⚪ + unstyled text (neutral status, system feedback, metadata)
-   - Use `output::info()` for primary status (unstyled)
-   - Add `HINT` style manually for supplementary/dimmed metadata
+1. **Progress**: 🔄 (operations in progress)
+2. **Success**: ✅ (successful completion)
+3. **Errors**: ❌ (failures, invalid states)
+4. **Warnings**: 🟡 (non-blocking issues)
+5. **Hints**: 💡 (actionable suggestions, tips for user)
+6. **Info**: ⚪ (neutral status, system feedback, metadata)
+
+**All message methods just add the emoji prefix** - callers handle their own styling:
+```rust
+// Caller provides the styling
+output::success(format!("{GREEN}Created worktree{GREEN:#}"))?;
+output::hint(format!("{HINT}Run 'wt config' to configure{HINT:#}"))?;
+```
+
+**Styling conventions by type:**
+- Progress → cyan (`{CYAN}...{CYAN:#}`)
+- Success → green (`{GREEN}...{GREEN:#}`)
+- Errors → red (`{ERROR}...{ERROR:#}`)
+- Warnings → yellow (`{WARNING}...{WARNING:#}`)
+- Hints → dimmed (`{HINT}...{HINT:#}`), avoid `HINT_BOLD` (renders inconsistently)
+- Info → unstyled or dimmed for supplementary metadata
 
 **Every user-facing message requires either an emoji or a gutter** for consistent visual separation.
 
@@ -196,15 +208,14 @@ Six canonical message patterns with their emojis:
 - **One blank after prompts** - Separate user input from results
 - **Never double blanks** - One blank line maximum between elements
 
-### stdout vs stderr: Separation by Mode
+### stdout vs stderr
 
-**Interactive mode:**
-- stdout: Status messages (progress, success, warning, info, hint)
-- stderr: Errors, gutter content (diagnostics), child process output, interactive prompts
+**Both modes write all messages to stderr.** stdout is reserved for structured data:
 
-**Directive mode** (--internal flag for shell integration):
-- stdout: Shell script emitted at the end (e.g., `cd '/path/to/worktree'`)
-- stderr: All user-facing messages + child process output - streams in real-time
+- **stdout**: JSON output (`--format=json`), shell scripts (directive mode)
+- **stderr**: All user-facing messages (progress, success, errors, hints, gutter, etc.)
+
+**Directive mode** additionally emits a shell script to stdout at the end.
 
 Use the output system (`output::success()`, `output::progress()`, etc.) to handle both modes automatically. Never write directly to stdout/stderr in command code.
 
@@ -430,7 +441,9 @@ Cover success/error states, with/without data, and flag variations.
 
 Worktrunk supports two output modes, selected once at program startup:
 1. **Interactive Mode** - Human-friendly output with colors, emojis, and hints
-2. **Directive Mode** - Shell script on stdout (at end), user messages on stderr (streaming)
+2. **Directive Mode** - Shell script on stdout (at end), user messages on stderr
+
+Both modes write all messages to stderr. stdout is reserved for structured data (JSON, shell scripts).
 
 The mode is determined at initialization in `main()` and never changes during execution.
 
@@ -467,9 +480,9 @@ The output module (`src/output/global.rs`) provides:
 - `progress(message)` - Operations in progress (🔄, both modes)
 - `info(message)` - Neutral status/metadata (⚪, both modes)
 - `warning(message)` - Non-blocking issues (🟡, both modes)
-- `error(message)` - Critical failures (❌, stdout in interactive, stderr in directive)
-- `hint(message)` - Actionable suggestions (💡, interactive only, suppressed in directive)
-- `shell_integration_hint(message)` - Shell integration hints (interactive only)
+- `hint(message)` - Actionable suggestions (💡, both modes)
+- `print(message)` - Write message as-is (caller formats, both modes)
+- `shell_integration_hint(message)` - Shell integration hints (💡, suppressed in directive)
 - `gutter(content)` - Gutter-formatted content (use with `format_with_gutter()`)
 - `blank()` - Blank line for visual separation
 - `raw(content)` - Raw output without emoji (JSON data)

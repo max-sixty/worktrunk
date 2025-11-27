@@ -204,13 +204,13 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 Configure hooks in `.config/wt.toml`:
 
-| Hook             | When                                | Example                        |
-| ---------------- | ----------------------------------- | ------------------------------ |
-| **post-create**  | After worktree created              | `cp -r .cache`, `ln -s`        |
-| **post-start**   | After worktree created (background) | `npm install`, `cargo build`   |
-| **pre-commit**   | Before squash commit created        | `pre-commit run`               |
-| **pre-merge**    | After squash, before push           | `cargo test`, `pytest`         |
-| **post-merge**   | After successful merge              | `cargo install --path .`       |
+| Hook            | When                                | Example                      |
+| --------------- | ----------------------------------- | ---------------------------- |
+| **post-create** | After worktree created              | `cp -r .cache`, `ln -s`      |
+| **post-start**  | After worktree created (background) | `npm install`, `cargo build` |
+| **pre-commit**  | Before squash commit created        | `pre-commit run`             |
+| **pre-merge**   | After squash, before push           | `cargo test`, `pytest`       |
+| **post-merge**  | After successful merge              | `cargo install --path .`     |
 
 ```toml
 # Install dependencies, build setup
@@ -1009,13 +1009,12 @@ $ wt list
 
 </details>
 
-Experimental commands under `wt beta`. Interface may change.
-
 ### `wt beta select`
 
 Interactive worktree selector with fuzzy search and diff preview. Unix only.
 
 Preview tabs (toggle with `1`/`2`/`3`):
+
 - **Tab 1**: Working tree changes (uncommitted)
 - **Tab 2**: History (commits not on main highlighted)
 - **Tab 3**: Branch diff (changes ahead of main)
@@ -1173,17 +1172,20 @@ This disables bash syntax highlighting in command output but keeps all core func
 ### Running Tests
 
 **Quick tests (no external dependencies):**
+
 ```bash
 cargo test --lib --bins           # Unit tests (~200 tests)
 cargo test --test integration     # Integration tests without shell tests (~300 tests)
 ```
 
 **Full integration tests (requires bash, zsh, fish):**
+
 ```bash
 cargo test --test integration --features shell-integration-tests
 ```
 
 **Dependencies for shell integration tests:**
+
 - bash, zsh, fish shells
 - Quick setup: `./dev/setup-claude-code-web.sh` (installs shells on Linux)
 

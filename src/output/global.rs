@@ -105,15 +105,11 @@ pub fn warning(message: impl Into<String>) -> io::Result<()> {
     with_output(|h| h.warning(message.into()))
 }
 
-/// Emit an error message
+/// Print a message (written as-is)
 ///
-/// Error messages are critical failures like "❌ Cannot remove main worktree"
-/// The message is already formatted (includes ERROR_EMOJI from WorktrunkError::Display).
-///
-/// In interactive mode: goes to stdout (with other worktrunk output)
-/// In directive mode: goes to stderr (with other user-facing messages)
-pub fn error(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.error(message.into()))
+/// The caller is responsible for formatting.
+pub fn print(message: impl Into<String>) -> io::Result<()> {
+    with_output(|h| h.print(message.into()))
 }
 
 /// Emit gutter-formatted content

@@ -17,14 +17,15 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
+
+----- stderr -----
 🔄 [36mRemoving [1m[36mfeature-b[0m[36m worktree & branch in background[0m
 🔄 [36mRemoving [1m[36mfeature-c[0m[36m worktree & branch in background[0m
 🔄 [36mRemoving [1m[36mfeature-a[0m[36m worktree & branch in background[0m
-
------ stderr -----

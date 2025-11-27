@@ -24,13 +24,13 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
-💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
-🔄 [36mRunning post-start [1mtask1[0m:[0m
-🔄 [36mRunning post-start [1mtask2[0m:[0m
-🔄 [36mRunning post-start [1mtask3[0m:[0m
 
 ----- stderr -----
+✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
+💡 [2mRun `wt config shell install` to enable automatic cd[0m
+🔄 [36mRunning post-start [1mtask1[0m:[0m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'TASK1_OUTPUT'[0m[2m[0m
+🔄 [36mRunning post-start [1mtask2[0m:[0m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'TASK2_OUTPUT'[0m[2m[0m
+🔄 [36mRunning post-start [1mtask3[0m:[0m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'TASK3_OUTPUT'[0m[2m[0m

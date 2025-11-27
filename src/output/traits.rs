@@ -6,9 +6,7 @@
 
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{
-    ERROR, ERROR_EMOJI, HINT, HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI,
-};
+use worktrunk::styling::{HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI};
 
 /// Core output handler trait
 ///
@@ -30,7 +28,7 @@ pub trait OutputHandler {
 
     /// Emit a hint message
     fn hint(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&format!("{HINT_EMOJI} {HINT}{message}{HINT:#}"))
+        self.write_message_line(&format!("{HINT_EMOJI} {message}"))
     }
 
     /// Emit an info message
@@ -43,14 +41,9 @@ pub trait OutputHandler {
         self.write_message_line(&format!("{WARNING_EMOJI} {message}"))
     }
 
-    /// Emit an error message
-    fn error(&mut self, message: String) -> io::Result<()> {
-        // Add emoji and styling if not already present
-        if message.starts_with(ERROR_EMOJI) {
-            self.write_message_line(&message)
-        } else {
-            self.write_message_line(&format!("{ERROR_EMOJI} {ERROR}{message}{ERROR:#}"))
-        }
+    /// Print a message (written as-is)
+    fn print(&mut self, message: String) -> io::Result<()> {
+        self.write_message_line(&message)
     }
 
     /// Emit gutter-formatted content (no emoji)

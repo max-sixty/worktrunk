@@ -16,13 +16,14 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mRemoving worktree for [1m[36mfeature-fg[0m[36m...[0m
-✅ [32mRemoved worktree & branch for [1m[32mfeature-fg[0m[0m
 
 ----- stderr -----
+🔄 [36mRemoving worktree for [1m[36mfeature-fg[0m[36m...[0m
+✅ [32mRemoved worktree & branch for [1m[32mfeature-fg[0m[0m

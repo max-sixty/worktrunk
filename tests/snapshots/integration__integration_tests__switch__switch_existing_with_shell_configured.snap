@@ -16,13 +16,13 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-✅ [32mSwitched to worktree for [1m[32mshell-configured[0m[32m at [1m[32m[REPO].shell-configured[0m[0m
 
 ----- stderr -----
+✅ [32mSwitched to worktree for [1m[32mshell-configured[0m[32m at [1m[32m[REPO].shell-configured[0m[0m

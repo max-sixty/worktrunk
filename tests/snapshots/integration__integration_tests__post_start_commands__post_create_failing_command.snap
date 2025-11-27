@@ -24,11 +24,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mRunning post-create:[0m
-🟡 [33mCommand failed: exit status: 1[0m
-✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
-💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
+🔄 [36mRunning post-create:[0m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
-[0m
+[0m🟡 [33mCommand failed: exit status: 1[0m
+✅ [32mCreated new worktree for [1m[32mfeature[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature[0m[0m
+💡 [2mRun `wt config shell install` to enable automatic cd[0m

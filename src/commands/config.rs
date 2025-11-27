@@ -58,8 +58,12 @@ pub fn handle_config_create() -> anyhow::Result<()> {
             format_path_for_display(&config_path)
         ))?;
         output::blank()?;
-        output::hint("Use 'wt config show' to view existing configuration")?;
-        output::hint("Use 'wt config create --help' for config format reference")?;
+        output::hint(format!(
+            "{HINT}Use 'wt config show' to view existing configuration{HINT:#}"
+        ))?;
+        output::hint(format!(
+            "{HINT}Use 'wt config create --help' for config format reference{HINT:#}"
+        ))?;
         return Ok(());
     }
 
@@ -80,7 +84,9 @@ pub fn handle_config_create() -> anyhow::Result<()> {
         format_path_for_display(&config_path)
     ))?;
     output::blank()?;
-    output::hint("Edit this file to customize worktree paths and LLM settings")?;
+    output::hint(format!(
+        "{HINT}Edit this file to customize worktree paths and LLM settings{HINT:#}"
+    ))?;
 
     Ok(())
 }

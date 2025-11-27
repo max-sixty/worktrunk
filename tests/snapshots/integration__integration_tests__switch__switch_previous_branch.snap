@@ -16,14 +16,14 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-🟡 [33mWorktree for [1m[33mfeature-a[0m[33m at [1m[33m[REPO].feature-a[0m[33m; cannot cd (no shell integration)[0m
-💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
+🟡 [33mWorktree for [1m[33mfeature-a[0m[33m at [1m[33m[REPO].feature-a[0m[33m; cannot cd (no shell integration)[0m
+💡 [2mRun `wt config shell install` to enable automatic cd[0m

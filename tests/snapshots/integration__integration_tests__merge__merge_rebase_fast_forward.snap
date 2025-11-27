@@ -15,14 +15,15 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
+
+----- stderr -----
 ✅ [32mFast-forwarded to [1m[32mmain[0m[0m
 ⚪ Already up to date with [1mmain[0m (no new commits)
 🔄 [36mRemoving [1m[36mfast-forward-test[0m[36m worktree & branch in background[0m
-
------ stderr -----

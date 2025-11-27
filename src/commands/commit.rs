@@ -143,7 +143,9 @@ impl CommitOptions<'_> {
             .unwrap_or(false);
 
         if self.no_verify && has_pre_commit {
-            crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
+            crate::output::hint(format!(
+                "{HINT}Skipping pre-commit hook (--no-verify){HINT:#}"
+            ))?;
         } else if let Some(ref config) = project_config {
             let pipeline = HookPipeline::new(*self.ctx);
             pipeline.run_pre_commit(config, self.target_branch, self.auto_trust)?;

@@ -22,7 +22,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-⚪ [90mNo worktree found for branch feature-squashed[0m
-✅ [32mRemoved branch [1m[32mfeature-squashed[0m[0m
 
 ----- stderr -----
+⚪ [90mNo worktree found for branch feature-squashed[0m
+✅ [32mRemoved branch [1m[32mfeature-squashed[0m[0m
