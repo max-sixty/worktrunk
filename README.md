@@ -64,9 +64,9 @@ merge, cleanup.
 ```console
 $ wt list
   Branch     Status         HEAD±    main↕  Path              Remote⇅  Commit    Age   Message
-@ main           ^                          ./repo             ⇡0  ⇣0  e6fd2060  1d    Initial commit
-+ feature-x  +   ↑        +5        ↑3      ./repo.feature-x           d840828e  1h    Add file 3
-+ bugfix-y       ↑                  ↑1      ./repo.bugfix-y            22f1aa87  2h    Fix bug
+@ main           ^                          ./repo             ⇡0  ⇣0  b834638e  1d    Initial commit
++ feature-x  +   ↑        +5        ↑3      ./repo.feature-x           6bba16d6  1h    Add file 3
++ bugfix-y       ↑                  ↑1      ./repo.bugfix-y            bafa4cbd  2h    Fix bug
 
 ⚪ Showing 3 worktrees, 1 with changes, 2 ahead
 ```
@@ -960,11 +960,11 @@ git config worktrunk.status.feature-x "💬"
 ```console
 $ wt list
   Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
-@ main                   ^                          ./repo                             e6fd2060  1d    Initial commit
-+ clean-no-status       _                           ./repo.clean-no-status             e6fd2060  1d    Initial commit
-+ clean-with-status     _   💬                      ./repo.clean-with-status           e6fd2060  1d    Initial commit
-+ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             e6fd2060  1d    Initial commit
-+ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           e6fd2060  1d    Initial commit
+@ main                   ^                          ./repo                             b834638e  1d    Initial commit
++ clean-no-status       _                           ./repo.clean-no-status             b834638e  1d    Initial commit
++ clean-with-status     _   💬                      ./repo.clean-with-status           b834638e  1d    Initial commit
++ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             b834638e  1d    Initial commit
++ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           b834638e  1d    Initial commit
 
 ⚪ Showing 5 worktrees, 1 with changes
 ```
@@ -989,11 +989,11 @@ When using Claude:
 ```console
 $ wt list
   Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
-@ main                   ^                          ./repo                             e6fd2060  1d    Initial commit
-+ clean-no-status       _                           ./repo.clean-no-status             e6fd2060  1d    Initial commit
-+ clean-with-status     _   💬                      ./repo.clean-with-status           e6fd2060  1d    Initial commit
-+ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             e6fd2060  1d    Initial commit
-+ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           e6fd2060  1d    Initial commit
+@ main                   ^                          ./repo                             b834638e  1d    Initial commit
++ clean-no-status       _                           ./repo.clean-no-status             b834638e  1d    Initial commit
++ clean-with-status     _   💬                      ./repo.clean-with-status           b834638e  1d    Initial commit
++ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             b834638e  1d    Initial commit
++ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           b834638e  1d    Initial commit
 
 ⚪ Showing 5 worktrees, 1 with changes
 ```

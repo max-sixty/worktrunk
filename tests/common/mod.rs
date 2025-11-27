@@ -358,9 +358,11 @@ impl TestRepo {
     /// ```
     pub fn commit_with_age(&self, message: &str, age_seconds: i64) {
         // SOURCE_DATE_EPOCH used in tests - must match configure_git_cmd/test_env_vars
+        // This is Jan 2, 2025 00:00:00 UTC
         const SOURCE_DATE_EPOCH: i64 = 1735776000;
         let commit_time = SOURCE_DATE_EPOCH - age_seconds;
-        let timestamp = format!("@{}", commit_time);
+        // Use ISO 8601 format for consistent behavior across git versions
+        let timestamp = unix_to_iso8601(commit_time);
 
         // Use file.txt like commit() does - allows multiple commits to the same file
         let file_path = self.root.join("file.txt");
@@ -394,9 +396,11 @@ impl TestRepo {
     /// ```
     pub fn commit_with_age_in(&self, message: &str, age_seconds: i64, dir: &Path) {
         // SOURCE_DATE_EPOCH used in tests - must match configure_git_cmd/test_env_vars
+        // This is Jan 2, 2025 00:00:00 UTC
         const SOURCE_DATE_EPOCH: i64 = 1735776000;
         let commit_time = SOURCE_DATE_EPOCH - age_seconds;
-        let timestamp = format!("@{}", commit_time);
+        // Use ISO 8601 format for consistent behavior across git versions
+        let timestamp = unix_to_iso8601(commit_time);
 
         // Use file.txt with message as content - deterministic for same message
         let file_path = dir.join("file.txt");
@@ -1073,9 +1077,77 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize, timeout: std::tim
     );
 }
 
+/// Convert Unix timestamp to ISO 8601 format for consistent git date handling
+///
+/// Git interprets `@timestamp` format inconsistently across versions and platforms.
+/// Using ISO 8601 format ensures deterministic commit SHAs across all environments.
+fn unix_to_iso8601(timestamp: i64) -> String {
+    // Calculate date components from Unix timestamp
+    let days_since_epoch = timestamp / 86400;
+    let seconds_in_day = timestamp % 86400;
+
+    let hours = seconds_in_day / 3600;
+    let minutes = (seconds_in_day % 3600) / 60;
+    let seconds = seconds_in_day % 60;
+
+    // Calculate year, month, day from days since Unix epoch (1970-01-01)
+    // Simplified algorithm: account for leap years
+    let mut year = 1970i64;
+    let mut remaining_days = days_since_epoch;
+
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    let days_in_months: [i64; 12] = if is_leap_year(year) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut month = 1;
+    for &days in &days_in_months {
+        if remaining_days < days {
+            break;
+        }
+        remaining_days -= days;
+        month += 1;
+    }
+
+    let day = remaining_days + 1; // Days are 1-indexed
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, minutes, seconds
+    )
+}
+
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_unix_to_iso8601() {
+        // 2025-01-01T00:00:00Z
+        assert_eq!(unix_to_iso8601(1735689600), "2025-01-01T00:00:00Z");
+        // 2025-01-02T00:00:00Z (SOURCE_DATE_EPOCH)
+        assert_eq!(unix_to_iso8601(1735776000), "2025-01-02T00:00:00Z");
+        // 2024-12-31T00:00:00Z (one day before 2025-01-01)
+        assert_eq!(unix_to_iso8601(1735603200), "2024-12-31T00:00:00Z");
+        // Unix epoch
+        assert_eq!(unix_to_iso8601(0), "1970-01-01T00:00:00Z");
+        // Leap year: 2024-02-29
+        assert_eq!(unix_to_iso8601(1709164800), "2024-02-29T00:00:00Z");
+    }
 
     #[test]
     fn test_commit_with_age() {

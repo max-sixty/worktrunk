@@ -217,13 +217,15 @@ fn normalize_for_readme(content: &str) -> String {
     let content = TMPDIR_REGEX.replace_all(&content, "../repo.$1");
     let content = REPO_REGEX.replace_all(&content, "../repo");
 
-    // Trim trailing whitespace from each line and overall (matches pre-commit behavior)
+    // Trim trailing whitespace from each line and overall trailing newlines
+    // NOTE: We use trim_end() not trim() to preserve leading spaces on the first line
+    // (e.g., the two-space gutter before table headers in `wt list` output)
     content
         .lines()
         .map(|line| line.trim_end())
         .collect::<Vec<_>>()
         .join("\n")
-        .trim()
+        .trim_end()
         .to_string()
 }
 
@@ -234,7 +236,7 @@ fn normalize_readme_content(content: &str) -> String {
         .map(|line| line.trim_end())
         .collect::<Vec<_>>()
         .join("\n")
-        .trim()
+        .trim_end()
         .to_string()
 }
 
