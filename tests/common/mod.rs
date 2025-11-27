@@ -804,6 +804,11 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Match if followed by a letter/character (not "#")
     settings.add_filter(r"(Could not apply \[SHA\]\.\.\.) ([A-Za-z])", "$1 # $2");
 
+    // Normalize OS-specific error messages in gutter output
+    // Ubuntu may produce "Broken pipe (os error 32)" instead of the expected error
+    // when capturing stderr from shell commands due to timing/buffering differences
+    settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
+
     settings
 }
 

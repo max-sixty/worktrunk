@@ -1100,7 +1100,7 @@ approved-commands = [
         // Copy the fixture script to the test repo to avoid path issues with special characters
         // (CARGO_MANIFEST_DIR may contain single quotes like worktrunk.'∅' which break shell parsing)
         let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let script_content = fs::read(&fixtures_dir.join("mixed-output.sh")).unwrap();
+        let script_content = fs::read(fixtures_dir.join("mixed-output.sh")).unwrap();
         let script_path = repo.root_path().join("mixed-output.sh");
         fs::write(&script_path, &script_content).unwrap();
         // Make the script executable
