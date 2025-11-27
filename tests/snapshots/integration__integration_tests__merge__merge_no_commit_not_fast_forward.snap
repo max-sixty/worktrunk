@@ -17,7 +17,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -25,7 +25,7 @@ success: false
 exit_code: 1
 ----- stdout -----
 ❌ [31mCan't push to local [1m[31mmain[0m[31m branch: it has newer commits[0m
-[107m [0m  * [SHA] Add main file
+[107m [0m  * [33mfb975b3[m Add main file
 
 💡 [2mRun 'wt merge' again to incorporate these changes[0m
 

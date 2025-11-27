@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "[SHA]",
+    "head_sha": "e6fd20606574fd9fa70e05e84654c7be500cda38",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Initial commit",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "[SHA]",
+    "head_sha": "e6fd20606574fd9fa70e05e84654c7be500cda38",
     "branch": "with-status",
     "timestamp": 0,
     "commit_message": "Initial commit",
@@ -127,7 +127,7 @@ exit_code: 0
     "is_main": false
   },
   {
-    "head_sha": "[SHA]",
+    "head_sha": "e6fd20606574fd9fa70e05e84654c7be500cda38",
     "branch": "without-status",
     "timestamp": 0,
     "commit_message": "Initial commit",

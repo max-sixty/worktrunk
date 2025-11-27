@@ -15,7 +15,8 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_COMMIT_GENERATION__COMMAND: nonexistent-llm-command
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -30,9 +31,9 @@ exit_code: 0
 [107m [0m  Combined commits:
 [107m [0m  - feat: new feature
 [107m [0m  - fix: bug fix
-✅ [32mSquashed @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
-[107m [0m  * [SHA] Squash commits from main
+✅ [32mSquashed @ [2m[32m091f0c5[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m091f0c5[0m[0m (no rebase needed)
+[107m [0m  * [33m091f0c5[m Squash commits from main
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

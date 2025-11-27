@@ -24,9 +24,9 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m           [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                    [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m                 [2m^[0m                          [1m./repo[0m                           [SHA]     [2m1d[0m    [2mInitial commit[0m
-+ diverged          [36m![0m  [2m↑[0m  💬   [32m+40[0m  [31m-60[0m   [32m↑1[0m      ./repo.diverged                  [SHA]     [2m1d[0m    [2mDiverged commit[0m
-+ feature-changes   [36m![0m[36m?[0m [2m↑[0m  🤖   [32m+50[0m [31m-100[0m   [32m↑1[0m      ./repo.feature-changes           [SHA]     [2m1d[0m    [2mAdd 100 lines[0m
-+ [2mfix[0m                [36m?[0m[2m_[0m   💬                      [2m./repo.fix[0m                       [SHA]     [2m1d[0m    [2mInitial commit[0m
+@ [1mmain[0m                 [2m^[0m                          [1m./repo[0m                           [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
++ diverged          [36m![0m  [2m↑[0m  💬   [32m+40[0m  [31m-60[0m   [32m↑1[0m      ./repo.diverged                  [2m8ba5aa92[0m  [2m1d[0m    [2mDiverged commit[0m
++ feature-changes   [36m![0m[36m?[0m [2m↑[0m  🤖   [32m+50[0m [31m-100[0m   [32m↑1[0m      ./repo.feature-changes           [2mb854b166[0m  [2m1d[0m    [2mAdd 100 lines[0m
++ [2mfix[0m                [36m?[0m[2m_[0m   💬                      [2m./repo.fix[0m                       [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
 
 ⚪ [2mShowing 4 worktrees, 2 with changes, 2 ahead[0m

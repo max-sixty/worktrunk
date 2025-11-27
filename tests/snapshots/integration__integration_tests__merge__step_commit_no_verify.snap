@@ -16,7 +16,8 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_COMMIT_GENERATION__ARGS: "feat: add file"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -31,6 +32,6 @@ exit_code: 0
 🔄 [36mCommitting changes with default message...[0m (2 files, [32m+2[0m)
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
 [107m [0m  [1mChanges to wt.toml & file1.txt[0m
-✅ [32mCommitted changes @ [2m[SHA][0m
+✅ [32mCommitted changes @ [2m[32m3dbcd5d[0m[0m
 
 ----- stderr -----

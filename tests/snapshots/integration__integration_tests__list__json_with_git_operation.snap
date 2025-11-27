@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "[SHA]",
+    "head_sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Main conflicting changes",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "[SHA]",
+    "head_sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
     "branch": "feature",
     "timestamp": 0,
     "commit_message": "Main conflicting changes",

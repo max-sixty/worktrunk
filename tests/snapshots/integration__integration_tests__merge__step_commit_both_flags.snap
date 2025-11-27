@@ -17,7 +17,8 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: update file"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,6 +30,6 @@ exit_code: 0
 🔄 [36mCommitting tracked changes with default message...[0m (1 file, [32m+1[0m, [31m-1[0m)
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
 [107m [0m  [1mChanges to tracked.txt[0m
-✅ [32mCommitted changes @ [2m[SHA][0m
+✅ [32mCommitted changes @ [2m[32ma5890cb[0m[0m
 
 ----- stderr -----

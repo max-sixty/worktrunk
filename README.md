@@ -43,9 +43,9 @@ This creates `../repo.fix-auth` on branch `fix-auth`.
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap — edit source to update -->
 
 ```console
-$ wt merge
-🔄 Merging 1 commit to main @ a1b2c3d (no commit/squash/rebase needed)
-   * a1b2c3d Implement JWT validation
+$ wt
+🔄 Merging 1 commit to main @ d29e0fd (no commit/squash/rebase needed)
+   * d29e0fd Implement JWT validation
     auth.rs | 13 +++++++++++++
     1 file changed, 13 insertions(+)
 ✅ Merged to main (1 commit, 1 file, +13)
@@ -62,11 +62,11 @@ merge, cleanup.
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap — edit source to update -->
 
 ```console
-$ wt list
+$ wt
 Branch     Status         HEAD±    main↕  Path              Remote⇅  Commit    Age   Message
-@ main           ^                          ./repo             ⇡0  ⇣0  a1b2c3d     1d    Initial commit
-+ feature-x  +   ↑        +5        ↑3      ./repo.feature-x           a1b2c3d     1h    Add file 3
-+ bugfix-y       ↑                  ↑1      ./repo.bugfix-y            a1b2c3d     2h    Fix bug
+@ main           ^                          ./repo             ⇡0  ⇣0  e6fd2060  1d    Initial commit
++ feature-x  +   ↑        +5        ↑3      ./repo.feature-x           d840828e  1h    Add file 3
++ bugfix-y       ↑                  ↑1      ./repo.bugfix-y            22f1aa87  2h    Fix bug
 
 ⚪ Showing 3 worktrees, 1 with changes, 2 ahead
 ```
@@ -150,7 +150,7 @@ args = ["-m", "claude-haiku-4-5-20251001"]
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap — edit source to update -->
 
 ```console
-$ wt merge
+$ wt
 🔄 Squashing 3 commits into a single commit (3 files, +33)...
 🔄 Generating squash commit message...
    feat(auth): Implement JWT authentication system
@@ -162,13 +162,13 @@ $ wt merge
    - Implement token refresh mechanism with expiry handling
    - Add JWT encoding/decoding with signature verification
    - Create test suite covering all authentication flows
-✅ Squashed @ a1b2c3d
+✅ Squashed @ 95c3316
 🔄 Running pre-merge test:
    cargo test
 🔄 Running pre-merge lint:
    cargo clippy
-🔄 Merging 1 commit to main @ a1b2c3d (no rebase needed)
-   * a1b2c3d feat(auth): Implement JWT authentication system
+🔄 Merging 1 commit to main @ 95c3316 (no rebase needed)
+   * 95c3316 feat(auth): Implement JWT authentication system
     auth.rs      |  8 ++++++++
     auth_test.rs | 17 +++++++++++++++++
     jwt.rs       |  8 ++++++++
@@ -930,13 +930,13 @@ git config worktrunk.status.feature-x "💬"
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__with_user_status.snap — edit source to update -->
 
 ```console
-$ wt list
+$ wt
 Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
-@ main                   ^                          ./repo                             a1b2c3d     1d    Initial commit
-+ clean-no-status       _                           ./repo.clean-no-status             a1b2c3d     1d    Initial commit
-+ clean-with-status     _   💬                      ./repo.clean-with-status           a1b2c3d     1d    Initial commit
-+ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             a1b2c3d     1d    Initial commit
-+ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           a1b2c3d     1d    Initial commit
+@ main                   ^                          ./repo                             e6fd2060  1d    Initial commit
++ clean-no-status       _                           ./repo.clean-no-status             e6fd2060  1d    Initial commit
++ clean-with-status     _   💬                      ./repo.clean-with-status           e6fd2060  1d    Initial commit
++ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             e6fd2060  1d    Initial commit
++ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           e6fd2060  1d    Initial commit
 
 ⚪ Showing 5 worktrees, 1 with changes
 ```
@@ -959,13 +959,13 @@ When using Claude:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__with_user_status.snap — edit source to update -->
 
 ```console
-$ wt list
+$ wt
 Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
-@ main                   ^                          ./repo                             a1b2c3d     1d    Initial commit
-+ clean-no-status       _                           ./repo.clean-no-status             a1b2c3d     1d    Initial commit
-+ clean-with-status     _   💬                      ./repo.clean-with-status           a1b2c3d     1d    Initial commit
-+ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             a1b2c3d     1d    Initial commit
-+ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           a1b2c3d     1d    Initial commit
+@ main                   ^                          ./repo                             e6fd2060  1d    Initial commit
++ clean-no-status       _                           ./repo.clean-no-status             e6fd2060  1d    Initial commit
++ clean-with-status     _   💬                      ./repo.clean-with-status           e6fd2060  1d    Initial commit
++ dirty-no-status     !           +1   -1           ./repo.dirty-no-status             e6fd2060  1d    Initial commit
++ dirty-with-status    ?_   🤖                      ./repo.dirty-with-status           e6fd2060  1d    Initial commit
 
 ⚪ Showing 5 worktrees, 1 with changes
 ```

@@ -16,7 +16,8 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_COMMIT_GENERATION__ARGS: "squash: combined commits"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -33,6 +34,6 @@ exit_code: 0
 [107m [0m  Combined commits:
 [107m [0m  - feat: add file 1
 [107m [0m  - feat: add file 2
-✅ [32mSquashed @ [2m[SHA][0m
+✅ [32mSquashed @ [2m[32m588aa53[0m[0m
 
 ----- stderr -----

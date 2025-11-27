@@ -324,14 +324,15 @@ impl TestRepo {
 
     /// Create a commit with a custom message (useful for testing malicious messages)
     pub fn commit_with_message(&self, message: &str) {
-        // Create a unique file to ensure there's something to commit
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let file_path = self.root.join(format!("file-{}.txt", timestamp));
-        std::fs::write(&file_path, "content").unwrap();
+        // Create file with message-derived name for deterministic commits
+        // Use first 16 chars of message (sanitized) as filename
+        let sanitized: String = message
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+            .take(16)
+            .collect();
+        let file_path = self.root.join(format!("file-{}.txt", sanitized));
+        std::fs::write(&file_path, message).unwrap();
 
         self.git_command(&["add", "."]).output().unwrap();
 
@@ -751,13 +752,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         );
     }
 
-    // Normalize git SHAs and backslashes
-    // First filter SHAs wrapped in ANSI color codes (more specific pattern)
-    // Match: ESC[COLORmSHAESC[RESETm where RESET can be empty, 0, or other codes
-    // Examples: \x1b[33m0b07a58\x1b[m or \x1b[2m0b07a58\x1b[0m
-    settings.add_filter(r"\x1b\[[0-9;]*m[0-9a-f]{7,40}\x1b\[[0-9;]*m", "[SHA]");
-    // Then filter plain SHAs (more general pattern)
-    settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]");
+    // Normalize backslashes for Windows compatibility
     settings.add_filter(r"\\", "/");
 
     // Normalize temp directory paths in project identifiers (approval prompts)

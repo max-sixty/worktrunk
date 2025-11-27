@@ -15,7 +15,8 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: commit changes"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -27,16 +28,16 @@ exit_code: 0
 [107m [0m  untracked1.txt
 [107m [0m  untracked2.txt
 🔄 [36mSquashing 1 commit & working tree changes into a single commit[0m (3 files, [32m+3[0m)...
-💡 [2mBackup created @ [SHA][0m
+💡 [2mBackup created @ [2m4967998[0m[0m
 🔄 [36mGenerating squash commit message...[0m
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
 [107m [0m  [1mSquash commits from main[0m
 [107m [0m  
 [107m [0m  Combined commits:
 [107m [0m  - feat: add file 1
-✅ [32mSquashed @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
-[107m [0m  * [SHA] Squash commits from main
+✅ [32mSquashed @ [2m[32mfbfc726[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36mfbfc726[0m[0m (no rebase needed)
+[107m [0m  * [33mfbfc726[m Squash commits from main
 [107m [0m   file1.txt      | 1 [32m+[m
 [107m [0m   untracked1.txt | 1 [32m+[m
 [107m [0m   untracked2.txt | 1 [32m+[m

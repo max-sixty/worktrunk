@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "[SHA]",
+    "head_sha": "a27cd57d20a6211799da676e70edefa5152f99fe",
     "branch": "main",
     "timestamp": 0,
     "commit_message": "Main commit 2",
@@ -75,7 +75,7 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "[SHA]",
+    "head_sha": "f16cd37915d5ee93903252f5cf877c76c54f3d50",
     "branch": "feature-ahead",
     "timestamp": 0,
     "commit_message": "Feature commit 2",
@@ -125,7 +125,7 @@ exit_code: 0
     "working_diff_display": "/u001b[32m+1/u001b[0m /u001b[31m-1/u001b[0m"
   },
   {
-    "head_sha": "[SHA]",
+    "head_sha": "6c3da84215d400bf6e05a7f9cd1efcfbd825b9e9",
     "branch": "feature-behind",
     "timestamp": 0,
     "commit_message": "Initial commit on main",

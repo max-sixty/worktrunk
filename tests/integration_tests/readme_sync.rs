@@ -34,9 +34,6 @@ static ANSI_ESCAPE_REGEX: LazyLock<Regex> =
 /// Regex to strip literal bracket notation (as stored in snapshots)
 static ANSI_LITERAL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[0-9;]*m").unwrap());
 
-/// Regex for SHA placeholder
-static SHA_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[SHA\]").unwrap());
-
 /// Regex for HASH placeholder (used by shell_wrapper tests)
 static HASH_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[HASH\]").unwrap());
 
@@ -128,8 +125,8 @@ fn parse_snapshot(path: &Path) -> Result<String, String> {
 
 /// Normalize snapshot output for README display
 fn normalize_for_readme(content: &str) -> String {
-    let content = SHA_REGEX.replace_all(content, "a1b2c3d");
-    let content = HASH_REGEX.replace_all(&content, "a1b2c3d");
+    // Real SHAs flow through from deterministic tests (fixed dates + git identity)
+    let content = HASH_REGEX.replace_all(content, "a1b2c3d");
     let content = TMPDIR_REGEX.replace_all(&content, "../repo.$1");
     let content = REPO_REGEX.replace_all(&content, "../repo");
 
@@ -394,30 +391,23 @@ fn test_readme_examples_are_in_sync() {
     let mut updated_content = readme_content.clone();
     let mut total_updated = 0;
 
-    // Check snapshot markers
-    for cap in SNAPSHOT_MARKER_PATTERN.captures_iter(&readme_content) {
-        let snap_path = cap.get(1).unwrap().as_str();
-        let current_content = normalize_readme_content(cap.get(2).unwrap().as_str());
-        checked += 1;
-
-        let full_path = project_root.join(snap_path);
-
-        // Parse and normalize the snapshot
-        let expected = match parse_snapshot(&full_path) {
-            Ok(content) => normalize_for_readme(&content),
-            Err(e) => {
-                errors.push(format!("❌ {}: {}", snap_path, e));
-                continue;
-            }
-        };
-
-        // Compare
-        if current_content != expected {
-            errors.push(format!(
-                "❌ {} is out of sync\n\n--- Current (in README) ---\n{}\n\n--- Expected (from snapshot) ---\n{}\n",
-                snap_path, current_content, expected
-            ));
+    // Update snapshot markers
+    let project_root_clone = project_root.to_path_buf();
+    match update_readme_section(
+        &updated_content,
+        &SNAPSHOT_MARKER_PATTERN,
+        |snap_path| {
+            let full_path = project_root_clone.join(snap_path);
+            parse_snapshot(&full_path).map(|content| normalize_for_readme(&content))
+        },
+        ("```console\n$ wt", "```"),
+    ) {
+        Ok((new_content, updated_count, total_count)) => {
+            updated_content = new_content;
+            total_updated += updated_count;
+            checked += total_count;
         }
+        Err(errs) => errors.extend(errs),
     }
 
     // Update help markers (no wrapper - content is rendered markdown)

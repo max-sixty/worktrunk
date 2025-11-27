@@ -4,17 +4,13 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn standard_settings(repo: &TestRepo) -> Settings {
-    let mut settings = setup_snapshot_settings(repo);
-    // Pad [SHA] with trailing spaces to maintain column alignment in list output
-    settings.add_filter(r"\[SHA\]", "[SHA]   ");
-    settings
+    setup_snapshot_settings(repo)
 }
 
 pub fn json_settings(repo: &TestRepo) -> Settings {
     let mut settings = setup_snapshot_settings(repo);
     // JSON-specific filters for timestamps and escaped ANSI codes
-    // Note: SHA filter runs first, converting numeric timestamps to [SHA], so we match that
-    settings.add_filter(r#""timestamp": \[SHA\]"#, r#""timestamp": 0"#);
+    settings.add_filter(r#""timestamp": \d+"#, r#""timestamp": 0"#);
     settings.add_filter(r"\\u001b\[32m", "[GREEN]");
     settings.add_filter(r"\\u001b\[31m", "[RED]");
     settings.add_filter(r"\\u001b\[2m", "[DIM]");
