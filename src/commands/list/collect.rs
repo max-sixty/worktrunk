@@ -26,8 +26,8 @@ use worktrunk::styling::INFO_EMOJI;
 
 use super::ci_status::PrStatus;
 use super::model::{
-    AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, ItemKind, ListItem,
-    UpstreamStatus, WorktreeData,
+    AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState, ItemKind,
+    ListItem, UpstreamStatus, WorktreeData,
 };
 
 /// Context for status symbol computation during cell updates
@@ -72,9 +72,9 @@ pub(super) enum CellUpdate {
         has_merge_tree_conflicts: bool,
     },
     /// Git operation in progress (rebase/merge)
-    WorktreeState {
+    GitOperation {
         item_idx: usize,
-        worktree_state: Option<String>,
+        git_operation: GitOperationState,
     },
     /// User-defined status from git config
     UserStatus {
@@ -102,7 +102,7 @@ impl CellUpdate {
             | CellUpdate::BranchDiff { item_idx, .. }
             | CellUpdate::WorkingTreeDiff { item_idx, .. }
             | CellUpdate::MergeTreeConflicts { item_idx, .. }
-            | CellUpdate::WorktreeState { item_idx, .. }
+            | CellUpdate::GitOperation { item_idx, .. }
             | CellUpdate::UserStatus { item_idx, .. }
             | CellUpdate::Upstream { item_idx, .. }
             | CellUpdate::CiStatus { item_idx, .. } => *item_idx,
@@ -111,15 +111,13 @@ impl CellUpdate {
 }
 
 /// Detect if a worktree is in the middle of a git operation (rebase/merge).
-pub(super) fn detect_worktree_state(repo: &Repository) -> Option<String> {
-    let git_dir = repo.git_dir().ok()?;
-
-    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-        Some("rebase".to_string())
-    } else if git_dir.join("MERGE_HEAD").exists() {
-        Some("merge".to_string())
+pub(super) fn detect_git_operation(repo: &Repository) -> GitOperationState {
+    if repo.is_rebasing().unwrap_or(false) {
+        GitOperationState::Rebase
+    } else if repo.is_merging().unwrap_or(false) {
+        GitOperationState::Merge
     } else {
-        None
+        GitOperationState::None
     }
 }
 
@@ -183,12 +181,12 @@ fn drain_cell_updates(
                 // Store for status_symbols computation
                 status_contexts[item_idx].has_merge_tree_conflicts = has_merge_tree_conflicts;
             }
-            CellUpdate::WorktreeState {
+            CellUpdate::GitOperation {
                 item_idx,
-                worktree_state,
+                git_operation,
             } => {
                 if let ItemKind::Worktree(data) = &mut items[item_idx].kind {
-                    data.worktree_state = worktree_state;
+                    data.git_operation = git_operation;
                 }
             }
             CellUpdate::UserStatus {

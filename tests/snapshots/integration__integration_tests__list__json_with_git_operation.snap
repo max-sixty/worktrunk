@@ -24,10 +24,10 @@ exit_code: 0
 ----- stdout -----
 [
   {
-    "head_sha": "a27cd57d20a6211799da676e70edefa5152f99fe",
+    "head_sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
     "branch": "main",
     "timestamp": 0,
-    "commit_message": "Main commit 2",
+    "commit_message": "Main conflicting changes",
     "ahead": 0,
     "behind": 0,
     "branch_diff": {
@@ -75,62 +75,12 @@ exit_code: 0
     "is_current": true
   },
   {
-    "head_sha": "f16cd37915d5ee93903252f5cf877c76c54f3d50",
-    "branch": "feature-ahead",
+    "head_sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
+    "branch": "feature",
     "timestamp": 0,
-    "commit_message": "Feature commit 2",
-    "ahead": 2,
-    "behind": 2,
-    "branch_diff": {
-      "added": 1,
-      "deleted": 0
-    },
-    "upstream_remote": null,
-    "upstream_ahead": 0,
-    "upstream_behind": 0,
-    "pr_status": null,
-    "status": {
-      "working_tree": {
-        "untracked": true,
-        "modified": true,
-        "staged": false,
-        "renamed": false,
-        "deleted": false
-      },
-      "branch_op_state": "",
-      "main_divergence": "Diverged",
-      "upstream_divergence": "",
-      "worktree_state": ""
-    },
-    "status_symbols": {
-      "working_tree": "!?",
-      "branch_op_state": "",
-      "main_divergence": "↕",
-      "upstream_divergence": "",
-      "worktree_state": ""
-    },
-    "commits_display": "/u001b[32m↑2/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
-    "branch_diff_display": "/u001b[32m+1/u001b[0m",
-    "status_line": "feature-ahead  /u001b[36m!?/u001b[0m  ±/u001b[32m+1/u001b[0m /u001b[31m-1/u001b[0m  /u001b[32m↑2/u001b[0m /u001b[2m/u001b[31m↓2/u001b[0m",
-    "type": "worktree",
-    "path": "[REPO].feature-ahead",
-    "bare": false,
-    "detached": false,
-    "working_tree_diff": {
-      "added": 1,
-      "deleted": 1
-    },
-    "working_tree_diff_with_main": null,
-    "is_main": false,
-    "working_diff_display": "/u001b[32m+1/u001b[0m /u001b[31m-1/u001b[0m"
-  },
-  {
-    "head_sha": "6c3da84215d400bf6e05a7f9cd1efcfbd825b9e9",
-    "branch": "feature-behind",
-    "timestamp": 0,
-    "commit_message": "Initial commit on main",
+    "commit_message": "Main conflicting changes",
     "ahead": 0,
-    "behind": 2,
+    "behind": 0,
     "branch_diff": {
       "added": 0,
       "deleted": 0
@@ -147,29 +97,32 @@ exit_code: 0
         "renamed": false,
         "deleted": false
       },
-      "branch_op_state": "NoCommits",
-      "main_divergence": "Behind",
+      "branch_op_state": "Conflicts",
+      "main_divergence": "",
       "upstream_divergence": "",
       "worktree_state": ""
     },
     "status_symbols": {
       "working_tree": "",
-      "branch_op_state": "_",
-      "main_divergence": "↓",
+      "branch_op_state": "✖",
+      "main_divergence": "",
       "upstream_divergence": "",
       "worktree_state": ""
     },
-    "commits_display": "/u001b[2m/u001b[31m↓2/u001b[0m",
-    "status_line": "feature-behind  /u001b[2m_/u001b[0m  /u001b[2m/u001b[31m↓2/u001b[0m",
+    "status_line": "feature  /u001b[31m✖/u001b[0m",
     "type": "worktree",
-    "path": "[REPO].feature-behind",
+    "path": "[REPO].feature",
     "bare": false,
-    "detached": false,
+    "detached": true,
     "working_tree_diff": {
       "added": 0,
       "deleted": 0
     },
-    "working_tree_diff_with_main": null,
+    "working_tree_diff_with_main": {
+      "added": 0,
+      "deleted": 0
+    },
+    "git_operation": "rebase",
     "is_main": false
   }
 ]

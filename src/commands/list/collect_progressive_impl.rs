@@ -18,7 +18,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::styling::eprintln;
 
 use super::ci_status::PrStatus;
-use super::collect::{CellUpdate, detect_worktree_state};
+use super::collect::{CellUpdate, detect_git_operation};
 use super::model::{AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus};
 
 /// Options for controlling what data to collect.
@@ -222,10 +222,10 @@ fn spawn_worktree_state<'scope>(
     let path = ctx.repo_path.clone();
     s.spawn(move || {
         let repo = Repository::at(&path);
-        let worktree_state = detect_worktree_state(&repo);
-        let _ = tx.send(CellUpdate::WorktreeState {
+        let git_operation = detect_git_operation(&repo);
+        let _ = tx.send(CellUpdate::GitOperation {
             item_idx,
-            worktree_state,
+            git_operation,
         });
     });
 }

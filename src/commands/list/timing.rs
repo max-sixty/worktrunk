@@ -7,7 +7,8 @@ const DEBUG_ENV_VAR: &str = "WT_LIST_DEBUG";
 const DEBUG_ENV_VALUE: &str = "1";
 
 /// Operation names for tracking timing
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum OpName {
     CommitDetails,
     AheadBehind,
@@ -16,29 +17,11 @@ pub enum OpName {
     WorkingTreeDiff,
     WorkingTreeDiffWithMain,
     BranchDiff,
-    WorktreeState,
+    GitOperation,
     // TODO(timing): Add PrStatus timing when CI/PR status collection is instrumented
     PrStatus,
     MergeConflicts,
     UserStatus,
-}
-
-impl OpName {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            OpName::CommitDetails => "commit_details",
-            OpName::AheadBehind => "ahead_behind",
-            OpName::UpstreamStatus => "upstream_status",
-            OpName::GitStatus => "git_status",
-            OpName::WorkingTreeDiff => "working_tree_diff",
-            OpName::WorkingTreeDiffWithMain => "working_tree_diff_with_main",
-            OpName::BranchDiff => "branch_diff",
-            OpName::WorktreeState => "worktree_state",
-            OpName::PrStatus => "pr_status",
-            OpName::MergeConflicts => "merge_conflicts",
-            OpName::UserStatus => "user_status",
-        }
-    }
 }
 
 /// Collects timing data for list operations.
@@ -101,13 +84,13 @@ impl TimingCollector {
         log::debug!("WT_LIST_DEBUG timing summary:");
 
         let mut ops: Vec<_> = guard.timings.iter().collect();
-        ops.sort_by_key(|(op, _)| op.as_str());
+        ops.sort_by_key(|(op, _)| op.as_ref());
 
         for (op, durations) in ops {
             let stats = compute_stats(durations);
             log::debug!(
                 "  {:<30} median: {:>6.1}ms  p95: {:>6.1}ms  count: {}",
-                op.as_str(),
+                op.as_ref(),
                 stats.median_ms,
                 stats.p95_ms,
                 durations.len()

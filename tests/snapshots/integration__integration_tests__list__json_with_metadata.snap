@@ -71,7 +71,6 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "worktree_state": null,
     "is_main": true,
     "is_current": true
   },
@@ -123,7 +122,6 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "worktree_state": null,
     "is_main": false
   },
   {
@@ -175,7 +173,6 @@ exit_code: 0
       "added": 0,
       "deleted": 0
     },
-    "worktree_state": null,
     "is_main": false
   }
 ]

@@ -469,6 +469,18 @@ impl Repository {
         Ok(git_dir != common_dir)
     }
 
+    /// Check if a rebase is in progress.
+    pub fn is_rebasing(&self) -> anyhow::Result<bool> {
+        let git_dir = self.git_dir()?;
+        Ok(git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists())
+    }
+
+    /// Check if a merge is in progress.
+    pub fn is_merging(&self) -> anyhow::Result<bool> {
+        let git_dir = self.git_dir()?;
+        Ok(git_dir.join("MERGE_HEAD").exists())
+    }
+
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
     pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
         self.run_command_check(&["merge-base", "--is-ancestor", base, head])

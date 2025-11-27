@@ -769,6 +769,79 @@ fn test_list_json_with_user_status() {
 }
 
 #[test]
+fn test_list_json_with_git_operation() {
+    // Test JSON output includes git_operation field when worktree is in rebase state
+    let mut repo = TestRepo::new();
+
+    // Create initial commit with a file that will conflict
+    std::fs::write(
+        repo.root_path().join("conflict.txt"),
+        "original line 1\noriginal line 2\n",
+    )
+    .unwrap();
+    repo.commit("Initial commit");
+
+    // Create feature worktree
+    let feature = repo.add_worktree("feature");
+
+    // Feature makes changes to the file
+    std::fs::write(
+        feature.join("conflict.txt"),
+        "feature line 1\nfeature line 2\n",
+    )
+    .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Feature changes"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+
+    // Main makes conflicting changes
+    std::fs::write(
+        repo.root_path().join("conflict.txt"),
+        "main line 1\nmain line 2\n",
+    )
+    .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Main conflicting changes"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Start rebase which will create conflicts and git operation state
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let rebase_output = cmd
+        .args(["rebase", "main"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+
+    // Rebase should fail with conflicts - verify we're in rebase state
+    assert!(
+        !rebase_output.status.success(),
+        "Rebase should fail with conflicts"
+    );
+
+    // JSON output should show git_operation: "rebase" for the feature worktree
+    snapshot_list_json("json_with_git_operation", &repo);
+}
+
+#[test]
 fn test_list_branch_only_with_status() {
     // Test that branch-only entries (no worktree) can display branch-keyed status
     let repo = TestRepo::new();

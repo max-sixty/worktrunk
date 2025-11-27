@@ -816,8 +816,8 @@ mod tests {
     #[test]
     fn test_visible_columns_follow_gap_rule() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState,
+            ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
         // Create test data with specific widths to verify position calculation
@@ -847,7 +847,7 @@ mod tests {
                 prunable: None,
                 working_tree_diff: Some(LineDiff::from((100, 50))),
                 working_tree_diff_with_main: Some(Some(LineDiff::default())),
-                worktree_state: None,
+                git_operation: GitOperationState::None,
                 is_main: false,
                 is_current: false,
                 is_previous: false,
@@ -902,8 +902,8 @@ mod tests {
     #[test]
     fn test_column_positions_with_empty_columns() {
         use crate::commands::list::model::{
-            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, ItemKind, ListItem,
-            StatusSymbols, UpstreamStatus, WorktreeData,
+            AheadBehind, BranchDiffTotals, CommitDetails, DisplayFields, GitOperationState,
+            ItemKind, ListItem, StatusSymbols, UpstreamStatus, WorktreeData,
         };
 
         // Create minimal data - most columns will be empty
@@ -933,7 +933,7 @@ mod tests {
                 prunable: None,
                 working_tree_diff: Some(LineDiff::default()),
                 working_tree_diff_with_main: Some(Some(LineDiff::default())),
-                worktree_state: None,
+                git_operation: GitOperationState::None,
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,

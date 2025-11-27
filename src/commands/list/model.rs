@@ -81,7 +81,9 @@ pub struct WorktreeData {
     /// `Some(None)` means computation was skipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff_with_main: Option<Option<LineDiff>>,
-    pub worktree_state: Option<String>,
+    /// Git operation in progress (rebase/merge)
+    #[serde(skip_serializing_if = "git_operation_is_none")]
+    pub git_operation: GitOperationState,
     pub is_main: bool,
     /// Whether this is the current worktree (matches $PWD)
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -447,9 +449,9 @@ impl ListItem {
                 // Apply priority: Conflicts > Rebase > Merge > MergeTreeConflicts > base_state
                 let branch_op_state = if has_conflicts {
                     BranchOpState::Conflicts
-                } else if data.worktree_state.as_deref() == Some("rebase") {
+                } else if data.git_operation == GitOperationState::Rebase {
                     BranchOpState::Rebase
-                } else if data.worktree_state.as_deref() == Some("merge") {
+                } else if data.git_operation == GitOperationState::Merge {
                     BranchOpState::Merge
                 } else if has_merge_tree_conflicts {
                     BranchOpState::MergeTreeConflicts
@@ -784,6 +786,23 @@ impl serde::Serialize for BranchOpState {
     }
 }
 
+/// Git operation state for a worktree
+///
+/// Represents whether a worktree is in the middle of a git operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, strum::IntoStaticStr)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum GitOperationState {
+    #[strum(serialize = "")]
+    #[serde(rename = "")]
+    #[default]
+    None,
+    /// Rebase in progress (rebase-merge or rebase-apply directory exists)
+    Rebase,
+    /// Merge in progress (MERGE_HEAD exists)
+    Merge,
+}
+
 /// Tracks which status symbol positions are actually used across all items
 /// and the maximum width needed for each position.
 ///
@@ -935,7 +954,9 @@ impl StatusSymbols {
         let (untracked_str, has_untracked) = style_working('?');
         let worktree_state_str = match self.worktree_state {
             WorktreeState::None => String::new(),
+            // Branch indicator (⎇) is informational (dimmed)
             WorktreeState::Branch => format!("{HINT}{}{HINT:#}", self.worktree_state),
+            // Worktree attrs (⚐⌫⊠) are warnings (yellow)
             _ => format!("{WARNING}{}{WARNING:#}", self.worktree_state),
         };
         let user_status_str = self.user_status.as_deref().unwrap_or("").to_string();
@@ -1134,4 +1155,9 @@ impl serde::Serialize for StatusSymbols {
 
         state.end()
     }
+}
+
+/// Helper for serde skip_serializing_if
+fn git_operation_is_none(state: &GitOperationState) -> bool {
+    *state == GitOperationState::None
 }
