@@ -6,6 +6,16 @@
 //!
 //! The tests normalize timing-sensitive parts of the output (query line, count
 //! indicators) to ensure stable snapshots despite TUI rendering variations.
+//!
+//! ## Timing Strategy
+//!
+//! Instead of fixed delays (which are either too short on slow CI or wastefully
+//! long on fast machines), we poll for screen stabilization:
+//!
+//! - **Long timeouts** (10s) ensure reliability on slow CI
+//! - **Fast polling** (10ms) means tests complete quickly when things work
+//! - **Content-based readiness** detects when skim has rendered ("> " prompt)
+//! - **Stabilization detection** waits for screen to stop changing
 
 use crate::common::TestRepo;
 use insta::assert_snapshot;
@@ -13,26 +23,29 @@ use insta_cmd::get_cargo_bin;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 /// Terminal dimensions for TUI tests
 const TERM_ROWS: u16 = 30;
 const TERM_COLS: u16 = 120;
 
-/// Initial wait for TUI to fully render before sending input.
-/// Must be long enough for skim to complete initial render including preview.
-const TUI_RENDER_DELAY: Duration = Duration::from_millis(1500);
+/// Maximum time to wait for skim to become ready (show "> " prompt).
+/// Long timeout ensures reliability on slow CI.
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Delay between keystrokes to allow TUI to process input.
-/// Each keystroke triggers a re-render, so this must be sufficient.
-const KEYSTROKE_DELAY: Duration = Duration::from_millis(300);
+/// Maximum time to wait for screen to stabilize after input.
+/// Long timeout ensures reliability on slow CI.
+const STABILIZE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Final delay after last input before capturing screen.
-/// Ensures the final state is fully rendered.
-const FINAL_CAPTURE_DELAY: Duration = Duration::from_millis(500);
+/// How long screen must be unchanged to consider it "stable".
+/// Must be long enough for preview content to load (preview commands run async).
+/// 300ms balances reliability (allows preview to complete) with speed.
+const STABLE_DURATION: Duration = Duration::from_millis(300);
 
-/// Timeout for waiting for process output before killing
-const OUTPUT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Polling interval when waiting for output.
+/// Fast polling ensures tests complete quickly when ready.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Assert that exit code is valid for skim abort (0, 1, or 130)
 fn assert_valid_abort_exit_code(exit_code: i32) {
@@ -47,10 +60,15 @@ fn assert_valid_abort_exit_code(exit_code: i32) {
     );
 }
 
+/// Check if skim is ready (shows "> " prompt indicating it's accepting input)
+fn is_skim_ready(screen_content: &str) -> bool {
+    // Skim shows "> " at the start when ready, and displays item count like "1/3"
+    screen_content.starts_with("> ") || screen_content.contains("\n> ")
+}
+
 /// Execute a command in a PTY and return raw output bytes
 ///
-/// Uses a thread to read PTY output with a timeout, then sends input and
-/// kills the process to capture the TUI state.
+/// Uses polling with stabilization detection instead of fixed delays.
 fn exec_in_pty_with_input(
     command: &str,
     args: &[&str],
@@ -61,9 +79,12 @@ fn exec_in_pty_with_input(
     exec_in_pty_with_input_sequence(command, args, working_dir, env_vars, &[input])
 }
 
-/// Execute a command in a PTY with a sequence of inputs, each sent with a delay
+/// Execute a command in a PTY with a sequence of inputs, polling for readiness
 ///
-/// This allows testing interactive TUIs where inputs need time to be processed.
+/// Instead of fixed delays, this function:
+/// 1. Polls until skim shows its ready state ("> " prompt)
+/// 2. After each input, polls until the screen stabilizes (no changes for STABLE_DURATION)
+/// 3. Uses long timeouts but fast polling for reliability + speed
 fn exec_in_pty_with_input_sequence(
     command: &str,
     args: &[&str],
@@ -71,8 +92,6 @@ fn exec_in_pty_with_input_sequence(
     env_vars: &[(String, String)],
     inputs: &[&str],
 ) -> (Vec<u8>, i32) {
-    use std::sync::mpsc;
-
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -113,55 +132,120 @@ fn exec_in_pty_with_input_sequence(
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut writer = pair.master.take_writer().unwrap();
 
-    // Spawn a thread to read output
-    let (tx, rx) = mpsc::channel();
+    // Spawn a thread to continuously read PTY output and send chunks via channel
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
-        let mut buf = Vec::new();
         let mut temp_buf = [0u8; 4096];
         loop {
             match reader.read(&mut temp_buf) {
                 Ok(0) => break,
-                Ok(n) => buf.extend_from_slice(&temp_buf[..n]),
-                Err(e) => {
-                    // Log error to help debug flaky tests
-                    eprintln!("PTY read error (may be expected on process exit): {e}");
-                    break;
+                Ok(n) => {
+                    if tx.send(temp_buf[..n].to_vec()).is_err() {
+                        break;
+                    }
                 }
+                Err(_) => break,
             }
         }
-        let _ = tx.send(buf);
     });
 
-    // Wait for TUI to render
-    std::thread::sleep(TUI_RENDER_DELAY);
+    let mut parser = vt100::Parser::new(TERM_ROWS, TERM_COLS, 0);
+    let mut raw_output = Vec::new();
 
-    // Send each input with a delay between them
+    // Helper to drain available output from the channel (non-blocking)
+    let drain_output =
+        |rx: &mpsc::Receiver<Vec<u8>>, parser: &mut vt100::Parser, raw_output: &mut Vec<u8>| {
+            while let Ok(chunk) = rx.try_recv() {
+                raw_output.extend_from_slice(&chunk);
+                parser.process(&chunk);
+            }
+        };
+
+    // Wait for skim to be ready (show "> " prompt)
+    let start = Instant::now();
+    loop {
+        drain_output(&rx, &mut parser, &mut raw_output);
+
+        let screen_content = parser.screen().contents();
+        if is_skim_ready(&screen_content) {
+            break;
+        }
+
+        if start.elapsed() > READY_TIMEOUT {
+            eprintln!(
+                "Warning: Timed out waiting for skim ready state. Screen content:\n{}",
+                screen_content
+            );
+            break;
+        }
+
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Wait for initial render to stabilize
+    wait_for_stable(&rx, &mut parser, &mut raw_output);
+
+    // Send each input and wait for screen to stabilize after each
     for input in inputs {
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
-        std::thread::sleep(KEYSTROKE_DELAY);
-    }
 
-    // Wait for final input to be processed
-    std::thread::sleep(FINAL_CAPTURE_DELAY);
+        // Wait for screen to stabilize after this input
+        wait_for_stable(&rx, &mut parser, &mut raw_output);
+    }
 
     // Drop writer to signal EOF on stdin
     drop(writer);
 
-    // Wait for output with timeout, then kill if necessary
-    let buf = match rx.recv_timeout(OUTPUT_TIMEOUT) {
-        Ok(buf) => buf,
-        Err(_) => {
-            // Timeout - kill the process
-            let _ = child.kill();
-            rx.recv().unwrap_or_default()
-        }
-    };
+    // Give the process a moment to exit gracefully, then kill if needed
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = child.kill();
+
+    // Drain any remaining output
+    drain_output(&rx, &mut parser, &mut raw_output);
 
     let exit_status = child.wait().unwrap();
     let exit_code = exit_status.exit_code() as i32;
 
-    (buf, exit_code)
+    (raw_output, exit_code)
+}
+
+/// Wait for screen content to stabilize (no changes for STABLE_DURATION)
+fn wait_for_stable(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    raw_output: &mut Vec<u8>,
+) {
+    let start = Instant::now();
+    let mut last_change = Instant::now();
+    let mut last_content = parser.screen().contents();
+
+    while start.elapsed() < STABILIZE_TIMEOUT {
+        // Drain available output
+        while let Ok(chunk) = rx.try_recv() {
+            raw_output.extend_from_slice(&chunk);
+            parser.process(&chunk);
+        }
+
+        let current_content = parser.screen().contents();
+        if current_content != last_content {
+            last_content = current_content;
+            last_change = Instant::now();
+        }
+
+        // Screen hasn't changed for STABLE_DURATION - consider it ready
+        if last_change.elapsed() >= STABLE_DURATION {
+            return;
+        }
+
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Timeout - proceed anyway (test may still pass with partial render)
+    eprintln!(
+        "Warning: Screen did not fully stabilize within {:?}",
+        STABILIZE_TIMEOUT
+    );
 }
 
 /// Render raw PTY output through vt100 terminal emulator to get clean screen text
