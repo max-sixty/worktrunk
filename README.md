@@ -43,7 +43,7 @@ This creates `../repo.fix-auth` on branch `fix-auth`.
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap — edit source to update -->
 
 ```console
-$ wt
+$ wt merge
 🔄 Merging 1 commit to main @ d29e0fd (no commit/squash/rebase needed)
    * d29e0fd Implement JWT validation
     auth.rs | 13 +++++++++++++
@@ -150,7 +150,7 @@ args = ["-m", "claude-haiku-4-5-20251001"]
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap — edit source to update -->
 
 ```console
-$ wt
+$ wt merge
 🔄 Squashing 3 commits into a single commit (3 files, +33)...
 🔄 Generating squash commit message...
    feat(auth): Implement JWT authentication system

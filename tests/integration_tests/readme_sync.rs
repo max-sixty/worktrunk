@@ -14,9 +14,10 @@ use std::sync::LazyLock;
 
 /// Regex to find README snapshot markers
 /// Format: <!-- ⚠️ AUTO-GENERATED from path.snap — edit source to update -->
+/// Captures: (1) snapshot path, (2) command line (e.g., "$ wt merge"), (3) content
 static SNAPSHOT_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?s)<!-- ⚠️ AUTO-GENERATED from ([^\s]+\.snap) — edit source to update -->\n+```\w*\n(?:\$ [^\n]+\n)?(.*?)```\n+<!-- END AUTO-GENERATED -->",
+        r"(?s)<!-- ⚠️ AUTO-GENERATED from ([^\s]+\.snap) — edit source to update -->\n+```\w*\n(\$ [^\n]+)\n(.*?)```\n+<!-- END AUTO-GENERATED -->",
     )
     .unwrap()
 });
@@ -391,23 +392,45 @@ fn test_readme_examples_are_in_sync() {
     let mut updated_content = readme_content.clone();
     let mut total_updated = 0;
 
-    // Update snapshot markers
-    let project_root_clone = project_root.to_path_buf();
-    match update_readme_section(
-        &updated_content,
-        &SNAPSHOT_MARKER_PATTERN,
-        |snap_path| {
-            let full_path = project_root_clone.join(snap_path);
-            parse_snapshot(&full_path).map(|content| normalize_for_readme(&content))
-        },
-        ("```console\n$ wt", "```"),
-    ) {
-        Ok((new_content, updated_count, total_count)) => {
-            updated_content = new_content;
-            total_updated += updated_count;
-            checked += total_count;
+    // Update snapshot markers (preserving command lines)
+    let matches: Vec<_> = SNAPSHOT_MARKER_PATTERN
+        .captures_iter(&updated_content.clone())
+        .map(|cap| {
+            let full_match = cap.get(0).unwrap();
+            let snap_path = cap.get(1).unwrap().as_str().to_string();
+            let command_line = cap.get(2).unwrap().as_str().to_string();
+            let current = normalize_readme_content(cap.get(3).unwrap().as_str());
+            (
+                full_match.start(),
+                full_match.end(),
+                snap_path,
+                command_line,
+                current,
+            )
+        })
+        .collect();
+
+    checked += matches.len();
+
+    // Process in reverse order to preserve positions
+    for (start, end, snap_path, command_line, current) in matches.into_iter().rev() {
+        let full_path = project_root.join(&snap_path);
+        let expected = match parse_snapshot(&full_path) {
+            Ok(content) => normalize_for_readme(&content),
+            Err(e) => {
+                errors.push(format!("❌ {}: {}", snap_path, e));
+                continue;
+            }
+        };
+
+        if current != expected {
+            let replacement = format!(
+                "<!-- ⚠️ AUTO-GENERATED from {} — edit source to update -->\n\n```console\n{}\n{}\n```\n\n<!-- END AUTO-GENERATED -->",
+                snap_path, command_line, expected
+            );
+            updated_content.replace_range(start..end, &replacement);
+            total_updated += 1;
         }
-        Err(errs) => errors.extend(errs),
     }
 
     // Update help markers (no wrapper - content is rendered markdown)
