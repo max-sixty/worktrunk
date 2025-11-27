@@ -62,8 +62,8 @@ merge, cleanup.
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap — edit source to update -->
 
 ```console
-$ wt
-Branch     Status         HEAD±    main↕  Path              Remote⇅  Commit    Age   Message
+$ wt list
+  Branch     Status         HEAD±    main↕  Path              Remote⇅  Commit    Age   Message
 @ main           ^                          ./repo             ⇡0  ⇣0  e6fd2060  1d    Initial commit
 + feature-x  +   ↑        +5        ↑3      ./repo.feature-x           d840828e  1h    Add file 3
 + bugfix-y       ↑                  ↑1      ./repo.bugfix-y            22f1aa87  2h    Fix bug
@@ -958,8 +958,8 @@ git config worktrunk.status.feature-x "💬"
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__with_user_status.snap — edit source to update -->
 
 ```console
-$ wt
-Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
+$ wt list
+  Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
 @ main                   ^                          ./repo                             e6fd2060  1d    Initial commit
 + clean-no-status       _                           ./repo.clean-no-status             e6fd2060  1d    Initial commit
 + clean-with-status     _   💬                      ./repo.clean-with-status           e6fd2060  1d    Initial commit
@@ -987,8 +987,8 @@ When using Claude:
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__with_user_status.snap — edit source to update -->
 
 ```console
-$ wt
-Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
+$ wt list
+  Branch             Status         HEAD±    main↕  Path                      Remote⇅  Commit    Age   Message
 @ main                   ^                          ./repo                             e6fd2060  1d    Initial commit
 + clean-no-status       _                           ./repo.clean-no-status             e6fd2060  1d    Initial commit
 + clean-with-status     _   💬                      ./repo.clean-with-status           e6fd2060  1d    Initial commit
