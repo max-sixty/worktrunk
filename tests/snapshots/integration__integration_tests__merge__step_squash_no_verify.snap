@@ -27,13 +27,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-💡 [2mSkipping pre-commit hook (--no-verify)[22m
-🔄 [36mSquashing 2 commits into a single commit (3 files, [32m+3[0m)...[39m
-🔄 [36mGenerating squash commit message...[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+💡 [2mSkipping pre-commit hook (--no-verify)[0m
+🔄 [36mSquashing 2 commits into a single commit [90m(3 files, [32m+3[0m[39m[90m)[39m...[0m
+🔄 [36mGenerating squash commit message...[0m
+💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m
 [107m [0m  [1mSquash commits from main[22m
 [107m [0m  
 [107m [0m  Combined commits:
 [107m [0m  - feat: add file 1
 [107m [0m  - feat: add file 2
-✅ [32mSquashed @ [2m588aa53[39m[22m
+✅ [32mSquashed @ [2m588aa53[22m[0m

@@ -66,9 +66,7 @@ pub fn approve_command_batch(
 
         if updated && let Err(e) = fresh_config.save() {
             let _ = output::warning(format!("Failed to save command approval: {e}"));
-            let _ = output::hint(cformat!(
-                "<dim>Approval will be requested again next time.</>"
-            ));
+            let _ = output::hint("Approval will be requested again next time.");
         }
     }
 

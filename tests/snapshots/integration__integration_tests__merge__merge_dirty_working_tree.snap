@@ -24,15 +24,15 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAuto-staging 1 untracked file:[39m
+🟡 [33mAuto-staging 1 untracked file:[0m
 [107m [0m  dirty.txt
-🔄 [36mCommitting changes with default message... (1 file, [32m+1[0m, no squashing needed)[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[0m, no squashing needed[39m[90m)[39m[0m
+💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m
 [107m [0m  [1mChanges to dirty.txt[22m
-✅ [32mCommitted changes @ [2mc1126ec[39m[22m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mc1126ec[22m (no rebase needed)[39m
+✅ [32mCommitted changes @ [2mc1126ec[22m[0m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mc1126ec[22m (no rebase needed)[0m
 [107m [0m  * [33mc1126ec[m Changes to dirty.txt
 [107m [0m   dirty.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
-✅ [32mMerged to [1mmain[22m (1 commit, 1 file, [32m+1[0m)[39m
-🔄 [36mRemoving [1mfeature[22m worktree & branch in background[39m
+✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[0m[39m[90m)[39m[0m
+🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background[39m[0m

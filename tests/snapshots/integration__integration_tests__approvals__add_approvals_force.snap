@@ -26,4 +26,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mCommands approved; not saved (--force)[39m
+✅ [32mCommands approved; not saved (--force)[0m

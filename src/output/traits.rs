@@ -3,10 +3,25 @@
 //! This trait extracts common patterns between Interactive and Directive output modes.
 //! The fundamental operation is `write_message_line` - implementations control where
 //! messages go (stdout for interactive, stderr for directive).
+//!
+//! # Semantic Colors
+//!
+//! Output functions automatically wrap content in semantic colors:
+//! - success → green
+//! - progress → cyan
+//! - hint → dimmed
+//! - warning → yellow
+//! - info → no color (neutral status)
+//!
+//! Callers provide content with optional inner styling (like `<bold>`) using `cformat!`.
+//! The trait adds the outer semantic color, so callers don't repeat `<green>...</>` etc.
 
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI};
+use worktrunk::styling::{
+    CYAN, GREEN, HINT, HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING,
+    WARNING_EMOJI,
+};
 
 /// Core output handler trait
 ///
@@ -16,29 +31,29 @@ pub trait OutputHandler {
     /// Write a single logical message line to the primary user stream
     fn write_message_line(&mut self, line: &str) -> io::Result<()>;
 
-    /// Emit a success message
+    /// Emit a success message (automatically wrapped in green)
     fn success(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&format!("{SUCCESS_EMOJI} {message}"))
+        self.write_message_line(&format!("{SUCCESS_EMOJI} {GREEN}{message}{GREEN:#}"))
     }
 
-    /// Emit a progress message
+    /// Emit a progress message (automatically wrapped in cyan)
     fn progress(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&format!("{PROGRESS_EMOJI} {message}"))
+        self.write_message_line(&format!("{PROGRESS_EMOJI} {CYAN}{message}{CYAN:#}"))
     }
 
-    /// Emit a hint message
+    /// Emit a hint message (automatically wrapped in dim)
     fn hint(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&format!("{HINT_EMOJI} {message}"))
+        self.write_message_line(&format!("{HINT_EMOJI} {HINT}{message}{HINT:#}"))
     }
 
-    /// Emit an info message
+    /// Emit an info message (no color - neutral status)
     fn info(&mut self, message: String) -> io::Result<()> {
         self.write_message_line(&format!("{INFO_EMOJI} {message}"))
     }
 
-    /// Emit a warning message
+    /// Emit a warning message (automatically wrapped in yellow)
     fn warning(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&format!("{WARNING_EMOJI} {message}"))
+        self.write_message_line(&format!("{WARNING_EMOJI} {WARNING}{message}{WARNING:#}"))
     }
 
     /// Print a message (written as-is)

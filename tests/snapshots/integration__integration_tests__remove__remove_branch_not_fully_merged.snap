@@ -24,4 +24,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRemoving [1mfeature-unmerged[22m worktree in background; retaining unmerged branch[39m
+🔄 [36m[36mRemoving [1mfeature-unmerged[22m worktree in background; retaining unmerged branch[39m[0m

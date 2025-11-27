@@ -26,9 +26,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m at [1m[REPO].feature[39m[22m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
-🔄 [36mRunning post-start:[39m
+✅ [32m[32mCreated new worktree for [1mfeature[22m from [1mmain[22m at [1m[REPO].feature[39m[22m[0m
+💡 [2m[2mRun `wt config shell install` to enable automatic cd[22m[0m
+🔄 [36mRunning post-start:[0m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m 'line1[0m
 [107m [0m  [2m[0m[2m[34mline2[0m[2m[0m
 [107m [0m  [2m[0m[2m[34mline3[0m[2m' | grep line2 > filtered.txt[0m

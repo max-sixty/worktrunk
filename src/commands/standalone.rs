@@ -142,7 +142,7 @@ pub fn handle_squash(
         .unwrap_or(false);
 
     if skip_pre_commit && has_pre_commit {
-        crate::output::hint(cformat!("<dim>Skipping pre-commit hook (--no-verify)</>"))?;
+        crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
     } else if let Some(ref config) = project_config {
         HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust)?;
     }
@@ -203,13 +203,13 @@ pub fn handle_squash(
     let parts = total_stats;
 
     let squash_progress = if parts.is_empty() {
-        cformat!(
-            "<cyan>Squashing {commit_count} {commit_text}{with_changes} into a single commit...</>"
-        )
+        format!("Squashing {commit_count} {commit_text}{with_changes} into a single commit...")
     } else {
+        // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
+        let parts_str = parts.join(", ");
+        let paren_close = cformat!("<bright-black>)</>");
         cformat!(
-            "<cyan>Squashing {commit_count} {commit_text}{with_changes} into a single commit ({})...</>",
-            parts.join(", ")
+            "Squashing {commit_count} {commit_text}{with_changes} into a single commit <bright-black>({parts_str}</>{paren_close}..."
         )
     };
     crate::output::progress(squash_progress)?;
@@ -218,14 +218,14 @@ pub fn handle_squash(
     if has_staged {
         let backup_message = format!("{} → {} (squash)", current_branch, target_branch);
         let (sha, _restore_cmd) = repo.create_safety_backup(&backup_message)?;
-        crate::output::hint(cformat!("<dim>Backup created @ {sha}</>"))?;
+        crate::output::hint(format!("Backup created @ {sha}"))?;
     }
 
     // Get commit subjects for the squash message
     let subjects = repo.commit_subjects(&range)?;
 
     // Generate squash commit message
-    crate::output::progress(cformat!("<cyan>Generating squash commit message...</>"))?;
+    crate::output::progress("Generating squash commit message...")?;
 
     generator.emit_hint_if_needed()?;
 
@@ -254,8 +254,8 @@ pub fn handle_squash(
 
     // Check if there are actually any changes to commit
     if !repo.has_staged_changes()? {
-        crate::output::info(cformat!(
-            "<dim>No changes after squashing {commit_count} {commit_text}</>"
+        crate::output::info(format!(
+            "No changes after squashing {commit_count} {commit_text}"
         ))?;
         return Ok(SquashResult::NoNetChanges);
     }
@@ -271,7 +271,7 @@ pub fn handle_squash(
         .to_string();
 
     // Show success immediately after completing the squash
-    crate::output::success(cformat!("<green>Squashed @ <dim>{commit_hash}</></>"))?;
+    crate::output::success(cformat!("Squashed @ <dim>{commit_hash}</>"))?;
 
     Ok(SquashResult::Squashed)
 }
@@ -309,9 +309,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Only show progress for true rebases (fast-forwards are instant)
     if !is_fast_forward {
-        crate::output::progress(cformat!(
-            "<cyan>Rebasing onto <bold>{target_branch}</>...</>"
-        ))?;
+        crate::output::progress(cformat!("Rebasing onto <bold>{target_branch}</>..."))?;
     }
 
     let rebase_result = repo.run_command(&["rebase", &target_branch]);
@@ -348,11 +346,9 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
     // Success
     if is_fast_forward {
-        crate::output::success(cformat!(
-            "<green>Fast-forwarded to <bold>{target_branch}</></>"
-        ))?;
+        crate::output::success(cformat!("Fast-forwarded to <bold>{target_branch}</>"))?;
     } else {
-        crate::output::success(cformat!("<green>Rebased onto <bold>{target_branch}</></>"))?;
+        crate::output::success(cformat!("Rebased onto <bold>{target_branch}</>"))?;
     }
 
     Ok(RebaseResult::Rebased)
@@ -412,10 +408,10 @@ pub fn handle_standalone_add_approvals(force: bool, show_all: bool) -> anyhow::R
     if approved {
         if force {
             // When using --force, commands aren't saved to config
-            crate::output::success(cformat!("<green>Commands approved; not saved (--force)</>"))?;
+            crate::output::success("Commands approved; not saved (--force)")?;
         } else {
             // Interactive approval - commands were saved to config (unless save failed)
-            crate::output::success(cformat!("<green>Commands approved & saved to config</>"))?;
+            crate::output::success("Commands approved & saved to config")?;
         }
     } else {
         crate::output::info("Commands declined")?;
@@ -442,8 +438,8 @@ pub fn handle_standalone_clear_approvals(global: bool) -> anyhow::Result<()> {
         config.projects.clear();
         config.save().context("Failed to save config")?;
 
-        crate::output::success(cformat!(
-            "<green>Cleared approvals for {project_count} project{}</>",
+        crate::output::success(format!(
+            "Cleared approvals for {project_count} project{}",
             if project_count == 1 { "" } else { "s" }
         ))?;
     } else {
@@ -470,8 +466,8 @@ pub fn handle_standalone_clear_approvals(global: bool) -> anyhow::Result<()> {
             .revoke_project(&project_id)
             .context("Failed to clear project approvals")?;
 
-        crate::output::success(cformat!(
-            "<green>Cleared {approval_count} approval{} for this project</>",
+        crate::output::success(format!(
+            "Cleared {approval_count} approval{} for this project",
             if approval_count == 1 { "" } else { "s" }
         ))?;
     }

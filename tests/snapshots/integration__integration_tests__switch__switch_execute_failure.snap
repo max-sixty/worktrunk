@@ -28,6 +28,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mfail-test[22m from [1mmain[22m at [1m[REPO].fail-test[39m[22m
-🔄 [36mExecuting (--execute):[39m
+✅ [32m[32mCreated new worktree for [1mfail-test[22m from [1mmain[22m at [1m[REPO].fail-test[39m[22m[0m
+🔄 [36m[36mExecuting (--execute):[39m[0m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m

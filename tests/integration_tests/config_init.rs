@@ -32,8 +32,8 @@ fn test_config_init_already_exists() {
         ----- stderr -----
         ⚪ Global config already exists: [1m~/.config/worktrunk/config.toml[22m
 
-        💡 [2mUse 'wt config show' to view existing configuration[22m
-        💡 [2mUse 'wt config create --help' for config format reference[22m
+        💡 [2mUse 'wt config show' to view existing configuration[0m
+        💡 [2mUse 'wt config create --help' for config format reference[0m
         ");
     });
 }
@@ -59,9 +59,9 @@ fn test_config_init_creates_file() {
         ----- stdout -----
 
         ----- stderr -----
-        ✅ [32mCreated config file: [1m~/.config/worktrunk/config.toml[39m[22m
+        ✅ [32mCreated config file: [1m~/.config/worktrunk/config.toml[22m[0m
 
-        💡 [2mEdit this file to customize worktree paths and LLM settings[22m
+        💡 [2mEdit this file to customize worktree paths and LLM settings[0m
         ");
     });
 

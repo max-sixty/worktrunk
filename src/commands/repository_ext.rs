@@ -168,7 +168,7 @@ impl RepositoryCliExt for Repository {
         );
 
         crate::output::progress(cformat!(
-            "<cyan>Stashing changes in <bold>{}</><cyan>...</>",
+            "Stashing changes in <bold>{}</>...",
             format_path_for_display(wt_path)
         ))?;
 
@@ -231,9 +231,7 @@ impl AutoStageWarning {
 
         let count = self.files.len();
         let file_word = if count == 1 { "file" } else { "files" };
-        crate::output::warning(cformat!(
-            "<yellow>Auto-staging {count} untracked {file_word}:</>"
-        ))?;
+        crate::output::warning(format!("Auto-staging {count} untracked {file_word}:"))?;
 
         let joined_files = self.files.join("\n");
         crate::output::gutter(format_with_gutter(&joined_files, "", None))?;
@@ -259,7 +257,7 @@ impl TargetWorktreeStash {
 
     pub(crate) fn restore(self) -> anyhow::Result<()> {
         crate::output::progress(cformat!(
-            "<cyan>Restoring stashed changes in <bold>{}</><cyan>...</>",
+            "Restoring stashed changes in <bold>{}</>...",
             format_path_for_display(&self.path)
         ))?;
 
@@ -268,7 +266,7 @@ impl TargetWorktreeStash {
             .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
         {
             crate::output::warning(cformat!(
-                "<yellow>Failed to restore stash <bold>{stash_ref}</> - run 'git stash pop {stash_ref}' in <bold>{path}</></>",
+                "Failed to restore stash <bold>{stash_ref}</> - run 'git stash pop {stash_ref}' in <bold>{path}</>",
                 stash_ref = self.stash_ref,
                 path = format_path_for_display(&self.path),
             ))?;

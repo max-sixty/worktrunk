@@ -24,8 +24,8 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mSquashing 2 commits into a single commit (2 files, [32m+2[0m)...[39m
-🔄 [36mGenerating squash commit message...[39m
+🔄 [36mSquashing 2 commits into a single commit [90m(2 files, [32m+2[0m[39m[90m)[39m...[0m
+🔄 [36mGenerating squash commit message...[0m
 ❌ [31mCommit generation command failed[39m
 [107m [0m  Error: connection refused
 

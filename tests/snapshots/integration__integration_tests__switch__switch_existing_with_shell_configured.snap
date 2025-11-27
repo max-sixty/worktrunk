@@ -25,4 +25,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mSwitched to worktree for [1mshell-configured[22m at [1m[REPO].shell-configured[39m[22m
+✅ [32m[32mSwitched to worktree for [1mshell-configured[22m at [1m[REPO].shell-configured[39m[22m[0m

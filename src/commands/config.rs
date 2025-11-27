@@ -55,12 +55,8 @@ pub fn handle_config_create() -> anyhow::Result<()> {
             format_path_for_display(&config_path)
         ))?;
         output::blank()?;
-        output::hint(cformat!(
-            "<dim>Use 'wt config show' to view existing configuration</>"
-        ))?;
-        output::hint(cformat!(
-            "<dim>Use 'wt config create --help' for config format reference</>"
-        ))?;
+        output::hint("Use 'wt config show' to view existing configuration")?;
+        output::hint("Use 'wt config create --help' for config format reference")?;
         return Ok(());
     }
 
@@ -76,13 +72,11 @@ pub fn handle_config_create() -> anyhow::Result<()> {
 
     // Success message
     output::success(cformat!(
-        "<green>Created config file: <bold>{}</></>",
+        "Created config file: <bold>{}</>",
         format_path_for_display(&config_path)
     ))?;
     output::blank()?;
-    output::hint(cformat!(
-        "<dim>Edit this file to customize worktree paths and LLM settings</>"
-    ))?;
+    output::hint("Edit this file to customize worktree paths and LLM settings")?;
 
     Ok(())
 }
@@ -417,7 +411,7 @@ pub fn handle_config_status_set(value: String, branch: Option<String>) -> anyhow
     repo.run_command(&["config", &config_key, &value])?;
 
     crate::output::success(cformat!(
-        "<green>Set status for <bold>{branch_name}</> to <bold>{value}</></>"
+        "Set status for <bold>{branch_name}</> to <bold>{value}</>"
     ))?;
 
     Ok(())
@@ -445,7 +439,7 @@ pub fn handle_config_status_unset(target: String) -> anyhow::Result<()> {
             crate::output::info("No statuses to clear")?;
         } else {
             crate::output::success(cformat!(
-                "<green>Cleared <bold>{cleared_count}</> status{}</>",
+                "Cleared <bold>{cleared_count}</> status{}",
                 if cleared_count == 1 { "" } else { "es" }
             ))?;
         }
@@ -461,9 +455,7 @@ pub fn handle_config_status_unset(target: String) -> anyhow::Result<()> {
         repo.run_command(&["config", "--unset", &config_key])
             .context("Failed to unset status (may not be set)")?;
 
-        crate::output::success(cformat!(
-            "<green>Cleared status for <bold>{branch_name}</></>"
-        ))?;
+        crate::output::success(cformat!("Cleared status for <bold>{branch_name}</>"))?;
     }
 
     Ok(())
@@ -519,7 +511,7 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
                 crate::output::info("No CI cache entries to clear")?;
             } else {
                 crate::output::success(cformat!(
-                    "<green>Cleared <bold>{cleared}</> CI cache entr{}</>",
+                    "Cleared <bold>{cleared}</> CI cache entr{}",
                     if cleared == 1 { "y" } else { "ies" }
                 ))?;
             }
@@ -529,7 +521,7 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
                 .run_command(&["config", "--unset", "worktrunk.defaultBranch"])
                 .is_ok()
             {
-                crate::output::success(cformat!("<green>Cleared default branch cache</>"))?;
+                crate::output::success("Cleared default branch cache")?;
             } else {
                 crate::output::info("No default branch cache to clear")?;
             }
@@ -541,7 +533,7 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
             let cleared_ci = CachedCiStatus::clear_all(&repo) > 0;
 
             if cleared_default || cleared_ci {
-                crate::output::success(cformat!("<green>Cleared all caches</>"))?;
+                crate::output::success("Cleared all caches")?;
             } else {
                 crate::output::info("No caches to clear")?;
             }
@@ -558,11 +550,11 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
 pub fn handle_cache_refresh() -> anyhow::Result<()> {
     let repo = Repository::current();
 
-    crate::output::progress(cformat!("<cyan>Querying remote for default branch...</>"))?;
+    crate::output::progress("Querying remote for default branch...")?;
 
     let branch = repo.refresh_default_branch()?;
 
-    crate::output::success(cformat!("<green>Cache refreshed: <bold>{branch}</></>"))?;
+    crate::output::success(cformat!("Cache refreshed: <bold>{branch}</>"))?;
 
     Ok(())
 }

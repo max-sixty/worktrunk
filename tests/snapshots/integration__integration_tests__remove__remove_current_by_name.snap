@@ -24,4 +24,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRemoving [1mfeature-current[22m worktree & branch in background[39m
+🔄 [36m[36mRemoving [1mfeature-current[22m worktree & branch in background[39m[0m

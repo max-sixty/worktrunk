@@ -184,20 +184,24 @@ Six canonical message patterns with their emojis:
 5. **Hints**: 💡 (actionable suggestions, tips for user)
 6. **Info**: ⚪ (neutral status, system feedback, metadata)
 
-**All message methods just add the emoji prefix** - callers handle their own styling:
+**Output functions automatically add emoji AND semantic color.** Callers provide content with optional inner styling (like `<bold>`):
+
 ```rust
-// Caller provides the styling
-output::success(format!("{GREEN}Created worktree{GREEN:#}"))?;
-output::hint(format!("{HINT}Run 'wt config' to configure{HINT:#}"))?;
+// Simple message - function adds emoji + color
+output::success("Created worktree")?;
+output::hint("Run 'wt config' to configure")?;
+
+// With inner styling - use cformat! for bold/dim within the message
+output::success(cformat!("Created worktree for <bold>{branch}</>"))?;
+output::warning(cformat!("Branch <bold>{name}</> not found"))?;
 ```
 
-**Styling conventions by type:**
-- Progress → cyan (`{CYAN}...{CYAN:#}`)
-- Success → green (`{GREEN}...{GREEN:#}`)
-- Errors → red (`{ERROR}...{ERROR:#}`)
-- Warnings → yellow (`{WARNING}...{WARNING:#}`)
-- Hints → dimmed (`{HINT}...{HINT:#}`), avoid `HINT_BOLD` (renders inconsistently)
-- Info → unstyled or dimmed for supplementary metadata
+**Semantic colors added automatically:**
+- `success()` → green
+- `progress()` → cyan
+- `hint()` → dimmed
+- `warning()` → yellow
+- `info()` → no color (neutral status)
 
 **Every user-facing message requires either an emoji or a gutter** for consistent visual separation.
 
@@ -241,7 +245,7 @@ Output should appear immediately adjacent to the operations it describes. Progre
 Sequential operations should show immediate feedback:
 ```rust
 for item in items {
-    output::progress(format!("🔄 Removing {item}..."))?;
+    output::progress(format!("Removing {item}..."))?;
     perform_operation(item)?;
     output::success(format!("Removed {item}"))?;  // Immediate feedback
 }
@@ -264,9 +268,9 @@ Progress messages should include all relevant details (what's being done, counts
 
 ```rust
 // ✅ GOOD - detailed progress, minimal success
-output::progress("🔄 Squashing 3 commits & working tree changes into a single commit (5 files, +60)...")?;
+output::progress("Squashing 3 commits & working tree changes into a single commit (5 files, +60)...")?;
 perform_squash()?;
-output::success("✅ Squashed @ a1b2c3d")?;
+output::success("Squashed @ a1b2c3d")?;
 ```
 
 ### Semantic Style Constants
@@ -288,55 +292,45 @@ Style constants defined in `src/styling/constants.rs`:
 
 Emoji constants: `PROGRESS_EMOJI` (🔄), `SUCCESS_EMOJI` (✅), `ERROR_EMOJI` (❌), `WARNING_EMOJI` (🟡), `HINT_EMOJI` (💡), `INFO_EMOJI` (⚪)
 
-### Inline Formatting Pattern
+### Styling in Command Code
 
-Use anstyle's inline pattern `{style}text{style:#}` where `#` means reset:
-
-```rust
-use worktrunk::styling::{println, CYAN, ERROR, ERROR_EMOJI, HINT, HINT_EMOJI};
-
-println!("🔄 {CYAN}Rebasing onto main...{CYAN:#}");
-println!("{ERROR_EMOJI} {ERROR}Working tree has uncommitted changes{ERROR:#}");
-println!("{HINT_EMOJI} {HINT}Use 'wt list' to see all worktrees{HINT:#}");
-```
-
-### Composing Styles
-
-Compose styles using anstyle methods (`.bold()`, `.fg_color()`, etc.). Branch names in messages (not tables) should be bolded. Tables (`wt list`) use conditional styling for branch names to indicate worktree state (current/main/other).
-
-Nested style resets leak color. Compose attributes into a single style, then re-apply the surrounding style after the reset:
+Use `output::` functions with `cformat!` for styled content. The output function adds the emoji + semantic color, and `cformat!` handles inner styling:
 
 ```rust
-// ❌ BAD - nested bold loses surrounding color, text after reset is unstyled
-"{WARNING}Text with {bold}nested{bold:#} styles{WARNING:#}"
-// ✅ GOOD - use composed style and re-apply surrounding style after reset
-"{WARNING}Text with {WARNING_BOLD}composed{WARNING_BOLD:#}{WARNING} styles{WARNING:#}"
-// ✅ ALSO GOOD - styled element at end (no text after reset needs styling)
-"{WARNING}Message: {WARNING_BOLD}{value}{WARNING_BOLD:#}{WARNING:#}"
+// ✅ GOOD - output:: handles emoji + outer color, cformat! handles inner styling
+output::success(cformat!("Created <bold>{branch}</> from <bold>{base}</>"))?;
+output::warning(cformat!("Branch <bold>{name}</> has <dim>uncommitted changes</>"))?;
+output::hint(cformat!("Run '<bold>wt merge</>' to continue"))?;
+
+// ✅ GOOD - plain strings work too (no inner styling needed)
+output::progress("Rebasing onto main...")?;
 ```
 
-**Key insight**: `{STYLE:#}` always resets to default, not to the surrounding style. Re-apply the surrounding style after any composed style reset if there's more text to style.
+**Available color-print tags:** `<bold>`, `<dim>`, `<red>`, `<green>`, `<yellow>`, `<cyan>`, `<magenta>`
+
+**Emoji constants in cformat!:** Use `{ERROR_EMOJI}`, `{HINT_EMOJI}`, etc. for messages that bypass output:: functions (e.g., GitError Display impl):
+
+```rust
+cformat!("{ERROR_EMOJI} <red>Branch <bold>{branch}</> not found</>")
+```
+
+Branch names in messages should be bolded. Tables (`wt list`) use `StyledLine` with conditional styling for branch names.
 
 ### Color Detection
 
-Colors automatically adjust based on environment (NO_COLOR, CLICOLOR_FORCE, TTY detection) via `anstream` macros.
+Colors automatically adjust based on environment (NO_COLOR, CLICOLOR_FORCE, TTY detection). When using `output::` functions, this is handled automatically.
 
-Styled print macros must be imported from `worktrunk::styling`, not stdlib:
+For direct terminal I/O (rare - mainly internal output system code), import print macros from `worktrunk::styling`:
 
 ```rust
-// ❌ BAD - uses standard library macro, bypasses anstream
-eprintln!("{}", styled_text);
-// ✅ GOOD - import and use anstream-wrapped version
-use worktrunk::styling::eprintln;
-eprintln!("{}", styled_text);
+use worktrunk::styling::eprintln;  // Auto-detects color support
 ```
 
 ### Design Principles
 
-- **Use the ecosystem, not manual escape codes** - Use `anstyle` for colors, `osc8` for hyperlinks, `strip-ansi-escapes` for stripping. Never manually write ANSI codes (`\x1b[...`)
-- **Inline over wrappers** - Use `{style}text{style:#}` pattern, not wrapper functions
-- **Composition over special cases** - Use `.bold()`, `.fg_color()`, not `format_X_with_Y()`
-- **Semantic constants** - Use `ERROR`, `WARNING`, not raw colors
+- **Use the ecosystem, not manual escape codes** - Use `color-print` for command code, `anstyle` for tables/StyledLine. Never manually write ANSI codes (`\x1b[...`)
+- **output:: functions over direct printing** - Use output:: for user messages, which auto-adds emoji + semantic color
+- **cformat! for inner styling** - Use `<bold>`, `<dim>` tags within output:: calls
 - **YAGNI for presentation** - Most output needs no styling
 - **Unicode-aware** - Width calculations respect emoji and CJK characters (via `StyledLine`)
 - **Graceful degradation** - Must work without color support
@@ -364,21 +358,19 @@ Use `format_with_gutter()` for quoted content. Gutter content displays external 
 
 ```rust
 // Show warning message, then external error in gutter
-super::warning(format!(
-    "{WARNING}Could not delete branch {WARNING_BOLD}{branch_name}{WARNING_BOLD:#}{WARNING:#}"
-))?;
-super::gutter(format_with_gutter(&e.to_string(), "", None))?;
+output::warning(cformat!("Could not delete branch <bold>{branch_name}</>"))?;
+output::gutter(format_with_gutter(&e.to_string(), "", None))?;
 ```
 
 **Linebreaks:** Gutter content requires a single newline before it, never double newlines. Output functions (`progress()`, `success()`, etc.) use `println!()` internally, adding a trailing newline. Messages passed to these functions should not include `\n`:
 
 ```rust
 // ✅ GOOD - no trailing \n
-output::progress(format!("{CYAN}Merging...{CYAN:#}"))?;
+output::progress("Merging...")?;
 output::gutter(format_with_gutter(&log, "", None))?;
 
 // ❌ BAD - trailing \n creates blank line
-output::progress(format!("{CYAN}Merging...{CYAN:#}\n"))?;
+output::progress("Merging...\n")?;
 ```
 
 ### Error Message Formatting

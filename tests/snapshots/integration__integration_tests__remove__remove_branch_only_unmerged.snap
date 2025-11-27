@@ -25,5 +25,5 @@ exit_code: 0
 
 ----- stderr -----
 ⚪ [90mNo worktree found for branch feature-unmerged[39m
-🟡 [33mCould not delete branch [1mfeature-unmerged[39m[22m
+🟡 [33m[33mCould not delete branch [1mfeature-unmerged[39m[22m[0m
 [107m [0m  error: the branch 'feature-unmerged' is not fully merged

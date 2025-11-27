@@ -67,9 +67,9 @@ impl<'a> CommitGenerator<'a> {
 
     pub fn emit_hint_if_needed(&self) -> anyhow::Result<()> {
         if !self.config.is_configured() {
-            crate::output::hint(cformat!(
-                "<dim>Using fallback commit message. Run 'wt config --help' for LLM setup guide</>"
-            ))?;
+            crate::output::hint(
+                "Using fallback commit message. Run 'wt config --help' for LLM setup guide",
+            )?;
         }
         Ok(())
     }
@@ -103,9 +103,12 @@ impl<'a> CommitGenerator<'a> {
         }
 
         let full_progress_msg = if parts.is_empty() {
-            cformat!("<cyan>{action}</>")
+            action
         } else {
-            cformat!("<cyan>{action} ({})</>", parts.join(", "))
+            // Gray parenthetical with separate cformat for closing paren (avoids optimizer)
+            let parts_str = parts.join(", ");
+            let paren_close = cformat!("<bright-black>)</>");
+            cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
         };
 
         crate::output::progress(full_progress_msg)?;
@@ -124,9 +127,7 @@ impl<'a> CommitGenerator<'a> {
             .trim()
             .to_string();
 
-        crate::output::success(cformat!(
-            "<green>Committed changes @ <dim>{commit_hash}</></>"
-        ))?;
+        crate::output::success(cformat!("Committed changes @ <dim>{commit_hash}</>"))?;
 
         Ok(())
     }
@@ -142,7 +143,7 @@ impl CommitOptions<'_> {
             .unwrap_or(false);
 
         if self.no_verify && has_pre_commit {
-            crate::output::hint(cformat!("<dim>Skipping pre-commit hook (--no-verify)</>"))?;
+            crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
         } else if let Some(ref config) = project_config {
             let pipeline = HookPipeline::new(*self.ctx);
             pipeline.run_pre_commit(config, self.target_branch, self.auto_trust)?;

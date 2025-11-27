@@ -301,7 +301,7 @@ fn main() {
                             for (shell, path) in &scan_result.skipped {
                                 let path = format_path_for_display(path);
                                 crate::output::hint(cformat!(
-                                    "<dim>Skipped <bold>{shell}</>; {path} not found</>"
+                                    "Skipped <bold>{shell}</>; {path} not found"
                                 ))?;
                             }
 
@@ -350,11 +350,11 @@ fn main() {
                                     // Fish auto-sources from conf.d, so just say "Restart shell"
                                     // Bash/Zsh can source directly for immediate activation
                                     if matches!(result.shell, worktrunk::shell::Shell::Fish) {
-                                        crate::output::hint(cformat!("<dim>Restart shell to activate</>"))?;
+                                        crate::output::hint("Restart shell to activate")?;
                                     } else {
                                         let path = format_path_for_display(&result.path);
-                                        crate::output::hint(cformat!(
-                                            "<dim>Restart shell or run: source {path}</>"
+                                        crate::output::hint(format!(
+                                            "Restart shell or run: source {path}"
                                         ))?;
                                     }
                                 }
@@ -421,8 +421,8 @@ fn main() {
                                             "No {what} found in {path}"
                                         ))?;
                                     } else {
-                                        crate::output::hint(cformat!(
-                                            "<dim>No {shell} {what} in {path}</>"
+                                        crate::output::hint(format!(
+                                            "No {shell} {what} in {path}"
                                         ))?;
                                     }
                                 }
@@ -442,8 +442,8 @@ fn main() {
                                             "No completions found in {path}"
                                         ))?;
                                     } else {
-                                        crate::output::hint(cformat!(
-                                            "<dim>No {shell} completions in {path}</>"
+                                        crate::output::hint(format!(
+                                            "No {shell} completions in {path}"
                                         ))?;
                                     }
                                 }
@@ -454,9 +454,9 @@ fn main() {
                                 if total_changes == 0 {
                                     if all_not_found == 0 {
                                         crate::output::blank()?;
-                                        crate::output::hint(cformat!(
-                                            "<dim>No shell integration found to remove</>"
-                                        ))?;
+                                        crate::output::hint(
+                                            "No shell integration found to remove",
+                                        )?;
                                     }
                                     return Ok(());
                                 }
@@ -481,9 +481,7 @@ fn main() {
                                     });
 
                                 if current_shell_affected {
-                                    crate::output::hint(cformat!(
-                                        "<dim>Restart shell to complete uninstall</>"
-                                    ))?;
+                                    crate::output::hint("Restart shell to complete uninstall")?;
                                 }
                                 Ok(())
                             })

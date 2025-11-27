@@ -234,19 +234,17 @@ pub fn handle_switch(
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
             crate::output::warning(cformat!(
-                "<yellow>Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead</>"
+                "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
             ))?;
-            crate::output::hint(cformat!(
-                "<dim>Use 'wt switch {resolved_branch}' (without --create) to switch to the remote branch</>"
+            crate::output::hint(format!(
+                "Use 'wt switch {resolved_branch}' (without --create) to switch to the remote branch"
             ))?;
         }
     }
 
     // Check if base flag was provided without create flag
     if resolved_base.is_some() && !create {
-        crate::output::warning(cformat!(
-            "<yellow>--base flag is only used with --create, ignoring</>"
-        ))?;
+        crate::output::warning("--base flag is only used with --create, ignoring")?;
     }
 
     // Check if worktree already exists for this branch
@@ -641,7 +639,7 @@ pub fn handle_push(
         };
 
         crate::output::progress(cformat!(
-            "<cyan>{verb_ing} {commit_count} {commit_text} to <bold>{target_branch}</> @ <dim>{head_sha}</>{operations_note}</>"
+            "{verb_ing} {commit_count} {commit_text} to <bold>{target_branch}</> @ <dim>{head_sha}</>{operations_note}"
         ))?;
 
         // Show the commit graph with color
@@ -694,9 +692,12 @@ pub fn handle_push(
         )];
         summary_parts.extend(stats_summary);
 
+        // Re-apply bright-black after stats (which end with a reset) so ) is also gray
+        let stats_str = summary_parts.join(", ");
+        let paren_close = cformat!("<bright-black>)</>"); // Separate to avoid cformat optimization
         crate::output::success(cformat!(
-            "<green>{verb} <bold>{target_branch}</> ({})</>",
-            summary_parts.join(", ")
+            "{verb} <bold>{target_branch}</> <bright-black>({stats_str}</>{}",
+            paren_close
         ))?;
     } else {
         // For merge workflow context, explain why nothing was pushed
