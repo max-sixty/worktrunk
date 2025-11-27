@@ -130,7 +130,7 @@ impl Repository {
     /// Uses the following strategy:
     /// 1. If the current branch has an upstream, use its remote
     ///    (Note: Detached HEAD falls through to step 2)
-    /// 2. Otherwise, get the first remote from `git remote`
+    /// 2. Otherwise, get the first remote with a configured URL
     /// 3. Fall back to "origin" if no remotes exist
     pub fn primary_remote(&self) -> anyhow::Result<String> {
         // Try to get the remote from the current branch's upstream
@@ -141,9 +141,19 @@ impl Repository {
             return Ok(remote.to_string());
         }
 
-        // Fall back to first remote in the list
-        let output = self.run_command(&["remote"])?;
-        let first_remote = output.lines().next();
+        // Fall back to first remote with a configured URL
+        // Use git config to find remotes with URLs, filtering out phantom remotes
+        // from global config (e.g., `remote.origin.prunetags=true` without a URL)
+        let output = self
+            .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
+            .unwrap_or_default();
+        let first_remote = output.lines().next().and_then(|line| {
+            // Parse "remote.<name>.url <value>" format
+            // Use ".url " as delimiter to handle remote names with dots (e.g., "my.remote")
+            line.strip_prefix("remote.")
+                .and_then(|s| s.split_once(".url "))
+                .map(|(name, _)| name)
+        });
 
         Ok(first_remote.unwrap_or("origin").to_string())
     }
