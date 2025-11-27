@@ -227,30 +227,6 @@ impl TestRepo {
         ]
     }
 
-    /// Check if git environment is properly isolated from user's global config.
-    ///
-    /// Returns true if GIT_CONFIG_GLOBAL is set (meaning we're running with
-    /// isolated git config). This is useful for tests that call internal
-    /// Repository methods which don't inherit the test's isolated environment.
-    ///
-    /// ## When to use this
-    ///
-    /// Tests should check isolation and skip when:
-    /// 1. They call `Repository::at()` directly (not via CLI commands)
-    /// 2. The Repository methods query git config (e.g., `primary_remote()`)
-    /// 3. User's global git config could interfere (e.g., `remote.origin.prunetags=true`)
-    ///
-    /// ## Running with isolation
-    ///
-    /// ```console
-    /// GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null cargo test
-    /// ```
-    ///
-    /// CI environments run with clean config automatically.
-    pub fn is_git_isolated() -> bool {
-        std::env::var("GIT_CONFIG_GLOBAL").is_ok()
-    }
-
     /// Create a configured git command with args and current_dir set
     ///
     /// This is a convenience wrapper around configure_git_cmd that reduces boilerplate.
