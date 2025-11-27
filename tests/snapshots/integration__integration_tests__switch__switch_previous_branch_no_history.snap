@@ -13,14 +13,16 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-❌ [31mNo previous branch found in history. Use 'wt list' to see available worktrees.[0m
 
 ----- stderr -----
+❌ [31mNo previous branch found in history. Use 'wt list' to see available worktrees.[0m

@@ -221,7 +221,7 @@ pub fn handle_switch(
         return Err(GitError::BranchAlreadyExists {
             branch: resolved_branch.clone(),
         }
-        .styled_err());
+        .into());
     }
 
     // Check if base flag was provided without create flag
@@ -263,7 +263,7 @@ pub fn handle_switch(
             return Err(GitError::WorktreeMissing {
                 branch: resolved_branch.clone(),
             }
-            .styled_err());
+            .into());
         }
         None => {}
     }
@@ -273,14 +273,19 @@ pub fn handle_switch(
 
     let repo_name = repo_root
         .file_name()
-        .ok_or_else(|| anyhow::anyhow!("{}", "Invalid repository path"))?
+        .ok_or_else(|| anyhow::anyhow!("Repository path has no filename: {}", repo_root.display()))?
         .to_str()
-        .ok_or_else(|| anyhow::anyhow!("{}", "Invalid UTF-8 in path"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Repository path contains invalid UTF-8: {}",
+                repo_root.display()
+            )
+        })?;
 
     let worktree_path = repo_root.join(
         config
             .format_path(repo_name, &resolved_branch)
-            .map_err(|e| anyhow::anyhow!(format!("Failed to format worktree path: {}", e)))?,
+            .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {}", e))?,
     );
 
     // If the target path already exists but no worktree is registered for this branch,
@@ -295,7 +300,7 @@ pub fn handle_switch(
             path: worktree_path,
             occupant,
         }
-        .styled_err());
+        .into());
     }
 
     // Create the worktree
@@ -344,7 +349,7 @@ pub fn handle_switch(
                 return Err(GitError::WorktreePathExists {
                     path: normalized_path,
                 }
-                .styled_err());
+                .into());
             }
         }
         // Fall back to generic error with context
@@ -353,7 +358,7 @@ pub fn handle_switch(
             base_branch: base_for_creation.clone(),
             error: msg,
         }
-        .styled_err());
+        .into());
     }
 
     // Canonicalize the path to resolve any .. components
@@ -532,13 +537,13 @@ pub fn handle_push(
             commits_formatted,
             in_merge_context: operations.is_some(),
         }
-        .styled_err());
+        .into());
     }
 
     // Check for merge commits unless allowed
     let has_merge_commits = repo.has_merge_commits(&target_branch, "HEAD")?;
     if !allow_merge_commits && has_merge_commits {
-        return Err(GitError::MergeCommitsFound.styled_err());
+        return Err(GitError::MergeCommitsFound.into());
     }
 
     // Check for conflicting changes in target worktree (auto-stash safe changes)
@@ -639,7 +644,7 @@ pub fn handle_push(
         return Err(GitError::PushFailed {
             error: e.to_string(),
         }
-        .styled_err());
+        .into());
     }
 
     if let Some(stash) = target_worktree_stash.take() {

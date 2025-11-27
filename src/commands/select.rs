@@ -364,13 +364,17 @@ impl WorktreeSkimItem {
 
         let Some(wt_info) = self.item.worktree_data() else {
             // Branch without worktree - selecting will create one
-            return format!("{INFO_EMOJI} Branch only — press Enter to create worktree\n");
+            let branch = self.item.branch_name();
+            return format!(
+                "{INFO_EMOJI} {branch} is branch only — press Enter to create worktree\n"
+            );
         };
 
+        let branch = self.item.branch_name();
         let path = wt_info.path.display().to_string();
         self.render_diff_preview(
             &["-C", &path, "diff", "HEAD"],
-            &format!("{INFO_EMOJI} No uncommitted changes"),
+            &format!("{INFO_EMOJI} {branch} has no uncommitted changes"),
             width,
         )
     }
@@ -380,14 +384,15 @@ impl WorktreeSkimItem {
     fn render_branch_diff_preview(&self, width: usize) -> String {
         use worktrunk::styling::INFO_EMOJI;
 
+        let branch = self.item.branch_name();
         if self.item.counts().ahead == 0 {
-            return format!("{INFO_EMOJI} No commits ahead of main\n");
+            return format!("{INFO_EMOJI} {branch} has no commits ahead of main\n");
         }
 
         let merge_base = format!("main...{}", self.item.head());
         self.render_diff_preview(
             &["diff", &merge_base],
-            &format!("{INFO_EMOJI} No changes vs main"),
+            &format!("{INFO_EMOJI} {branch} has no changes vs main"),
             width,
         )
     }
@@ -411,14 +416,13 @@ impl WorktreeSkimItem {
         // Alternative: Check specific conditions (main branch exists, valid HEAD, etc.) before
         // running git commands. This would provide better diagnostics but adds latency to
         // every preview render. Trade-off: simplicity + speed vs. detailed error messages.
+        let branch = self.item.branch_name();
         let Ok(merge_base_output) = repo.run_command(&["merge-base", "main", head]) else {
-            output.push_str(&format!("{INFO_EMOJI} No commits\n"));
+            output.push_str(&format!("{INFO_EMOJI} {branch} has no commits\n"));
             return output;
         };
 
         let merge_base = merge_base_output.trim();
-
-        let branch = self.item.branch_name();
         let is_main = branch == "main" || branch == "master";
 
         if is_main {
@@ -598,13 +602,13 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         // Legend/controls moved to preview window tabs (render_preview_tabs)
         .no_clear(true) // Prevent skim from clearing screen, we'll do it manually
         .build()
-        .map_err(|e| anyhow::anyhow!(format!("Failed to build skim options: {}", e)))?;
+        .map_err(|e| anyhow::anyhow!("Failed to build skim options: {}", e))?;
 
     // Create item receiver
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
     for item in items {
         tx.send(item)
-            .map_err(|e| anyhow::anyhow!(format!("Failed to send item to skim: {}", e)))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send item to skim: {}", e))?;
     }
     drop(tx);
 

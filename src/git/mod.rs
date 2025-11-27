@@ -124,7 +124,7 @@ impl WorktreeList {
             return Err(GitError::Other {
                 message: "No worktrees found".into(),
             }
-            .styled_err());
+            .into());
         }
 
         Ok(Self { worktrees })

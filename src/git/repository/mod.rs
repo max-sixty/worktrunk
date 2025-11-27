@@ -100,10 +100,12 @@ impl Repository {
             git_common_dir
                 .parent()
                 .ok_or_else(|| {
-                    GitError::Other {
-                        message: "Invalid git directory".into(),
-                    }
-                    .styled_err()
+                    anyhow::Error::from(GitError::Other {
+                        message: format!(
+                            "Git directory has no parent: {}",
+                            git_common_dir.display()
+                        ),
+                    })
                 })?
                 .to_path_buf()
         };
@@ -191,7 +193,7 @@ impl Repository {
             GitError::DetachedHead {
                 action: Some(action.into()),
             }
-            .styled_err()
+            .into()
         })
     }
 
@@ -270,7 +272,7 @@ impl Repository {
                 GitError::DetachedHead {
                     action: Some("resolve '@' to current branch".into()),
                 }
-                .styled_err()
+                .into()
             }),
             "-" => {
                 // Read from worktrunk.history (recorded by wt switch operations)
@@ -283,7 +285,7 @@ impl Repository {
                                 "No previous branch found in history. Use 'wt list' to see available worktrees."
                                     .into(),
                         }
-                        .styled_err()
+                        .into()
                     })
             }
             "^" => self.default_branch(),
@@ -376,7 +378,7 @@ impl Repository {
                 "Could not infer default branch. Please specify target branch explicitly or set up a remote."
                     .into(),
         }
-        .styled_err())
+        .into())
     }
 
     /// List all local branches.
@@ -446,7 +448,7 @@ impl Repository {
             return Err(GitError::UncommittedChanges {
                 action: action.map(String::from),
             }
-            .styled_err());
+            .into());
         }
         Ok(())
     }
@@ -498,7 +500,7 @@ impl Repository {
             GitError::ParseError {
                 message: format!("Failed to parse commit count: {}", e),
             }
-            .styled_err()
+            .into()
         })
     }
 
@@ -523,7 +525,7 @@ impl Repository {
             GitError::ParseError {
                 message: format!("Failed to parse timestamp: {}", e),
             }
-            .styled_err()
+            .into()
         })
     }
 
@@ -610,7 +612,7 @@ impl Repository {
             return Err(crate::git::GitError::ParseError {
                 message: format!("Unexpected rev-list output format: {}", output),
             }
-            .styled_err());
+            .into());
         }
 
         let behind: usize = parts[0].parse().context("Failed to parse behind count")?;
@@ -785,7 +787,7 @@ impl Repository {
             return Err(crate::git::GitError::Other {
                 message: "git stash create returned empty SHA - no changes to backup".into(),
             }
-            .styled_err());
+            .into());
         }
 
         // Get current branch name to use in the ref name
@@ -1042,10 +1044,9 @@ impl Repository {
     /// Remove a worktree at the specified path.
     pub fn remove_worktree(&self, path: &std::path::Path) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
-            GitError::Other {
-                message: "Invalid UTF-8 in worktree path".into(),
-            }
-            .styled_err()
+            anyhow::Error::from(GitError::Other {
+                message: format!("Worktree path contains invalid UTF-8: {}", path.display()),
+            })
         })?;
         self.run_command(&["worktree", "remove", path_str])?;
         Ok(())
@@ -1066,12 +1067,21 @@ impl Repository {
         Ok(branch)
     }
 
+    /// Check if two refs have identical tree content (same files/directories).
+    /// Returns true when content is identical even if commit history differs.
+    ///
+    /// Useful for detecting squash merges or rebases where the content has been
+    /// integrated but commit ancestry doesn't show the relationship.
+    pub fn trees_match(&self, ref1: &str, ref2: &str) -> anyhow::Result<bool> {
+        let tree1 = self.rev_parse_tree(&format!("{ref1}^{{tree}}"))?;
+        let tree2 = self.rev_parse_tree(&format!("{ref2}^{{tree}}"))?;
+        Ok(tree1 == tree2)
+    }
+
     /// Check if HEAD's tree SHA matches a branch's tree SHA.
     /// Returns true when content is identical even if commit history differs.
     pub fn head_tree_matches_branch(&self, branch: &str) -> anyhow::Result<bool> {
-        let head_tree = self.rev_parse_tree("HEAD^{tree}")?;
-        let branch_tree = self.rev_parse_tree(&format!("{branch}^{{tree}}"))?;
-        Ok(head_tree == branch_tree)
+        self.trees_match("HEAD", branch)
     }
 
     fn rev_parse_tree(&self, spec: &str) -> anyhow::Result<String> {
@@ -1156,10 +1166,12 @@ impl Repository {
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| {
-                GitError::Other {
-                    message: "Could not determine repository name".into(),
-                }
-                .styled_err()
+                anyhow::Error::from(GitError::Other {
+                    message: format!(
+                        "Repository directory has no valid name: {}",
+                        repo_root.display()
+                    ),
+                })
             })?;
 
         Ok(repo_name.to_string())

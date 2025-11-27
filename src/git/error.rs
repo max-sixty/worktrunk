@@ -3,8 +3,8 @@
 //! This module provides typed error handling:
 //!
 //! - **`GitError`** - A typed enum for domain errors that can be pattern-matched
-//!   and tested. Use `.styled_err()` to convert to styled `anyhow::Error` for user
-//!   display, or `.into()` to preserve the type for pattern matching.
+//!   and tested. Use `.into()` to convert to `anyhow::Error` while preserving the
+//!   type for pattern matching and styled display in main.rs.
 //!
 //! - **`WorktrunkError`** - A minimal enum for semantic errors that need
 //!   special handling (exit codes, silent errors).
@@ -29,11 +29,8 @@ use crate::styling::{
 /// # Usage
 ///
 /// ```ignore
-/// // Return a styled error for user display
-/// return Err(GitError::DetachedHead { action: Some("merge".into()) }.styled_err());
-///
-/// // Return a typed error for pattern matching
-/// return Err(GitError::BranchAlreadyExists { branch: "main".into() }.into());
+/// // Return a typed error (main.rs handles styled display via downcast)
+/// return Err(GitError::DetachedHead { action: Some("merge".into()) }.into());
 ///
 /// // Pattern match on errors
 /// if let Some(GitError::BranchAlreadyExists { branch }) = err.downcast_ref() {
@@ -103,10 +100,6 @@ pub enum GitError {
         error: String,
     },
 
-    /// Failed to delete branch
-    #[error("failed to delete branch '{branch}'")]
-    BranchDeletionFailed { branch: String, error: String },
-
     // -------------------------------------------------------------------------
     // Merge/push errors
     // -------------------------------------------------------------------------
@@ -160,6 +153,13 @@ pub enum GitError {
         command: String,
         /// The stderr output from the command
         error: String,
+    },
+
+    /// Project configuration file not found
+    #[error("no project configuration found")]
+    ProjectConfigNotFound {
+        /// Path where config file was expected
+        config_path: PathBuf,
     },
 
     /// Generic error with custom message
@@ -266,13 +266,6 @@ impl GitError {
                 format_error_block(header, error)
             }
 
-            GitError::BranchDeletionFailed { branch, error } => {
-                let header = format!(
-                    "{ERROR_EMOJI} {ERROR}Failed to delete branch {ERROR_BOLD}{branch}{ERROR_BOLD:#}{ERROR:#}"
-                );
-                format_error_block(header, error)
-            }
-
             GitError::ConflictingChanges {
                 files,
                 worktree_path,
@@ -364,17 +357,17 @@ impl GitError {
                 msg
             }
 
+            GitError::ProjectConfigNotFound { config_path } => {
+                format!(
+                    "{ERROR_EMOJI} {ERROR}No project configuration found{ERROR:#}\n\n{HINT_EMOJI} {HINT}Create a config file at: {HINT_BOLD}{}{HINT_BOLD:#}{HINT:#}",
+                    format_path_for_display(config_path)
+                )
+            }
+
             GitError::ParseError { message } | GitError::Other { message } => {
                 format!("{ERROR_EMOJI} {ERROR}{message}{ERROR:#}")
             }
         }
-    }
-
-    /// Convert to anyhow::Error with styled message.
-    ///
-    /// This wraps the error with its styled representation for user display.
-    pub fn styled_err(self) -> anyhow::Error {
-        anyhow::anyhow!("{}", self.styled())
     }
 }
 
@@ -522,16 +515,19 @@ mod tests {
     }
 
     #[test]
-    fn test_git_error_styled_err_conversion() {
-        // styled_err() wraps the styled message in anyhow::Error
-        let err = GitError::BranchAlreadyExists {
+    fn test_into_preserves_type_for_styled_output() {
+        // .into() preserves type so we can downcast and get styled output
+        let err: anyhow::Error = GitError::BranchAlreadyExists {
             branch: "main".into(),
         }
-        .styled_err();
-        let msg = err.to_string();
-        assert!(msg.contains("❌")); // Should be styled
-        assert!(msg.contains("main"));
-        assert!(msg.contains("already exists"));
+        .into();
+
+        // Can downcast and get styled output
+        let git_err = err.downcast_ref::<GitError>().expect("Should downcast");
+        let styled = git_err.styled();
+        assert!(styled.contains("❌")); // Should be styled
+        assert!(styled.contains("main"));
+        assert!(styled.contains("already exists"));
     }
 
     #[test]
@@ -547,19 +543,6 @@ mod tests {
         } else {
             panic!("Failed to downcast and pattern match");
         }
-    }
-
-    #[test]
-    fn test_styled_err_loses_type() {
-        // styled_err() wraps as string, cannot be pattern matched
-        let err = GitError::BranchAlreadyExists {
-            branch: "feature".into(),
-        }
-        .styled_err();
-        assert!(
-            err.downcast_ref::<GitError>().is_none(),
-            "styled_err() wraps as string, cannot be pattern matched"
-        );
     }
 
     #[test]

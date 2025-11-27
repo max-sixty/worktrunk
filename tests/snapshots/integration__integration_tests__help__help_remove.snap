@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -60,6 +61,17 @@ Removes worktree directory, git metadata, and branch. Requires clean working tre
 
 - Removes specified worktree(s) and branches
 - Current worktree removed last (switches to main first)
+
+### Branch deletion
+
+By default, branches are deleted only when their content has been integrated:
+
+- Traditional merge: branch is an ancestor of the target (git's [2m-d[0m behavior)
+- Squash merge/rebase: branch's tree SHA matches target's tree SHA
+
+This handles workflows where PRs are squash-merged or rebased, which don't preserve
+commit ancestry but do integrate the content. Use [2m-D[0m to delete unintegrated
+branches, or [2m--no-delete-branch[0m to always keep branches.
 
 ### Background removal (default)
 

@@ -44,8 +44,11 @@ fn comment_out_config(content: &str) -> String {
 
 /// Handle the config create command
 pub fn handle_config_create() -> anyhow::Result<()> {
-    let config_path = get_global_config_path()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine global config path"))?;
+    let config_path = get_global_config_path().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable"
+        )
+    })?;
 
     // Check if file already exists
     if config_path.exists() {
@@ -112,8 +115,11 @@ fn render_global_config(out: &mut String) -> anyhow::Result<()> {
     let bold = AnstyleStyle::new().bold();
 
     // Get config path
-    let config_path = get_global_config_path()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine global config path"))?;
+    let config_path = get_global_config_path().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable"
+        )
+    })?;
 
     writeln!(
         out,

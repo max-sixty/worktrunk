@@ -15,7 +15,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -24,10 +24,10 @@ exit_code: 1
 ----- stdout -----
 🔄 [36mSquashing 2 commits into a single commit[0m (2 files, [32m+2[0m)...
 🔄 [36mGenerating squash commit message...[0m
+
+----- stderr -----
 ❌ [31mCommit generation command failed[0m
 [107m [0m  Error: connection refused
 
 ⚪ Ran command:
 [107m [0m  sh -c echo 'Error: connection refused' >&2 && exit 1
-
------ stderr -----

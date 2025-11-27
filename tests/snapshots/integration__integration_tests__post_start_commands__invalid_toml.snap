@@ -17,18 +17,18 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
 exit_code: 1
 ----- stdout -----
+
+----- stderr -----
 ❌ [31mFailed to load project config[0m
 [107m [0m  Failed to parse TOML: TOML parse error at line 1, column 31
 [107m [0m    |
 [107m [0m  1 | post-create = [invalid syntax
 [107m [0m    |                               ^
 [107m [0m  unclosed array, expected `]`
-
------ stderr -----

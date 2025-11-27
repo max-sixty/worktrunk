@@ -71,6 +71,92 @@ fn strip_ansi(text: &str) -> String {
     ANSI_LITERAL_REGEX.replace_all(&text, "").to_string()
 }
 
+/// Check if a line is gutter-formatted content (has the white background ANSI code)
+fn is_gutter_line(line: &str) -> bool {
+    line.starts_with("[107m") || line.starts_with("\x1b[107m")
+}
+
+/// Check if a line is a command gutter (gutter line with blue command name)
+fn is_command_gutter(line: &str) -> bool {
+    is_gutter_line(line) && line.contains("[34m")
+}
+
+/// Split stderr into logical chunks for interleaving with stdout
+///
+/// Chunks are split at command gutter boundaries and at transitions between
+/// command output and regular gutter content.
+fn split_stderr_chunks(stderr: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current_chunk = Vec::new();
+    let mut in_command_section = false;
+
+    for line in stderr.lines() {
+        if is_command_gutter(line) {
+            // New command section - save previous chunk if any
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk.join("\n"));
+                current_chunk = Vec::new();
+            }
+            current_chunk.push(line.to_string());
+            in_command_section = true;
+        } else if is_gutter_line(line) && in_command_section {
+            // Non-command gutter after command section - new content section
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk.join("\n"));
+                current_chunk = Vec::new();
+            }
+            current_chunk.push(line.to_string());
+            in_command_section = false;
+        } else {
+            // Continue current chunk
+            current_chunk.push(line.to_string());
+        }
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk.join("\n"));
+    }
+
+    chunks
+}
+
+/// Combine stdout and stderr by inserting stderr content after trigger lines
+///
+/// The pattern is:
+/// - Certain stdout lines trigger stderr content (commit messages, commands, etc.)
+/// - stderr is split into chunks that correspond to these triggers
+/// - All stderr content is included (gutter + child process output)
+fn combine_stdout_stderr(stdout: &str, stderr: &str) -> String {
+    if stderr.is_empty() {
+        return stdout.to_string();
+    }
+
+    let stdout_lines: Vec<&str> = stdout.lines().collect();
+    let mut stderr_chunks: std::collections::VecDeque<String> = split_stderr_chunks(stderr).into();
+    let mut result = Vec::new();
+
+    for stdout_line in stdout_lines {
+        result.push(stdout_line.to_string());
+
+        // Check if this line triggers stderr content
+        let triggers_stderr = stdout_line.contains("Generating")
+            || stdout_line.contains("Running pre-")
+            || stdout_line.contains("Running post-")
+            || (stdout_line.contains("Merging") && stdout_line.contains("commit"));
+
+        if triggers_stderr && let Some(chunk) = stderr_chunks.pop_front() {
+            result.push(chunk);
+        }
+    }
+
+    // Append any remaining stderr chunks (shouldn't normally happen)
+    for chunk in stderr_chunks {
+        result.push(chunk);
+    }
+
+    result.join("\n")
+}
+
 /// Parse content from an insta snapshot file
 fn parse_snapshot(path: &Path) -> Result<String, String> {
     let content = fs::read_to_string(path)
@@ -114,8 +200,8 @@ fn parse_snapshot(path: &Path) -> Result<String, String> {
             String::new()
         };
 
-        // Use stdout if it has content, otherwise stderr
-        if !stdout.is_empty() { stdout } else { stderr }
+        // Combine stdout and stderr by inserting gutter content after trigger lines
+        combine_stdout_stderr(&stdout, &stderr)
     } else {
         content
     };

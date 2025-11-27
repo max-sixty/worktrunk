@@ -7,7 +7,7 @@ fn home_dir() -> Result<PathBuf, std::io::Error> {
     home::home_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "Could not determine home directory",
+            "Cannot determine home directory. Set $HOME environment variable",
         )
     })
 }

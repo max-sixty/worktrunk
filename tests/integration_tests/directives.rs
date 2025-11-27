@@ -55,11 +55,10 @@ fn test_switch_without_internal() {
         success: false
         exit_code: 1
         ----- stdout -----
-        ❌ [31mFailed to create worktree for [1m[31mmy-feature[0m[0m
-        [107m [0m  fatal: invalid reference: my-feature
-
 
         ----- stderr -----
+        ❌ [31mFailed to create worktree for [1m[31mmy-feature[0m[0m
+        [107m [0m  fatal: invalid reference: my-feature
         ");
     });
 }

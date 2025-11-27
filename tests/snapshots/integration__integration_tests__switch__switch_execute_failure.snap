@@ -19,7 +19,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -28,6 +28,6 @@ exit_code: 1
 ----- stdout -----
 ✅ [32mCreated new worktree for [1m[32mfail-test[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].fail-test[0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
 
 ----- stderr -----
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m

@@ -303,7 +303,7 @@ fn main() {
                                 return Err(worktrunk::git::GitError::Other {
                                     message: "No shell config files found".into(),
                                 }
-                                .styled_err());
+                                .into());
                             }
 
                             // Summary
@@ -667,7 +667,7 @@ fn main() {
                 return Err(worktrunk::git::GitError::Other {
                     message: "Cannot use --force-delete with --no-delete-branch".into(),
                 }
-                .styled_err());
+                .into());
             }
 
             let repo = Repository::current();
@@ -677,7 +677,7 @@ fn main() {
                 let current_branch = repo.resolve_worktree_name("@")?;
                 let result =
                     handle_remove(&current_branch, !delete_branch, force_delete, background)?;
-                handle_remove_output(&result, None, false, background)
+                handle_remove_output(&result, None, background)
             } else {
                 // When removing multiple worktrees, we need to handle the current worktree last
                 // to avoid deleting the directory we're currently in
@@ -708,14 +708,14 @@ fn main() {
                 // Progress messages shown by handle_remove_output for all cases
                 for resolved in &others {
                     let result = handle_remove(resolved, !delete_branch, force_delete, background)?;
-                    handle_remove_output(&result, Some(resolved), false, background)?;
+                    handle_remove_output(&result, Some(resolved), background)?;
                 }
 
                 // Remove current worktree last (if it was in the list)
                 if let Some(resolved) = current {
                     let result =
                         handle_remove(&resolved, !delete_branch, force_delete, background)?;
-                    handle_remove_output(&result, Some(&resolved), false, background)?;
+                    handle_remove_output(&result, Some(&resolved), background)?;
                 }
 
                 Ok(())
@@ -784,18 +784,23 @@ fn main() {
         // Route through output system to respect mode:
         // - Interactive mode: errors go to stdout
         // - Directive mode: errors go to stderr
-        //
-        // Multi-line errors from external commands (e.g., git output) get gutter formatting.
-        // We detect this by checking if context was added: e.to_string() != root_cause means
-        // the error was wrapped with .context(), so the root cause is raw external output.
-        let msg = e.to_string();
-        let root_cause = e.root_cause().to_string();
-        let has_context = msg != root_cause;
-        if has_context && root_cause.contains('\n') {
-            let _ = output::error(msg);
-            let _ = output::gutter(format_with_gutter(&root_cause, "", None));
+
+        // Check if it's a typed GitError - use its styled output
+        if let Some(git_err) = e.downcast_ref::<worktrunk::git::GitError>() {
+            let _ = output::error(git_err.styled());
         } else {
-            let _ = output::error(msg);
+            // Anyhow error - multi-line errors from external commands get gutter formatting.
+            // We detect this by checking if context was added: e.to_string() != root_cause means
+            // the error was wrapped with .context(), so the root cause is raw external output.
+            let msg = e.to_string();
+            let root_cause = e.root_cause().to_string();
+            let has_context = msg != root_cause;
+            if has_context && root_cause.contains('\n') {
+                let _ = output::error(msg);
+                let _ = output::gutter(format_with_gutter(&root_cause, "", None));
+            } else {
+                let _ = output::error(msg);
+            }
         }
 
         // Preserve exit code from child processes (especially for signals like SIGINT)

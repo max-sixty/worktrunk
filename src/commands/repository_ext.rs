@@ -7,10 +7,7 @@ use anyhow::Context;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{
-    CYAN, CYAN_BOLD, ERROR, ERROR_EMOJI, HINT, HINT_BOLD, HINT_EMOJI, WARNING, WARNING_BOLD,
-    format_with_gutter,
-};
+use worktrunk::styling::{CYAN, CYAN_BOLD, WARNING, WARNING_BOLD, format_with_gutter};
 
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
@@ -52,15 +49,7 @@ impl RepositoryCliExt for Repository {
 
         match load_project_config_at(&repo_root)? {
             Some(cfg) => Ok(cfg),
-            None => {
-                use worktrunk::styling::eprintln;
-                eprintln!("{ERROR_EMOJI} {ERROR}No project configuration found{ERROR:#}");
-                eprintln!(
-                    "{HINT_EMOJI} {HINT}Create a config file at: {HINT_BOLD}{}{HINT_BOLD:#}{HINT:#}",
-                    format_path_for_display(&config_path)
-                );
-                Err(anyhow::anyhow!("No project configuration found"))
-            }
+            None => Err(GitError::ProjectConfigNotFound { config_path }.into()),
         }
     }
 
@@ -92,7 +81,7 @@ impl RepositoryCliExt for Repository {
                 return Err(GitError::NoWorktreeFound {
                     branch: branch_name.into(),
                 }
-                .styled_err());
+                .into());
             }
         };
 
@@ -100,7 +89,7 @@ impl RepositoryCliExt for Repository {
             return Err(GitError::WorktreeMissing {
                 branch: branch_name.into(),
             }
-            .styled_err());
+            .into());
         }
 
         let target_repo = Repository::at(&worktree_path);
@@ -163,7 +152,7 @@ impl RepositoryCliExt for Repository {
                 files: overlapping,
                 worktree_path: wt_path.clone(),
             }
-            .styled_err());
+            .into());
         }
 
         let nanos = SystemTime::now()
@@ -205,10 +194,10 @@ impl RepositoryCliExt for Repository {
         }
 
         let Some(stash_ref) = stash_ref else {
-            return Err(anyhow::anyhow!(format!(
+            return Err(anyhow::anyhow!(
                 "Failed to locate autostash entry '{}'",
                 stash_name
-            )));
+            ));
         };
 
         Ok(Some(TargetWorktreeStash::new(wt_path, stash_ref)))

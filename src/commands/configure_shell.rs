@@ -204,7 +204,9 @@ pub fn scan_shell_configs(
     let mut skipped = Vec::new();
 
     for shell in shells {
-        let paths = shell.config_paths().map_err(|e| e.to_string())?;
+        let paths = shell
+            .config_paths()
+            .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
 
         // Find the first existing config file
         let target_path = paths.iter().find(|p| p.exists());
@@ -301,7 +303,13 @@ fn configure_shell_file(
 
         // Check for the exact conditional wrapper we would write
         for line in reader.lines() {
-            let line = line.map_err(|e| format!("Failed to read line: {}", e))?;
+            let line = line.map_err(|e| {
+                format!(
+                    "Failed to read line from {}: {}",
+                    format_path_for_display(path),
+                    e
+                )
+            })?;
 
             // Canonical detection: check if the line matches exactly what we write
             if line.trim() == config_content {
@@ -571,7 +579,9 @@ pub fn process_shell_completions(
             continue;
         }
 
-        let completion_path = shell.completion_path().map_err(|e| e.to_string())?;
+        let completion_path = shell
+            .completion_path()
+            .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
 
         // Check if completions already exist with correct content
         if completion_path.exists() {
@@ -739,7 +749,9 @@ fn scan_for_uninstall(
             continue;
         }
 
-        let completion_path = shell.completion_path().map_err(|e| e.to_string())?;
+        let completion_path = shell
+            .completion_path()
+            .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
 
         if completion_path.exists() {
             if dry_run {

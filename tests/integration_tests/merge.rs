@@ -667,7 +667,7 @@ fn test_merge_squash_llm_error() {
     repo.setup_remote("main");
 
     // Create a worktree for main
-    let main_wt = repo.root_path().parent().unwrap().join("test-repo.main-wt");
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
@@ -2452,14 +2452,14 @@ fn test_merge_no_commit_with_clean_tree() {
         success: true
         exit_code: 0
         ----- stdout -----
-        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m6551244[0m[0m (no commit/squash/rebase needed)
-        [107m [0m  * [33m6551244[m Add feature file
-        [107m [0m   feature.txt | 1 [32m+[m
-        [107m [0m   1 file changed, 1 insertion(+)
+        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
         ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
         ⚪ Worktree preserved (--no-remove)
 
         ----- stderr -----
+        [107m [0m  * [SHA] Add feature file
+        [107m [0m   feature.txt | 1 [32m+[m
+        [107m [0m   1 file changed, 1 insertion(+)
         ");
     });
 }
@@ -2500,11 +2500,11 @@ fn test_merge_no_commit_with_dirty_tree() {
         success: false
         exit_code: 1
         ----- stdout -----
+
+        ----- stderr -----
         ❌ [31mCannot merge with --no-commit: working tree has uncommitted changes[0m
 
         💡 [2mCommit or stash them first[0m
-
-        ----- stderr -----
         ");
     });
 }
@@ -2555,14 +2555,14 @@ fn test_merge_no_commit_no_squash_no_remove_redundant() {
         success: true
         exit_code: 0
         ----- stdout -----
-        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m6551244[0m[0m (no commit/squash/rebase needed)
-        [107m [0m  * [33m6551244[m Add feature file
-        [107m [0m   feature.txt | 1 [32m+[m
-        [107m [0m   1 file changed, 1 insertion(+)
+        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
         ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
         ⚪ Worktree preserved (--no-remove)
 
         ----- stderr -----
+        [107m [0m  * [SHA] Add feature file
+        [107m [0m   feature.txt | 1 [32m+[m
+        [107m [0m   1 file changed, 1 insertion(+)
         ");
     });
 }
@@ -3524,5 +3524,102 @@ fn test_step_commit_nothing_to_commit() {
                 "feat: this should fail",
             ),
         ],
+    );
+}
+
+// =============================================================================
+// Error message snapshot tests
+// =============================================================================
+
+#[test]
+fn test_merge_error_uncommitted_changes_with_no_commit() {
+    // Tests the `uncommitted_changes()` error function when using --no-commit with dirty tree
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Create a feature worktree
+    let feature_wt = repo.add_worktree("feature");
+
+    // Make uncommitted changes (dirty working tree)
+    fs::write(feature_wt.join("dirty.txt"), "uncommitted content").unwrap();
+
+    // Try to merge with --no-commit - should fail because working tree is dirty
+    snapshot_merge(
+        "merge_error_uncommitted_changes_no_commit",
+        &repo,
+        &["main", "--no-commit", "--no-remove"],
+        Some(&feature_wt),
+    );
+}
+
+#[test]
+fn test_merge_error_conflicting_changes_in_target() {
+    // Tests the `conflicting_changes()` error function when target worktree has
+    // uncommitted changes that overlap with files being pushed
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Switch primary worktree off main so we can create a worktree for main
+    repo.switch_primary_to("develop");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git worktree add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Create a feature worktree and commit a change to shared.txt
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("shared.txt"), "feature content").unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "shared.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add shared.txt on feature"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    // Now make uncommitted changes to shared.txt in main worktree
+    // This creates a conflict - we're trying to push changes to shared.txt
+    // but main has uncommitted changes to the same file
+    fs::write(
+        main_wt.join("shared.txt"),
+        "conflicting uncommitted content",
+    )
+    .unwrap();
+
+    // Try to merge - should fail because of conflicting uncommitted changes
+    snapshot_merge(
+        "merge_error_conflicting_changes",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
     );
 }

@@ -264,9 +264,9 @@ fn test_configure_shell_no_files() {
         💡 [2mSkipped [1mbash[0m; ~/.bashrc not found[0m
         💡 [2mSkipped [1mzsh[0m; ~/.zshrc not found[0m
         💡 [2mSkipped [1mfish[0m; ~/.config/fish/conf.d not found[0m
-        ❌ [31mNo shell config files found[0m
 
         ----- stderr -----
+        ❌ [31mNo shell config files found[0m
         ");
     });
 }

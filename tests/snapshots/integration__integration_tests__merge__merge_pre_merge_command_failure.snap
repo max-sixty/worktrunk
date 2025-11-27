@@ -16,7 +16,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -24,10 +24,9 @@ success: false
 exit_code: 1
 ----- stdout -----
 🔄 [36mRunning pre-merge:[0m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
-❌ [31mpre-merge command failed: exit status: 1[0m
-
-💡 [2mUse --no-verify to skip pre-merge commands[0m
 
 ----- stderr -----
-[0m
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
+[0m❌ [31mpre-merge command failed: exit status: 1[0m
+
+💡 [2mUse --no-verify to skip pre-merge commands[0m

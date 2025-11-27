@@ -5,7 +5,7 @@ expression: normalized
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch  Status         HEAD±    main↕  Path  Remote⇅  Co│ctrl-u/d: scroll
 > @ main        ^                          .              ..│
-                                                            │⚪ No uncommitted changes
+                                                            │⚪ main has no uncommitted changes
                                                             │
                                                             │
                                                             │

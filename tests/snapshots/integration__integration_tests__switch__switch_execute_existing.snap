@@ -18,7 +18,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -27,6 +27,6 @@ exit_code: 0
 ----- stdout -----
 ✅ [32mSwitched to worktree for [1m[32mexisting-exec[0m[32m at [1m[32m[REPO].existing-exec[0m[0m
 🔄 [36mExecuting (--execute):[0m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'existing worktree'[0m[2m [0m[2m[36m>[0m[2m existing.txt[0m
 
 ----- stderr -----
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'existing worktree'[0m[2m [0m[2m[36m>[0m[2m existing.txt[0m

@@ -28,7 +28,7 @@ impl Worktree {
                         return Err(GitError::ParseError {
                             message: "worktree line missing path".into(),
                         }
-                        .styled_err());
+                        .into());
                     };
                     current = Some(Worktree {
                         path: PathBuf::from(path),
@@ -46,7 +46,7 @@ impl Worktree {
                             return Err(GitError::ParseError {
                                 message: "HEAD line missing SHA".into(),
                             }
-                            .styled_err());
+                            .into());
                         };
                         wt.head = sha.to_string();
                     }
@@ -56,7 +56,7 @@ impl Worktree {
                             return Err(GitError::ParseError {
                                 message: "branch line missing ref".into(),
                             }
-                            .styled_err());
+                            .into());
                         };
                         let branch = branch_ref
                             .strip_prefix("refs/heads/")
@@ -107,7 +107,7 @@ impl DefaultBranchName {
             return Err(GitError::ParseError {
                 message: format!("Empty branch name from {}/HEAD", remote),
             }
-            .styled_err());
+            .into());
         }
 
         Ok(Self(branch.to_string()))
@@ -128,7 +128,7 @@ impl DefaultBranchName {
                 GitError::ParseError {
                     message: "Could not find symbolic ref in ls-remote output".into(),
                 }
-                .styled_err()
+                .into()
             })
     }
 

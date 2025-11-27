@@ -17,7 +17,7 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -25,15 +25,15 @@ success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mRunning post-create:[0m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Repo: repo'[0m[2m [0m[2m[36m>[0m[2m info.txt[0m
 🔄 [36mRunning post-create:[0m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt[0m
 🔄 [36mRunning post-create:[0m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt[0m
 🔄 [36mRunning post-create:[0m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Root: [REPO]'[0m[2m [0m[2m[36m>>[0m[2m info.txt[0m
 ✅ [32mCreated new worktree for [1m[32mfeature/test[0m[32m from [1m[32mmain[0m[32m at [1m[32m[REPO].feature-test[0m[0m
 💡 [2m[2mRun `wt config shell install` to enable automatic cd[0m[0m
 
 ----- stderr -----
-[0m[0m[0m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Repo: repo'[0m[2m [0m[2m[36m>[0m[2m info.txt[0m
+[0m[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt[0m
+[0m[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt[0m
+[0m[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Root: [REPO]'[0m[2m [0m[2m[36m>>[0m[2m info.txt[0m
+[0m

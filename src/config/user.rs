@@ -426,7 +426,9 @@ impl WorktrunkConfig {
             Some(path) => self.save_to(path),
             None => {
                 let path = get_config_path().ok_or_else(|| {
-                    ConfigError::Message("Could not determine config path".to_string())
+                    ConfigError::Message(
+                        "Cannot determine config directory. Set $HOME or $XDG_CONFIG_HOME environment variable".to_string(),
+                    )
                 })?;
                 self.save_to(&path)
             }

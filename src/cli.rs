@@ -866,6 +866,17 @@ Removes worktree directory, git metadata, and branch. Requires clean working tre
 - Removes specified worktree(s) and branches
 - Current worktree removed last (switches to main first)
 
+### Branch deletion
+
+By default, branches are deleted only when their content has been integrated:
+
+- Traditional merge: branch is an ancestor of the target (git's `-d` behavior)
+- Squash merge/rebase: branch's tree SHA matches target's tree SHA
+
+This handles workflows where PRs are squash-merged or rebased, which don't preserve
+commit ancestry but do integrate the content. Use `-D` to delete unintegrated
+branches, or `--no-delete-branch` to always keep branches.
+
 ### Background removal (default)
 
 - Returns immediately for continued work

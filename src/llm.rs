@@ -121,7 +121,7 @@ fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::
         return Err(worktrunk::git::GitError::Other {
             message: "LLM returned empty message".into(),
         }
-        .styled_err());
+        .into());
     }
 
     Ok(message)
@@ -140,14 +140,13 @@ fn build_commit_prompt(
         (None, Some(path)) => {
             let expanded_path = PathBuf::from(shellexpand::tilde(path).as_ref());
             std::fs::read_to_string(&expanded_path).map_err(|e| {
-                worktrunk::git::GitError::Other {
+                anyhow::Error::from(worktrunk::git::GitError::Other {
                     message: format!(
                         "Failed to read template-file '{}': {}",
                         format_path_for_display(&expanded_path),
                         e
                     ),
-                }
-                .styled_err()
+                })
             })?
         }
         (None, None) => DEFAULT_TEMPLATE.to_string(),
@@ -161,7 +160,7 @@ fn build_commit_prompt(
         return Err(worktrunk::git::GitError::Other {
             message: "Template is empty".into(),
         }
-        .styled_err());
+        .into());
     }
 
     // Render template with minijinja
@@ -191,14 +190,13 @@ fn build_squash_prompt(
         (None, Some(path)) => {
             let expanded_path = PathBuf::from(shellexpand::tilde(path).as_ref());
             std::fs::read_to_string(&expanded_path).map_err(|e| {
-                worktrunk::git::GitError::Other {
+                anyhow::Error::from(worktrunk::git::GitError::Other {
                     message: format!(
                         "Failed to read squash-template-file '{}': {}",
                         format_path_for_display(&expanded_path),
                         e
                     ),
-                }
-                .styled_err()
+                })
             })?
         }
         (None, None) => DEFAULT_SQUASH_TEMPLATE.to_string(),
@@ -214,7 +212,7 @@ fn build_squash_prompt(
         return Err(worktrunk::git::GitError::Other {
             message: "Squash template is empty".into(),
         }
-        .styled_err());
+        .into());
     }
 
     // Render template with minijinja
@@ -247,7 +245,7 @@ pub fn generate_commit_message(
                 command: format_command_display(command, args),
                 error: e.to_string(),
             }
-            .styled_err()
+            .into()
         });
     }
 
@@ -345,7 +343,7 @@ pub fn generate_squash_message(
                 command: format_command_display(command, args),
                 error: e.to_string(),
             }
-            .styled_err()
+            .into()
         });
     }
 

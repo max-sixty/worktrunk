@@ -602,3 +602,37 @@ fn test_switch_internal_execute_with_output_before_exit() {
         &["--internal"],
     );
 }
+
+// =============================================================================
+// Error message snapshot tests
+// =============================================================================
+
+/// Test the `worktree_path_occupied` error when target path exists but isn't a worktree
+#[test]
+fn test_switch_error_path_occupied() {
+    let repo = setup_switch_repo();
+
+    // Calculate where the worktree would be created
+    // Default path pattern is {repo_name}.{branch}
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let expected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.occupied-branch", repo_name));
+
+    // Create a non-worktree directory at that path
+    std::fs::create_dir_all(&expected_path).unwrap();
+    std::fs::write(expected_path.join("some_file.txt"), "occupant content").unwrap();
+
+    // Try to create a worktree with a branch that would use that path
+    // Should fail with worktree_path_occupied error
+    snapshot_switch(
+        "switch_error_path_occupied",
+        &repo,
+        &["--create", "occupied-branch"],
+    );
+
+    // Cleanup
+    std::fs::remove_dir_all(&expected_path).ok();
+}

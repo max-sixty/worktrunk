@@ -329,3 +329,77 @@ fn test_remove_branch_only_force_delete() {
         None,
     );
 }
+
+/// Test that a branch with matching tree content (but not an ancestor) is deleted.
+///
+/// This simulates a squash merge workflow where:
+/// - Feature branch has commits ahead of main
+/// - Main is updated (e.g., via squash merge on GitHub) with the same content
+/// - Branch is NOT an ancestor of main, but tree SHAs match
+/// - Branch should be deleted because content is integrated
+#[test]
+fn test_remove_branch_matching_tree_content() {
+    let repo = setup_remove_repo();
+
+    // Create a feature branch from main
+    repo.git_command(&["branch", "feature-squashed"])
+        .output()
+        .unwrap();
+
+    // On feature branch: add a file
+    repo.git_command(&["checkout", "feature-squashed"])
+        .output()
+        .unwrap();
+    std::fs::write(repo.root_path().join("feature.txt"), "squash content").unwrap();
+    repo.git_command(&["add", "feature.txt"]).output().unwrap();
+    repo.git_command(&["commit", "-m", "Add feature (on feature branch)"])
+        .output()
+        .unwrap();
+
+    // On main: add the same file with same content (simulates squash merge result)
+    repo.git_command(&["checkout", "main"]).output().unwrap();
+    std::fs::write(repo.root_path().join("feature.txt"), "squash content").unwrap();
+    repo.git_command(&["add", "feature.txt"]).output().unwrap();
+    repo.git_command(&["commit", "-m", "Add feature (squash merged)"])
+        .output()
+        .unwrap();
+
+    // Verify the setup: feature-squashed is NOT an ancestor of main (different commits)
+    let is_ancestor = repo
+        .git_command(&["merge-base", "--is-ancestor", "feature-squashed", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        !is_ancestor.status.success(),
+        "feature-squashed should NOT be an ancestor of main"
+    );
+
+    // Verify: tree SHAs should match
+    let feature_tree = String::from_utf8(
+        repo.git_command(&["rev-parse", "feature-squashed^{tree}"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let main_tree = String::from_utf8(
+        repo.git_command(&["rev-parse", "main^{tree}"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        feature_tree.trim(),
+        main_tree.trim(),
+        "Tree SHAs should match (same content)"
+    );
+
+    // Remove the branch - should succeed because tree content matches main
+    snapshot_remove(
+        "remove_branch_matching_tree_content",
+        &repo,
+        &["feature-squashed"],
+        None,
+    );
+}

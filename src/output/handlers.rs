@@ -4,11 +4,86 @@ use crate::commands::process::spawn_detached;
 use crate::commands::worktree::{RemoveResult, SwitchResult};
 use crate::output::global::format_switch_success;
 use worktrunk::git::GitError;
+use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
     CYAN, CYAN_BOLD, GREEN, GREEN_BOLD, WARNING, WARNING_BOLD, format_with_gutter,
 };
+
+/// Check if a branch's content has been integrated into the target.
+///
+/// Returns true if the branch is safe to delete because either:
+/// - The branch is an ancestor of the target (traditional merge), OR
+/// - The branch's tree SHA matches the target's tree SHA (squash merge/rebase)
+///
+/// Returns false if neither condition is met, or if an error occurs (e.g., invalid refs).
+/// This fail-safe default prevents accidental branch deletion when integration cannot
+/// be determined.
+fn is_branch_integrated(repo: &Repository, branch_name: &str, target: &str) -> bool {
+    // Check traditional merge relationship
+    if repo.is_ancestor(branch_name, target).unwrap_or(false) {
+        return true;
+    }
+
+    // Check if tree content matches (handles squash merge/rebase)
+    repo.trees_match(branch_name, target).unwrap_or(false)
+}
+
+/// Attempt to delete a branch if it's integrated or force_delete is set.
+///
+/// Returns:
+/// - `Ok(true)` if branch was deleted
+/// - `Ok(false)` if branch was not deleted (not integrated, and not force)
+/// - `Err` if git command failed
+fn delete_branch_if_safe(
+    repo: &Repository,
+    branch_name: &str,
+    target: &str,
+    force_delete: bool,
+) -> anyhow::Result<bool> {
+    if !force_delete && !is_branch_integrated(repo, branch_name, target) {
+        return Ok(false);
+    }
+    repo.run_command(&["branch", "-D", branch_name])?;
+    Ok(true)
+}
+
+/// Handle the result of a branch deletion attempt.
+///
+/// Shows appropriate warnings for non-deleted branches.
+///
+/// Returns:
+/// - `Ok(true)` if branch was deleted
+/// - `Ok(false)` if branch was not deleted (warning shown)
+fn handle_branch_deletion_result(
+    result: anyhow::Result<bool>,
+    branch_name: &str,
+) -> anyhow::Result<bool> {
+    match result {
+        Ok(true) => Ok(true),
+        Ok(false) => {
+            // Branch not integrated - show warning
+            super::warning(format!(
+                "{WARNING}Could not delete branch {WARNING_BOLD}{branch_name}{WARNING_BOLD:#}{WARNING:#}"
+            ))?;
+            super::gutter(format_with_gutter(
+                &format!("error: the branch '{}' is not fully merged", branch_name),
+                "",
+                None,
+            ))?;
+            Ok(false)
+        }
+        Err(e) => {
+            // Git command failed - show warning with error details
+            super::warning(format!(
+                "{WARNING}Could not delete branch {WARNING_BOLD}{branch_name}{WARNING_BOLD:#}{WARNING:#}"
+            ))?;
+            super::gutter(format_with_gutter(&e.to_string(), "", None))?;
+            Ok(false)
+        }
+    }
+}
 
 /// Get flag acknowledgment note for remove messages
 fn get_flag_note(no_delete_branch: bool, force_delete: bool, branch_deleted: bool) -> &'static str {
@@ -189,7 +264,6 @@ fn build_remove_command(
 pub fn handle_remove_output(
     result: &RemoveResult,
     branch: Option<&str>,
-    strict_branch_deletion: bool,
     background: bool,
 ) -> anyhow::Result<()> {
     match result {
@@ -210,19 +284,13 @@ pub fn handle_remove_output(
             *force_delete,
             target_branch.as_deref(),
             branch,
-            strict_branch_deletion,
             background,
         ),
         RemoveResult::BranchOnly {
             branch_name,
             no_delete_branch,
             force_delete,
-        } => handle_branch_only_output(
-            branch_name,
-            *no_delete_branch,
-            *force_delete,
-            strict_branch_deletion,
-        ),
+        } => handle_branch_only_output(branch_name, *no_delete_branch, *force_delete),
     }
 }
 
@@ -231,7 +299,6 @@ fn handle_branch_only_output(
     branch_name: &str,
     no_delete_branch: bool,
     force_delete: bool,
-    strict_branch_deletion: bool,
 ) -> anyhow::Result<()> {
     use worktrunk::styling::GRAY;
 
@@ -248,57 +315,18 @@ fn handle_branch_only_output(
     }
 
     let repo = worktrunk::git::Repository::current();
+    let result = delete_branch_if_safe(&repo, branch_name, "HEAD", force_delete);
+    let deleted = handle_branch_deletion_result(result, branch_name)?;
 
-    // Use git branch -D if force_delete is true, otherwise check if merged first
-    let delete_result = if force_delete {
-        // Force delete - use -D directly
-        repo.run_command(&["branch", "-D", branch_name])
-    } else {
-        // Check if branch is merged to HEAD using is_ancestor
-        match repo.is_ancestor(branch_name, "HEAD") {
-            Ok(true) => {
-                // Branch is an ancestor of HEAD (fully merged), safe to delete
-                repo.run_command(&["branch", "-D", branch_name])
-            }
-            Ok(false) | Err(_) => {
-                // Branch is not fully merged
-                Err(anyhow::anyhow!(
-                    "error: the branch '{}' is not fully merged",
-                    branch_name
-                ))
-            }
-        }
-    };
-
-    match delete_result {
-        Ok(_) => {
-            // Branch removed successfully
-            let flag_note = if force_delete {
-                " (--force-delete)"
-            } else {
-                ""
-            };
-            super::success(format!(
-                "{GREEN}Removed branch {GREEN_BOLD}{branch_name}{GREEN_BOLD:#}{GREEN:#}{flag_note}"
-            ))?;
-        }
-        Err(e) => {
-            if strict_branch_deletion {
-                return Err(GitError::BranchDeletionFailed {
-                    branch: branch_name.into(),
-                    error: e.to_string(),
-                }
-                .styled_err());
-            }
-
-            // If branch deletion fails in non-strict mode, show a warning but don't error
-            super::warning(format!(
-                "{WARNING}Could not delete branch {WARNING_BOLD}{branch_name}{WARNING_BOLD:#}{WARNING:#}"
-            ))?;
-
-            // Show the git error in a gutter-formatted block (raw output, no styling)
-            super::gutter(format_with_gutter(&e.to_string(), "", None))?;
-        }
+    if deleted {
+        let flag_note = if force_delete {
+            " (--force-delete)"
+        } else {
+            ""
+        };
+        super::success(format!(
+            "{GREEN}Removed branch {GREEN_BOLD}{branch_name}{GREEN_BOLD:#}{GREEN:#}{flag_note}"
+        ))?;
     }
 
     super::flush()?;
@@ -316,7 +344,6 @@ fn handle_removed_worktree_output(
     force_delete: bool,
     target_branch: Option<&str>,
     branch: Option<&str>,
-    strict_branch_deletion: bool,
     background: bool,
 ) -> anyhow::Result<()> {
     // 1. Emit cd directive if needed - shell will execute this immediately
@@ -337,12 +364,10 @@ fn handle_removed_worktree_output(
             // Force delete requested - always delete
             true
         } else {
-            // Check if branch is fully merged to target
+            // Check if branch is integrated (ancestor or matching tree content)
             let check_target = target_branch.unwrap_or("HEAD");
             let deletion_repo = worktrunk::git::Repository::at(main_path);
-            deletion_repo
-                .is_ancestor(branch_name, check_target)
-                .unwrap_or(false)
+            is_branch_integrated(&deletion_repo, branch_name, check_target)
         };
 
         // Show progress message based on what we'll do
@@ -390,57 +415,16 @@ fn handle_removed_worktree_output(
                 path: worktree_path.to_path_buf(),
                 error: err.to_string(),
             }
-            .styled_err());
+            .into());
         }
 
         // Delete the branch (unless --no-delete-branch was specified)
         let branch_deleted = if !no_delete_branch {
             let deletion_repo = worktrunk::git::Repository::at(main_path);
-
-            // Use git branch -D if force_delete is true, otherwise check if merged first
-            let delete_result = if force_delete {
-                // Force delete - use -D directly
-                deletion_repo.run_command(&["branch", "-D", branch_name])
-            } else {
-                let check_target = target_branch.unwrap_or("HEAD");
-
-                // Check if branch is merged to target using is_ancestor
-                match deletion_repo.is_ancestor(branch_name, check_target) {
-                    Ok(true) => {
-                        // Branch is an ancestor of target (fully merged), safe to delete
-                        deletion_repo.run_command(&["branch", "-D", branch_name])
-                    }
-                    Ok(false) | Err(_) => {
-                        // Branch is not fully merged to target
-                        Err(anyhow::anyhow!(
-                            "error: the branch '{}' is not fully merged",
-                            branch_name
-                        ))
-                    }
-                }
-            };
-
-            match delete_result {
-                Ok(_) => true,
-                Err(e) => {
-                    if strict_branch_deletion {
-                        return Err(GitError::BranchDeletionFailed {
-                            branch: branch_name.into(),
-                            error: e.to_string(),
-                        }
-                        .styled_err());
-                    }
-
-                    // If branch deletion fails in non-strict mode, show a warning but don't error
-                    super::warning(format!(
-                        "{WARNING}Could not delete branch {WARNING_BOLD}{branch_name}{WARNING_BOLD:#}{WARNING:#}"
-                    ))?;
-
-                    // Show the git error in a gutter-formatted block (raw output, no styling)
-                    super::gutter(format_with_gutter(&e.to_string(), "", None))?;
-                    false
-                }
-            }
+            let check_target = target_branch.unwrap_or("HEAD");
+            let result =
+                delete_branch_if_safe(&deletion_repo, branch_name, check_target, force_delete);
+            handle_branch_deletion_result(result, branch_name)?
         } else {
             false
         };
@@ -506,18 +490,16 @@ pub(crate) fn execute_streaming(
         .env_remove("VERGEN_GIT_DESCRIBE")
         .spawn()
         .map_err(|e| {
-            worktrunk::git::GitError::Other {
+            anyhow::Error::from(worktrunk::git::GitError::Other {
                 message: format!("Failed to execute command: {}", e),
-            }
-            .styled_err()
+            })
         })?;
 
     // Wait for command to complete
     let status = child.wait().map_err(|e| {
-        worktrunk::git::GitError::Other {
+        anyhow::Error::from(worktrunk::git::GitError::Other {
             message: format!("Failed to wait for command: {}", e),
-        }
-        .styled_err()
+        })
     })?;
 
     // Check if child was killed by a signal (Unix only)

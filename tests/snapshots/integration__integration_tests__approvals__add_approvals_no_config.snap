@@ -16,14 +16,15 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-❌ [31mNo project configuration found[0m
 
 ----- stderr -----
 ❌ [31mNo project configuration found[0m
+
 💡 [2mCreate a config file at: [1m[2m[REPO]/.config/wt.toml[0m[0m

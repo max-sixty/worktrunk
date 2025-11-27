@@ -24,9 +24,9 @@ info:
 success: false
 exit_code: 1
 ----- stdout -----
+
+----- stderr -----
 ❌ [31mCan't push to local [1m[31mmain[0m[31m branch: it has newer commits[0m
 [107m [0m  * [33mfb975b3[m Add main file
 
 💡 [2mRun 'wt merge' again to incorporate these changes[0m
-
------ stderr -----

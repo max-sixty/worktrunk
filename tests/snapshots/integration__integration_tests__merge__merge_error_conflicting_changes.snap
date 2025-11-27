@@ -1,10 +1,10 @@
 ---
-source: tests/integration_tests/remove.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - remove
-    - feature-dirty
+    - merge
+    - main
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -24,6 +24,8 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mCannot remove worktree: working tree has uncommitted changes[0m
+❌ [31mCannot push: conflicting uncommitted changes in:[0m
 
-💡 [2mCommit or stash them first[0m
+[107m [0m  shared.txt
+
+💡 [2mCommit or stash these changes in [REPO].main-wt first[0m

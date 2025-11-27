@@ -57,7 +57,7 @@ fn check_hook_configured<T>(hook: &Option<T>, hook_type: HookType) -> anyhow::Re
         return Err(worktrunk::git::GitError::Other {
             message: format!("No {hook_type} hook configured"),
         }
-        .styled_err());
+        .into());
     }
     Ok(())
 }
@@ -333,13 +333,13 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
                 target_branch: target_branch.clone(),
                 git_output,
             }
-            .styled_err());
+            .into());
         }
         // Not a rebase conflict, return original error
         return Err(worktrunk::git::GitError::Other {
             message: format!("Failed to rebase onto '{}': {}", target_branch, e),
         }
-        .styled_err());
+        .into());
     }
 
     // Verify rebase completed successfully (safety check for edge cases)
@@ -349,7 +349,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
             target_branch: target_branch.clone(),
             git_output: String::new(),
         }
-        .styled_err());
+        .into());
     }
 
     // Success

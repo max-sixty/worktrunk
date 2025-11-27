@@ -15,12 +15,13 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
 exit_code: 1
 ----- stdout -----
-❌ [31mNo worktree found for branch [1m[31mnonexistent[0m[0m
 
 ----- stderr -----
+❌ [31mNo worktree found for branch [1m[31mnonexistent[0m[0m

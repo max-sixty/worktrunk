@@ -109,7 +109,7 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> anyhow:
     // This happens AFTER showing the commands so they appear in CI/CD logs
     // even when the prompt cannot be displayed (fail-fast principle)
     if !io::stdin().is_terminal() {
-        return Err(GitError::NotInteractive.styled_err());
+        return Err(GitError::NotInteractive.into());
     }
 
     // Flush stderr before showing prompt to ensure all output is visible

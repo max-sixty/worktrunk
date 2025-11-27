@@ -165,8 +165,20 @@ $ wt merge
 ✅ Squashed @ 95c3316
 🔄 Running pre-merge test:
    cargo test
+    Finished test [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
+
+running 18 tests
+test auth::tests::test_jwt_decode ... ok
+test auth::tests::test_jwt_encode ... ok
+test auth::tests::test_token_refresh ... ok
+test auth::tests::test_token_validation ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
 🔄 Running pre-merge lint:
    cargo clippy
+    Checking worktrunk v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 1.23s
 🔄 Merging 1 commit to main @ 95c3316 (no rebase needed)
    * 95c3316 feat(auth): Implement JWT authentication system
     auth.rs      |  8 ++++++++
@@ -177,6 +189,11 @@ $ wt merge
 🔄 Removing feature-auth worktree & branch in background
 🔄 Running post-merge install:
    cargo install --path .
+  Installing worktrunk v0.1.0
+   Compiling worktrunk v0.1.0
+    Finished release [optimized] target(s) in 2.34s
+  Installing ~/.cargo/bin/wt
+   Installed package `worktrunk v0.1.0` (executable `wt`)
 ```
 
 <!-- END AUTO-GENERATED -->
@@ -606,6 +623,17 @@ Removes worktree directory, git metadata, and branch. Requires clean working tre
 
 - Removes specified worktree(s) and branches
 - Current worktree removed last (switches to main first)
+
+### Branch deletion
+
+By default, branches are deleted only when their content has been integrated:
+
+- Traditional merge: branch is an ancestor of the target (git's `-d` behavior)
+- Squash merge/rebase: branch's tree SHA matches target's tree SHA
+
+This handles workflows where PRs are squash-merged or rebased, which don't preserve
+commit ancestry but do integrate the content. Use `-D` to delete unintegrated
+branches, or `--no-delete-branch` to always keep branches.
 
 ### Background removal (default)
 

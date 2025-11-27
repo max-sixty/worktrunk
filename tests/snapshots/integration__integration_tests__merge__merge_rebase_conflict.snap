@@ -23,12 +23,11 @@ success: false
 exit_code: 1
 ----- stdout -----
 🔄 [36mRebasing onto [1m[36mmain[0m[36m...[0m
+
+----- stderr -----
 ❌ [31mRebase onto [1m[31mmain[0m[31m incomplete[0m
 [107m [0m  Rebasing (1/1)
 [107m [0m  error: could not apply c661874... Update shared.txt in feature
 [107m [0m  Could not apply c661874... # Update shared.txt in feature
 [107m [0m  Auto-merging shared.txt
 [107m [0m  CONFLICT (content): Merge conflict in shared.txt
-
-
------ stderr -----

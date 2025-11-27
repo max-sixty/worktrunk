@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{println, stderr, stdout};
+use worktrunk::styling::{ERROR, ERROR_EMOJI, eprintln, println, stderr, stdout};
 
 #[cfg(not(unix))]
 use super::handlers::execute_streaming;
@@ -35,10 +35,20 @@ impl OutputHandler for InteractiveOutput {
         self.stdout.flush()
     }
 
+    fn error(&mut self, message: String) -> io::Result<()> {
+        // Errors go to stderr in all modes (Unix convention)
+        if message.starts_with(ERROR_EMOJI) {
+            eprintln!("{message}");
+        } else {
+            eprintln!("{ERROR_EMOJI} {ERROR}{message}{ERROR:#}");
+        }
+        stderr().flush()
+    }
+
     fn gutter(&mut self, content: String) -> io::Result<()> {
-        // Gutter content is pre-formatted with its own newlines
-        write!(self.stdout, "{content}")?;
-        self.stdout.flush()
+        // Gutter content is diagnostic/informational, not data - goes to stderr
+        write!(stderr(), "{content}")?;
+        stderr().flush()
     }
 
     fn shell_integration_hint(&mut self, message: String) -> io::Result<()> {

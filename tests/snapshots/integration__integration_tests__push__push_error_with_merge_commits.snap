@@ -16,14 +16,15 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
 exit_code: 1
 ----- stdout -----
+
+----- stderr -----
 ❌ [31mFound merge commits in push range[0m
 
 💡 [2mUse --allow-merge-commits to push non-linear history[0m
-
------ stderr -----

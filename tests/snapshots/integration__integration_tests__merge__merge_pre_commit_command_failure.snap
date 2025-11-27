@@ -16,7 +16,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -24,12 +24,11 @@ success: false
 exit_code: 1
 ----- stdout -----
 🟡 [33mAuto-staging 1 untracked file:[0m
-[107m [0m  feature.txt
 🔄 [36mRunning pre-commit:[0m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
-❌ [31mpre-commit command failed: exit status: 1[0m
-
-💡 [2mUse --no-verify to skip pre-commit commands[0m
 
 ----- stderr -----
-[0m
+[107m [0m  feature.txt
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
+[0m❌ [31mpre-commit command failed: exit status: 1[0m
+
+💡 [2mUse --no-verify to skip pre-commit commands[0m

@@ -1,7 +1,9 @@
+use anyhow::Context;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 
 /// Spawn a detached background process with output redirected to a log file
 ///
@@ -32,8 +34,12 @@ pub fn spawn_detached(
 
     // Create log directory in the common git directory
     let log_dir = git_common_dir.join("wt-logs");
-    fs::create_dir_all(&log_dir)
-        .map_err(|e| anyhow::anyhow!("Failed to create log directory\n   {e}"))?;
+    fs::create_dir_all(&log_dir).with_context(|| {
+        format!(
+            "Failed to create log directory {}",
+            format_path_for_display(&log_dir)
+        )
+    })?;
 
     // Generate log filename (no timestamp - overwrites on each run)
     // Format: {branch}-{name}.log (e.g., "feature-post-start-npm.log", "bugfix-remove.log")
@@ -43,8 +49,12 @@ pub fn spawn_detached(
     let log_path = log_dir.join(format!("{}-{}.log", safe_branch, safe_name));
 
     // Create log file
-    let log_file = fs::File::create(&log_path)
-        .map_err(|e| anyhow::anyhow!("Failed to create log file\n   {e}"))?;
+    let log_file = fs::File::create(&log_path).with_context(|| {
+        format!(
+            "Failed to create log file {}",
+            format_path_for_display(&log_path)
+        )
+    })?;
 
     #[cfg(unix)]
     {
@@ -80,17 +90,19 @@ fn spawn_detached_unix(
         ))
         .current_dir(worktree_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file.try_clone().map_err(|e| {
-            anyhow::anyhow!(format!("Failed to clone log file handle: {}", e))
-        })?))
+        .stdout(Stdio::from(
+            log_file
+                .try_clone()
+                .context("Failed to clone log file handle")?,
+        ))
         .stderr(Stdio::from(log_file))
         .spawn()
-        .map_err(|e| anyhow::anyhow!(format!("Failed to spawn detached process\n   {e}")))?;
+        .context("Failed to spawn detached process")?;
 
     // Wait for the outer shell to exit (immediate, doesn't block on background command)
     child
         .wait()
-        .map_err(|e| anyhow::anyhow!(format!("Failed to wait for detachment shell\n   {e}")))?;
+        .context("Failed to wait for detachment shell")?;
 
     Ok(())
 }
@@ -112,13 +124,15 @@ fn spawn_detached_windows(
         .args(["/C", command])
         .current_dir(worktree_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file.try_clone().map_err(|e| {
-            anyhow::anyhow!(format!("Failed to clone log file handle: {}", e))
-        })?))
+        .stdout(Stdio::from(
+            log_file
+                .try_clone()
+                .context("Failed to clone log file handle")?,
+        ))
         .stderr(Stdio::from(log_file))
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()
-        .map_err(|e| anyhow::anyhow!(format!("Failed to spawn detached process\n   {e}")))?;
+        .context("Failed to spawn detached process")?;
 
     Ok(())
 }

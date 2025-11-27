@@ -15,7 +15,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -25,7 +25,7 @@ exit_code: 0
 ⚪ Already up to date with [1mmain[0m (no new commits, no rebase needed)
 ⚪ Worktree preserved (on main branch)
 🔄 [36mRunning post-merge:[0m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran from main'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt[0m
 
 ----- stderr -----
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran from main'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt[0m
 [0m

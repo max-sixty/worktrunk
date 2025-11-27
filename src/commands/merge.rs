@@ -87,14 +87,14 @@ pub fn handle_merge(
         return Err(worktrunk::git::GitError::UncommittedChanges {
             action: Some("merge with --no-commit".into()),
         }
-        .styled_err());
+        .into());
     }
 
     // Validate --no-commit flag compatibility
     if !commit && remove {
-        return Err(anyhow::anyhow!(format!(
+        return Err(anyhow::anyhow!(
             "{ERROR_EMOJI} {ERROR}--no-commit requires --no-remove{ERROR:#}\n\n{HINT_EMOJI} {HINT}Cannot remove active worktree when skipping commit/rebase{HINT:#}"
-        )));
+        ));
     }
 
     // --no-commit implies --no-squash (validation above ensures --no-remove is already set)
@@ -216,7 +216,7 @@ pub fn handle_merge(
             force_delete: false,
             target_branch: Some(target_branch.clone()),
         };
-        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true, true)?;
+        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true)?;
     } else {
         // Print comprehensive summary (worktree preserved)
         // Priority: main branch > on target > --no-remove flag

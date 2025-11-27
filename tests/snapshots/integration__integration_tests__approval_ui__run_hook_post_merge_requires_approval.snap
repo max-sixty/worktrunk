@@ -4,12 +4,13 @@ expression: combined
 ---
 exit_code: 1
 ----- stdout -----
-❌ [31mCannot prompt for approval in non-interactive environment[0m
-
-💡 [2mIn CI/CD, use --force to skip prompts. To pre-approve commands, use 'wt config approvals add'[0m
 
 ----- stderr -----
 🟡 [33m[1m[33mrepo[0m[33m needs approval to execute [1m[33m1[0m[33m command:[0m
 
 ⚪ post-merge:
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Post-merge cleanup for main'[0m[2m[0m
+
+❌ [31mCannot prompt for approval in non-interactive environment[0m
+
+💡 [2mIn CI/CD, use --force to skip prompts. To pre-approve commands, use 'wt config approvals add'[0m

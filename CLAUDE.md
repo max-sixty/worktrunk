@@ -199,8 +199,8 @@ Six canonical message patterns with their emojis:
 ### stdout vs stderr: Separation by Mode
 
 **Interactive mode:**
-- stdout: All worktrunk output (messages, errors, warnings, progress)
-- stderr: Child process output (git, npm, user commands) + interactive prompts
+- stdout: Status messages (progress, success, warning, info, hint)
+- stderr: Errors, gutter content (diagnostics), child process output, interactive prompts
 
 **Directive mode** (--internal flag for shell integration):
 - stdout: Shell script emitted at the end (e.g., `cd '/path/to/worktree'`)
@@ -370,24 +370,35 @@ output::gutter(format_with_gutter(&log, "", None))?;
 output::progress(format!("{CYAN}Merging...{CYAN:#}\n"))?;
 ```
 
-### External Command Error Formatting
+### Error Message Formatting
 
-When external commands (user-configured commands like LLM tools, hooks) fail, error messages must:
+**Single-line errors with variables are fine:**
+```rust
+// ✅ GOOD - single-line with path variable
+.map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?
+
+// ✅ GOOD - using .context() for simple errors
+std::fs::read_to_string(&path).context("Failed to read config")?
+```
+
+**Multi-line external output needs gutter formatting:**
+
+When external commands (git, npm, LLM tools, hooks) produce multi-line stderr, use gutter formatting:
 1. **Show the command that was run** - Include the full command with arguments so users can debug
-2. **Put error output in a gutter** - Don't embed raw stderr inline in the message
+2. **Put multi-line output in a gutter** - Don't embed raw stderr inline in the message
 
 Use the `format_error_block` helper in `src/git/error.rs` or follow its pattern:
 
 ```rust
-// ✅ GOOD - command shown in header, error in gutter
+// ✅ GOOD - command shown in header, multi-line error in gutter
 ❌ Commit generation command 'llm --model claude' failed
    ┃ Error: [Errno 8] nodename nor servname provided, or not known
 
-// ❌ BAD - error embedded inline, command not shown
+// ❌ BAD - multi-line error embedded inline
 ❌ Commit generation command 'llm' failed: LLM command failed: Error: [Errno 8]...
 ```
 
-**Implementation:** See `format_error_block()` in `src/git/error.rs` for the pattern, and `llm_command_failed()` for an example.
+**Implementation:** See `format_error_block()` in `src/git/error.rs` for the pattern, and `LlmCommandFailed` variant for an example.
 
 ### Table Column Alignment
 
