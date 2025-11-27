@@ -737,11 +737,16 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
     }
 
-    // Normalize paths (escape for regex to handle Windows backslashes)
-    settings.add_filter(&regex::escape(repo.root_path().to_str().unwrap()), "[REPO]");
+    // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
+    let root_canonical = repo
+        .root_path()
+        .canonicalize()
+        .unwrap_or_else(|_| repo.root_path().to_path_buf());
+    settings.add_filter(&regex::escape(root_canonical.to_str().unwrap()), "[REPO]");
     for (name, path) in &repo.worktrees {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         settings.add_filter(
-            &regex::escape(path.to_str().unwrap()),
+            &regex::escape(canonical.to_str().unwrap()),
             format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
         );
     }

@@ -1,45 +1,20 @@
-use super::{TestRepo, wt_command};
+use super::{TestRepo, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use std::path::Path;
 use std::process::Command;
 
-fn base_settings(repo: &TestRepo) -> Settings {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-    normalize_worktree_paths(&mut settings, repo);
-    settings.add_filter(r"\\", "/");
-
-    // Redact volatile metadata captured by insta-cmd (same as common::setup_snapshot_settings)
-    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
-    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
-    settings.add_redaction(".env.HOME", "[TEST_HOME]");
-    settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
-    settings.add_redaction(".env.PATH", "[PATH]");
-
-    settings
-}
-
 pub fn standard_settings(repo: &TestRepo) -> Settings {
-    let mut settings = base_settings(repo);
-    // Filter SHAs: match 7-40 hex chars that are either at boundaries or wrapped in ANSI codes
-    // The \b word boundary doesn't work when SHA follows ANSI sequence (e.g., [2me6fd2060)
-    // because 'm' and 'e' are both word characters. Use negative lookbehind/lookahead instead.
-    settings.add_filter(r"\x1b\[[0-9;]*m[0-9a-f]{7,40}\x1b\[[0-9;]*m", "[SHA]   ");
-    settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]   ");
-    // Normalize WORKTRUNK_CONFIG_PATH across platforms (macOS, Linux, Windows)
-    // macOS: /var/folders/.../T/.tmpXXX/test-config.toml
-    // Linux: /tmp/.tmpXXX/test-config.toml
-    settings.add_filter(
-        r"(/var/folders/[^/]+/[^/]+/T/\.tmp[^/]+|/tmp/\.tmp[^/]+)/test-config\.toml",
-        "[TEST_CONFIG]",
-    );
+    let mut settings = setup_snapshot_settings(repo);
+    // Pad [SHA] with trailing spaces to maintain column alignment in list output
+    settings.add_filter(r"\[SHA\]", "[SHA]   ");
     settings
 }
 
 pub fn json_settings(repo: &TestRepo) -> Settings {
-    let mut settings = base_settings(repo);
-    settings.add_filter(r#""head_sha": "[0-9a-f]{40}""#, r#""head_sha": "[SHA]""#);
-    settings.add_filter(r#""timestamp": \d+"#, r#""timestamp": 0"#);
+    let mut settings = setup_snapshot_settings(repo);
+    // JSON-specific filters for timestamps and escaped ANSI codes
+    // Note: SHA filter runs first, converting numeric timestamps to [SHA], so we match that
+    settings.add_filter(r#""timestamp": \[SHA\]"#, r#""timestamp": 0"#);
     settings.add_filter(r"\\u001b\[32m", "[GREEN]");
     settings.add_filter(r"\\u001b\[31m", "[RED]");
     settings.add_filter(r"\\u001b\[2m", "[DIM]");
@@ -131,21 +106,4 @@ pub fn command_task_dag_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
     repo.clean_cli_env(&mut cmd);
     cmd.args(["list", "--progressive"]).current_dir(cwd);
     cmd
-}
-
-fn normalize_worktree_paths(settings: &mut Settings, repo: &TestRepo) {
-    // Canonicalize to handle macOS /var -> /private/var symlink
-    let root_canonical = repo
-        .root_path()
-        .canonicalize()
-        .unwrap_or_else(|_| repo.root_path().to_path_buf());
-    settings.add_filter(&regex::escape(root_canonical.to_str().unwrap()), "[REPO]");
-
-    for (name, path) in &repo.worktrees {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        settings.add_filter(
-            &regex::escape(canonical.to_str().unwrap()),
-            format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
-        );
-    }
 }
