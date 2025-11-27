@@ -722,7 +722,7 @@ Order: `+!? ✖⚠≡_ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠`
 - `!` Modified files (unstaged changes)
 - `?` Untracked files present
 - `✖` **Merge conflicts** - unresolved conflicts in working tree (fix before continuing)
-- `⚠` **Would conflict** - merging into main would fail
+- `⊘` **Would conflict** - merging into main would fail
 - `≡` Working tree matches main (identical contents, regardless of commit history)
 - `_` No commits (no commits ahead AND no uncommitted changes)
 - `↻` Rebase in progress

@@ -102,14 +102,14 @@ fn colorize_status_symbols(text: &str) -> String {
         .replace("● failed", &format!("{error}●{error:#} failed"))
         .replace("● conflicts", &format!("{warning}●{warning:#} conflicts"))
         .replace("● no-ci", &format!("{disabled}●{disabled:#} no-ci"))
-        // Conflicts: ✖ is ERROR (red), ⚠ is WARNING (yellow)
+        // Conflicts: ✖ is ERROR (red), ⊘ is WARNING (yellow)
         .replace(
             "✖ Merge conflicts",
             &format!("{error}✖{error:#} Merge conflicts"),
         )
         .replace(
-            "⚠ Would conflict",
-            &format!("{warning}⚠{warning:#} Would conflict"),
+            "⊘ Would conflict",
+            &format!("{warning}⊘{warning:#} Would conflict"),
         )
         // Git operations: WARNING (yellow)
         .replace("↻ Rebase", &format!("{warning}↻{warning:#} Rebase"))

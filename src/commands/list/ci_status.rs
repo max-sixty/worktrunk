@@ -119,6 +119,22 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -
         .ok()
 }
 
+/// Check if stderr indicates a retriable error (rate limit, network issues)
+fn is_retriable_error(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    [
+        "rate limit",
+        "api rate",
+        "403",
+        "429",
+        "timeout",
+        "connection",
+        "network",
+    ]
+    .iter()
+    .any(|p| lower.contains(p))
+}
+
 /// CI status from GitHub/GitLab checks
 /// Matches the statusline.sh color scheme:
 /// - Passed: Green (all checks passed)
@@ -126,6 +142,7 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], command: &str, branch: &str) -
 /// - Failed: Red (checks failed)
 /// - Conflicts: Yellow (merge conflicts)
 /// - NoCI: Gray (no PR/checks)
+/// - Error: Yellow (CI fetch failed, e.g., rate limit)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CiStatus {
@@ -134,6 +151,8 @@ pub enum CiStatus {
     Failed,
     Conflicts,
     NoCI,
+    /// CI status could not be fetched (rate limit, network error, etc.)
+    Error,
 }
 
 /// Source of CI status
@@ -175,24 +194,15 @@ impl CiStatus {
     /// - Failed: Red
     /// - Conflicts: Yellow
     /// - NoCI: BrightBlack (dimmed)
+    /// - Error: Yellow (warning color)
     pub fn color(&self) -> anstyle::AnsiColor {
         use anstyle::AnsiColor;
         match self {
             Self::Passed => AnsiColor::Green,
             Self::Running => AnsiColor::Blue,
             Self::Failed => AnsiColor::Red,
-            Self::Conflicts => AnsiColor::Yellow,
+            Self::Conflicts | Self::Error => AnsiColor::Yellow,
             Self::NoCI => AnsiColor::BrightBlack,
-        }
-    }
-}
-
-impl CiSource {
-    /// Get the indicator symbol for this CI source
-    pub fn indicator(&self) -> &'static str {
-        match self {
-            Self::PullRequest => "●",
-            Self::Branch => "○",
         }
     }
 }
@@ -205,13 +215,38 @@ impl PrStatus {
         if self.is_stale { style.dimmed() } else { style }
     }
 
+    /// Get the indicator symbol for this status
+    ///
+    /// - Error: ⚠ (overrides source indicator)
+    /// - PullRequest: ● (filled circle)
+    /// - Branch: ○ (hollow circle)
+    pub fn indicator(&self) -> &'static str {
+        match self.ci_status {
+            CiStatus::Error => "⚠",
+            _ => match self.source {
+                CiSource::PullRequest => "●",
+                CiSource::Branch => "○",
+            },
+        }
+    }
+
     /// Format CI status as a colored indicator for statusline output.
     ///
     /// Returns a string like "●" with appropriate ANSI color.
     pub fn format_indicator(&self) -> String {
         let style = self.style();
-        let indicator = self.source.indicator();
+        let indicator = self.indicator();
         format!("{style}{indicator}{style:#}")
+    }
+
+    /// Create an error status for retriable failures (rate limit, network errors)
+    fn error() -> Self {
+        Self {
+            ci_status: CiStatus::Error,
+            source: CiSource::Branch,
+            is_stale: false,
+            url: None,
+        }
     }
 
     /// Detect CI status for a branch using gh/glab CLI
@@ -299,6 +334,9 @@ impl PrStatus {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::debug!("gh pr list failed for {}: {}", branch, stderr.trim());
+            if is_retriable_error(&stderr) {
+                return Some(Self::error());
+            }
             return None;
         }
 
@@ -436,6 +474,9 @@ impl PrStatus {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::debug!("gh run list failed for {}: {}", branch, stderr.trim());
+            if is_retriable_error(&stderr) {
+                return Some(Self::error());
+            }
             return None;
         }
 

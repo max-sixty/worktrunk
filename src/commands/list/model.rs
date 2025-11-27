@@ -720,7 +720,7 @@ impl serde::Serialize for WorktreeState {
 /// 1. Conflicts (✖) - blocking, must resolve
 /// 2. Rebase (↻) - active operation
 /// 3. Merge (⋈) - active operation
-/// 4. MergeTreeConflicts (⚠) - potential problem
+/// 4. MergeTreeConflicts (⊘) - potential problem
 /// 5. MatchesMain (≡) - removable
 /// 6. NoCommits (_) - removable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
@@ -750,7 +750,7 @@ impl std::fmt::Display for BranchOpState {
             Self::Conflicts => write!(f, "✖"),
             Self::Rebase => write!(f, "↻"),
             Self::Merge => write!(f, "⋈"),
-            Self::MergeTreeConflicts => write!(f, "⚠"),
+            Self::MergeTreeConflicts => write!(f, "⊘"),
             Self::MatchesMain => write!(f, "≡"),
             Self::NoCommits => write!(f, "_"),
         }
@@ -886,7 +886,7 @@ impl PositionMask {
 #[derive(Debug, Clone, Default)]
 pub struct StatusSymbols {
     /// Combined branch and operation state (mutually exclusive with priority)
-    /// Priority: Conflicts (✖) > Rebase (↻) > Merge (⋈) > MergeTreeConflicts (⚠) > MatchesMain (≡) > NoCommits (_)
+    /// Priority: Conflicts (✖) > Rebase (↻) > Merge (⋈) > MergeTreeConflicts (⊘) > MatchesMain (≡) > NoCommits (∅)
     pub(crate) branch_op_state: BranchOpState,
 
     /// Worktree state: ⎇ for branches, ⚐⌫⊠ for worktrees (priority: path_mismatch > prunable > locked)

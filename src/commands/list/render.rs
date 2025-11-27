@@ -81,7 +81,7 @@ impl PrStatus {
         } else {
             self.style()
         };
-        (self.source.indicator(), style)
+        (self.indicator(), style)
     }
 
     fn render_indicator(&self) -> StyledLine {
