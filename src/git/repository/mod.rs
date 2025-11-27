@@ -130,8 +130,9 @@ impl Repository {
     /// Uses the following strategy:
     /// 1. If the current branch has an upstream, use its remote
     ///    (Note: Detached HEAD falls through to step 2)
-    /// 2. Otherwise, get the first remote with a configured URL
-    /// 3. Fall back to "origin" if no remotes exist
+    /// 2. Use git's `checkout.defaultRemote` config if set and has a URL
+    /// 3. Otherwise, get the first remote with a configured URL
+    /// 4. Fall back to "origin" if no remotes exist
     pub fn primary_remote(&self) -> anyhow::Result<String> {
         // Try to get the remote from the current branch's upstream
         if let Ok(Some(branch)) = self.current_branch()
@@ -139,6 +140,14 @@ impl Repository {
             && let Some((remote, _)) = upstream.split_once('/')
         {
             return Ok(remote.to_string());
+        }
+
+        // Check git's checkout.defaultRemote config
+        if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"]) {
+            let default_remote = default_remote.trim();
+            if !default_remote.is_empty() && self.remote_has_url(default_remote) {
+                return Ok(default_remote.to_string());
+            }
         }
 
         // Fall back to first remote with a configured URL
@@ -156,6 +165,13 @@ impl Repository {
         });
 
         Ok(first_remote.unwrap_or("origin").to_string())
+    }
+
+    /// Check if a remote has a URL configured.
+    fn remote_has_url(&self, remote: &str) -> bool {
+        self.run_command(&["config", &format!("remote.{}.url", remote)])
+            .map(|url| !url.trim().is_empty())
+            .unwrap_or(false)
     }
 
     /// Check if a local git branch exists.

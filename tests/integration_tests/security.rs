@@ -297,7 +297,9 @@ fn test_commit_message_with_directive_not_executed() {
     // Create a worktree
     let _feature_wt = repo.add_worktree("feature");
 
-    let settings = setup_snapshot_settings(&repo);
+    let mut settings = setup_snapshot_settings(&repo);
+    // Filter SHAs because commit_with_message creates non-deterministic hashes
+    settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]");
 
     // Run 'wt list' which might show commit messages
     settings.bind(|| {

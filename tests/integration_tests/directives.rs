@@ -153,9 +153,7 @@ fn test_merge_internal_no_remove() {
         .output()
         .unwrap();
 
-    let mut settings = setup_snapshot_settings(&repo);
-    // Normalize SHA in output
-    settings.add_filter(r"@ [a-f0-9]{7}", "@ [SHA]");
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -208,8 +206,6 @@ fn test_merge_internal_remove() {
         .unwrap();
 
     let mut settings = setup_snapshot_settings(&repo);
-    // Normalize SHA and path in output
-    settings.add_filter(r"@ [a-f0-9]{7}", "@ [SHA]");
     settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
 
     settings.bind(|| {

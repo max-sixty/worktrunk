@@ -727,10 +727,7 @@ fn test_list_with_upstream_tracking() {
     repo.add_worktree("no-upstream");
 
     // Run list --branches --full to show all columns including Remote
-    let mut settings = setup_snapshot_settings(&repo);
-
-    // Additional custom filters
-    settings.add_filter(r"\b[0-9a-f]{7,40}\b", "[SHA]   ");
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();

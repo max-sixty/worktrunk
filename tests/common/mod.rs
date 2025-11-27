@@ -785,9 +785,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_redaction(".env.PATH", "[PATH]");
 
     // Normalize timestamps in log filenames (format: YYYYMMDD-HHMMSS)
-    // The SHA filter runs first, so we match: post-start-NAME-[SHA]-HHMMSS.log
+    // Match: post-start-NAME-SHA-HHMMSS.log
     settings.add_filter(
-        r"post-start-[^-]+-\[SHA\]-\d{6}\.log",
+        r"post-start-[^-]+-[0-9a-f]{7,40}-\d{6}\.log",
         "post-start-[NAME]-[TIMESTAMP].log",
     );
 
@@ -798,11 +798,19 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(r"(?m)^\x1b\[40m \x1b\[0m {1,2}hint:.*\n", "");
 
     // Normalize Git error message format differences across versions
-    // Older Git (< 2.43): "Could not apply [SHA]... # commit message"
-    // Newer Git (>= 2.43): "Could not apply [SHA]... commit message"
+    // Older Git (< 2.43): "Could not apply SHA... # commit message"
+    // Newer Git (>= 2.43): "Could not apply SHA... commit message"
     // Add the "# " prefix to newer Git output for consistency with snapshots
     // Match if followed by a letter/character (not "#")
-    settings.add_filter(r"(Could not apply \[SHA\]\.\.\.) ([A-Za-z])", "$1 # $2");
+    settings.add_filter(
+        r"(Could not apply [0-9a-f]{7,40}\.\.\.) ([A-Za-z])",
+        "$1 # $2",
+    );
+
+    // Normalize OS-specific error messages in gutter output
+    // Ubuntu may produce "Broken pipe (os error 32)" instead of the expected error
+    // when capturing stderr from shell commands due to timing/buffering differences
+    settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
 
     // Normalize OS-specific error messages in gutter output
     // Ubuntu may produce "Broken pipe (os error 32)" instead of the expected error
