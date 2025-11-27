@@ -24,8 +24,8 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m     [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m              [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m           [2m^[0m                          [1m./repo[0m             [32m⇡0[0m  [2m[31m⇣0[0m  [2me6fd2060[0m  [2m1d[0m    [2mInitial commit[0m
-+ feature-x  [36m+[0m   [2m↑[0m        [32m+5[0m        [32m↑3[0m      ./repo.feature-x           [2md840828e[0m  [2m1h[0m    [2mAdd file 3[0m
-+ bugfix-y       [2m↑[0m                  [32m↑1[0m      ./repo.bugfix-y            [2m22f1aa87[0m  [2m2h[0m    [2mFix bug[0m
+@ [1mmain[0m           [2m^[0m                          [1m./repo[0m             [32m⇡0[0m  [2m[31m⇣0[0m  [SHA]     [2m1d[0m    [2mInitial commit[0m
++ feature-x  [36m+[0m   [2m↑[0m        [32m+5[0m        [32m↑3[0m      ./repo.feature-x           [SHA]     [2m1h[0m    [2mAdd file 3[0m
++ bugfix-y       [2m↑[0m                  [32m↑1[0m      ./repo.bugfix-y            [SHA]     [2m2h[0m    [2mFix bug[0m
 
 ⚪ [2mShowing 3 worktrees, 1 with changes, 2 ahead[0m

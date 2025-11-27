@@ -24,10 +24,10 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m             [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                      [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m                   [2m^[0m                          [1m./repo[0m                             [2me6fd2060[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mclean-no-status[0m       [2m_[0m                           [2m./repo.clean-no-status[0m             [2me6fd2060[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mclean-with-status[0m     [2m_[0m   💬                      [2m./repo.clean-with-status[0m           [2me6fd2060[0m  [2m1d[0m    [2mInitial commit[0m
-+ dirty-no-status     [36m![0m           [32m+1[0m   [31m-1[0m           ./repo.dirty-no-status             [2me6fd2060[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mdirty-with-status[0m    [36m?[0m[2m_[0m   🤖                      [2m./repo.dirty-with-status[0m           [2me6fd2060[0m  [2m1d[0m    [2mInitial commit[0m
+@ [1mmain[0m                   [2m^[0m                          [1m./repo[0m                             [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mclean-no-status[0m       [2m_[0m                           [2m./repo.clean-no-status[0m             [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mclean-with-status[0m     [2m_[0m   💬                      [2m./repo.clean-with-status[0m           [SHA]     [2m1d[0m    [2mInitial commit[0m
++ dirty-no-status     [36m![0m           [32m+1[0m   [31m-1[0m           ./repo.dirty-no-status             [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mdirty-with-status[0m    [36m?[0m[2m_[0m   🤖                      [2m./repo.dirty-with-status[0m           [SHA]     [2m1d[0m    [2mInitial commit[0m
 
 ⚪ [2mShowing 5 worktrees, 1 with changes[0m

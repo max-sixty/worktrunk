@@ -25,16 +25,16 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m      [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m               [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m            [2m^[0m                          [1m./repo[0m                      [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-1[0m      [2m_[0m                           [2m./repo.feature-1[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-10[0m     [2m_[0m                           [2m./repo.feature-10[0m           [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-2[0m      [2m_[0m                           [2m./repo.feature-2[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-3[0m      [2m_[0m                           [2m./repo.feature-3[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-4[0m      [2m_[0m                           [2m./repo.feature-4[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-5[0m      [2m_[0m                           [2m./repo.feature-5[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-6[0m      [2m_[0m                           [2m./repo.feature-6[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-7[0m      [2m_[0m                           [2m./repo.feature-7[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-8[0m      [2m_[0m                           [2m./repo.feature-8[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ [2mfeature-9[0m      [2m_[0m                           [2m./repo.feature-9[0m            [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
+@ [1mmain[0m            [2m^[0m                          [1m./repo[0m                      [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-1[0m      [2m_[0m                           [2m./repo.feature-1[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-10[0m     [2m_[0m                           [2m./repo.feature-10[0m           [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-2[0m      [2m_[0m                           [2m./repo.feature-2[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-3[0m      [2m_[0m                           [2m./repo.feature-3[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-4[0m      [2m_[0m                           [2m./repo.feature-4[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-5[0m      [2m_[0m                           [2m./repo.feature-5[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-6[0m      [2m_[0m                           [2m./repo.feature-6[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-7[0m      [2m_[0m                           [2m./repo.feature-7[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-8[0m      [2m_[0m                           [2m./repo.feature-8[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
++ [2mfeature-9[0m      [2m_[0m                           [2m./repo.feature-9[0m            [SHA]     [2m1d[0m    [2mInitial commit[0m
 
 ⚪ [2mShowing 11 worktrees[0m

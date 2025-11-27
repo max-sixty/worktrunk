@@ -24,9 +24,9 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m        [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                 [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m              [2m^[0m                          [1m./repo[0m                        [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ main-symbol       [2m↑[0m  💬              [32m↑1[0m      ./repo.main-symbol            [2m579fcd0b[0m  [2m1d[0m    [2mSymbol commit[0m
-+ pr-link           [2m↑[0m  🤖              [32m↑1[0m      ./repo.pr-link                [2me17e7d2d[0m  [2m1d[0m    [2mPR commit[0m
-+ wli-sequence   [36m![0m[36m?[0m [2m↑[0m  🤖    [32m+1[0m [31m-112[0m   [32m↑1[0m      ./repo.wli-sequence           [2ma2483ffd[0m  [2m1d[0m    [2mInitial content[0m
+@ [1mmain[0m              [2m^[0m                          [1m./repo[0m                        [SHA]     [2m1d[0m    [2mInitial commit[0m
++ main-symbol       [2m↑[0m  💬              [32m↑1[0m      ./repo.main-symbol            [SHA]     [2m1d[0m    [2mSymbol commit[0m
++ pr-link           [2m↑[0m  🤖              [32m↑1[0m      ./repo.pr-link                [SHA]     [2m1d[0m    [2mPR commit[0m
++ wli-sequence   [36m![0m[36m?[0m [2m↑[0m  🤖    [32m+1[0m [31m-112[0m   [32m↑1[0m      ./repo.wli-sequence           [SHA]     [2m1d[0m    [2mInitial content[0m
 
 ⚪ [2mShowing 4 worktrees, 1 with changes, 3 ahead[0m

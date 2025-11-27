@@ -25,8 +25,8 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m                   [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m                         [2m^[0m                          [1m.[0m      [32m⇡0[0m  [2m[31m⇣0[0m  [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-  [2morigin/remote-feature-1[0m     [2m_[0m  [2m⎇[0m                                       [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-  [2morigin/remote-feature-2[0m     [2m_[0m  [2m⎇[0m                                       [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
+@ [1mmain[0m                         [2m^[0m                          [1m.[0m      [32m⇡0[0m  [2m[31m⇣0[0m  [SHA]     [2m1d[0m    [2mInitial commit[0m
+  [2morigin/remote-feature-1[0m     [2m_[0m  [2m⎇[0m                                       [SHA]     [2m1d[0m    [2mInitial commit[0m
+  [2morigin/remote-feature-2[0m     [2m_[0m  [2m⎇[0m                                       [SHA]     [2m1d[0m    [2mInitial commit[0m
 
 ⚪ [2mShowing 1 worktrees, 2 remote branches[0m

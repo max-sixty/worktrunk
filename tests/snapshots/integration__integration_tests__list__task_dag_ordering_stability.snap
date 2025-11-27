@@ -25,10 +25,10 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m           [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                    [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mfeature-current[0m      [2m↑[0m                  [32m↑1[0m      [1m./repo.feature-current[0m           [2mfc28a4d1[0m  [2m23h[0m   [2mCommit at 01:00[0m
-^ main                 [2m^[0m                          ./repo                           [2m6c3da842[0m  [2m1d[0m    [2mInitial commit on main[0m
-+ feature-newest       [2m↑[0m                  [32m↑1[0m      ./repo.feature-newest            [2m136358eb[0m  [2m21h[0m   [2mCommit at 03:00[0m
-+ feature-middle       [2m↑[0m                  [32m↑1[0m      ./repo.feature-middle            [2ma0a4851a[0m  [2m22h[0m   [2mCommit at 02:00[0m
-+ feature-oldest       [2m↑[0m                  [32m↑1[0m      ./repo.feature-oldest            [2m1b1a2d78[0m  [2m23h[0m   [2mCommit at 00:30[0m
+@ [1mfeature-current[0m      [2m↑[0m                  [32m↑1[0m      [1m./repo.feature-current[0m           [SHA]     [2m23h[0m   [2mCommit at 01:00[0m
+^ main                 [2m^[0m                          ./repo                           [SHA]     [2m1d[0m    [2mInitial commit on main[0m
++ feature-newest       [2m↑[0m                  [32m↑1[0m      ./repo.feature-newest            [SHA]     [2m21h[0m   [2mCommit at 03:00[0m
++ feature-middle       [2m↑[0m                  [32m↑1[0m      ./repo.feature-middle            [SHA]     [2m22h[0m   [2mCommit at 02:00[0m
++ feature-oldest       [2m↑[0m                  [32m↑1[0m      ./repo.feature-oldest            [SHA]     [2m23h[0m   [2mCommit at 00:30[0m
 
 ⚪ [2mShowing 5 worktrees, 4 ahead[0m
