@@ -23,15 +23,15 @@ success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mSquashing 1 commit & working tree changes into a single commit[0m (1 file, [32m+1[0m)...
-💡 [2mBackup created @ [SHA][0m
+💡 [2mBackup created @ [2m967330a[0m[0m
 🔄 [36mGenerating squash commit message...[0m
-✅ [32mSquashed @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+✅ [32mSquashed @ [2m[32m1e3993e[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m1e3993e[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
 [107m [0m  [1mfix: improve auth validation logic[0m
-[107m [0m  * [SHA] fix: improve auth validation logic
+[107m [0m  * [33m1e3993e[m fix: improve auth validation logic
 [107m [0m   auth.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)

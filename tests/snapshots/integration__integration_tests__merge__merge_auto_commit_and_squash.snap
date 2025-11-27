@@ -23,16 +23,16 @@ success: true
 exit_code: 0
 ----- stdout -----
 🔄 [36mSquashing 2 commits & working tree changes into a single commit[0m (2 files, [32m+2[0m)...
-💡 [2mBackup created @ [SHA][0m
+💡 [2mBackup created @ [2m330ccd6[0m[0m
 🔄 [36mGenerating squash commit message...[0m
-✅ [32mSquashed @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+✅ [32mSquashed @ [2m[32mb54183b[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36mb54183b[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 2 files, [32m+2[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
 [107m [0m  [1mfix: update file 1 content[0m
-[107m [0m  * [SHA] fix: update file 1 content
+[107m [0m  * [33mb54183b[m fix: update file 1 content
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

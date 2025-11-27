@@ -27,8 +27,8 @@ exit_code: 0
 🔄 [36mRunning pre-commit:[0m
 🔄 [36mCommitting changes with default message...[0m (1 file, [32m+1[0m, no squashing needed)
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
-✅ [32mCommitted changes @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+✅ [32mCommitted changes @ [2m[32mcdc8f90[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36mcdc8f90[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
@@ -37,6 +37,6 @@ exit_code: 0
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Pre-commit check passed'[0m[2m[0m
 [0mPre-commit check passed
 [107m [0m  [1mChanges to feature.txt[0m
-[107m [0m  * [SHA] Changes to feature.txt
+[107m [0m  * [33mcdc8f90[m Changes to feature.txt
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)

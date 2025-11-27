@@ -28,10 +28,10 @@ exit_code: 0
 ----- stdout -----
 💡 [2mSkipping pre-commit hook (--no-verify)[0m
 🔄 [36mSquashing 2 commits & tracked changes into a single commit[0m (3 files, [32m+3[0m)...
-💡 [2mBackup created @ [SHA][0m
+💡 [2mBackup created @ [2m31e06e8[0m[0m
 🔄 [36mGenerating squash commit message...[0m
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
-✅ [32mSquashed @ [2m[SHA][0m
+✅ [32mSquashed @ [2m[32m9f7a3e2[0m[0m
 
 ----- stderr -----
 [107m [0m  [1mSquash commits from main[0m

@@ -24,11 +24,11 @@ exit_code: 0
 ----- stdout -----
 🔄 [36mRebasing onto [1m[36mmain[0m[36m...[0m
 ✅ [32mRebased onto [1m[32mmain[0m[0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash needed)
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m76778cc[0m[0m (no commit/squash needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature-dirty-primary[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
-[107m [0m  * [SHA] Add feature file
+[107m [0m  * [33m76778cc[m Add feature file
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)

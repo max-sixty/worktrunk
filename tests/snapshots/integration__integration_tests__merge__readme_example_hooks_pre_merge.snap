@@ -26,10 +26,10 @@ exit_code: 0
 ----- stdout -----
 🔄 [36mSquashing 3 commits into a single commit[0m (2 files, [32m+45[0m)...
 🔄 [36mGenerating squash commit message...[0m
-✅ [32mSquashed @ [2m[SHA][0m
+✅ [32mSquashed @ [2m[32m69200cc[0m[0m
 🔄 [36mRunning pre-merge [1mtest[0m:[0m
 🔄 [36mRunning pre-merge [1mlint[0m:[0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m69200cc[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 2 files, [32m+45[0m)
 🔄 [36mRemoving [1m[36mfeature-auth[0m[36m worktree & branch in background[0m
 
@@ -53,7 +53,7 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 [0m
 All checks passed!
 
-[107m [0m  * [SHA] feat(api): Add user authentication endpoints
+[107m [0m  * [33m69200cc[m feat(api): Add user authentication endpoints
 [107m [0m   api/auth.py        | 31 [32m+++++++++++++++++++++++++++++++[m
 [107m [0m   tests/test_auth.py | 14 [32m++++++++++++++[m
 [107m [0m   2 files changed, 45 insertions(+)

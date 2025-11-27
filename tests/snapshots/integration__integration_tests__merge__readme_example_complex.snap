@@ -26,10 +26,10 @@ exit_code: 0
 ----- stdout -----
 🔄 [36mSquashing 3 commits into a single commit[0m (3 files, [32m+33[0m)...
 🔄 [36mGenerating squash commit message...[0m
-✅ [32mSquashed @ [2m[SHA][0m
+✅ [32mSquashed @ [2m[32m95c3316[0m[0m
 🔄 [36mRunning pre-merge [1mtest[0m:[0m
 🔄 [36mRunning pre-merge [1mlint[0m:[0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m95c3316[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 3 files, [32m+33[0m)
 🔄 [36mRemoving [1m[36mfeature-auth[0m[36m worktree & branch in background[0m
 🔄 [36mRunning post-merge [1minstall[0m:[0m
@@ -58,7 +58,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 [107m [0m  [2m[0m[2m[34mcargo[0m[2m clippy[0m
 [0m    Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
-[107m [0m  * [SHA] feat(auth): Implement JWT authentication system
+[107m [0m  * [33m95c3316[m feat(auth): Implement JWT authentication system
 [107m [0m   auth.rs      |  8 [32m++++++++[m
 [107m [0m   auth_test.rs | 17 [32m+++++++++++++++++[m
 [107m [0m   jwt.rs       |  8 [32m++++++++[m

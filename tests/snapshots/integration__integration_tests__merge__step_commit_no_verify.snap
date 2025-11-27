@@ -29,7 +29,7 @@ exit_code: 0
 🟡 [33mAuto-staging 2 untracked files:[0m
 🔄 [36mCommitting changes with default message...[0m (2 files, [32m+2[0m)
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
-✅ [32mCommitted changes @ [2m[SHA][0m
+✅ [32mCommitted changes @ [2m[32m3dbcd5d[0m[0m
 
 ----- stderr -----
 [107m [0m  .config/

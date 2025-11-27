@@ -24,13 +24,13 @@ exit_code: 0
 ----- stdout -----
 🔄 [36mSquashing 2 commits into a single commit[0m (1 file, [32m+1[0m)...
 🔄 [36mGenerating squash commit message...[0m
-✅ [32mSquashed @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+✅ [32mSquashed @ [2m[32md42412f[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36md42412f[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
 [107m [0m  [1mfeat: implement user authentication system[0m
-[107m [0m  * [SHA] feat: implement user authentication system
+[107m [0m  * [33md42412f[m feat: implement user authentication system
 [107m [0m   auth.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)

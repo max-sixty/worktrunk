@@ -25,8 +25,8 @@ exit_code: 0
 🔄 [36mSquashing 3 commits into a single commit[0m (3 files, [32m+3[0m)...
 🔄 [36mGenerating squash commit message...[0m
 💡 [2m[2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[0m[0m
-✅ [32mSquashed @ [2m[SHA][0m
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no rebase needed)
+✅ [32mSquashed @ [2m[32m27eb169[0m[0m
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m27eb169[0m[0m (no rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 3 files, [32m+3[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
@@ -37,7 +37,7 @@ exit_code: 0
 [107m [0m  - feat: add file 1
 [107m [0m  - fix: update logic
 [107m [0m  - docs: update readme
-[107m [0m  * [SHA] Squash commits from main
+[107m [0m  * [33m27eb169[m Squash commits from main
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   file3.txt | 1 [32m+[m

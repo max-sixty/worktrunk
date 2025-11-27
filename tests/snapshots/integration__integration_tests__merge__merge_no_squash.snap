@@ -23,13 +23,13 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mMerging 2 commits to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
+🔄 [36mMerging 2 commits to [1m[36mmain[0m[36m @ [2m[36mbf212d3[0m[0m (no commit/squash/rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (2 commits, 2 files, [32m+2[0m)
 🔄 [36mRemoving [1m[36mfeature[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
-[107m [0m  * [SHA] feat: add file 2
-[107m [0m  * [SHA] feat: add file 1
+[107m [0m  * [33mbf212d3[m feat: add file 2
+[107m [0m  * [33m123e46c[m feat: add file 1
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

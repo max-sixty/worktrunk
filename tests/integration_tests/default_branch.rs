@@ -84,6 +84,16 @@ fn test_get_default_branch_with_custom_remote() {
 
 #[test]
 fn test_primary_remote_detects_custom_remote() {
+    // This test calls internal Repository methods which don't inherit test isolation.
+    // Skip if user's global git config might interfere (e.g., remote.origin.prunetags=true).
+    // Run with: GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null cargo test
+    if !TestRepo::is_git_isolated() {
+        eprintln!(
+            "Skipping test_primary_remote_detects_custom_remote: git environment not isolated"
+        );
+        return;
+    }
+
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
     repo.setup_custom_remote("upstream", "develop");

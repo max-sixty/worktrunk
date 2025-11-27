@@ -2452,12 +2452,12 @@ fn test_merge_no_commit_with_clean_tree() {
         success: true
         exit_code: 0
         ----- stdout -----
-        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
+        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m6551244[0m[0m (no commit/squash/rebase needed)
         ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
         ⚪ Worktree preserved (--no-remove)
 
         ----- stderr -----
-        [107m [0m  * [SHA] Add feature file
+        [107m [0m  * [33m6551244[m Add feature file
         [107m [0m   feature.txt | 1 [32m+[m
         [107m [0m   1 file changed, 1 insertion(+)
         ");
@@ -2555,12 +2555,12 @@ fn test_merge_no_commit_no_squash_no_remove_redundant() {
         success: true
         exit_code: 0
         ----- stdout -----
-        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
+        🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36m6551244[0m[0m (no commit/squash/rebase needed)
         ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+1[0m)
         ⚪ Worktree preserved (--no-remove)
 
         ----- stderr -----
-        [107m [0m  * [SHA] Add feature file
+        [107m [0m  * [33m6551244[m Add feature file
         [107m [0m   feature.txt | 1 [32m+[m
         [107m [0m   1 file changed, 1 insertion(+)
         ");

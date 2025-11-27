@@ -24,15 +24,15 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mPushing 3 commits to [1m[36mmain[0m[36m @ [2m[SHA][0m (merge commits allowed)
+🔄 [36mPushing 3 commits to [1m[36mmain[0m[36m @ [2m[36m13bed7b[0m[0m (merge commits allowed)
 ✅ [32mPushed to [1m[32mmain[0m[0m (3 commits, 2 files, [32m+2[0m)
 
 ----- stderr -----
-[107m [0m  *   [SHA] Merge temp
+[107m [0m  *   [33m13bed7b[m Merge temp
 [107m [0m  [31m|[m[32m/[m  
-[107m [0m  [31m|[m * [SHA] Commit 2
+[107m [0m  [31m|[m * [33m1f38fab[m Commit 2
 [107m [0m  [31m|[m[31m/[m  
-[107m [0m  * [SHA] Commit 1
+[107m [0m  * [33ma184b7f[m Commit 1
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

@@ -22,11 +22,11 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[SHA][0m (no commit/squash/rebase needed)
+🔄 [36mMerging 1 commit to [1m[36mmain[0m[36m @ [2m[36md29e0fd[0m[0m (no commit/squash/rebase needed)
 ✅ [32mMerged to [1m[32mmain[0m[0m (1 commit, 1 file, [32m+13[0m)
 🔄 [36mRemoving [1m[36mfix-auth[0m[36m worktree & branch in background[0m
 
 ----- stderr -----
-[107m [0m  * [SHA] Implement JWT validation
+[107m [0m  * [33md29e0fd[m Implement JWT validation
 [107m [0m   auth.rs | 13 [32m+++++++++++++[m
 [107m [0m   1 file changed, 13 insertions(+)
