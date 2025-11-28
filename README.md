@@ -25,8 +25,11 @@ statusline.
 
 I've been using Worktrunk as my daily driver while building it for the past
 couple of months, and found the workflows extremely good. It's built with love;
-there's no slop here! If some social proof is helpful: I also created PRQL and
-am a maintainer of Xarray & Insta & Numbagg.
+there's no slop here! If some social proof is helpful: I also created
+[PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of
+[Xarray](https://github.com/pydata/xarray) (4k stars),
+[Insta](https://github.com/mitsuhiko/insta), &
+[Numbagg](https://github.com/numbagg/numbagg).
 
 ## Demo
 
