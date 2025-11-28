@@ -438,6 +438,11 @@ pub fn capture_progressive_output(
                     let drain_start = Instant::now();
 
                     loop {
+                        // Universal timeout check - prevents infinite loop regardless of read result
+                        if drain_start.elapsed() > backoff.timeout {
+                            break;
+                        }
+
                         match reader.read(&mut temp_buf) {
                             Ok(0) => {
                                 // EOF - may be spurious on Linux, require consecutive confirmations
@@ -456,15 +461,8 @@ pub fn capture_progressive_output(
                                 parser.process(&temp_buf[..n]);
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                // No data available yet - count toward stability
-                                consecutive_no_data += 1;
-                                if consecutive_no_data >= STABLE_READ_THRESHOLD {
-                                    break;
-                                }
-                                // Check timeout
-                                if drain_start.elapsed() > backoff.timeout {
-                                    break;
-                                }
+                                // No data available yet - PTY buffer may still be flushing.
+                                // Don't count toward stability; only true EOF (Ok(0)) counts.
                                 backoff.sleep(attempt);
                                 attempt += 1;
                             }
