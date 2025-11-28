@@ -602,7 +602,7 @@ Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
 
     /// Interactive worktree selector
     ///
-    /// Toggle preview tabs with 1/2/3 keys.
+    /// Toggle preview tabs with 1/2/3 keys. Toggle preview visibility with alt-p.
     #[cfg(unix)]
     Select,
 

@@ -78,6 +78,18 @@ fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
 /// If the pager takes longer than this, kill it and fall back to raw diff.
 const PAGER_TIMEOUT: Duration = Duration::from_millis(2000);
 
+/// Skim uses this percentage of terminal height.
+const SKIM_HEIGHT_PERCENT: usize = 90;
+
+/// Maximum number of list items visible in down layout before scrolling.
+const MAX_VISIBLE_ITEMS: usize = 12;
+
+/// Lines reserved for skim chrome (header + prompt/margins).
+const LIST_CHROME_LINES: usize = 4;
+
+/// Minimum preview lines to keep usable even with many items.
+const MIN_PREVIEW_LINES: usize = 5;
+
 /// Run git diff piped directly through the pager as a streaming pipeline.
 ///
 /// Runs `git <args> | pager` as a single shell command, avoiding intermediate
@@ -190,6 +202,79 @@ enum PreviewMode {
     BranchDiff = 3,
 }
 
+/// Typical terminal character aspect ratio (width/height).
+///
+/// Terminal characters are taller than wide - typically around 0.5 (twice as tall as wide).
+/// This varies by font, but 0.5 is a reasonable default for monospace fonts.
+const CHAR_ASPECT_RATIO: f64 = 0.5;
+
+/// Preview layout orientation for the interactive selector
+///
+/// Preview window position (auto-detected at startup based on terminal dimensions)
+///
+/// - Right: Preview on the right side (50% width) - better for wide terminals
+/// - Down: Preview below the list - better for tall/vertical monitors
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PreviewLayout {
+    #[default]
+    Right,
+    Down,
+}
+
+impl PreviewLayout {
+    /// Auto-detect layout based on terminal dimensions.
+    ///
+    /// Terminal dimensions are in characters, not pixels. Since characters are
+    /// typically twice as tall as wide (~0.5 aspect ratio), we correct for this
+    /// when calculating the effective aspect ratio.
+    ///
+    /// Example: 180 cols × 136 rows
+    /// - Raw ratio: 180/136 = 1.32 (appears landscape)
+    /// - Effective: 1.32 × 0.5 = 0.66 (actually portrait!)
+    ///
+    /// Returns Down for portrait (effective ratio < 1.0), Right for landscape.
+    fn auto_detect() -> Self {
+        let (cols, rows) = terminal_size::terminal_size()
+            .map(|(terminal_size::Width(w), terminal_size::Height(h))| (w as f64, h as f64))
+            .unwrap_or((80.0, 24.0));
+
+        // Effective aspect ratio accounting for character shape
+        let effective_ratio = (cols / rows) * CHAR_ASPECT_RATIO;
+
+        if effective_ratio < 1.0 {
+            Self::Down
+        } else {
+            Self::Right
+        }
+    }
+}
+
+impl PreviewLayout {
+    /// Calculate the preview window spec for skim
+    ///
+    /// For Right layout: always 50%
+    /// For Down layout: dynamically sized based on item count - list gets
+    /// up to MAX_VISIBLE_ITEMS lines, preview gets the rest (min 5 lines)
+    fn to_preview_window_spec(self, num_items: usize) -> String {
+        match self {
+            Self::Right => "right:50%".to_string(),
+            Self::Down => {
+                let height = terminal_size::terminal_size()
+                    .map(|(_, terminal_size::Height(h))| h as usize)
+                    .unwrap_or(24);
+
+                let available = height * SKIM_HEIGHT_PERCENT / 100;
+                let list_lines = LIST_CHROME_LINES + num_items.min(MAX_VISIBLE_ITEMS);
+                // Ensure preview doesn't exceed available space while trying to maintain minimum
+                let remaining = available.saturating_sub(list_lines);
+                let preview_lines = remaining.max(MIN_PREVIEW_LINES).min(available);
+
+                format!("down:{}", preview_lines)
+            }
+        }
+    }
+}
+
 impl PreviewMode {
     fn from_u8(n: u8) -> Self {
         match n {
@@ -198,32 +283,49 @@ impl PreviewMode {
             _ => Self::WorkingTree,
         }
     }
+}
 
-    fn read_from_state() -> Self {
+/// Preview state persistence (mode only, layout auto-detected)
+///
+/// State file format: Single digit representing preview mode (1=WorkingTree, 2=History, 3=BranchDiff)
+struct PreviewStateData;
+
+impl PreviewStateData {
+    fn state_path() -> PathBuf {
+        // Use per-process temp file to avoid race conditions when running multiple instances
+        std::env::temp_dir().join(format!("wt-select-state-{}", std::process::id()))
+    }
+
+    /// Read current preview mode from state file
+    fn read_mode() -> PreviewMode {
         let state_path = Self::state_path();
         fs::read_to_string(&state_path)
             .ok()
             .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(Self::from_u8)
-            .unwrap_or(Self::WorkingTree)
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree)
     }
 
-    fn state_path() -> PathBuf {
-        // Use per-process temp file to avoid race conditions when running multiple instances
-        std::env::temp_dir().join(format!("wt-select-mode-{}", std::process::id()))
+    fn write_mode(mode: PreviewMode) {
+        let state_path = Self::state_path();
+        let _ = fs::write(&state_path, format!("{}", mode as u8));
     }
 }
 
 /// RAII wrapper for preview state file lifecycle management
 struct PreviewState {
     path: PathBuf,
+    initial_layout: PreviewLayout,
 }
 
 impl PreviewState {
     fn new() -> Self {
-        let path = PreviewMode::state_path();
-        let _ = fs::write(&path, "1");
-        Self { path }
+        let path = PreviewStateData::state_path();
+        PreviewStateData::write_mode(PreviewMode::WorkingTree);
+        Self {
+            path,
+            initial_layout: PreviewLayout::auto_detect(),
+        }
     }
 }
 
@@ -275,7 +377,7 @@ impl SkimItem for WorktreeSkimItem {
     }
 
     fn preview(&self, context: PreviewContext<'_>) -> ItemPreview {
-        let mode = PreviewMode::read_from_state();
+        let mode = PreviewStateData::read_mode();
 
         // Build preview: tabs header + content
         let mut result = Self::render_preview_tabs(mode);
@@ -289,7 +391,7 @@ impl WorktreeSkimItem {
     /// Render the tab header for the preview window
     ///
     /// Shows all preview modes as tabs, with the current mode bolded
-    /// and unselected modes dimmed. Controls are shown below in dimmed text.
+    /// and unselected modes dimmed. Controls shown below.
     fn render_preview_tabs(mode: PreviewMode) -> String {
         /// Format a tab label with bold (active) or dimmed (inactive) styling
         fn format_tab(label: &str, is_active: bool) -> String {
@@ -305,7 +407,7 @@ impl WorktreeSkimItem {
         let tab1 = format_tab("1: HEAD±", mode == PreviewMode::WorkingTree);
         let tab2 = format_tab("2: history", mode == PreviewMode::History);
         let tab3 = format_tab("3: main…±", mode == PreviewMode::BranchDiff);
-        let controls = format_tab("ctrl-u/d: scroll", false);
+        let controls = format_tab("ctrl-u/d: scroll | alt-p: toggle", false);
 
         format!("{} | {} | {}\n{}\n\n", tab1, tab2, tab3, controls)
     }
@@ -555,6 +657,12 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         .map(|(_, terminal_size::Height(h))| (h as usize * 45 / 100).max(5))
         .unwrap_or(10);
 
+    // Calculate preview window spec based on auto-detected layout
+    // items.len() - 1 because we added a header row
+    let num_items = items.len().saturating_sub(1);
+    let initial_layout = _state.initial_layout;
+    let preview_window_spec = initial_layout.to_preview_window_spec(num_items);
+
     // Configure skim options with Rust-based preview and mode switching keybindings
     let options = SkimOptionsBuilder::default()
         .height("90%".to_string())
@@ -563,7 +671,7 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         .multi(false)
         .no_info(true) // Hide info line (matched/total counter)
         .preview(Some("".to_string())) // Enable preview (empty string means use SkimItem::preview())
-        .preview_window("right:50%".to_string())
+        .preview_window(preview_window_spec)
         // Color scheme using fzf's --color=light values: dark text (237) on light gray bg (251)
         //
         // Terminal color compatibility is tricky:
@@ -582,19 +690,22 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
                 .to_string(),
         ))
         .bind(vec![
-            // Mode switching
+            // Mode switching (1/2/3 keys change preview content)
             format!(
-                "1:execute-silent(echo 1 > {})+refresh-preview",
+                "1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "2:execute-silent(echo 2 > {})+refresh-preview",
+                "2:execute-silent(echo 2 > {0})+refresh-preview",
                 state_path_str
             ),
             format!(
-                "3:execute-silent(echo 3 > {})+refresh-preview",
+                "3:execute-silent(echo 3 > {0})+refresh-preview",
                 state_path_str
             ),
+            // Preview toggle (alt-p shows/hides preview)
+            // Note: skim doesn't support change-preview-window like fzf, only toggle
+            "alt-p:toggle-preview".to_string(),
             // Preview scrolling (half-page based on terminal height)
             format!("ctrl-u:preview-up({half_page})"),
             format!("ctrl-d:preview-down({half_page})"),
@@ -662,50 +773,39 @@ mod tests {
     }
 
     #[test]
-    fn test_preview_mode_state_file_read_default() {
-        // When state file doesn't exist or is invalid, default to WorkingTree
-        let state_path = PreviewMode::state_path();
-        // Clean up any existing state
-        let _ = fs::remove_file(&state_path);
+    fn test_preview_layout_to_preview_window_spec() {
+        // Right is always 50%
+        assert_eq!(PreviewLayout::Right.to_preview_window_spec(10), "right:50%");
 
-        assert_eq!(PreviewMode::read_from_state(), PreviewMode::WorkingTree);
+        // Down calculates based on item count
+        let spec = PreviewLayout::Down.to_preview_window_spec(5);
+        assert!(spec.starts_with("down:"));
     }
 
     #[test]
-    fn test_preview_mode_state_file_roundtrip() {
-        // Use a unique test file to avoid conflicts with concurrent tests
-        let test_state_path =
-            std::env::temp_dir().join(format!("wt-select-mode-test-{}", std::process::id()));
+    fn test_preview_state_data_read_default() {
+        // When state file doesn't exist, defaults to WorkingTree
+        let state_path = PreviewStateData::state_path();
+        let _ = fs::remove_file(&state_path);
 
-        // Write mode 1 (WorkingTree)
-        fs::write(&test_state_path, "1").unwrap();
-        let mode = fs::read_to_string(&test_state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
+        let mode = PreviewStateData::read_mode();
         assert_eq!(mode, PreviewMode::WorkingTree);
+    }
 
-        // Write mode 2 (History)
-        fs::write(&test_state_path, "2").unwrap();
-        let mode = fs::read_to_string(&test_state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::History);
+    #[test]
+    fn test_preview_state_data_roundtrip() {
+        // Write and read back various modes
+        PreviewStateData::write_mode(PreviewMode::WorkingTree);
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::WorkingTree);
 
-        // Write mode 3 (BranchDiff)
-        fs::write(&test_state_path, "3").unwrap();
-        let mode = fs::read_to_string(&test_state_path)
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())
-            .map(PreviewMode::from_u8)
-            .unwrap_or(PreviewMode::WorkingTree);
-        assert_eq!(mode, PreviewMode::BranchDiff);
+        PreviewStateData::write_mode(PreviewMode::History);
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::History);
+
+        PreviewStateData::write_mode(PreviewMode::BranchDiff);
+        assert_eq!(PreviewStateData::read_mode(), PreviewMode::BranchDiff);
 
         // Cleanup
-        let _ = fs::remove_file(&test_state_path);
+        let _ = fs::remove_file(PreviewStateData::state_path());
     }
 
     #[test]

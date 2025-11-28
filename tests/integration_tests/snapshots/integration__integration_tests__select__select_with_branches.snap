@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch           Status         HEAD±    main↕  Path    │ctrl-u/d: scroll
+    Branch           Status         HEAD±    main↕  Path    │ctrl-u/d: scroll | alt-p: toggle
 > @ main                 ^                          ./repo  │
   + active-worktree     _                           ./repo..│⚪ main has no uncommitted changes
     orphan-branch       _  ⎇                                │

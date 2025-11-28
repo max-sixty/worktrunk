@@ -3,7 +3,7 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch   Status         HEAD±    main↕  Path            │ctrl-u/d: scroll
+    Branch   Status         HEAD±    main↕  Path            │ctrl-u/d: scroll | alt-p: toggle
 > + feature      ↑                  ↑5      ./repo.feature..│
                                                             │* b1549b6 (feature) Add file 5 with important changes
                                                             │* 111f7e4 Add file 4 with important changes
