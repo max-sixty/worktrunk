@@ -95,6 +95,7 @@ pub enum OutputFormat {
 #[command(version = version_str())]
 #[command(disable_help_subcommand = true)]
 #[command(styles = help_styles())]
+#[command(arg_required_else_help = true)]
 #[command(
     after_long_help = r#"See `wt config --help` for configuration file locations and setup."#
 )]
@@ -134,7 +135,7 @@ pub struct Cli {
     pub internal: bool,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]

@@ -212,7 +212,15 @@ fn main() {
     })
     .init();
 
-    let result = match cli.command {
+    let Some(command) = cli.command else {
+        // No subcommand provided - print help to stderr (stdout is eval'd by shell wrapper)
+        let mut cmd = cli::build_command();
+        let help = cmd.render_help().ansi().to_string();
+        eprintln!("{help}");
+        return;
+    };
+
+    let result = match command {
         Commands::Config { action } => match action {
             ConfigCommand::Shell { action } => {
                 match action {
