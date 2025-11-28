@@ -71,14 +71,18 @@ jobs:
       uses: clechasseur/rs-cargo@v4
       with:
         command: test
-        args: --no-run --locked
+        args: --no-run --locked ${{ runner.os != 'Windows' && '--features shell-integration-tests' || '' }}
+
+    - name: 🔧 Build test helpers
+      if: runner.os != 'Windows'
+      run: cargo build -p dev-detach
 
     - name: 📋 Test
       uses: clechasseur/rs-cargo@v4
       timeout-minutes: 10
       with:
         command: insta
-        args: test --test-runner=nextest
+        args: test --test-runner=nextest ${{ runner.os != 'Windows' && '--features shell-integration-tests' || '' }}
 
     - name: 📖 Doctest
       uses: clechasseur/rs-cargo@v4
