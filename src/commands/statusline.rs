@@ -199,8 +199,12 @@ pub fn run(claude_code: bool) -> Result<()> {
     // Output via output system (goes to stderr, like `wt list`)
     if !output.is_empty() {
         if claude_code {
+            use std::io::Write;
             let reset = anstyle::Reset;
-            output::data(format!("{reset} {output}"))?;
+            // Bypass anstream - write directly to stdout to preserve ANSI codes
+            // regardless of TTY detection (Claude Code expects raw ANSI)
+            writeln!(std::io::stdout(), "{reset} {output}")?;
+            std::io::stdout().flush()?;
         } else {
             output::data(output)?;
         }
