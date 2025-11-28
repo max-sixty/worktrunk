@@ -977,11 +977,50 @@ pub fn validate_ansi_codes(text: &str) -> Vec<String> {
 // Timing utilities for background command tests
 // ============================================================================
 
+/// Configuration for exponential backoff polling.
+///
+/// Default: 10ms → 20ms → 40ms → ... → 500ms max, 5s timeout.
+#[derive(Debug, Clone)]
+pub struct ExponentialBackoff {
+    /// Initial sleep duration in milliseconds
+    pub initial_ms: u64,
+    /// Maximum sleep duration in milliseconds
+    pub max_ms: u64,
+    /// Total timeout
+    pub timeout: std::time::Duration,
+}
+
+impl Default for ExponentialBackoff {
+    fn default() -> Self {
+        Self {
+            initial_ms: 10,
+            max_ms: 500,
+            timeout: std::time::Duration::from_secs(5),
+        }
+    }
+}
+
+impl ExponentialBackoff {
+    /// Create with fast initial polling (1ms start), good for low-latency scenarios.
+    pub fn fast() -> Self {
+        Self {
+            initial_ms: 1,
+            max_ms: 100,
+            timeout: std::time::Duration::from_secs(5),
+        }
+    }
+
+    /// Sleep for the appropriate duration based on attempt number.
+    pub fn sleep(&self, attempt: u32) {
+        let ms = (self.initial_ms * (1u64 << attempt.min(20))).min(self.max_ms);
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
 /// Poll with exponential backoff: 10ms → 20ms → 40ms → ... → 500ms max.
 /// Fast initial checks catch quick completions; backs off to reduce CPU on slow CI.
 fn exponential_sleep(attempt: u32) {
-    let ms = (10 * (1 << attempt)).min(500);
-    std::thread::sleep(std::time::Duration::from_millis(ms));
+    ExponentialBackoff::default().sleep(attempt);
 }
 
 /// Wait for a file to exist, polling with exponential backoff.
