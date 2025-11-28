@@ -107,8 +107,10 @@ fn exec_wt_list_in_pty(
 
 /// Normalize PTY output for snapshot testing
 fn normalize_pty_output(output: &str) -> String {
+    use ansi_str::AnsiStr;
+
     // Strip ANSI codes for easier snapshot reading
-    let output = worktrunk::styling::strip_ansi_codes(output);
+    let output = output.ansi_strip();
 
     // Normalize line endings
     output.replace("\r\n", "\n").replace('\r', "\n")

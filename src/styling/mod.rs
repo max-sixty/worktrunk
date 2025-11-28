@@ -26,7 +26,7 @@ pub use anstyle::Style as AnstyleStyle;
 
 // Re-export our public types
 pub use constants::*;
-pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, strip_ansi_codes};
+pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter};
 pub use highlighting::format_toml;
 pub use line::{StyledLine, StyledString, truncate_visible};
 
@@ -58,18 +58,6 @@ pub fn visual_width(s: &str) -> usize {
     use ansi_str::AnsiStr;
     use unicode_width::UnicodeWidthStr;
     s.ansi_strip().width()
-}
-
-/// Wrap text with an OSC 8 hyperlink
-///
-/// See: <https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda>
-pub fn hyperlink(text: &str, url: &str) -> String {
-    format!(
-        "{}{}{}",
-        osc8::Hyperlink::new(url),
-        text,
-        osc8::Hyperlink::END
-    )
 }
 
 // Re-export for tests
@@ -425,28 +413,6 @@ command = "npm install"
             result.len() > 1,
             "Should wrap into multiple lines when visual width (52) > max_width (30)"
         );
-    }
-
-    #[test]
-    fn test_hyperlink() {
-        let text = "Click me";
-        let url = "https://github.com/user/repo/pull/123";
-        let result = super::hyperlink(text, url);
-
-        // Should match osc8 library output
-        let expected = format!(
-            "{}{}{}",
-            osc8::Hyperlink::new(url),
-            text,
-            osc8::Hyperlink::END
-        );
-        assert_eq!(result, expected);
-
-        // Verify structure
-        assert!(result.starts_with("\x1b]8;;"));
-        assert!(result.contains(url));
-        assert!(result.contains(text));
-        assert!(result.ends_with("\x1b]8;;\x1b\\"));
     }
 
     // wrap_styled_text tests

@@ -54,7 +54,7 @@ pub struct StyledString {
 }
 
 impl StyledString {
-    pub fn new(text: impl Into<String>, style: Option<Style>) -> Self {
+    fn new(text: impl Into<String>, style: Option<Style>) -> Self {
         Self {
             text: text.into(),
             style,

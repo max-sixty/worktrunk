@@ -89,11 +89,12 @@ impl PrStatus {
         let (indicator, style) = self.indicator_and_style();
 
         if let Some(ref url) = self.url {
-            use worktrunk::styling::hyperlink;
             let styled_indicator = format!(
-                "{}{}{}",
+                "{}{}{}{}{}",
                 style,
-                hyperlink(indicator, url),
+                osc8::Hyperlink::new(url),
+                indicator,
+                osc8::Hyperlink::END,
                 style.render_reset()
             );
             segment.push_raw(styled_indicator);
@@ -694,6 +695,7 @@ impl ColumnLayout {
 mod tests {
     use super::*;
     use crate::commands::list::layout::DiffDisplayConfig;
+    use ansi_str::AnsiStr;
     use worktrunk::styling::{ADDITION, DELETION, StyledLine};
 
     fn format_diff_like_column(
@@ -822,7 +824,7 @@ mod tests {
         let rendered = result.render();
 
         // Strip ANSI codes to check alignment
-        let clean = worktrunk::styling::strip_ansi_codes(&rendered);
+        let clean = rendered.ansi_strip().into_owned();
 
         // Should be " +1 -1" (with leading space for right-alignment)
         assert_eq!(clean, " +1 -1", "Diff should be right-aligned");
@@ -861,7 +863,7 @@ mod tests {
 
         // The rendered output should have correct spacing
         let rendered = line.render();
-        let clean = worktrunk::styling::strip_ansi_codes(&rendered);
+        let clean = rendered.ansi_strip().into_owned();
         assert_eq!(
             clean.width(),
             24,
@@ -1031,7 +1033,7 @@ mod tests {
         );
         assert_eq!(without.width(), total);
         let rendered_without = without.render();
-        let clean_without = worktrunk::styling::strip_ansi_codes(&rendered_without);
+        let clean_without = rendered_without.ansi_strip().into_owned();
         assert_eq!(clean_without, "       ", "Should render as blank");
 
         // With always_show_zeros=true, (0, 0) renders as "↑0 ↓0"
@@ -1052,7 +1054,7 @@ mod tests {
         );
         assert_eq!(with.width(), total);
         let rendered_with = with.render();
-        let clean_with = worktrunk::styling::strip_ansi_codes(&rendered_with);
+        let clean_with = rendered_with.ansi_strip().into_owned();
         assert_eq!(
             clean_with, "  ↑0 ↓0",
             "Should render ↑0 ↓0 with padding (right-aligned)"
@@ -1145,7 +1147,7 @@ mod tests {
             },
         );
         let rendered1 = result1.render();
-        let clean1 = worktrunk::styling::strip_ansi_codes(&rendered1);
+        let clean1 = rendered1.ansi_strip().into_owned();
         assert_eq!(clean1, " +53  -7", "Should be ' +53  -7'");
 
         // Test case 2: (33, 23) - both medium
@@ -1165,7 +1167,7 @@ mod tests {
             },
         );
         let rendered2 = result2.render();
-        let clean2 = worktrunk::styling::strip_ansi_codes(&rendered2);
+        let clean2 = rendered2.ansi_strip().into_owned();
         assert_eq!(clean2, " +33 -23", "Should be ' +33 -23'");
 
         // Test case 3: (2, 2) - both small (needs padding)
@@ -1185,7 +1187,7 @@ mod tests {
             },
         );
         let rendered3 = result3.render();
-        let clean3 = worktrunk::styling::strip_ansi_codes(&rendered3);
+        let clean3 = rendered3.ansi_strip().into_owned();
         assert_eq!(clean3, "  +2  -2", "Should be '  +2  -2'");
 
         // Verify vertical alignment: the ones digits should be in the same column

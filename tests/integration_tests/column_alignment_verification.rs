@@ -12,8 +12,8 @@
 //! The detailed verification logic here catches alignment bugs that would slip through snapshot review.
 
 use crate::common::{TestRepo, wt_command};
+use ansi_str::AnsiStr;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::strip_ansi_codes;
 
 /// Represents the start position of each column in a table row
 #[derive(Debug, Clone)]
@@ -161,7 +161,7 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
     }
 
     // Strip ANSI codes from all lines
-    let stripped_lines: Vec<String> = lines.iter().map(|l| strip_ansi_codes(l)).collect();
+    let stripped_lines: Vec<String> = lines.iter().map(|l| l.ansi_strip().into_owned()).collect();
 
     if stripped_lines.is_empty() {
         return Err("No lines after stripping ANSI codes".to_string());

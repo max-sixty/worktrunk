@@ -2,7 +2,6 @@
 //!
 //! Provides functions for formatting commands and configuration with visual gutters.
 
-use ansi_str::AnsiStr;
 use unicode_width::UnicodeWidthStr;
 
 #[cfg(feature = "syntax-highlighting")]
@@ -22,11 +21,6 @@ use super::{get_terminal_width, visual_width};
 /// When passing widths to tools like git --stat-width, subtract this overhead
 /// so the final output (content + gutter) fits within the terminal width.
 pub const GUTTER_OVERHEAD: usize = 3;
-
-/// Strip ANSI escape codes from a string
-pub fn strip_ansi_codes(s: &str) -> String {
-    s.ansi_strip().into_owned()
-}
 
 /// Wraps text at word boundaries to fit within the specified width
 ///

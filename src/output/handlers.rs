@@ -1,6 +1,7 @@
 //! Output handlers for worktree operations using the global output context
 
 use color_print::cformat;
+use std::path::Path;
 
 use crate::commands::process::spawn_detached;
 use crate::commands::worktree::{RemoveResult, SwitchResult};
@@ -9,6 +10,40 @@ use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::format_with_gutter;
+
+/// Format a switch success message with a consistent location phrase
+///
+/// Both interactive and directive modes now use the human-friendly
+/// `"Created new worktree for {branch} from {base} at {path}"` wording so
+/// users see the same message regardless of how worktrunk is invoked.
+fn format_switch_success_message(
+    branch: &str,
+    path: &Path,
+    created_branch: bool,
+    base_branch: Option<&str>,
+    from_remote: Option<&str>,
+) -> String {
+    // Determine action and source based on how the worktree was created
+    // Priority: explicit --create > DWIM from remote > existing local branch
+    let (action, source) = if created_branch {
+        ("Created new worktree for", base_branch)
+    } else if let Some(remote) = from_remote {
+        ("Created worktree for", Some(remote))
+    } else {
+        ("Switched to worktree for", None)
+    };
+
+    match source {
+        Some(src) => cformat!(
+            "<green>{action} <bold>{branch}</> from <bold>{src}</> at <bold>{}</></>",
+            format_path_for_display(path)
+        ),
+        None => cformat!(
+            "<green>{action} <bold>{branch}</> at <bold>{}</></>",
+            format_path_for_display(path)
+        ),
+    }
+}
 
 /// Check if a branch's content has been integrated into the target.
 ///
@@ -169,7 +204,7 @@ pub fn handle_switch_output(
 
             if is_directive_mode || has_execute_command || is_configured {
                 // Shell integration active, --execute provided, or configured - show success
-                super::success(super::format_switch_success_message(
+                super::success(format_switch_success_message(
                     branch, path, false, None, None,
                 ))?;
             } else {
@@ -188,7 +223,7 @@ pub fn handle_switch_output(
             from_remote,
         } => {
             // Creation succeeded - show success
-            super::success(super::format_switch_success_message(
+            super::success(format_switch_success_message(
                 branch,
                 path,
                 *created_branch,
