@@ -112,6 +112,17 @@ const FINAL_DRAIN_TIMEOUT_MS: u64 = 5000;
 /// Short interval ensures tests complete quickly when data is available.
 const OUTPUT_POLL_INTERVAL_MS: u64 = 10;
 
+/// Delay after child exits before starting drain, to allow kernel buffers to flush.
+/// On Linux CI, the kernel may not immediately make all buffered PTY data available.
+/// 50ms is conservative - typical kernel buffer flush is <10ms, but CI load can cause delays.
+const POST_EXIT_SETTLE_MS: u64 = 50;
+
+/// Number of consecutive EOF reads required before considering the stream truly empty.
+/// On Linux, the PTY may return EOF before all data has arrived (kernel scheduling).
+/// With 10ms polling, 3 consecutive EOFs = 30ms of no data, which is sufficient to
+/// confirm the stream is truly empty rather than just momentarily drained.
+const CONSECUTIVE_EOF_THRESHOLD: u32 = 3;
+
 /// Strategy for capturing progressive output snapshots
 #[derive(Debug, Clone)]
 pub enum CaptureStrategy {
@@ -427,18 +438,33 @@ pub fn capture_progressive_output(
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // Check if child exited
                 if let Ok(Some(_)) = child.try_wait() {
+                    // Allow kernel buffers to settle before draining.
+                    // On Linux CI, the kernel may not immediately make all PTY data available.
+                    std::thread::sleep(Duration::from_millis(POST_EXIT_SETTLE_MS));
+
                     // Drain remaining PTY data with long timeout but fast polling.
                     // Long timeout (5s) ensures reliability on slow CI machines.
                     // Fast polling (10ms) ensures quick completion when data is available.
                     let drain_start = Instant::now();
+                    let mut consecutive_eof = 0u32;
                     loop {
                         match reader.read(&mut temp_buf) {
-                            Ok(0) => break,
+                            Ok(0) => {
+                                // On Linux, PTY may return EOF before all data is available.
+                                // Require multiple consecutive EOFs to confirm stream is empty.
+                                consecutive_eof += 1;
+                                if consecutive_eof >= CONSECUTIVE_EOF_THRESHOLD {
+                                    break;
+                                }
+                                std::thread::sleep(Duration::from_millis(OUTPUT_POLL_INTERVAL_MS));
+                            }
                             Ok(n) => {
+                                consecutive_eof = 0; // Reset on successful read
                                 total_bytes += n;
                                 parser.process(&temp_buf[..n]);
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                consecutive_eof = 0; // Reset - WouldBlock means more data may come
                                 // PTY may still have buffered data; retry with timeout
                                 if drain_start.elapsed()
                                     > Duration::from_millis(FINAL_DRAIN_TIMEOUT_MS)
