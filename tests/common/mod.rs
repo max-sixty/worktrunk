@@ -1001,15 +1001,6 @@ impl Default for ExponentialBackoff {
 }
 
 impl ExponentialBackoff {
-    /// Create with fast initial polling (1ms start), good for low-latency scenarios.
-    pub fn fast() -> Self {
-        Self {
-            initial_ms: 1,
-            max_ms: 100,
-            timeout: std::time::Duration::from_secs(5),
-        }
-    }
-
     /// Sleep for the appropriate duration based on attempt number.
     pub fn sleep(&self, attempt: u32) {
         let ms = (self.initial_ms * (1u64 << attempt.min(20))).min(self.max_ms);
