@@ -710,10 +710,12 @@ fn test_merge_squash_llm_error() {
     // This tests that:
     // 1. The full command (with args) is shown in the error header
     // 2. The error output appears in a gutter
+    // Note: We consume stdin first to avoid race condition where stdin write fails
+    // before stderr is captured (broken pipe if process exits before reading stdin)
     let worktrunk_config = r#"
 [commit-generation]
 command = "sh"
-args = ["-c", "echo 'Error: connection refused' >&2 && exit 1"]
+args = ["-c", "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 

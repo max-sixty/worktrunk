@@ -30,4 +30,4 @@ exit_code: 1
 [107m [0m  Error: connection refused
 
 ⚪ Ran command:
-[107m [0m  sh -c echo 'Error: connection refused' >&2 && exit 1
+[107m [0m  sh -c cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1
