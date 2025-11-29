@@ -204,21 +204,14 @@ fn format_remove_worktree_message(
         "worktree & branch"
     };
 
-    if changed_directory {
-        if let Some(b) = branch_display {
-            cformat!(
-                "<green>Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}</>"
-            )
-        } else {
-            cformat!(
-                "<green>Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}</>"
-            )
-        }
-    } else if let Some(b) = branch_display {
-        cformat!("<green>Removed <bold>{b}</> {action_suffix}{flag_note}</>")
-    } else {
-        cformat!("<green>Removed {action_suffix}{flag_note}</>")
-    }
+    let branch_fragment = branch_display
+        .map(|b| format!(" <bold>{b}</> {action_suffix}"))
+        .unwrap_or_else(|| format!(" {action_suffix}"));
+    let directory_fragment = changed_directory
+        .then(|| format!("; changed directory to <bold>{path_display}</>"))
+        .unwrap_or_default();
+
+    cformat!("<green>Removed{branch_fragment}{directory_fragment}{flag_note}</>")
 }
 
 /// Shell integration hint message (with HINT styling - emoji added by shell_integration_hint())
