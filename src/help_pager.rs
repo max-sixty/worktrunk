@@ -57,7 +57,7 @@ fn detect_help_pager() -> Option<String> {
 /// Only uses pager when stdout is a terminal. Falls back to direct output if:
 /// - No pager configured (prints to stderr)
 /// - stdout is not a TTY (prints to stderr)
-/// - Pager spawn fails (returns error)
+/// - Pager spawn fails (prints to stderr)
 ///
 /// Note: All fallbacks output to stderr for consistency with pager behavior
 /// (which sends output to stderr via `>&2`). This ensures `config show --internal`
@@ -92,21 +92,38 @@ pub fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     let final_cmd = format!("{} >&2", pager_cmd);
 
     // Spawn pager with TTY access (interactive, unlike detached diff renderer)
+    // Falls back to direct output if pager unavailable (e.g., less not installed)
     #[cfg(unix)]
-    let mut child = Command::new("sh")
+    let mut child = match Command::new("sh")
         .arg("-c")
         .arg(&final_cmd)
         .stdin(Stdio::piped())
         .env("LESS", &less_flags)
-        .spawn()?;
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            log::debug!("Failed to spawn pager '{}': {}", pager_cmd, e);
+            eprint!("{}", help_text);
+            return Ok(());
+        }
+    };
 
     #[cfg(windows)]
-    let mut child = Command::new("cmd")
+    let mut child = match Command::new("cmd")
         .arg("/C")
         .arg(&final_cmd)
         .stdin(Stdio::piped())
         .env("LESS", &less_flags)
-        .spawn()?;
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            log::debug!("Failed to spawn pager '{}': {}", pager_cmd, e);
+            eprint!("{}", help_text);
+            return Ok(());
+        }
+    };
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(help_text.as_bytes())?;
