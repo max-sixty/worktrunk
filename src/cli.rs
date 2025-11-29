@@ -158,7 +158,7 @@ wt config shell init fish | source
 Zsh (~/.zshrc):
 ```zsh
 eval "$(wt config shell init zsh)"
-```console
+```
 
 ## Auto Setup
 
@@ -673,7 +673,7 @@ Note: `locked` and `prunable` are top-level fields on worktree objects, not in s
 
 **Worktree position fields** (for identifying special worktrees):
 
-- `is_main`: boolean - is the main/default worktree
+- `is_main`: boolean - is the main worktree
 - `is_current`: boolean - is the current working directory (present when true)
 - `is_previous`: boolean - is the previous worktree from `wt switch` (present when true)
 
@@ -897,7 +897,7 @@ branch `foo` has a different worktree at `repo.bar/`, an error is raised.
 
 - `@` - current worktree (by path, works in detached HEAD)
 - `-` - previous worktree (from switch history)
-- `^` - main/default branch worktree
+- `^` - main worktree
 
 ### Branch deletion
 

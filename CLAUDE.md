@@ -32,6 +32,15 @@ Example of escalating instead of suppressing:
 fn parse_config() { ... }
 ```
 
+## Terminology
+
+Use consistent terminology in documentation, help text, and code comments:
+
+- **main worktree** — when referring to the primary worktree (the original git directory)
+- **default branch** — when referring to the branch (main, master, etc.)
+
+Avoid mixing: "main/default branch worktree" is confusing. Use "main worktree" for worktrees and "default branch" for branches.
+
 ## Testing
 
 ### Running Tests

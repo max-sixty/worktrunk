@@ -330,7 +330,7 @@ impl Repository {
     /// * `name` - The worktree name to resolve:
     ///   - "@" for current HEAD
     ///   - "-" for previous branch (via worktrunk.history)
-    ///   - "^" for main/default branch
+    ///   - "^" for default branch
     ///   - any other string is returned as-is
     ///
     /// # Returns
@@ -377,7 +377,7 @@ impl Repository {
     /// * `name` - The worktree name to resolve:
     ///   - "@" for current worktree (works even in detached HEAD)
     ///   - "-" for previous branch's worktree
-    ///   - "^" for main/default branch's worktree
+    ///   - "^" for main worktree
     ///   - any other string is treated as a branch name
     ///
     /// # Returns
