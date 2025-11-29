@@ -181,17 +181,6 @@ git branch -d feature</pre></td>
 
 Many Worktrunk users will just use the commands above. For more:
 
-### Shell integration
-
-Shell integration lets `wt switch`, `wt merge`, and `wt remove` change
-directories:
-
-```console
-wt config shell install  # Bash, Zsh, Fish
-```
-
-or for manual setup: `wt config shell --help`.
-
 ### LLM commit messages
 
 Worktrunk can invoke external commands to generate commit messages.
