@@ -40,7 +40,8 @@ struct StatusContext {
 
 /// Cell update messages sent as each git operation completes.
 /// These enable progressive rendering - update UI as data arrives.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub(super) enum CellUpdate {
     /// Commit timestamp and message
     CommitDetails {
@@ -127,17 +128,48 @@ pub(super) fn detect_git_operation(repo: &Repository) -> GitOperationState {
     }
 }
 
+/// Result of draining cell updates - indicates whether all updates were received
+/// or if a timeout occurred.
+#[derive(Debug)]
+enum DrainResult {
+    /// All updates received (channel closed normally)
+    Complete,
+    /// Timeout occurred - contains diagnostic info about what was received
+    TimedOut {
+        /// Number of cell updates received before timeout
+        received_count: usize,
+        /// Sample of items that had incomplete data (item_idx, branch_name, received_cells)
+        incomplete_items: Vec<(usize, String, Vec<&'static str>)>,
+    },
+}
+
 /// Drain cell updates from the channel and apply them to items.
 ///
 /// This is the shared logic between progressive and buffered collection modes.
 /// The `on_update` callback is called after each update is processed with the
 /// item index and a reference to the updated item, allowing progressive mode
 /// to update progress bars while buffered mode does nothing.
+///
+/// Uses a 30-second deadline to prevent infinite hangs if git commands stall.
+/// When timeout occurs, returns `DrainResult::TimedOut` with diagnostic info.
+///
+/// Callers decide how to handle timeout:
+/// - `collect()`: Shows user-facing diagnostic (interactive command)
+/// - `populate_items()`: Logs silently (used by statusline)
 fn drain_cell_updates(
     rx: chan::Receiver<CellUpdate>,
     items: &mut [ListItem],
     mut on_update: impl FnMut(usize, &mut ListItem, &StatusContext),
-) {
+) -> DrainResult {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    // Deadline for the entire drain operation (30 seconds should be more than enough)
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    // Track which cell types we've received per item (for timeout diagnostics)
+    let mut received_by_item: HashMap<usize, Vec<&'static str>> = HashMap::new();
+
     // Temporary storage for data needed by status_symbols computation
     let mut status_contexts: Vec<StatusContext> = (0..items.len())
         .map(|_| StatusContext {
@@ -148,9 +180,52 @@ fn drain_cell_updates(
         })
         .collect();
 
-    // Process cell updates as they arrive
-    while let Ok(update) = rx.recv() {
+    // Process cell updates as they arrive (with deadline)
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            // Deadline exceeded - build diagnostic info
+            let received_count: usize = received_by_item.values().map(|v| v.len()).sum();
+
+            // Find items that likely have incomplete data (received some but not all cells)
+            // We show items that received between 1 and 9 cells as "incomplete"
+            // (full worktree = 10 cells, full branch = 7 cells)
+            let mut incomplete_items: Vec<(usize, String, Vec<&'static str>)> = received_by_item
+                .into_iter()
+                .filter(|(_, cells)| cells.len() < 7) // Incomplete if fewer than branch minimum
+                .take(5)
+                .map(|(item_idx, cells)| {
+                    let name = if item_idx < items.len() {
+                        items[item_idx].branch.clone().unwrap_or_else(|| {
+                            items[item_idx].head[..8.min(items[item_idx].head.len())].to_string()
+                        })
+                    } else {
+                        format!("item_{item_idx}")
+                    };
+                    (item_idx, name, cells)
+                })
+                .collect();
+            incomplete_items.sort_by_key(|(idx, _, _)| *idx);
+
+            return DrainResult::TimedOut {
+                received_count,
+                incomplete_items,
+            };
+        }
+
+        let update = match rx.recv_timeout(remaining) {
+            Ok(update) => update,
+            Err(chan::RecvTimeoutError::Timeout) => continue, // Check deadline in next iteration
+            Err(chan::RecvTimeoutError::Disconnected) => break, // All senders dropped - done
+        };
+
+        // Track this update for diagnostics (strum::IntoStaticStr provides the conversion)
         let item_idx = update.item_idx();
+        let cell_type: &'static str = (&update).into();
+        received_by_item
+            .entry(item_idx)
+            .or_default()
+            .push(cell_type);
 
         match update {
             CellUpdate::CommitDetails { item_idx, commit } => {
@@ -223,6 +298,8 @@ fn drain_cell_updates(
         // Invoke rendering callback (progressive mode re-renders rows, buffered mode does nothing)
         on_update(item_idx, &mut items[item_idx], &status_contexts[item_idx]);
     }
+
+    DrainResult::Complete
 }
 
 /// Get branches that don't have worktrees.
@@ -584,7 +661,7 @@ pub fn collect(
     let mut completed_cells = 0;
 
     // Drain cell updates with conditional progressive rendering
-    drain_cell_updates(rx, &mut all_items, |item_idx, item, ctx| {
+    let drain_result = drain_cell_updates(rx, &mut all_items, |item_idx, item, ctx| {
         // Compute/recompute status symbols as data arrives (both modes)
         // This is idempotent and updates status as new data (like upstream) arrives
         let item_default_branch = if item.is_main() {
@@ -628,6 +705,29 @@ pub fn collect(
             }
         }
     });
+
+    // Handle timeout if it occurred
+    if let DrainResult::TimedOut {
+        received_count,
+        incomplete_items,
+    } = drain_result
+    {
+        // Build diagnostic message showing what we received (not what's missing)
+        let mut diag = format!("wt list timed out after 30s ({received_count} cells received)");
+
+        if !incomplete_items.is_empty() {
+            diag.push_str("\nIncomplete items:");
+            for (_, name, cells) in &incomplete_items {
+                diag.push_str(&format!("\n  - {name}: received {}", cells.join(", ")));
+            }
+        }
+
+        diag.push_str(
+            "\n\nThis likely indicates a git command hung. Run with RUST_LOG=debug for details.",
+        );
+
+        crate::output::warning(diag)?;
+    }
 
     // Finalize progressive table or render buffered output
     if let Some(mut table) = progressive_table {
@@ -839,7 +939,7 @@ pub fn populate_items(
     });
 
     // Drain cell updates (blocking until all complete)
-    drain_cell_updates(rx, items, |_item_idx, item, ctx| {
+    let drain_result = drain_cell_updates(rx, items, |_item_idx, item, ctx| {
         // Compute status symbols as data arrives (same logic as in collect())
         let item_default_branch = if item.is_main() {
             None
@@ -854,6 +954,11 @@ pub fn populate_items(
             ctx.has_conflicts,
         );
     });
+
+    // Handle timeout (silent for statusline - just log it)
+    if let DrainResult::TimedOut { received_count, .. } = drain_result {
+        log::warn!("populate_items timed out after 30s ({received_count} cells received)");
+    }
 
     // Populate display fields (including status_line for statusline command)
     for item in items.iter_mut() {

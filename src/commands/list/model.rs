@@ -592,7 +592,7 @@ pub enum MainDivergence {
     /// Up to date with main branch
     #[default]
     None,
-    /// This is the main/default branch itself
+    /// This is the default branch itself
     IsMain,
     /// Ahead of main (has commits main doesn't have)
     Ahead,

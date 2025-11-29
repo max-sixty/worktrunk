@@ -169,7 +169,7 @@ fn test_statusline_claude_code_full_context() {
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings(&repo).bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[39m[2m^[22m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m  | Opus");
     });
 }
 

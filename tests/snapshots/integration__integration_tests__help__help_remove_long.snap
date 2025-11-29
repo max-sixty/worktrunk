@@ -82,7 +82,7 @@ branch [2mfoo[0m has a different worktree at [2mrepo.bar/[0m, an error is ra
 
 - [2m@[0m - current worktree (by path, works in detached HEAD)
 - [2m-[0m - previous worktree (from switch history)
-- [2m^[0m - main/default branch worktree
+- [2m^[0m - main worktree
 
 ### Branch deletion
 

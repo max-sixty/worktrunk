@@ -124,7 +124,7 @@ Note: [2mlocked[0m and [2mprunable[0m are top-level fields on worktree objec
 
 [1mWorktree position fields[0m (for identifying special worktrees):
 
-- [2mis_main[0m: boolean - is the main/default worktree
+- [2mis_main[0m: boolean - is the main worktree
 - [2mis_current[0m: boolean - is the current working directory (present when true)
 - [2mis_previous[0m: boolean - is the previous worktree from [2mwt switch[0m (present when true)
 

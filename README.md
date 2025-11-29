@@ -21,24 +21,24 @@ goal is to make spinning up a new AI "developer" for a task feel as routine as
 ## December 2025 Project Status
 
 I've been using Worktrunk as my daily driver, and am releasing it as Open Source
-this week. It's built with love (no slop!). If some social proof is helpful: I
-also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a
+this week. It's built with love (there's no slop!). If social proof is helpful:
+I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a
 maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars),
 [Insta](https://github.com/mitsuhiko/insta), &
 [Numbagg](https://github.com/numbagg/numbagg).
 
-Currently, Worktrunk:
+I'd recommend:
 
-- simplifies standard worktree workflows — an easier way to create / navigate /
-  list / clean up git worktrees.
-- can be used for more advanced workflows, such as [LLM commit
+- **starting with Worktrunk as a simpler & better `git worktree`**: create / navigate /
+  list / clean up git worktrees with ease
+- **later using the more advanced features if you find they resonate**: there's
+  lots for the more ambitious, such as [LLM commit
   messages](#llm-commit-messages), or [local merging of worktrees gated on
-  CI-like checks](#local-merging-with-wt-merge). It also comes with optional QoL
-  features, such as listing the CI status & the Claude Code status for all
-  branches, or a great [Claude Code statusline](#statusline-integration).
-
-I'd recommend starting with it as a simple & better `git worktree`, and then
-using the more advanced features if you find they resonate.
+  CI-like checks](#local-merging-with-wt-merge), or [fzf-like selector +
+  preview](#interactive-worktree-picker). And QoL features, such as listing the
+  CI status & the Claude Code status for all branches, or a great [Claude Code
+  statusline](#statusline-integration). But they're not required to get value
+  from the tool.
 
 ## Demo
 
@@ -110,22 +110,20 @@ $ wt remove
 
 ## Why git worktrees?
 
-Parallel agents need isolated working directories that share one Git history.
+We have a few options for working with multiple agents:
 
-We can get that a few ways:
-
+- one working tree with many branches — agents step on each other, can't use git
+  for staging & committing
 - multiple clones — slow to set up, drift out of sync
-- one working tree with many branches — constant stashing, rebasing, and conflict risk
 - git worktrees — multiple directories backed by a single `.git` directory
 
-So we use git worktrees: multiple working directories backed by a single repository.
+So we use git worktrees! But then...
 
 ## Why Worktrunk?
 
-Git's built-in `worktree` commands offer primitives, but require the user to
-remember worktrees' locations, and compose git & `cd` commands together.
-Worktrunk bundles creation, navigation, status, and cleanup into simple
-commands. A few examples:
+Git's built-in `worktree` commands require remembering worktrees' locations, and
+composing git & `cd` commands together. In contrast, Worktrunk bundles creation,
+navigation, status, and cleanup into simple commands. A few examples:
 
 <table>
 <tr>
@@ -182,7 +180,7 @@ Many Worktrunk users will just use the commands above. For more:
 ### LLM commit messages
 
 Worktrunk can invoke external commands to generate commit messages.
-[llm](https://llm.datasette.io/) is recommended.
+[llm](https://llm.datasette.io/) from [**@simonw**](https://github.com/simonw) is recommended.
 
 Add to user config (`~/.config/worktrunk/config.toml`):
 
@@ -204,7 +202,7 @@ Automate setup and validation at worktree lifecycle events:
 | --------------- | ----------------------------------- | ---------------------------- |
 | **post-create** | After worktree created              | `cp -r .cache`, `ln -s`      |
 | **post-start**  | After worktree created (background) | `npm install`, `cargo build` |
-| **pre-commit**  | Before squash commit created        | `pre-commit run`             |
+| **pre-commit**  | Before creating any commit          | `pre-commit run`             |
 | **pre-merge**   | After squash, before push           | `cargo test`, `pytest`       |
 | **post-merge**  | After successful merge              | `cargo install --path .`     |
 
@@ -222,8 +220,8 @@ or `--no-verify` to skip hooks entirely. Configure in `.config/wt.toml`:
 
 # Tests and lints before merging (blocks on failure)
 [pre-merge]
-"test" = "uv run pytest"
 "lint" = "uv run ruff check"
+"test" = "uv run pytest"
 ```
 
 Example output:
@@ -344,8 +342,8 @@ $ wt list
 
 <!-- END AUTO-GENERATED -->
 
-- `🤖` — Claude is working (processing a prompt)
-- `💬` — Claude is idle or waiting for input
+- `🤖` — Claude is working
+- `💬` — Claude is waiting for input
 
 **Install the plugin:**
 
@@ -369,7 +367,7 @@ git config worktrunk.status.feature "💬"    # Direct git config
 
 ### Interactive Worktree Picker
 
-`wt select` opens a fuzzy-search worktree picker with diff preview. Unix only.
+`wt select` opens a fzf-like fuzzy-search worktree picker with diff preview. Unix only.
 
 Preview tabs (toggle with `1`/`2`/`3`):
 
@@ -380,7 +378,11 @@ Preview tabs (toggle with `1`/`2`/`3`):
 ### Statusline Integration
 
 `wt list statusline` outputs a single-line status for shell prompts, starship,
-or editor integrations.
+or editor integrations[^1].
+
+[^1]:
+    Currently this grabs CI status, so is too slow to use in synchronous
+    contexts. If a faster version would be helpful, please add an Issue.
 
 **Claude Code** (`--claude-code`): Reads workspace context from stdin, outputs
 directory, branch status, and model.
@@ -792,7 +794,7 @@ branch `foo` has a different worktree at `repo.bar/`, an error is raised.
 
 - `@` - current worktree (by path, works in detached HEAD)
 - `-` - previous worktree (from switch history)
-- `^` - main/default branch worktree
+- `^` - main worktree
 
 ### Branch deletion
 
@@ -971,7 +973,7 @@ Note: `locked` and `prunable` are top-level fields on worktree objects, not in s
 
 **Worktree position fields** (for identifying special worktrees):
 
-- `is_main`: boolean - is the main/default worktree
+- `is_main`: boolean - is the main worktree
 - `is_current`: boolean - is the current working directory (present when true)
 - `is_previous`: boolean - is the previous worktree from `wt switch` (present when true)
 

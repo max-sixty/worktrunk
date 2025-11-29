@@ -60,6 +60,15 @@ pub fn visual_width(s: &str) -> usize {
     s.ansi_strip().width()
 }
 
+/// Fix dim rendering for terminals that don't handle \e[2m after \e[39m.
+///
+/// Claude Code's terminal doesn't render dim (\e[2m) correctly when it follows
+/// a foreground color reset (\e[39m). This function replaces that sequence with
+/// a full reset (\e[0m) before dim, which works correctly.
+pub fn fix_dim_after_color_reset(s: &str) -> String {
+    s.replace("\x1b[39m\x1b[2m", "\x1b[0m\x1b[2m")
+}
+
 // Re-export for tests
 #[cfg(test)]
 use format::wrap_styled_text;
@@ -770,6 +779,36 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
             "Output should NOT contain [1m] (bold) - we use dim instead.\n\
              Output:\n{:?}",
             result
+        );
+    }
+
+    #[test]
+    fn test_fix_dim_after_color_reset() {
+        // Basic case: foreground reset followed by dim
+        assert_eq!(
+            fix_dim_after_color_reset("\x1b[39m\x1b[2m"),
+            "\x1b[0m\x1b[2m"
+        );
+
+        // With surrounding content (cyan ? then dim ^)
+        assert_eq!(
+            fix_dim_after_color_reset("\x1b[36m?\x1b[39m\x1b[2m^\x1b[22m"),
+            "\x1b[36m?\x1b[0m\x1b[2m^\x1b[22m"
+        );
+
+        // Multiple occurrences
+        assert_eq!(
+            fix_dim_after_color_reset("a\x1b[39m\x1b[2mb\x1b[39m\x1b[2mc"),
+            "a\x1b[0m\x1b[2mb\x1b[0m\x1b[2mc"
+        );
+
+        // No matches - idempotent
+        assert_eq!(fix_dim_after_color_reset("no escapes"), "no escapes");
+
+        // Similar but different sequence (bold, not dim) - should not match
+        assert_eq!(
+            fix_dim_after_color_reset("\x1b[39m\x1b[1m"),
+            "\x1b[39m\x1b[1m"
         );
     }
 }

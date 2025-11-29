@@ -493,20 +493,24 @@ impl WorktreeSkimItem {
         )
     }
 
-    /// Render Tab 3: Branch diff preview (line diffs in commits ahead of main)
+    /// Render Tab 3: Branch diff preview (line diffs in commits ahead of default branch)
     /// Matches `wt list` "main…± (--full)" column
     fn render_branch_diff_preview(&self, width: usize) -> String {
         use worktrunk::styling::INFO_EMOJI;
 
         let branch = self.item.branch_name();
-        if self.item.counts().ahead == 0 {
+        let repo = Repository::current();
+        let Ok(default_branch) = repo.default_branch() else {
             return format!("{INFO_EMOJI} {branch} has no commits ahead of main\n");
+        };
+        if self.item.counts().ahead == 0 {
+            return format!("{INFO_EMOJI} {branch} has no commits ahead of {default_branch}\n");
         }
 
-        let merge_base = format!("main...{}", self.item.head());
+        let merge_base = format!("{}...{}", default_branch, self.item.head());
         self.render_diff_preview(
             &["diff", &merge_base],
-            &format!("{INFO_EMOJI} {branch} has no changes vs main"),
+            &format!("{INFO_EMOJI} {branch} has no changes vs {default_branch}"),
             width,
         )
     }
@@ -519,28 +523,32 @@ impl WorktreeSkimItem {
         let mut output = String::new();
         let repo = Repository::current();
         let head = self.item.head();
+        let branch = self.item.branch_name();
+        let Ok(default_branch) = repo.default_branch() else {
+            output.push_str(&format!("{INFO_EMOJI} {branch} has no commits\n"));
+            return output;
+        };
 
-        // Get merge-base with main
+        // Get merge-base with default branch
         //
         // Note on error handling: This code runs in an interactive preview pane that updates
         // on every keystroke. We intentionally use silent fallbacks rather than propagating
         // errors to avoid disruptive error messages during navigation. The preview is
         // supplementary - users can still select worktrees even if preview fails.
         //
-        // Alternative: Check specific conditions (main branch exists, valid HEAD, etc.) before
+        // Alternative: Check specific conditions (default branch exists, valid HEAD, etc.) before
         // running git commands. This would provide better diagnostics but adds latency to
         // every preview render. Trade-off: simplicity + speed vs. detailed error messages.
-        let branch = self.item.branch_name();
-        let Ok(merge_base_output) = repo.run_command(&["merge-base", "main", head]) else {
+        let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
             output.push_str(&format!("{INFO_EMOJI} {branch} has no commits\n"));
             return output;
         };
 
         let merge_base = merge_base_output.trim();
-        let is_main = branch == "main" || branch == "master";
+        let is_default_branch = branch == default_branch;
 
-        if is_main {
-            // Viewing main itself - show history without dimming
+        if is_default_branch {
+            // Viewing default branch itself - show history without dimming
             if let Ok(log_output) = repo.run_command(&[
                 "log",
                 "--graph",
@@ -554,7 +562,7 @@ impl WorktreeSkimItem {
                 output.push_str(&log_output);
             }
         } else {
-            // Not on main - show bright commits not on main, dimmed commits on main
+            // Not on default branch - show bright commits unique to this branch, dimmed commits on default
 
             // Part 1: Bright commits (merge-base..HEAD)
             let range = format!("{}..{}", merge_base, head);
@@ -569,7 +577,7 @@ impl WorktreeSkimItem {
                 output.push_str(&log_output);
             }
 
-            // Part 2: Dimmed commits on main (history before merge-base)
+            // Part 2: Dimmed commits on default branch (history before merge-base)
             if let Ok(log_output) = repo.run_command(&[
                 "log",
                 "--graph",

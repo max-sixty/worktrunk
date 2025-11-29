@@ -200,9 +200,11 @@ pub fn run(claude_code: bool) -> Result<()> {
     if !output.is_empty() {
         if claude_code {
             use std::io::Write;
+            use worktrunk::styling::fix_dim_after_color_reset;
             let reset = anstyle::Reset;
             // Bypass anstream - write directly to stdout to preserve ANSI codes
             // regardless of TTY detection (Claude Code expects raw ANSI)
+            let output = fix_dim_after_color_reset(&output);
             writeln!(std::io::stdout(), "{reset} {output}")?;
             std::io::stdout().flush()?;
         } else {
