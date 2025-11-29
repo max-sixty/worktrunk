@@ -79,8 +79,6 @@ $ wt switch feature-api
 
 ### 4. List worktrees
 
-After doing some work:
-
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_simple_list.snap — edit source to update -->
 
 ```console
