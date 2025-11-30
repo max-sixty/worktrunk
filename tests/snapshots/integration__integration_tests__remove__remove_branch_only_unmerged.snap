@@ -23,6 +23,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ [90mNo worktree found for branch feature-unmerged[39m
-🟡 [33m[33mCould not delete branch [1mfeature-unmerged[39m[22m[39m
-[107m [0m  error: the branch 'feature-unmerged' is not fully merged
+🟡 [33m[33mNo worktree found for branch [1mfeature-unmerged[39m[22m[39m
+⚪ [90mBranch [1mfeature-unmerged[22m retained; not integrated into HEAD[39m

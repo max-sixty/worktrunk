@@ -114,11 +114,13 @@ fn delete_branch_if_safe(
 
 /// Handle the result of a branch deletion attempt.
 ///
-/// Shows appropriate warnings for non-deleted branches.
+/// Shows appropriate messages for non-deleted branches:
+/// - `Ok(None)`: We checked and chose not to delete (not integrated) - show info
+/// - `Err(e)`: Git command failed - show warning with actual error
 ///
 /// Returns:
 /// - `Ok(Some(reason))` if branch was deleted (reason is None if force-deleted)
-/// - `Ok(None)` if branch was not deleted (warning shown)
+/// - `Ok(None)` if branch was not deleted
 fn handle_branch_deletion_result(
     result: anyhow::Result<Option<Option<IntegrationReason>>>,
     branch_name: &str,
@@ -126,19 +128,14 @@ fn handle_branch_deletion_result(
     match result {
         Ok(Some(reason)) => Ok(Some(reason)), // Deleted (with or without integration reason)
         Ok(None) => {
-            // Branch not integrated - show warning
-            super::warning(cformat!(
-                "<yellow>Could not delete branch <bold>{branch_name}</></>"
-            ))?;
-            super::gutter(format_with_gutter(
-                &format!("error: the branch '{}' is not fully merged", branch_name),
-                "",
-                None,
+            // Branch not integrated - we chose not to delete (not a failure)
+            super::info(cformat!(
+                "<bright-black>Branch <bold>{branch_name}</> retained; not integrated into HEAD</>"
             ))?;
             Ok(None)
         }
         Err(e) => {
-            // Git command failed - show warning with error details
+            // Git command failed - show warning with actual error details
             super::warning(cformat!(
                 "<yellow>Could not delete branch <bold>{branch_name}</></>"
             ))?;
@@ -387,9 +384,9 @@ fn handle_branch_only_output(
     no_delete_branch: bool,
     force_delete: bool,
 ) -> anyhow::Result<()> {
-    // Show info message that no worktree was found
-    super::info(cformat!(
-        "<bright-black>No worktree found for branch {branch_name}</>"
+    // Warn that no worktree was found (user asked to remove it)
+    super::warning(cformat!(
+        "<yellow>No worktree found for branch <bold>{branch_name}</></>"
     ))?;
 
     // Attempt branch deletion (unless --no-delete-branch was specified)
@@ -404,11 +401,7 @@ fn handle_branch_only_output(
     let integration_reason = handle_branch_deletion_result(result, branch_name)?;
 
     if integration_reason.is_some() {
-        let flag_note = if force_delete {
-            " (--force-delete)"
-        } else {
-            ""
-        };
+        let flag_note = get_flag_note(no_delete_branch, force_delete, integration_reason, None);
         super::success(cformat!(
             "<green>Removed branch <bold>{branch_name}</>{flag_note}</>"
         ))?;
