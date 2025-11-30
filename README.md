@@ -48,9 +48,18 @@ I'd recommend:
 
 ### 1. Install
 
+**Homebrew (macOS):**
+
+```console
+$ brew install max-sixty/worktrunk/wt
+$ wt config shell install  # allows commands to change directories
+```
+
+**Cargo:**
+
 ```console
 $ cargo install worktrunk
-$ wt config shell install  # allows commands to change directories
+$ wt config shell install
 ```
 
 ### 2. Create a worktree
@@ -1299,5 +1308,15 @@ cargo release major --execute   # 0.1.0 -> 1.0.0
 This updates Cargo.toml and Cargo.lock, creates a commit and tag, then pushes to GitHub. The tag push triggers GitHub Actions to build binaries, create the release, and publish to crates.io.
 
 Run without `--execute` to preview changes first.
+
+### Updating Homebrew Formula
+
+After `cargo release` completes and the GitHub release is created, update the [homebrew-worktrunk](https://github.com/max-sixty/homebrew-worktrunk) tap:
+
+```console
+./dev/update-homebrew.sh
+```
+
+This script fetches the new tarball, computes the SHA256, updates the formula, and pushes to homebrew-worktrunk.
 
 </details>
