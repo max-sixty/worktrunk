@@ -47,7 +47,7 @@ pub const WEEK: i64 = 7 * DAY;
 /// The command has the following guarantees:
 /// - All host `GIT_*` and `WORKTRUNK_*` variables are cleared
 /// - Color output is forced (`CLICOLOR_FORCE=1`) so ANSI styling appears in snapshots
-/// - Terminal width defaults to 150 columns when `COLUMNS` is not already set
+/// - Terminal width set to 150 columns (`COLUMNS=150`)
 pub fn wt_command() -> Command {
     let mut cmd = Command::new(get_cargo_bin("wt"));
     configure_cli_command(&mut cmd);
@@ -101,9 +101,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
     // Jan 2, 2025 - 1 day after default commit date (2025-01-01)
     // for deterministic "1d" in Age column
     cmd.env("SOURCE_DATE_EPOCH", "1735776000");
-    if std::env::var("COLUMNS").is_err() {
-        cmd.env("COLUMNS", "150");
-    }
+    cmd.env("COLUMNS", "150");
 }
 
 /// Set `HOME` and `XDG_CONFIG_HOME` for commands that rely on isolated temp homes.
