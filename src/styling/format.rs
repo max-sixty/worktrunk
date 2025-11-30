@@ -174,6 +174,15 @@ pub(super) fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
 /// ```
 #[cfg(feature = "syntax-highlighting")]
 pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
+    format_bash_with_gutter_with_width(content, left_margin, get_terminal_width())
+}
+
+#[cfg(feature = "syntax-highlighting")]
+fn format_bash_with_gutter_with_width(
+    content: &str,
+    left_margin: &str,
+    term_width: usize,
+) -> String {
     use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
     let gutter = super::GUTTER;
@@ -182,7 +191,6 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     let mut output = String::new();
 
     // Calculate available width for content
-    let term_width = get_terminal_width();
     let left_margin_width = left_margin.width();
     let available_width = term_width.saturating_sub(3 + left_margin_width);
 

@@ -33,11 +33,23 @@ pub use line::{StyledLine, StyledString, truncate_visible};
 /// Default terminal width fallback if detection fails
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
+#[cfg(test)]
+static TEST_TERMINAL_WIDTH: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// Get terminal width, defaulting to 80 if detection fails
 ///
 /// Checks COLUMNS environment variable first (for testing and scripts),
 /// then falls back to actual terminal size detection.
 pub fn get_terminal_width() -> usize {
+    #[cfg(test)]
+    {
+        let test_width = TEST_TERMINAL_WIDTH.load(std::sync::atomic::Ordering::Relaxed);
+        if test_width != 0 {
+            return test_width;
+        }
+    }
+
     // Check COLUMNS environment variable first (for testing and scripts)
     if let Ok(cols) = std::env::var("COLUMNS")
         && let Ok(width) = cols.parse::<usize>()
@@ -49,6 +61,11 @@ pub fn get_terminal_width() -> usize {
     terminal_size::terminal_size()
         .map(|(terminal_size::Width(w), _)| w as usize)
         .unwrap_or(DEFAULT_TERMINAL_WIDTH)
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_terminal_width(width: usize) {
+    TEST_TERMINAL_WIDTH.store(width, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Calculate visual width of a string, ignoring ANSI escape codes
@@ -73,7 +90,19 @@ use format::wrap_text_at_width;
 mod tests {
     use super::*;
     use anstyle::Style;
+    use std::sync::Once;
     use unicode_width::UnicodeWidthStr;
+
+    /// Set a deterministic terminal width for styling tests.
+    ///
+    /// Using a shared override keeps wrapping consistent across environments
+    /// without plumbing width overrides through every call site.
+    fn set_test_columns() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            set_test_terminal_width(80);
+        });
+    }
 
     #[test]
     fn test_toml_formatting() {
@@ -266,11 +295,12 @@ command = "npm install"
 
     #[test]
     fn test_format_with_gutter_wrapping() {
+        set_test_columns();
+
         // Create a very long line that would overflow a narrow terminal
         let long_text = "This is a very long commit message that would normally overflow the terminal width and break the gutter formatting, but now it should wrap nicely at word boundaries.";
 
-        // Use fixed width for consistent testing (80 columns)
-        let result = format_with_gutter(long_text, "", Some(80));
+        let result = format_with_gutter(long_text, "", None);
 
         // Should contain multiple lines (wrapped)
         let line_count = result.lines().count();
@@ -305,11 +335,12 @@ command = "npm install"
 
     #[test]
     fn test_format_with_gutter_long_paragraph() {
+        set_test_columns();
+
         // Realistic commit message scenario - a long unbroken paragraph
         let commit_msg = "This commit refactors the authentication system to use a more secure token-based approach instead of the previous session-based system which had several security vulnerabilities that were identified during the security audit last month. The new implementation follows industry best practices and includes proper token rotation and expiration handling.";
 
-        // Use fixed width for consistent testing (80 columns)
-        let result = format_with_gutter(commit_msg, "", Some(80));
+        let result = format_with_gutter(commit_msg, "", None);
 
         insta::assert_snapshot!(result, @r"
         [107m [0m  This commit refactors the authentication system to use a more secure
@@ -534,6 +565,8 @@ command = "npm install"
 
     #[test]
     fn test_format_bash_with_gutter_template_command() {
+        set_test_columns();
+
         // Test that format_bash_with_gutter produces consistent dim styling
         // for a realistic command with Jinja-style template variables.
         // This is a regression test for wrap-point discontinuity.
@@ -549,6 +582,8 @@ command = "npm install"
 
     #[test]
     fn test_format_bash_multiline_command_consistent_styling() {
+        set_test_columns();
+
         // This test simulates the REAL user scenario: a multi-line command
         // where each line is processed separately by tree-sitter.
         //
