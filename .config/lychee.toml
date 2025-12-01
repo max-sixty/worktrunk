@@ -18,6 +18,7 @@ exclude = [
     # Social media (blocks GitHub Actions)
     "~twitter\\.com",
     "~x\\.com",
+    "~reddit\\.com",
 
     # Sites with reliability issues in CI
     "~stackoverflow\\.com",
