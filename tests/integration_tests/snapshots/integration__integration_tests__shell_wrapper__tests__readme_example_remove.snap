@@ -2,4 +2,4 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36m[36mRemoving [1mfeature-api[22m worktree & branch in background (no marginal contribution to main)[39m[39m
+🔄 [36m[36mRemoving [1mfeature-api[22m worktree & branch in background (already in main)[39m[39m

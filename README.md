@@ -112,7 +112,7 @@ Say we merged via CI, our changes are on main, and we're finished with the workt
 
 ```console
 $ wt remove
-🔄 Removing feature-api worktree & branch in background (no marginal contribution to main)
+🔄 Removing feature-api worktree & branch in background (already in main)
 ```
 
 <!-- END AUTO-GENERATED -->
@@ -320,7 +320,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
     jwt.rs       |  8 ++++++++
     3 files changed, 33 insertions(+)
 ✅ Merged to main (1 commit, 3 files, +33)
-🔄 Removing feature-auth worktree & branch in background (no marginal contribution to main)
+🔄 Removing feature-auth worktree & branch in background (already in main)
 🔄 Running post-merge install:
    cargo install --path .
   Installing worktrunk v0.1.0

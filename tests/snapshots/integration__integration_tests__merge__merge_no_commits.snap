@@ -24,4 +24,4 @@ exit_code: 0
 
 ----- stderr -----
 ⚪ Already up to date with [1mmain[22m (no new commits, no rebase needed)
-🔄 [36m[36mRemoving [1mno-commits[22m worktree & branch in background (no marginal contribution to main)[39m[39m
+🔄 [36m[36mRemoving [1mno-commits[22m worktree & branch in background (already in main)[39m[39m

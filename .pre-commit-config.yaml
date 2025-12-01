@@ -60,6 +60,7 @@ repos:
         exclude: '^(tests/|.*_test\.rs$|src/styling/(line|mod|format)\.rs$|src/output/directive\.rs$|src/cli\.rs$)'
 
 ci:
-  # Currently network access isn't supported in the CI product.
-  skip: [fmt, lychee]
+  # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
+  # Network access also isn't supported, so skip lychee.
+  skip: [fmt, clippy, lychee]
   autoupdate_commit_msg: "chore: pre-commit autoupdate"

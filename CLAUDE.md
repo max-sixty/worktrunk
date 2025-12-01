@@ -168,8 +168,8 @@ Use consistent punctuation and structure for related messages:
 ```rust
 // ✅ GOOD - parallel structure with integration reason explaining branch deletion
 // Both wt merge and wt remove show integration reason when branch is deleted
-"Removing feature worktree & branch in background (ancestor of main)"       // Branch is integrated (ancestor)
-"Removing feature worktree & branch in background (contents match main)"    // Branch is integrated (squash/rebase)
+"Removing feature worktree & branch in background (already in main)"       // Branch is integrated (ancestor)
+"Removing feature worktree & branch in background (files match main)"      // Branch is integrated (squash/rebase)
 "Removing feature worktree in background; retaining unmerged branch"        // Unmerged (system keeps)
 "Removing feature worktree in background; retaining branch (--no-delete-branch)"  // User flag (user keeps)
 ```

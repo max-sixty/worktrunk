@@ -130,15 +130,15 @@ fn handle_branch_deletion_result(
         Ok(None) => {
             // Branch not integrated - we chose not to delete (not a failure)
             super::info(cformat!(
-                "Branch <bold>{branch_name}</> retained; not integrated into HEAD"
+                "Branch <bold>{branch_name}</> retained; has unmerged changes"
             ))?;
             Ok(None)
         }
         Err(e) => {
-            // Git command failed - show warning with actual error details
-            super::warning(cformat!("Could not delete branch <bold>{branch_name}</>"))?;
+            // Git command failed - this is an error (we decided to delete but couldn't)
+            super::error(cformat!("Failed to delete branch <bold>{branch_name}</>"))?;
             super::gutter(format_with_gutter(&e.to_string(), "", None))?;
-            Ok(None)
+            Err(e)
         }
     }
 }
@@ -161,9 +161,9 @@ fn get_flag_note(
         // Show integration reason when branch is deleted (both wt merge and wt remove)
         match deletion_result {
             Some(Some(IntegrationReason::NoMarginalContribution)) => {
-                format!(" (no marginal contribution to {target})")
+                format!(" (already in {target})")
             }
-            Some(Some(IntegrationReason::ContentsMatch)) => format!(" (contents match {target})"),
+            Some(Some(IntegrationReason::ContentsMatch)) => format!(" (files match {target})"),
             Some(None) | None => String::new(),
         }
     } else {

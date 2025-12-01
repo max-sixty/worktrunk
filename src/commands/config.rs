@@ -347,6 +347,11 @@ fn check_zsh_compinit_missing() -> bool {
         return false; // Assume compinit is configured
     }
 
+    // Force compinit to be missing (for tests that expect the warning)
+    if std::env::var("WT_ASSUME_NO_COMPINIT").is_ok() {
+        return true; // Force warning to appear
+    }
+
     // Probe zsh to check if compdef function exists (indicates compinit has run)
     // Use --no-globalrcs to skip system files (like /etc/zshrc on macOS which enables compinit)
     // This ensures we're checking the USER's configuration, not system defaults

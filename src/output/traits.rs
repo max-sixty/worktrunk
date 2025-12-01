@@ -11,6 +11,7 @@
 //! - progress → cyan
 //! - hint → dimmed
 //! - warning → yellow
+//! - error → red
 //! - info → no color (neutral status)
 //!
 //! Callers provide content with optional inner styling (like `<bold>`) using `cformat!`.
@@ -19,7 +20,9 @@
 use color_print::cformat;
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI};
+use worktrunk::styling::{
+    ERROR_EMOJI, HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI,
+};
 
 /// Core output handler trait
 ///
@@ -52,6 +55,11 @@ pub trait OutputHandler {
     /// Emit a warning message (automatically wrapped in yellow)
     fn warning(&mut self, message: String) -> io::Result<()> {
         self.write_message_line(&cformat!("{WARNING_EMOJI} <yellow>{message}</>"))
+    }
+
+    /// Emit an error message (automatically wrapped in red)
+    fn error(&mut self, message: String) -> io::Result<()> {
+        self.write_message_line(&cformat!("{ERROR_EMOJI} <red>{message}</>"))
     }
 
     /// Print a message (written as-is)

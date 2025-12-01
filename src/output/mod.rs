@@ -63,8 +63,8 @@ mod traits;
 
 // Re-export the public API
 pub use global::{
-    OutputMode, blank, change_directory, data, execute, flush, flush_for_stderr_prompt, gutter,
-    hint, info, initialize, print, progress, shell_integration_hint, success, table,
+    OutputMode, blank, change_directory, data, error, execute, flush, flush_for_stderr_prompt,
+    gutter, hint, info, initialize, print, progress, shell_integration_hint, success, table,
     terminate_output, warning,
 };
 // Re-export output handlers

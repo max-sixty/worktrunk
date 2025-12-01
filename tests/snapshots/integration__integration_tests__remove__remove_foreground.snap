@@ -25,4 +25,4 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mRemoving worktree for [1mfeature-fg[22m...[39m
-✅ [32mRemoved [1mfeature-fg[22m worktree & branch (no marginal contribution to main)[39m
+✅ [32mRemoved [1mfeature-fg[22m worktree & branch (already in main)[39m

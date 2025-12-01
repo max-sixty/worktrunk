@@ -55,7 +55,7 @@ When you're done with a worktree (e.g., after merging via CI):
 
 ```bash
 $ wt remove
-🔄 Removing feature-api worktree & branch in background (no marginal contribution to main)
+🔄 Removing feature-api worktree & branch in background (already in main)
 ```
 
 Worktrunk checks if your changes are already on main before deleting the branch.

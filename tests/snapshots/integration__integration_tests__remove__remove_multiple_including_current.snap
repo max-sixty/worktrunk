@@ -25,6 +25,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36m[36mRemoving [1mfeature-b[22m worktree & branch in background (no marginal contribution to main)[39m[39m
-🔄 [36m[36mRemoving [1mfeature-c[22m worktree & branch in background (no marginal contribution to main)[39m[39m
-🔄 [36m[36mRemoving [1mfeature-a[22m worktree & branch in background (no marginal contribution to main)[39m[39m
+🔄 [36m[36mRemoving [1mfeature-b[22m worktree & branch in background (already in main)[39m[39m
+🔄 [36m[36mRemoving [1mfeature-c[22m worktree & branch in background (already in main)[39m[39m
+🔄 [36m[36mRemoving [1mfeature-a[22m worktree & branch in background (already in main)[39m[39m
