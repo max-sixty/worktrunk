@@ -5,9 +5,18 @@ weight = 1
 
 ## Install
 
+**Homebrew (macOS):**
+
+```bash
+$ brew install max-sixty/worktrunk/wt
+$ wt config shell install  # allows commands to change directories
+```
+
+**Cargo:**
+
 ```bash
 $ cargo install worktrunk
-$ wt config shell install  # allows commands to change directories
+$ wt config shell install
 ```
 
 ## Create a worktree
@@ -67,6 +76,6 @@ $ wt remove @                              # Remove current worktree
 
 ## Next steps
 
-- Learn [why worktrees](/concepts/) and how Worktrunk improves on plain git
+- Understand [why worktrees matter](/concepts/) and how Worktrunk improves on plain git
 - Set up [project hooks](/configuration/) for automated setup
 - Use [LLM commit messages](/configuration/#llm-commit-messages) for auto-generated commits

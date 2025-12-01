@@ -484,6 +484,33 @@ fn test_config_example_templates_are_in_sync() {
     }
 }
 
+/// Update help markers in a file (for both README.md and docs pages)
+fn sync_help_markers(file_path: &Path, project_root: &Path) -> Result<usize, Vec<String>> {
+    let content = fs::read_to_string(file_path)
+        .map_err(|e| vec![format!("Failed to read {}: {}", file_path.display(), e)])?;
+
+    let project_root_clone = project_root.to_path_buf();
+    match update_readme_section(
+        &content,
+        &HELP_MARKER_PATTERN,
+        |cmd, _current| get_help_output(cmd, &project_root_clone),
+        ("", ""),
+    ) {
+        Ok((new_content, updated_count, _total_count)) => {
+            if updated_count > 0 {
+                fs::write(file_path, &new_content).unwrap();
+                println!(
+                    "✅ Updated {} help sections in {}",
+                    updated_count,
+                    file_path.display()
+                );
+            }
+            Ok(updated_count)
+        }
+        Err(errs) => Err(errs),
+    }
+}
+
 #[test]
 fn test_readme_examples_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -555,5 +582,23 @@ fn test_readme_examples_are_in_sync() {
             checked,
             errors.len()
         );
+    }
+}
+
+#[test]
+fn test_docs_commands_are_in_sync() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let commands_path = project_root.join("docs/content/commands.md");
+
+    if !commands_path.exists() {
+        // Skip if docs directory doesn't exist
+        return;
+    }
+
+    match sync_help_markers(&commands_path, project_root) {
+        Ok(_) => {}
+        Err(errors) => {
+            panic!("Docs commands are out of sync:\n\n{}\n", errors.join("\n"));
+        }
     }
 }

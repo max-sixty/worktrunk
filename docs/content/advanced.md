@@ -1,7 +1,9 @@
 +++
 title = "Advanced Features"
-weight = 5
+weight = 6
 +++
+
+Most Worktrunk users get everything they need from `wt switch`, `wt list`, `wt merge`, and `wt remove`. The features below are optional power-user capabilities.
 
 ## Claude Code Integration
 
@@ -65,75 +67,8 @@ Add to `~/.claude/settings.json`:
 
 ## Interactive Worktree Picker
 
-`wt select` opens a fzf-like fuzzy-search worktree picker with diff preview.
+`wt select` opens a fuzzy-search worktree picker with diff preview (Unix only).
 
-### Preview tabs
+Type to filter, use arrow keys or `j`/`k` to navigate, Enter to switch. Preview tabs show working tree changes, commit history, or branch diff — toggle with `1`/`2`/`3`.
 
-Toggle with number keys:
-
-1. **Tab 1**: Working tree changes (uncommitted)
-2. **Tab 2**: Commit history (commits not on main highlighted)
-3. **Tab 3**: Branch diff (changes ahead of main)
-
-## Tips & Patterns
-
-### Alias for new worktree + agent
-
-```bash
-alias wsc='wt switch --create --execute=claude'
-wsc new-feature  # Creates worktree, runs hooks, launches Claude
-```
-
-### Eliminate cold starts
-
-`post-create` hooks install deps and copy caches. Use copy-on-write on macOS:
-
-```toml
-[post-create]
-"cache" = "cp -c -r ../.cache .cache"  # Uses APFS clones
-"install" = "npm ci"
-```
-
-### Local CI gate
-
-`pre-merge` hooks run before merging. Failures abort:
-
-```toml
-[pre-merge]
-"test" = "cargo test"
-"lint" = "cargo clippy -- -D warnings"
-```
-
-### Monitor CI across branches
-
-```bash
-$ wt list --full --branches
-```
-
-Shows PR/CI status for all branches, including those without worktrees.
-
-### JSON API
-
-```bash
-$ wt list --format=json
-```
-
-For dashboards, statuslines, and scripts.
-
-### Task runners in hooks
-
-```toml
-[post-create]
-"setup" = "task install"
-
-[pre-merge]
-"validate" = "just test lint"
-```
-
-### Stacked branches
-
-```bash
-$ wt switch --create feature-part2 --base=@
-```
-
-Branches from current HEAD, not main.
+See [wt select](/commands/#wt-select) for full keyboard shortcuts and details.

@@ -146,6 +146,12 @@ wt config shell init fish | source
 
 ## Environment Variables
 
-- `WORKTRUNK_CONFIG_PATH` — Override user config location
-- `NO_COLOR` — Disable colored output
-- `CLICOLOR_FORCE` — Force colored output
+Override default behavior with environment variables:
+
+| Variable | Effect |
+|----------|--------|
+| `WORKTRUNK_CONFIG_PATH` | Override user config location (default: `~/.config/worktrunk/config.toml`) |
+| `NO_COLOR` | Disable colored output |
+| `CLICOLOR_FORCE` | Force colored output even when not a TTY |
+
+These follow standard conventions — `NO_COLOR` is the [no-color.org](https://no-color.org/) standard.
