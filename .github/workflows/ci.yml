@@ -23,7 +23,7 @@ jobs:
 
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install lychee
       uses: baptiste0928/cargo-install@v3
@@ -162,7 +162,7 @@ jobs:
       cargo: ${{ steps.filter.outputs.cargo }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
     - uses: dorny/paths-filter@v3
       id: filter
       with:
@@ -179,7 +179,7 @@ jobs:
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -201,7 +201,7 @@ jobs:
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     # cargo-udeps requires nightly; update date periodically
     - run: rustup override set nightly-2025-11-10
@@ -228,7 +228,7 @@ jobs:
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
