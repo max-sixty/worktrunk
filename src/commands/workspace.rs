@@ -194,7 +194,7 @@ fn create_workspace(session_name: &str, repo_root: &std::path::Path) -> anyhow::
         None
     };
 
-    output::progress(cformat!("Creating workspace <bold>{session_name}</>"))?;
+    output::progress(cformat!("Creating workspace <bold>{session_name}</>..."))?;
     output::flush()?;
     create_session(session_name, repo_root, layout.as_deref())?;
     Ok(())
@@ -225,7 +225,9 @@ pub fn handle_ui() -> anyhow::Result<()> {
             // Not in zellij - check session status
             match session_status(&session_name) {
                 SessionStatus::Running => {
-                    output::progress(cformat!("Attaching to workspace <bold>{session_name}</>"))?;
+                    output::progress(cformat!(
+                        "Attaching to workspace <bold>{session_name}</>..."
+                    ))?;
                     output::flush()?;
                     attach_session(&session_name)?;
                 }
@@ -255,9 +257,8 @@ pub fn handle_ui() -> anyhow::Result<()> {
             // Inside a worktrunk session, but for a different repo
             return Err(worktrunk::git::GitError::Other {
                 message: format!(
-                    "Inside workspace {} for a different repository. \
-                     Expected {} for this repo. Detach first (Ctrl+O, D) \
-                     then run `wt ui` from a normal shell.",
+                    "Inside workspace {} for a different repository (expected {}). \
+                     Detach first (Ctrl+O, D), then run 'wt ui' from a normal shell",
                     current_session, expected_session
                 ),
             }
@@ -268,8 +269,8 @@ pub fn handle_ui() -> anyhow::Result<()> {
             // Inside a non-worktrunk zellij session
             return Err(worktrunk::git::GitError::Other {
                 message: format!(
-                    "Inside zellij session '{}' which is not managed by worktrunk. \
-                     Detach first (Ctrl+O, D) then run `wt ui` from a normal shell.",
+                    "Inside zellij session '{}' (not managed by worktrunk). \
+                     Detach first (Ctrl+O, D), then run 'wt ui' from a normal shell",
                     session_name
                 ),
             }
@@ -294,23 +295,23 @@ pub fn handle_status() -> anyhow::Result<()> {
     output::info("Context")?;
     match detect_context(&repo_root) {
         ZellijContext::InsideWorkspace { session_name } => {
-            output::success(format!("  Inside workspace: {}", session_name))?;
+            output::success(format!("Inside workspace: {}", session_name))?;
         }
         ZellijContext::Outside => {
             let name = worktrunk::zellij::session_name_for_repo(&repo_root);
-            output::print(format!("  Outside zellij (session would be: {})", name))?;
+            output::print(format!("Outside zellij (session would be: {})", name))?;
         }
         ZellijContext::InsideOtherWorkspace {
             expected_session,
             current_session,
         } => {
             output::warning(format!(
-                "  Inside different workspace: {} (expected: {})",
+                "Inside different workspace: {} (expected: {})",
                 current_session, expected_session
             ))?;
         }
         ZellijContext::InsideOtherSession { session_name } => {
-            output::warning(format!("  Inside non-worktrunk session: {}", session_name))?;
+            output::warning(format!("Inside non-worktrunk session: {}", session_name))?;
         }
     }
 
@@ -324,16 +325,16 @@ pub fn handle_status() -> anyhow::Result<()> {
 
     // Plugin installed?
     if plugin.exists() {
-        output::success(format!("  Plugin: {}", plugin.display()))?;
+        output::success(format!("Plugin: {}", plugin.display()))?;
     } else {
-        output::warning("  Plugin: not installed")?;
+        output::warning("Plugin: not installed")?;
     }
 
     // Layout installed?
     if layout.exists() {
-        output::success(format!("  Layout: {}", layout.display()))?;
+        output::success(format!("Layout: {}", layout.display()))?;
     } else {
-        output::warning("  Layout: not installed")?;
+        output::warning("Layout: not installed")?;
     }
 
     // Config has load_plugins entry?
@@ -343,14 +344,14 @@ pub fn handle_status() -> anyhow::Result<()> {
             .unwrap_or(false);
 
     if config_ok {
-        output::success(format!("  Config: {} (has load_plugins)", config.display()))?;
+        output::success(format!("Config: {} (has load_plugins)", config.display()))?;
     } else if config.exists() {
         output::warning(format!(
-            "  Config: {} (missing load_plugins entry)",
+            "Config: {} (missing load_plugins entry)",
             config.display()
         ))?;
     } else {
-        output::warning("  Config: not found")?;
+        output::warning("Config: not found")?;
     }
 
     // Show hints

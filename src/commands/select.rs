@@ -785,7 +785,7 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
             use color_print::cformat;
             use worktrunk::path::format_path_for_display;
             crate::output::success(cformat!(
-                "Focusing seat for <bold>{}</>",
+                "Focused seat for <bold>{}</>",
                 format_path_for_display(result.path())
             ))?;
         } else {

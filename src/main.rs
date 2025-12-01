@@ -671,7 +671,7 @@ fn main() {
                     let focused = try_focus_seat(&repo_root, result.path())?;
                     if focused {
                         output::success(cformat!(
-                            "Focusing seat for <bold>{}</>",
+                            "Focused seat for <bold>{}</>",
                             format_path_for_display(result.path())
                         ))?;
                     }
