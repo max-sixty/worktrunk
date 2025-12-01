@@ -8,7 +8,7 @@ use worktrunk::git::{Repository, exit_code, is_command_not_approved, set_base_pa
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{format_with_gutter, println};
 #[cfg(unix)]
-use worktrunk::zellij::try_focus_seat;
+use worktrunk::zellij::try_focus_tab;
 
 mod cli;
 mod commands;
@@ -663,12 +663,12 @@ fn main() {
                     handle_switch(&branch, create, base.as_deref(), force, !verify, &config)?;
 
                 // Check if we're inside the worktrunk workspace (Unix only)
-                // If so, focus the seat instead of emitting a cd directive
+                // If so, focus the tab instead of emitting a cd directive
                 #[cfg(unix)]
                 let handled_by_workspace = {
                     let repo = Repository::current();
                     let repo_root = repo.worktree_base()?;
-                    let focused = try_focus_seat(&repo_root, result.path())?;
+                    let focused = try_focus_tab(&repo_root, result.path())?;
                     if focused {
                         output::success(cformat!(
                             "Focused seat for <bold>{}</>",

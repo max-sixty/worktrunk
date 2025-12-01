@@ -311,9 +311,9 @@ pub fn create_session(session_name: &str, cwd: &Path, layout: Option<&Path>) -> 
 
 /// Send a pipe message to the wt-bridge plugin.
 ///
-/// Format: `zellij pipe --name wt '<action>|<data>'`
-pub fn send_pipe_message(action: &str, data: &str) -> anyhow::Result<()> {
-    let message = format!("{}|{}", action, data);
+/// Format: `zellij pipe --name wt '<action>|<name>|<data>'`
+pub fn send_pipe_message(action: &str, name: &str, data: &str) -> anyhow::Result<()> {
+    let message = format!("{}|{}|{}", action, name, data);
 
     let output = Command::new("zellij")
         .args(["pipe", "--name", "wt", &message])
@@ -327,27 +327,35 @@ pub fn send_pipe_message(action: &str, data: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Request the wt-bridge plugin to focus or create a seat for a worktree.
-pub fn focus_or_create_seat(worktree_path: &Path) -> anyhow::Result<()> {
+/// Request the wt-bridge plugin to focus or create a tab for a worktree.
+///
+/// The tab name is derived from the worktree directory name (typically the branch name).
+pub fn focus_or_create_tab(worktree_path: &Path) -> anyhow::Result<()> {
     // Git worktree paths come from validated git operations and should always be valid UTF-8.
     // If not, the pipe protocol can't handle it anyway.
     let path_str = worktree_path
         .to_str()
         .expect("worktree path from git should be valid UTF-8");
 
-    send_pipe_message("select", path_str)
+    // Extract the tab name from the worktree directory name
+    let tab_name = worktree_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("worktree");
+
+    send_pipe_message("select", tab_name, path_str)
 }
 
-/// Focus a worktree seat if running inside a worktrunk workspace.
+/// Focus a worktree tab if running inside a worktrunk workspace.
 ///
-/// Returns `Ok(true)` if we're inside a workspace and handled the seat focus,
+/// Returns `Ok(true)` if we're inside a workspace and handled the tab focus,
 /// `Ok(false)` if we're outside a workspace (caller should use normal cd behavior),
-/// or an error if seat focusing failed.
-pub fn try_focus_seat(repo_root: &Path, worktree_path: &Path) -> anyhow::Result<bool> {
+/// or an error if tab focusing failed.
+pub fn try_focus_tab(repo_root: &Path, worktree_path: &Path) -> anyhow::Result<bool> {
     let context = detect_context(repo_root);
 
     if context.is_in_workspace() {
-        focus_or_create_seat(worktree_path)?;
+        focus_or_create_tab(worktree_path)?;
         Ok(true)
     } else {
         Ok(false)
@@ -461,26 +469,29 @@ mod tests {
     /// This tests the format, not actual sending (which requires zellij).
     #[test]
     fn pipe_message_format() {
-        // The format should be "action|data"
+        // The format should be "action|name|path"
         let action = "select";
-        let data = "/path/to/worktree";
-        let message = format!("{}|{}", action, data);
+        let name = "feature";
+        let path = "/path/to/worktree";
+        let message = format!("{}|{}|{}", action, name, path);
 
-        assert_eq!(message, "select|/path/to/worktree");
+        assert_eq!(message, "select|feature|/path/to/worktree");
 
         // Verify it can be parsed back
-        let (parsed_action, parsed_data) = message.split_once('|').unwrap();
-        assert_eq!(parsed_action, action);
-        assert_eq!(parsed_data, data);
+        let parts: Vec<&str> = message.splitn(3, '|').collect();
+        assert_eq!(parts[0], action);
+        assert_eq!(parts[1], name);
+        assert_eq!(parts[2], path);
     }
 
     #[test]
     fn pipe_message_handles_paths_with_spaces() {
+        let name = "my-feature";
         let path = "/home/user/my project/worktree";
-        let message = format!("select|{}", path);
+        let message = format!("select|{}|{}", name, path);
 
-        let (_, parsed_path) = message.split_once('|').unwrap();
-        assert_eq!(parsed_path, path);
+        let parts: Vec<&str> = message.splitn(3, '|').collect();
+        assert_eq!(parts[2], path);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

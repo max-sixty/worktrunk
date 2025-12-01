@@ -42,11 +42,19 @@ pub fn is_plugin_installed() -> bool {
 
 /// The zellij layout for worktrunk workspaces.
 ///
-/// Simple layout with just a terminal pane. The wt-bridge plugin is loaded
-/// in the background via load_plugins in config.kdl.
+/// Layout with a terminal pane and tab bar for visibility.
+/// The wt-bridge plugin is loaded in the background via load_plugins in config.kdl.
 fn layout_content() -> &'static str {
     r#"layout {
-    pane
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+        children
+    }
+    tab name="main" {
+        pane
+    }
 }
 "#
 }

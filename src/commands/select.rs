@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::Repository;
-use worktrunk::zellij::try_focus_seat;
+use worktrunk::zellij::try_focus_tab;
 
 use super::list::collect;
 use super::list::model::ListItem;
@@ -776,9 +776,9 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
             handle_switch(&identifier, false, None, false, false, &config)?;
 
         // Check if we're inside the worktrunk workspace
-        // If so, focus the seat instead of emitting a cd directive
+        // If so, focus the tab instead of emitting a cd directive
         let repo_root = repo.worktree_base()?;
-        let handled_by_workspace = try_focus_seat(&repo_root, result.path())?;
+        let handled_by_workspace = try_focus_tab(&repo_root, result.path())?;
 
         if handled_by_workspace {
             // Show brief success message

@@ -3,7 +3,7 @@
 //! # Role
 //!
 //! This plugin is the "inside zellij" component of the workspace integration.
-//! It receives pipe messages from the CLI and manipulates panes accordingly.
+//! It receives pipe messages from the CLI and manipulates tabs accordingly.
 //!
 //! # How It Fits Together
 //!
@@ -15,8 +15,8 @@
 //!                             │
 //! wt switch feature           │
 //!   └─► zellij pipe ──────────┼──► pipe() receives "select|/path"
-//!         --name wt           │      └─► focus_terminal_pane() or
-//!         "select|/path"      │          open_terminal("/path")
+//!         --name wt           │      └─► go_to_tab_name() or
+//!         "select|/path"      │          new_tab(name, cwd)
 //! ```
 //!
 //! # Loading
@@ -36,27 +36,20 @@
 //!
 //! Messages arrive via `zellij pipe --name wt -- "<action>|<data>"`:
 //!
-//! - `select|/path/to/worktree` - Focus existing seat or create new one
+//! - `select|<name>|/path/to/worktree` - Focus existing tab or create new one
 //!
-//! # Seat Tracking
+//! # Tab Tracking
 //!
-//! The plugin maintains `seats: HashMap<PathBuf, u32>` mapping worktree paths
-//! to pane IDs. When `open_terminal()` is called, zellij auto-focuses the new
-//! pane. The next `PaneUpdate` event captures the focused pane's ID.
+//! Each worktree gets its own tab, named after the branch/worktree name.
+//! The plugin tracks known tabs via TabUpdate events to determine whether
+//! to create a new tab or focus an existing one.
 //!
 //! # Debugging
 //!
 //! The plugin uses `eprintln!` for logging. To see output:
 //!
 //! 1. Run zellij with logging: `ZELLIJ_LOG=debug zellij ...`
-//! 2. Check `/tmp/zellij-*/zellij.log` for `[wt-bridge]` messages
-//!
-//! # Known Limitations
-//!
-//! - **Race condition**: User switching focus between `open_terminal()` and
-//!   `PaneUpdate` may cause the wrong pane ID to be captured.
-//! - **Single pending seat**: Rapid `select` messages may overwrite pending
-//!   tracking state.
+//! 2. Check `/var/folders/.../zellij.log` for `[wt-bridge]` messages
 //!
 //! # Testing
 //!
@@ -64,18 +57,12 @@
 //!
 //! ```bash
 //! # After entering workspace with `wt ui`:
-//! zellij pipe --name wt -- "select|/tmp"
+//! zellij pipe --name wt -- "select|feature|/path/to/feature"
 //!
-//! # Expected: New pane opens in /tmp (first time) or focuses (subsequent)
+//! # Expected: New tab "feature" opens with cwd /path/to/feature
 //! ```
-//!
-//! Check logs if nothing happens:
-//! - `[wt-bridge] Permissions granted` should appear after dialog
-//! - `[wt-bridge] Creating new seat for "/tmp"` on select
-//! - `[wt-bridge] Tracking seat: "/tmp" -> pane N` on PaneUpdate
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashSet};
 use zellij_tile::prelude::*;
 
 /// The pipe message name we listen for.
@@ -84,15 +71,8 @@ const PIPE_NAME: &str = "wt";
 /// Plugin state.
 #[derive(Default)]
 struct WtBridge {
-    /// Mapping from worktree path to pane ID.
-    seats: HashMap<PathBuf, u32>,
-
-    /// Worktree path waiting to be associated with a pane ID.
-    /// Set when we call `open_terminal()`, cleared when we receive `PaneUpdate`.
-    pending_seat: Option<PathBuf>,
-
-    /// Current tab position, needed to find focused pane.
-    current_tab: usize,
+    /// Set of known tab names (from TabUpdate events).
+    known_tabs: HashSet<String>,
 
     /// Whether we have received permission to operate.
     has_permission: bool,
@@ -106,16 +86,11 @@ impl ZellijPlugin for WtBridge {
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
-            PermissionType::RunCommands,
+            PermissionType::OpenTerminalsOrPlugins,
         ]);
 
-        // Subscribe to events including permission result
-        subscribe(&[
-            EventType::PaneClosed,
-            EventType::PaneUpdate,
-            EventType::TabUpdate,
-            EventType::PermissionRequestResult,
-        ]);
+        // Subscribe to events
+        subscribe(&[EventType::TabUpdate, EventType::PermissionRequestResult]);
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -126,31 +101,34 @@ impl ZellijPlugin for WtBridge {
         // Don't process commands until we have permission
         if !self.has_permission {
             eprintln!("[wt-bridge] Ignoring pipe message - waiting for permissions");
-            return true;
+            return false;
         }
 
         let payload = match &pipe_message.payload {
             Some(p) => p.as_str(),
             None => {
                 eprintln!("[wt-bridge] Received pipe message with no payload");
-                return true;
+                return false;
             }
         };
 
-        let (action, data) = match payload.split_once('|') {
-            Some(pair) => pair,
-            None => {
-                eprintln!("[wt-bridge] Invalid message format: {}", payload);
-                return true;
-            }
-        };
-
-        match action {
-            "select" => self.handle_select(data),
-            _ => eprintln!("[wt-bridge] Unknown action: {}", action),
+        // Parse: "action|name|path"
+        let parts: Vec<&str> = payload.splitn(3, '|').collect();
+        if parts.len() < 2 {
+            eprintln!("[wt-bridge] Invalid message format: {}", payload);
+            return false;
         }
 
-        true
+        match parts[0] {
+            "select" => {
+                let name = parts[1];
+                let cwd = parts.get(2).copied();
+                self.handle_select(name, cwd);
+            }
+            _ => eprintln!("[wt-bridge] Unknown action: {}", parts[0]),
+        }
+
+        false
     }
 
     fn update(&mut self, event: Event) -> bool {
@@ -162,82 +140,37 @@ impl ZellijPlugin for WtBridge {
                 }
             }
             Event::TabUpdate(tabs) => {
-                // Track current tab position for finding focused pane
-                if let Some(tab) = get_focused_tab(&tabs) {
-                    self.current_tab = tab.position;
+                // Update our set of known tab names
+                self.known_tabs.clear();
+                for tab in &tabs {
+                    self.known_tabs.insert(tab.name.clone());
                 }
-            }
-            Event::PaneUpdate(manifest) => {
-                // If we just opened a terminal, capture its pane ID
-                if let Some(worktree_path) = self.pending_seat.take() {
-                    match get_focused_pane(self.current_tab, &manifest) {
-                        Some(pane) if !pane.is_plugin => {
-                            eprintln!(
-                                "[wt-bridge] Tracking seat: {:?} -> pane {}",
-                                worktree_path, pane.id
-                            );
-                            self.seats.insert(worktree_path, pane.id);
-                        }
-                        Some(_) => {
-                            eprintln!(
-                                "[wt-bridge] Focused pane is a plugin, can't track seat for {:?}",
-                                worktree_path
-                            );
-                        }
-                        None => {
-                            eprintln!(
-                                "[wt-bridge] No focused pane found, can't track seat for {:?}",
-                                worktree_path
-                            );
-                        }
-                    }
-                }
-            }
-            Event::PaneClosed(PaneId::Terminal(terminal_id)) => {
-                self.seats.retain(|path, &mut id| {
-                    if id == terminal_id {
-                        eprintln!("[wt-bridge] Seat closed: {:?}", path);
-                        false
-                    } else {
-                        true
-                    }
-                });
+                eprintln!("[wt-bridge] TabUpdate: known_tabs={:?}", self.known_tabs);
             }
             _ => {}
         }
 
         false
     }
-
-    // No render() needed - plugin runs in the background without a pane.
-    // Zellij handles the permission dialog automatically via load_plugins.
 }
 
 impl WtBridge {
-    /// Handle the "select" action: focus or create a seat for the given worktree.
-    fn handle_select(&mut self, worktree_path: &str) {
-        let path = PathBuf::from(worktree_path);
+    /// Handle the "select" action: focus existing tab or create new one.
+    fn handle_select(&mut self, name: &str, cwd: Option<&str>) {
+        eprintln!(
+            "[wt-bridge] select: name={:?}, known_tabs={:?}",
+            name, self.known_tabs
+        );
 
-        // Focus existing seat if we have one
-        if let Some(&pane_id) = self.seats.get(&path) {
-            eprintln!(
-                "[wt-bridge] Focusing existing seat for {:?} -> pane {}",
-                path, pane_id
-            );
-            focus_terminal_pane(pane_id, false);
+        // Check if tab already exists
+        if self.known_tabs.contains(name) {
+            eprintln!("[wt-bridge] Focusing existing tab: {}", name);
+            go_to_tab_name(name);
             return;
         }
 
-        // Create new terminal pane for this worktree
-        eprintln!("[wt-bridge] Creating new seat for {:?}", path);
-        open_terminal(worktree_path);
-
-        // Mark this path as pending - we'll capture the pane ID on next PaneUpdate
-        if let Some(old) = self.pending_seat.replace(path) {
-            eprintln!(
-                "[wt-bridge] Overwriting pending seat {:?} (rapid requests)",
-                old
-            );
-        }
+        // Create new tab with the given name and cwd
+        eprintln!("[wt-bridge] Creating new tab: {} (cwd: {:?})", name, cwd);
+        new_tab(Some(name), cwd);
     }
 }
