@@ -1,0 +1,25 @@
+# Zola configuration for Worktrunk documentation
+base_url = "https://worktrunk.dev/"
+
+compile_sass = true
+build_search_index = true
+
+theme = "juice"
+title = "Worktrunk"
+
+[markdown]
+highlight_code = true
+highlight_theme = "inspired-github"
+
+[extra]
+juice_logo_name = "Worktrunk"
+juice_logo_path = "logo.svg"
+rust_crate = "worktrunk"
+github_repo = "max-sixty/worktrunk"
+site_description = "CLI for Git worktree management, designed for parallel AI agent workflows."
+juice_exclude_menu = ["Quick Start", "Concepts", "Configuration", "Commands Reference", "Advanced Features", "FAQ"]
+juice_extra_menu = [
+    { title = "Docs", link = "/" },
+    { title = "GitHub", link = "https://github.com/max-sixty/worktrunk" },
+    { title = "Crate", link = "https://crates.io/crates/worktrunk" },
+]

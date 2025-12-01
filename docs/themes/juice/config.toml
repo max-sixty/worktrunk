@@ -1,0 +1,30 @@
+# The URL the site will be built for
+base_url = "/"
+
+title = "Juice - An intuitive, elegant, and lightweight Zola theme for product sites."
+# default_language = "en"
+
+# Whether to automatically compile all Sass files in the sass directory
+compile_sass = true
+
+# Whether to build a search index to be used later on by a JavaScript library
+build_search_index = false
+
+# Configuration of the Markdown rendering
+[markdown]
+# Whether to do syntax highlighting
+# Theme can be customised by setting the `highlight_theme` variable to a theme supported by Zola
+highlight_code = true
+highlight_theme = "inspired-github"
+
+[extra]
+juice_logo_name = "Juice"
+juice_logo_path = "juice.svg"
+juice_extra_menu = [
+    { title = "Github", link = "https://github.com/huhu/juice" }
+]
+# Add page titles here to exclude them from the nav section (case sensitive)
+juice_exclude_menu = [
+    "exclude_from_nav"
+]
+repository_url = "https://github.com/huhu/juice"

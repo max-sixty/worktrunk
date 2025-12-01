@@ -1,0 +1,162 @@
+// Custom styles for Worktrunk docs
+
+// Better code block styling
+.content {
+    pre {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 1rem;
+        overflow-x: auto;
+        margin: 1rem 0;
+    }
+
+    code {
+        background-color: #f5f5f5;
+        border-radius: 3px;
+        padding: 0.15em 0.4em;
+        font-size: 0.9em;
+    }
+
+    pre code {
+        background-color: transparent;
+        padding: 0;
+    }
+}
+
+// Better table styling
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.5rem 0;
+
+    th, td {
+        border: 1px solid #e0e0e0;
+        padding: 0.75rem 1rem;
+        text-align: left;
+    }
+
+    th {
+        background-color: #f8f8f8;
+        font-weight: 600;
+    }
+
+    tr:nth-child(even) {
+        background-color: #fafafa;
+    }
+}
+
+// Sidebar improvements
+.toc {
+    .toc-item {
+        margin: 0.35rem 0;
+    }
+
+    .toc-item-child {
+        margin: 0.25rem 0;
+        padding-left: 1rem;
+
+        &.nested {
+            padding-left: 1.5rem;
+        }
+    }
+
+    .toc-divider {
+        border-top: 1px solid #e0e0e0;
+        margin: 0.5rem 0;
+    }
+
+    a.active {
+        color: var(--toc-highlight-text-color);
+        font-weight: 600;
+    }
+}
+
+// Better heading styling
+.heading-text {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+    color: var(--primary-text-color);
+}
+
+// Page navigation at bottom
+.page-nav {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e0e0e0;
+
+    a {
+        text-decoration: none;
+        color: var(--primary-link-color);
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+}
+
+// Better list styling
+.content ul, .content ol {
+    margin: 1rem 0;
+    padding-left: 1.5rem;
+
+    li {
+        margin: 0.5rem 0;
+    }
+}
+
+// Improve blockquote
+blockquote {
+    border-left: 4px solid var(--primary-color);
+    margin: 1.5rem 0;
+    padding: 0.5rem 1rem;
+    background-color: #f8f8f8;
+
+    p {
+        margin: 0;
+    }
+}
+
+// Button styling
+.button {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    background-color: var(--primary-color, #00d4aa);
+    color: white !important;
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: 600;
+    transition: background-color 0.2s, transform 0.2s;
+
+    &:hover {
+        background-color: darken(#00d4aa, 10%);
+        transform: translateY(-1px);
+        text-decoration: none;
+    }
+}
+
+// Footer styling
+footer {
+    margin-top: 3rem;
+    padding: 1.5rem 0;
+    border-top: 1px solid #e0e0e0;
+    text-align: center;
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    flex-wrap: wrap;
+
+    span {
+        a {
+            color: var(--secondary-text-color);
+            text-decoration: none;
+            opacity: 0.8;
+
+            &:hover {
+                opacity: 1;
+                text-decoration: underline;
+            }
+        }
+    }
+}

@@ -1,0 +1,149 @@
+{% import "_macros.html" as macros %}
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    {% block favicon %}
+    <link rel="icon" type="image/png" href="/favicon.ico">
+    {% endblock favicon %}
+    {% include "_variables.html" %}
+    {% block fonts %}
+    <link href="https://fonts.googleapis.com/css?family=Alfa+Slab+One&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Fira+Sans:400,500,600&display=swap" rel="stylesheet">
+    {% endblock fonts %}
+    <link rel="stylesheet" href="/normalize.css">
+    <link rel="stylesheet" href="{{ get_url(path="juice.css") }}">
+    {% block head %}
+    <link rel="stylesheet" href="{{ get_url(path="carbon.css") }}">
+    {% endblock head %}
+</head>
+
+<body>
+    {% block header %}
+
+    <header class="pos-absolute" style="background-color: transparent">
+        {{ macros::render_header() }}
+    </header>
+
+    <div class="hero">
+        {% block hero %}
+        <script async defer src="https://buttons.github.io/buttons.js"></script>
+        <section class="text-center">
+            <h1 class="heading-text" style="font-size: 50px">
+                Build your static website
+            </h1>
+            <h3 class="title-text">
+                <b>Juice</b> is an intuitive, elegant, and lightweight Zola theme for product websites.
+            </h3>
+            <div>
+                <a class="github-button" href="https://github.com/huhu/juice" data-size="large" data-show-count="true"
+                    aria-label="Star huhu/juice on GitHub">Star</a>
+                <a class="github-button" href="https://github.com/huhu/juice/fork" data-size="large"
+                    data-show-count="true" aria-label="Fork huhu/juice on GitHub">Fork</a>
+            </div>
+        </section>
+        <img class="hero-image" style="width: 50%" src="{{ get_url(path="juice.svg") }}">
+
+        <div class="explore-more text"
+            onclick="document.getElementById('features').scrollIntoView({behavior: 'smooth'})">
+            Explore More ⇩
+        </div>
+        <style>
+            .hero section {
+                padding: 0 5rem;
+            }
+
+            @media screen and (max-width: 768px) {
+                .hero section {
+                    padding: 0 2rem;
+                }
+
+                .hero-image {
+                    display: none
+                }
+            }
+        </style>
+        {% endblock hero %}
+    </div>
+
+    {% endblock header %}
+
+    <main>
+        {% block toc %}
+        {% if section.toc %}
+        {% set toc = section.toc %}
+        {% elif page.toc %}
+        {% set toc = page.toc %}
+        {% endif %}
+        {% if toc %}
+        <div class="toc">
+            <div class="toc-sticky">
+                {% for h in toc %}
+                <div class="toc-item">
+                    <a class="subtext" href="{{h.permalink | safe}}">{{ h.title }}</a>
+                </div>
+                {% if h.children %}
+                {% for h2 in h.children %}
+                <div class="toc-item-child">
+                    <a class="subtext" href="{{h2.permalink | safe}}"><small>- {{ h2.title }}</small></a>
+                </div>
+                {% endfor %}
+                {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        {% endblock toc %}
+
+        <div class="content text">
+            {% block content %}
+            <div id="features" class="heading-text">Overview</div>
+            {{ section.content | safe }}
+            {% endblock content %}
+        </div>
+
+        {% block sidebar %}
+        <div class="sidebar">
+            Your can customize the sidebar.
+            <script async type="text/javascript" src="//cdn.carbonads.com/carbon.js?serve=CEBIL27E&placement=extensionsh" id="_carbonads_js"></script>
+        </div>
+        {% endblock sidebar %}
+    </main>
+
+    {% block footer %}
+    <footer>
+        <small class="subtext">
+            <a href="https://huhu.io">Huhu.io</a> © 2021
+        </small>
+    </footer>
+    {% endblock footer %}
+</body>
+<script>
+    const scrollHandler = entries => {
+        // Find the first entry which intersecting and ratio > 0.9 to highlight.
+        let entry = entries.find(entry => {
+            return entry.isIntersecting && entry.intersectionRatio > 0.9;
+        });
+        if (!entry) return;
+
+        document.querySelectorAll(".toc a").forEach((item) => {
+            item.classList.remove("active");
+        });
+
+        // let url = new URL(`#${entry.target.id}`);
+        let link = document.querySelector(`.toc a[href$="${decodeURIComponent(`#${entry.target.id}`)}"]`)
+        if (link) {
+            link.classList.add("active");
+            link.scrollIntoView({ behavior: "auto", block: "nearest" });
+        }
+    };
+    // Set -100px root margin to improve highlight experience.
+    const observer = new IntersectionObserver(scrollHandler, { threshold: 1 });
+    let items = document.querySelectorAll('h1,h2,h3,h4,h5,h6');
+    items.forEach(item => observer.observe(item));
+</script>
+
+</html>

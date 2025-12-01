@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock title %}
+
+{% block toc %}
+{% set docs_section = get_section(path="_index.md") %}
+<div class="toc">
+    <div class="toc-sticky">
+        <div class="toc-item" style="margin-bottom: 0.5rem;">
+            <a class="subtext" href="{{ docs_section.permalink | safe }}" style="font-weight: 600;">
+                ← Home
+            </a>
+        </div>
+
+        <div class="toc-divider"></div>
+
+        {% for doc_page in docs_section.pages %}
+        {% set is_current = doc_page.permalink == page.permalink %}
+        <div class="toc-item">
+            <a class="subtext {% if is_current %}active{% endif %}" href="{{ doc_page.permalink | safe }}">
+                {{ doc_page.title }}
+            </a>
+        </div>
+
+        {% if is_current and page.toc %}
+        {% for h in page.toc %}
+        <div class="toc-item-child">
+            <a class="subtext" href="{{ h.permalink | safe }}">
+                <small>{{ h.title }}</small>
+            </a>
+        </div>
+        {% if h.children %}
+        {% for h2 in h.children %}
+        <div class="toc-item-child nested">
+            <a class="subtext" href="{{ h2.permalink | safe }}">
+                <small>{{ h2.title }}</small>
+            </a>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endblock toc %}
+
+{% block content %}
+<div class="heading-text">{{ page.title }}</div>
+{{ page.content | safe }}
+
+{# Calculate prev/next from section pages #}
+{% set prev_page = false %}
+{% set next_page = false %}
+{% set found_current = false %}
+{% for doc_page in docs_section.pages %}
+    {% if found_current and not next_page %}
+        {% set_global next_page = doc_page %}
+    {% endif %}
+    {% if doc_page.permalink == page.permalink %}
+        {% set_global found_current = true %}
+    {% endif %}
+    {% if not found_current %}
+        {% set_global prev_page = doc_page %}
+    {% endif %}
+{% endfor %}
+
+<div class="page-nav">
+    {% if prev_page %}
+    <a href="{{ prev_page.permalink | safe }}">← {{ prev_page.title }}</a>
+    {% else %}
+    <span></span>
+    {% endif %}
+
+    {% if next_page %}
+    <a href="{{ next_page.permalink | safe }}">{{ next_page.title }} →</a>
+    {% endif %}
+</div>
+{% endblock content %}

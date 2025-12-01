@@ -1,0 +1,23 @@
+{% macro render_header() %}
+{% set section = get_section(path="_index.md") %}
+<a href="{{ section.permalink | safe }}">
+    <div class="logo">
+        <img src="{{ get_url(path=config.extra.juice_logo_path) }}" alt="logo">
+        {{ config.extra.juice_logo_name }}
+    </div>
+</a>
+
+<nav>
+    {% for page in section.pages %}
+    {% set exclude_menu = config.extra.juice_exclude_menu | default(value=[]) %}
+    {% if exclude_menu is not containing(page.title) %}
+    <a class="nav-item subtitle-text" href="{{ page.permalink | safe }}">{{ page.title }}</a>
+    {% endif %}
+    {% endfor %}
+    {% if config.extra.juice_extra_menu %}
+        {% for menu in config.extra.juice_extra_menu %}
+        <a class="nav-item subtitle-text" href="{{ menu.link | safe }}">{{ menu.title }}</a>
+        {% endfor %}
+    {% endif %}
+</nav>
+{% endmacro render_header %}
