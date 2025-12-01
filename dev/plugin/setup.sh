@@ -46,48 +46,4 @@ wt ui setup
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "Verifying..."
-errors=0
-
-# Plugin
-if [[ -f "$PLUGIN" ]]; then
-    echo "  OK  Plugin: $PLUGIN"
-else
-    echo "  ERR Plugin not found: $PLUGIN"
-    errors=$((errors + 1))
-fi
-
-# Layout
-if [[ -f "$LAYOUT" ]]; then
-    echo "  OK  Layout: $LAYOUT"
-else
-    echo "  ERR Layout not found: $LAYOUT"
-    errors=$((errors + 1))
-fi
-
-# Config
-if [[ -f "$CONFIG" ]]; then
-    if grep -q "wt-bridge.wasm" "$CONFIG"; then
-        echo "  OK  Config: $CONFIG (has load_plugins)"
-    else
-        echo "  ERR Config missing load_plugins entry: $CONFIG"
-        errors=$((errors + 1))
-    fi
-else
-    echo "  ERR Config not found: $CONFIG"
-    errors=$((errors + 1))
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Result
-# ─────────────────────────────────────────────────────────────────────────────
-
-echo ""
-if [[ $errors -gt 0 ]]; then
-    echo "Setup incomplete. Fix errors above and re-run."
-    exit 1
-fi
-
-echo "Setup complete."
-echo ""
-echo "Next: Run 'wt ui' to enter workspace, grant permissions when prompted."
+wt ui status
