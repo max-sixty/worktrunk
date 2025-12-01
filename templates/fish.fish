@@ -26,6 +26,13 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
 
     # Override {{ cmd_prefix }} command to add --internal flag
     function {{ cmd_prefix }}
+        # Commands that need direct terminal access (bypass directive mode)
+        # ui uses exec() to replace process with zellij - can't capture stdout
+        if test (count $argv) -gt 0; and test "$argv[1]" = "ui"
+            command $WORKTRUNK_BIN $argv
+            return $status
+        end
+
         set -l use_source false
         set -l args
 

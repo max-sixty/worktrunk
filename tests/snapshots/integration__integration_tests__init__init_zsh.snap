@@ -17,7 +17,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -50,6 +50,13 @@ wt_exec() {
 
     # Override wt command to add --internal flag
     wt() {
+        # Commands that need direct terminal access (bypass directive mode)
+        # ui uses exec() to replace process with zellij - can't capture stdout
+        if [[ "$1" == "ui" ]]; then
+            command "${WORKTRUNK_BIN:-wt}" "$@"
+            return $?
+        fi
+
         local use_source=false
         local -a args
 

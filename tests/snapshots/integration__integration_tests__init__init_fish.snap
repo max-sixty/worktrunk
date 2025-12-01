@@ -17,7 +17,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -52,6 +52,13 @@ if type -q wt; or set -q WORKTRUNK_BIN
 
     # Override wt command to add --internal flag
     function wt
+        # Commands that need direct terminal access (bypass directive mode)
+        # ui uses exec() to replace process with zellij - can't capture stdout
+        if test (count $argv) -gt 0; and test "$argv[1]" = "ui"
+            command $WORKTRUNK_BIN $argv
+            return $status
+        end
+
         set -l use_source false
         set -l args
 
