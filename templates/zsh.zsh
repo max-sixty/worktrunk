@@ -12,6 +12,8 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
     {{ cmd_prefix }}() {
         # Commands that need direct terminal access (bypass directive mode)
         # ui uses exec() to replace process with zellij - can't capture stdout
+        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
+        # exit code (wt exits 200 to request direct access) or compile-time codegen.
         if [[ "$1" == "ui" ]]; then
             command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" "$@"
             return $?

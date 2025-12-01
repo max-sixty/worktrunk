@@ -28,6 +28,8 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
     function {{ cmd_prefix }}
         # Commands that need direct terminal access (bypass directive mode)
         # ui uses exec() to replace process with zellij - can't capture stdout
+        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
+        # exit code (wt exits 200 to request direct access) or compile-time codegen.
         if test (count $argv) -gt 0; and test "$argv[1]" = "ui"
             command $WORKTRUNK_BIN $argv
             return $status
