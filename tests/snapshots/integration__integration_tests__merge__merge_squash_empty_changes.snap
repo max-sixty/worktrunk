@@ -25,7 +25,7 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mSquashing 3 commits into a single commit...[39m
 🔄 [36mGenerating squash commit message...[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
 [107m [0m  [1mSquash commits from main[22m
 [107m [0m  
 [107m [0m  Combined commits:

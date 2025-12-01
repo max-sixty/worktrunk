@@ -1,0 +1,7 @@
+---
+source: tests/git_error_display.rs
+expression: err.to_string()
+---
+❌ [31mNo project configuration found[39m
+
+💡 [2mCreate a config file at: [1m/tmp/repo/.config/wt.toml[22m[22m

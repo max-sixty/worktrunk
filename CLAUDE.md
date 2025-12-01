@@ -128,6 +128,17 @@ Output messages should acknowledge user-supplied arguments (flags, options, valu
 "Committing with default message... (3 files, +45, -12)"
 ```
 
+**Avoid pronouns with cross-message referents:** Hints appear as separate messages from errors. Don't use pronouns like "it" that refer to something mentioned in the error message.
+
+```rust
+// ❌ BAD - "it" refers to branch name in error message
+// Error: "Branch 'feature' not found"
+// Hint:  "Use --create to create it"
+// ✅ GOOD - self-contained hint
+// Error: "Branch 'feature' not found"
+// Hint:  "Use --create to create a new branch"
+```
+
 ### Message Consistency Patterns
 
 Use consistent punctuation and structure for related messages:
@@ -296,7 +307,7 @@ Use `output::` functions with `cformat!` for styled content. The output function
 // ✅ GOOD - output:: handles emoji + outer color, cformat! handles inner styling
 output::success(cformat!("Created <bold>{branch}</> from <bold>{base}</>"))?;
 output::warning(cformat!("Branch <bold>{name}</> has <dim>uncommitted changes</>"))?;
-output::hint(cformat!("Run '<bold>wt merge</>' to continue"))?;
+output::hint(cformat!("<dim>Run </>wt merge<dim> to continue</>"))?;
 
 // ✅ GOOD - plain strings work too (no inner styling needed)
 output::progress("Rebasing onto main...")?;
@@ -311,6 +322,24 @@ cformat!("{ERROR_EMOJI} <red>Branch <bold>{branch}</> not found</>")
 ```
 
 Branch names in messages should be bolded. Tables (`wt list`) use `StyledLine` with conditional styling for branch names.
+
+### Commands and Branches in Messages
+
+Never quote commands or branch names. Use styling to make them stand out:
+
+- **In normal font context**: Use `<bold>` for commands and branches
+- **In dim font context** (hints): Close dim, show in normal font, reopen dim
+
+```rust
+// ✅ GOOD - bold in normal context
+output::info(cformat!("Use <bold>wt merge</> to continue"))?;
+
+// ✅ GOOD - normal font in dim context (close/reopen dim)
+output::hint(cformat!("<dim>Run </>wt list<dim> to see worktrees</>"))?;
+
+// ❌ BAD - quoted commands
+output::hint("Run 'wt list' to see worktrees")?;
+```
 
 ### Color Detection
 

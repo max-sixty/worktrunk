@@ -1,0 +1,9 @@
+---
+source: tests/git_error_display.rs
+expression: err.to_string()
+---
+❌ [31mCommit generation command failed[39m
+[107m [0m  Error: API key not found
+
+⚪ Ran command:
+[107m [0m  llm --model claude

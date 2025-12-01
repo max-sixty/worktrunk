@@ -1,0 +1,5 @@
+---
+source: tests/git_error_display.rs
+expression: err.to_string()
+---
+❌ [31mThe main worktree cannot be removed[39m

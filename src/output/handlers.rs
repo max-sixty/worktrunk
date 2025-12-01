@@ -262,7 +262,7 @@ pub fn handle_switch_output(
                 // Shell integration not configured - show warning and setup hint
                 let path_display = format_path_for_display(path);
                 super::warning(cformat!(
-                    "<yellow>Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)</>"
+                    "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)"
                 ))?;
                 super::shell_integration_hint(shell_integration_hint())?;
             }

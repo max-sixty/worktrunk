@@ -30,7 +30,7 @@ exit_code: 0
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Pre-commit check passed'[0m[2m[0m
 [0mPre-commit check passed
 🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
 [107m [0m  [1mChanges to feature.txt[22m
 ✅ [32mCommitted changes @ [2mcdc8f90[22m[39m
 🔄 [36mMerging 1 commit to [1mmain[22m @ [2mcdc8f90[22m (no rebase needed)[39m

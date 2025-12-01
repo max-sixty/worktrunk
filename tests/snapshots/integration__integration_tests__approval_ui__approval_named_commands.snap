@@ -19,4 +19,4 @@ exit_code: 1
 
 ❌ [31mCannot prompt for approval in non-interactive environment[39m
 
-💡 [2mIn CI/CD, use --force to skip prompts. To pre-approve commands, use 'wt config approvals add'[22m
+💡 [2mIn CI/CD, use [22m--force[2m to skip prompts. To pre-approve commands, use [22mwt config approvals add

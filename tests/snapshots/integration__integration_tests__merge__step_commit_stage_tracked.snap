@@ -27,6 +27,6 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mCommitting tracked changes with default message... [90m(1 file, [32m+1[39m, [31m-1[39m[39m[90m)[39m[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
 [107m [0m  [1mChanges to tracked.txt[22m
 ✅ [32mCommitted changes @ [2m7d441f0[22m[39m

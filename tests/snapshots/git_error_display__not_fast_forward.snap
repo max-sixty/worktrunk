@@ -1,0 +1,9 @@
+---
+source: tests/git_error_display.rs
+expression: err.to_string()
+---
+❌ [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
+[107m [0m  abc1234 Fix bug
+[107m [0m  def5678 Add feature
+
+💡 [2mUse [22mwt step rebase[2m or [22mwt merge[2m to rebase onto [1mmain[22m[22m

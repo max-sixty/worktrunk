@@ -368,7 +368,7 @@ impl TargetWorktreeStash {
             .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
         {
             crate::output::warning(cformat!(
-                "Failed to restore stash <bold>{stash_ref}</> - run 'git stash pop {stash_ref}' in <bold>{path}</>",
+                "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
                 stash_ref = self.stash_ref,
                 path = format_path_for_display(&self.path),
             ))?;

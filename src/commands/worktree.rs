@@ -114,7 +114,7 @@ use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::{CommandPhase, WorktrunkConfig};
 use worktrunk::git::{GitError, Repository, ResolvedWorktree, is_command_not_approved};
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{HINT_EMOJI, format_with_gutter};
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
@@ -327,8 +327,8 @@ pub fn handle_switch(
             crate::output::warning(cformat!(
                 "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
             ))?;
-            crate::output::hint(format!(
-                "Use 'wt switch {resolved_branch}' (without --create) to switch to the remote branch"
+            crate::output::print(cformat!(
+                "{HINT_EMOJI} <dim>Use </>wt switch <bold>{resolved_branch}</><dim> (without </>--create<dim>) to switch to the remote branch</>"
             ))?;
         }
     }

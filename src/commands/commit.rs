@@ -2,7 +2,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{HINT_EMOJI, format_with_gutter};
 
 use super::command_executor::CommandContext;
 use super::hooks::HookPipeline;
@@ -67,9 +67,9 @@ impl<'a> CommitGenerator<'a> {
 
     pub fn emit_hint_if_needed(&self) -> anyhow::Result<()> {
         if !self.config.is_configured() {
-            crate::output::hint(
-                "Using fallback commit message. Run 'wt config --help' for LLM setup guide",
-            )?;
+            crate::output::print(cformat!(
+                "{HINT_EMOJI} <dim>Using fallback commit message. Run </>wt config --help<dim> for LLM setup guide</>"
+            ))?;
         }
         Ok(())
     }

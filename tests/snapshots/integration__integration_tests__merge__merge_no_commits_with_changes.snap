@@ -26,7 +26,7 @@ exit_code: 0
 🟡 [33mAuto-staging 1 untracked file:[39m
 [107m [0m  newfile.txt
 🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
 [107m [0m  [1mChanges to newfile.txt[22m
 ✅ [32mCommitted changes @ [2m96ddfbc[22m[39m
 🔄 [36mMerging 1 commit to [1mmain[22m @ [2m96ddfbc[22m (no rebase needed)[39m

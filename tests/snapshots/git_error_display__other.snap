@@ -1,0 +1,5 @@
+---
+source: tests/git_error_display.rs
+expression: err.to_string()
+---
+❌ [31mUnexpected git error[39m

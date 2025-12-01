@@ -26,6 +26,6 @@ exit_code: 0
 
 ----- stderr -----
 🟡 [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
-💡 [2mUse 'wt switch remote-feature' (without --create) to switch to the remote branch[22m
+💡 [2mUse [22mwt switch [1mremote-feature[22m[2m (without [22m--create[2m) to switch to the remote branch[22m
 ✅ [32m[32mCreated new worktree for [1mremote-feature[22m from [1mmain[22m at [1m[REPO].remote-feature[39m[22m[39m
 💡 [2mRun `wt config shell install` to enable automatic cd[22m

@@ -31,6 +31,6 @@ exit_code: 0
 [107m [0m  .config/
 [107m [0m  file1.txt
 🔄 [36mCommitting changes with default message... [90m(2 files, [32m+2[39m[39m[90m)[39m[39m
-💡 [2mUsing fallback commit message. Run 'wt config --help' for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
 [107m [0m  [1mChanges to wt.toml & file1.txt[22m
 ✅ [32mCommitted changes @ [2m3dbcd5d[22m[39m
