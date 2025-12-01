@@ -3,21 +3,21 @@
 //! # Goals
 //!
 //! Enable a workspace-based workflow where each repository has a dedicated zellij
-//! session, and each worktree has a "seat" (canonical pane) within that session.
+//! session, and each worktree has its own tab within that session.
 //! When you run `wt switch feature`, instead of changing directories, it focuses
-//! (or creates) the pane for that worktree.
+//! (or creates) the tab for that worktree.
 //!
 //! # Architecture
 //!
-//! The integration has three layers:
+//! The integration has two layers:
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                         CLI Commands                            │
 //! │  wt ui          - Enter/create workspace                        │
-//! │  wt ui setup    - Install plugin                                │
+//! │  wt ui setup    - Install plugin (for permission caching)       │
 //! │  wt ui status   - Show context                                  │
-//! │  wt switch foo  - Focus/create seat (when inside workspace)     │
+//! │  wt switch foo  - Focus/create tab (when inside workspace)      │
 //! └──────────────────────────┬──────────────────────────────────────┘
 //!                            │
 //!                            ▼
@@ -25,34 +25,20 @@
 //! │                    Library Layer (this module)                  │
 //! │  detect_context()       - Where are we running?                 │
 //! │  session_name_for_repo() - Deterministic session naming         │
-//! │  send_pipe_message()    - CLI → Plugin communication            │
+//! │  focus_or_create_tab()  - Tab management via zellij action      │
 //! │  create_session()       - Launch zellij with layout             │
-//! └──────────────────────────┬──────────────────────────────────────┘
-//!                            │ zellij pipe --name wt
-//!                            ▼
-//! ┌─────────────────────────────────────────────────────────────────┐
-//! │                    Plugin Layer (wt-bridge)                     │
-//! │  Runs as WASM inside zellij via load_plugins                    │
-//! │  Receives: "select|/path/to/worktree"                           │
-//! │  Actions: focus_terminal_pane() or open_terminal()              │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! Tab management uses `zellij action` commands directly:
+//! - `zellij action query-tab-names` - Check existing tabs
+//! - `zellij action go-to-tab-name` - Focus existing tab
+//! - `zellij action new-tab` - Create new tab with cwd
 //!
 //! # Terminology
 //!
 //! - **Workspace**: A zellij session dedicated to one repository (named `wt:<hash>`)
-//! - **Seat**: A terminal pane dedicated to one worktree within a workspace
-//!
-//! # Message Protocol
-//!
-//! The CLI communicates with the plugin via `zellij pipe`:
-//!
-//! ```text
-//! zellij pipe --name wt -- "select|/path/to/worktree"
-//! ```
-//!
-//! The plugin maintains a mapping from worktree paths to pane IDs. On receiving
-//! a `select` message, it either focuses an existing pane or creates a new one.
+//! - **Tab**: A named tab dedicated to one worktree within a workspace
 //!
 //! # Context Detection
 //!
@@ -66,25 +52,16 @@
 //! # Testing
 //!
 //! The library layer is tested via unit tests (see tests module below).
-//! The plugin layer requires manual testing inside zellij:
+//! Manual testing inside zellij:
 //!
 //! ```bash
-//! # 1. Install the plugin
-//! wt ui setup
-//!
-//! # 2. Enter a workspace
+//! # 1. Enter a workspace
 //! wt ui
 //!
-//! # 3. Verify permissions were granted (check for dialog on first run)
-//!
-//! # 4. Test the pipe message interface
-//! zellij pipe --name wt -- "select|/tmp"
-//!
-//! # Expected: A new pane opens in /tmp (or existing pane focuses)
+//! # 2. Test tab switching
+//! wt switch feature  # Creates or focuses "feature" tab
+//! wt switch main     # Creates or focuses "main" tab
 //! ```
-//!
-//! If nothing happens, check `~/.config/zellij/config.kdl` contains the
-//! `load_plugins` entry for wt-bridge.wasm.
 
 use std::env;
 use std::path::Path;
@@ -309,41 +286,93 @@ pub fn create_session(session_name: &str, cwd: &Path, layout: Option<&Path>) -> 
     Err(anyhow::anyhow!("Failed to create session: {}", err))
 }
 
-/// Send a pipe message to the wt-bridge plugin.
+/// Focus an existing tab by name.
 ///
-/// Format: `zellij pipe --name wt '<action>|<name>|<data>'`
-pub fn send_pipe_message(action: &str, name: &str, data: &str) -> anyhow::Result<()> {
-    let message = format!("{}|{}|{}", action, name, data);
+/// Uses `zellij action go-to-tab-name` to switch to the tab.
+///
+/// Note: zellij stores tab names with a leading space in their internal
+/// representation (visible in `query-tab-names` output). The `go-to-tab-name`
+/// command requires this leading space to match correctly.
+fn go_to_tab(name: &str) -> anyhow::Result<()> {
+    // Prepend leading space to match zellij's internal tab name format
+    let tab_name = format!(" {}", name.trim());
 
     let output = Command::new("zellij")
-        .args(["pipe", "--name", "wt", &message])
+        .args(["action", "go-to-tab-name", &tab_name])
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to send pipe message: {}", stderr.trim());
+        anyhow::bail!("Failed to go to tab '{}': {}", name, stderr.trim());
     }
 
     Ok(())
 }
 
-/// Request the wt-bridge plugin to focus or create a tab for a worktree.
+/// Create a new tab with the given name and working directory.
 ///
-/// The tab name is derived from the worktree directory name (typically the branch name).
-pub fn focus_or_create_tab(worktree_path: &Path) -> anyhow::Result<()> {
-    // Git worktree paths come from validated git operations and should always be valid UTF-8.
-    // If not, the pipe protocol can't handle it anyway.
-    let path_str = worktree_path
+/// Uses `zellij action new-tab` to create the tab.
+///
+/// Note: zellij adds a leading space to tab names internally after creation.
+/// We pass the name without the leading space here.
+fn create_tab(name: &str, cwd: &Path) -> anyhow::Result<()> {
+    let cwd_str = cwd
         .to_str()
         .expect("worktree path from git should be valid UTF-8");
 
+    let output = Command::new("zellij")
+        .args(["action", "new-tab", "--name", name, "--cwd", cwd_str])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to create tab '{}': {}", name, stderr.trim());
+    }
+
+    Ok(())
+}
+
+/// Check if a tab with the given name exists.
+///
+/// Uses `zellij action query-tab-names` to list all tabs.
+///
+/// Note: zellij returns tab names with leading spaces, so we trim both sides.
+/// On error (e.g., zellij not running), returns false to allow tab creation.
+fn tab_exists(name: &str) -> bool {
+    let output = match Command::new("zellij")
+        .args(["action", "query-tab-names"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false, // Can't query → assume doesn't exist
+    };
+
+    if !output.status.success() {
+        return false; // Query failed → assume doesn't exist
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let name_trimmed = name.trim();
+    stdout.lines().any(|line| line.trim() == name_trimmed)
+}
+
+/// Focus or create a tab for a worktree.
+///
+/// The tab name is derived from the worktree directory name (typically the branch name).
+/// If a tab with that name exists, it will be focused. Otherwise, a new tab is created.
+pub fn focus_or_create_tab(worktree_path: &Path) -> anyhow::Result<()> {
     // Extract the tab name from the worktree directory name
     let tab_name = worktree_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("worktree");
 
-    send_pipe_message("select", tab_name, path_str)
+    // Check if tab exists and focus it, or create a new one
+    if tab_exists(tab_name) {
+        go_to_tab(tab_name)
+    } else {
+        create_tab(tab_name, worktree_path)
+    }
 }
 
 /// Focus a worktree tab if running inside a worktrunk workspace.
@@ -459,39 +488,6 @@ mod tests {
             }
             .is_in_workspace()
         );
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Message protocol tests
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Verify the message format that would be sent to the plugin.
-    /// This tests the format, not actual sending (which requires zellij).
-    #[test]
-    fn pipe_message_format() {
-        // The format should be "action|name|path"
-        let action = "select";
-        let name = "feature";
-        let path = "/path/to/worktree";
-        let message = format!("{}|{}|{}", action, name, path);
-
-        assert_eq!(message, "select|feature|/path/to/worktree");
-
-        // Verify it can be parsed back
-        let parts: Vec<&str> = message.splitn(3, '|').collect();
-        assert_eq!(parts[0], action);
-        assert_eq!(parts[1], name);
-        assert_eq!(parts[2], path);
-    }
-
-    #[test]
-    fn pipe_message_handles_paths_with_spaces() {
-        let name = "my-feature";
-        let path = "/home/user/my project/worktree";
-        let message = format!("select|{}|{}", name, path);
-
-        let parts: Vec<&str> = message.splitn(3, '|').collect();
-        assert_eq!(parts[2], path);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
