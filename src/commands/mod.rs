@@ -15,6 +15,8 @@ pub mod repository_ext;
 pub mod select;
 pub mod standalone;
 pub mod statusline;
+#[cfg(unix)]
+pub mod workspace;
 pub mod worktree;
 
 pub use config::{
@@ -31,6 +33,8 @@ pub use standalone::{
     RebaseResult, SquashResult, handle_rebase, handle_squash, handle_standalone_add_approvals,
     handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
 };
+#[cfg(unix)]
+pub use workspace::handle_ui;
 pub use worktree::{
     handle_remove, handle_remove_by_path, handle_remove_current, handle_switch,
     resolve_worktree_path_first,

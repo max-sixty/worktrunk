@@ -226,7 +226,7 @@ fn test_configure_shell_fish_extension_exists() {
         ");
     });
 
-    // Fish completions should be in a separate file with WORKTRUNK_BIN fallback
+    // Fish completions should be in a separate file using $WORKTRUNK_BIN
     let completions_file = temp_home.path().join(".config/fish/completions/wt.fish");
     assert!(
         completions_file.exists(),
@@ -234,8 +234,8 @@ fn test_configure_shell_fish_extension_exists() {
     );
     let contents = std::fs::read_to_string(&completions_file).unwrap();
     assert!(
-        contents.contains("set -q WORKTRUNK_BIN; or set -l WORKTRUNK_BIN"),
-        "Fish completions should use WORKTRUNK_BIN with fallback"
+        contents.contains("$WORKTRUNK_BIN"),
+        "Fish completions should use $WORKTRUNK_BIN to bypass shell wrapper"
     );
 }
 

@@ -1,4 +1,5 @@
 /target
+wt-bridge/target
 dev/wt-demo/out/*
 !dev/wt-demo/out/wt-demo.gif
 

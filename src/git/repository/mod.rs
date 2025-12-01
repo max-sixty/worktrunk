@@ -585,20 +585,6 @@ impl Repository {
         self.run_command_check(&["merge-base", "--is-ancestor", base, head])
     }
 
-    /// Check if a branch has any marginal contribution compared to a target.
-    ///
-    /// Uses three-dot diff (`target...branch`) which shows changes from the merge-base
-    /// to the branch. Returns false (no marginal contribution) when:
-    /// - Branch is an ancestor of target (merge-base = branch)
-    /// - Branch merged target and resolved back to merge-base state
-    /// - Branch's net changes are empty for any other reason
-    pub fn has_marginal_contribution(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
-        // git diff --name-only target...branch shows files changed from merge-base to branch
-        let range = format!("{target}...{branch}");
-        let stdout = self.run_command(&["diff", "--name-only", &range])?;
-        Ok(!stdout.trim().is_empty())
-    }
-
     /// Count commits between base and head.
     pub fn count_commits(&self, base: &str, head: &str) -> anyhow::Result<usize> {
         // Limit concurrent rev-list operations to reduce mmap thrash on commit-graph

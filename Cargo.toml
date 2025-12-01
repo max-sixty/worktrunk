@@ -1,5 +1,8 @@
 [workspace]
 members = ["tests/helpers/setup-select-test", "tests/helpers/dev-detach"]
+# wt-bridge is excluded from the workspace - it must be built separately for wasm32-wasip1 target
+# Build with: cd wt-bridge && cargo build --target wasm32-wasip1 --release
+exclude = ["wt-bridge"]
 
 [package]
 name = "worktrunk"
@@ -73,6 +76,7 @@ unicode-width = "0.2"
 wrap-ansi = "0.1"
 osc8 = "0.1.0"
 home = "0.5.12"
+dirs = "6.0.0"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"

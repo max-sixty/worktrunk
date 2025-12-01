@@ -399,6 +399,36 @@ Use when the remote default branch has changed. The cached value is used by
     Refresh,
 }
 
+#[cfg(unix)]
+#[derive(Subcommand)]
+pub enum UiCommand {
+    /// Install the wt-bridge zellij plugin
+    #[command(
+        after_long_help = r#"Builds and installs the wt-bridge plugin for zellij integration.
+
+This command:
+1. Builds the plugin from source (requires wasm32-wasip1 target)
+2. Installs it to ~/.config/zellij/plugins/wt-bridge.wasm
+3. Adds load_plugins entry to ~/.config/zellij/config.kdl
+4. Creates the workspace layout at ~/.config/zellij/layouts/worktrunk.kdl
+
+Run this once before using `wt ui` for the first time."#
+    )]
+    Setup,
+
+    /// Show workspace context and setup status
+    #[command(
+        after_long_help = r#"Displays diagnostic information about the zellij integration:
+
+- Current context (inside/outside workspace)
+- Plugin installation status
+- Config file status
+
+Use this to debug issues with the workspace integration."#
+    )]
+    Status,
+}
+
 /// Workflow building blocks
 #[derive(Subcommand)]
 pub enum StepCommand {
@@ -520,6 +550,60 @@ pub enum ListSubcommand {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Open workspace in zellij
+    ///
+    /// Attaches to or creates a dedicated zellij session for this repository.
+    /// Each worktree gets a "seat" (canonical pane) within the session.
+    #[cfg(unix)]
+    #[command(
+        name = "ui",
+        after_long_help = r#"## Operation
+
+When run from a normal shell (outside zellij):
+1. Computes a unique session ID for this repository (wt:<hash>)
+2. If a session with that ID exists, attaches to it
+3. Otherwise, creates a new zellij session rooted at the repository
+
+When run inside a non-worktrunk zellij session:
+- Prints an error; you must run `wt ui` from a normal shell
+
+When run inside the worktrunk session for this repo:
+- No-op; you're already in the workspace
+
+## Inside the Workspace
+
+Once inside the workspace, `wt select` and `wt switch` behavior changes:
+- Instead of changing directories, they focus/create "seats" (panes)
+- Each worktree gets a stable, persistent shell with its own scrollback
+- Exit the workspace by quitting zellij normally
+
+## Setup
+
+Before first use, install the wt-bridge plugin:
+```console
+wt ui setup
+```
+
+This builds and installs the zellij plugin to ~/.config/zellij/.
+
+## Examples
+
+Enter the workspace for the current repository:
+```console
+wt ui
+```
+
+Detach from workspace (standard zellij):
+Press Ctrl+O, then D
+
+Exit workspace completely:
+Press Ctrl+O, then Q (or exit all panes)"#
+    )]
+    Ui {
+        #[command(subcommand)]
+        command: Option<UiCommand>,
+    },
+
     /// Manage configuration and shell integration
     #[command(
         about = "Manage configuration and shell integration",
@@ -901,12 +985,10 @@ branch `foo` has a different worktree at `repo.bar/`, an error is raised.
 
 ### Branch deletion
 
-By default, branches are deleted only when their content is already in the target branch:
+By default, branches are deleted only when their content has been integrated:
 
-- no changes beyond the common ancestor — `git diff --name-only target...branch` is empty:
-  no files changed between the merge base of `target`/`branch` and the tip of `branch`.
-- same content as target — `git rev-parse branch^{tree}` equals `git rev-parse target^{tree}`:
-  both branches point at the same tracked-files snapshot (tree), even if the commits differ.
+- Traditional merge: branch is an ancestor of the target (git's `-d` behavior)
+- Squash merge/rebase: branch's tree SHA matches target's tree SHA
 
 This handles workflows where PRs are squash-merged or rebased, which don't preserve
 commit ancestry but do integrate the content. Use `-D` to delete unintegrated

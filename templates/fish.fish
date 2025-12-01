@@ -2,10 +2,15 @@
 
 # Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
 if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
+    # TODO: Consider time-of-use pattern like bash/zsh instead of init-time setup.
+    # Fish lacks ${:-} syntax; would require verbose workaround at each call site.
+    if not set -q WORKTRUNK_BIN
+        set -gx WORKTRUNK_BIN (type -p {{ cmd_prefix }})
+    end
+
     # Capture stdout (shell script), eval in parent shell. stderr streams to terminal.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     function wt_exec
-        set -q WORKTRUNK_BIN; or set -l WORKTRUNK_BIN (type -P {{ cmd_prefix }})
         set -l script (command $WORKTRUNK_BIN $argv | string collect)
         set -l exit_code $pipestatus[1]
 

@@ -17,7 +17,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1735776000"
+    SOURCE_DATE_EPOCH: "1761609600"
     WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -28,10 +28,15 @@ exit_code: 0
 
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 if type -q wt; or set -q WORKTRUNK_BIN
+    # TODO: Consider time-of-use pattern like bash/zsh instead of init-time setup.
+    # Fish lacks ${:-} syntax; would require verbose workaround at each call site.
+    if not set -q WORKTRUNK_BIN
+        set -gx WORKTRUNK_BIN (type -p wt)
+    end
+
     # Capture stdout (shell script), eval in parent shell. stderr streams to terminal.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     function wt_exec
-        set -q WORKTRUNK_BIN; or set -l WORKTRUNK_BIN (type -P wt)
         set -l script (command $WORKTRUNK_BIN $argv | string collect)
         set -l exit_code $pipestatus[1]
 

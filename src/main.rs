@@ -7,6 +7,8 @@ use worktrunk::config::{WorktrunkConfig, set_config_path};
 use worktrunk::git::{Repository, exit_code, is_command_not_approved, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{format_with_gutter, println};
+#[cfg(unix)]
+use worktrunk::zellij::try_focus_seat;
 
 mod cli;
 mod commands;
@@ -22,6 +24,8 @@ pub use crate::cli::OutputFormat;
 use commands::command_executor::CommandContext;
 #[cfg(unix)]
 use commands::handle_select;
+#[cfg(unix)]
+use commands::handle_ui;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     ConfigAction, RebaseResult, SquashResult, handle_cache_clear, handle_cache_refresh,
@@ -582,6 +586,12 @@ fn main() {
             }
         },
         #[cfg(unix)]
+        Commands::Ui { command } => match command {
+            Some(cli::UiCommand::Setup) => commands::workspace::handle_setup(),
+            Some(cli::UiCommand::Status) => commands::workspace::handle_status(),
+            None => handle_ui(),
+        },
+        #[cfg(unix)]
         Commands::Select => handle_select(cli.internal),
         Commands::List {
             subcommand,
@@ -652,9 +662,34 @@ fn main() {
                 let (result, resolved_branch) =
                     handle_switch(&branch, create, base.as_deref(), force, !verify, &config)?;
 
-                // Show success message (temporal locality: immediately after worktree creation)
-                // Pass cli.internal to indicate whether shell integration is active
-                handle_switch_output(&result, &resolved_branch, execute.is_some(), cli.internal)?;
+                // Check if we're inside the worktrunk workspace (Unix only)
+                // If so, focus the seat instead of emitting a cd directive
+                #[cfg(unix)]
+                let handled_by_workspace = {
+                    let repo = Repository::current();
+                    let repo_root = repo.worktree_base()?;
+                    let focused = try_focus_seat(&repo_root, result.path())?;
+                    if focused {
+                        output::success(cformat!(
+                            "Focusing seat for <bold>{}</>",
+                            format_path_for_display(result.path())
+                        ))?;
+                    }
+                    focused
+                };
+                #[cfg(not(unix))]
+                let handled_by_workspace = false;
+
+                if !handled_by_workspace {
+                    // Show success message (temporal locality: immediately after worktree creation)
+                    // Pass cli.internal to indicate whether shell integration is active
+                    handle_switch_output(
+                        &result,
+                        &resolved_branch,
+                        execute.is_some(),
+                        cli.internal,
+                    )?;
+                }
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing

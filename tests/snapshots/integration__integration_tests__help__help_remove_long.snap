@@ -86,12 +86,10 @@ branch [2mfoo[0m has a different worktree at [2mrepo.bar/[0m, an error is ra
 
 ### Branch deletion
 
-By default, branches are deleted only when their content is already in the target branch:
+By default, branches are deleted only when their content has been integrated:
 
-- no changes beyond the common ancestor — [2mgit diff --name-only target...branch[0m is empty:
-  no files changed between the merge base of [2mtarget[0m/[2mbranch[0m and the tip of [2mbranch[0m.
-- same content as target — [2mgit rev-parse branch^{tree}[0m equals [2mgit rev-parse target^{tree}[0m:
-  both branches point at the same tracked-files snapshot (tree), even if the commits differ.
+- Traditional merge: branch is an ancestor of the target (git's [2m-d[0m behavior)
+- Squash merge/rebase: branch's tree SHA matches target's tree SHA
 
 This handles workflows where PRs are squash-merged or rebased, which don't preserve
 commit ancestry but do integrate the content. Use [2m-D[0m to delete unintegrated

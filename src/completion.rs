@@ -86,9 +86,8 @@ fn complete_branches(suppress_with_create: bool) -> Vec<CompletionCandidate> {
         .map(|branch| {
             let time_str = format_relative_time_short(branch.timestamp);
             let help = match branch.category {
-                BranchCategory::Worktree => format!("+ {}", time_str),
-                BranchCategory::Local => format!("⎇ {}", time_str),
-                BranchCategory::Remote(remote) => format!("⇣ {} {}", time_str, remote),
+                BranchCategory::Worktree | BranchCategory::Local => time_str,
+                BranchCategory::Remote(remote) => format!("{}, {}", time_str, remote),
             };
             CompletionCandidate::new(branch.name).help(Some(help.into()))
         })

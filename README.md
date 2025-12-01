@@ -103,7 +103,7 @@ Say we merged via CI, our changes are on main, and we're finished with the workt
 
 ```console
 $ wt remove
-🔄 Removing feature-api worktree & branch in background (no marginal contribution to main)
+🔄 Removing feature-api worktree & branch in background (ancestor of main)
 ```
 
 <!-- END AUTO-GENERATED -->
@@ -311,7 +311,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
     jwt.rs       |  8 ++++++++
     3 files changed, 33 insertions(+)
 ✅ Merged to main (1 commit, 3 files, +33)
-🔄 Removing feature-auth worktree & branch in background (no marginal contribution to main)
+🔄 Removing feature-auth worktree & branch in background (ancestor of main)
 🔄 Running post-merge install:
    cargo install --path .
   Installing worktrunk v0.1.0
@@ -798,12 +798,10 @@ branch `foo` has a different worktree at `repo.bar/`, an error is raised.
 
 ### Branch deletion
 
-By default, branches are deleted only when their content is already in the target branch:
+By default, branches are deleted only when their content has been integrated:
 
-- no changes beyond the common ancestor — `git diff --name-only target...branch` is empty:
-  no files changed between the merge base of `target`/`branch` and the tip of `branch`.
-- same content as target — `git rev-parse branch^{tree}` equals `git rev-parse target^{tree}`:
-  both branches point at the same tracked-files snapshot (tree), even if the commits differ.
+- Traditional merge: branch is an ancestor of the target (git's `-d` behavior)
+- Squash merge/rebase: branch's tree SHA matches target's tree SHA
 
 This handles workflows where PRs are squash-merged or rebased, which don't preserve
 commit ancestry but do integrate the content. Use `-D` to delete unintegrated

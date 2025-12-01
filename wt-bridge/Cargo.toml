@@ -1,0 +1,12 @@
+[package]
+name = "wt-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Zellij plugin for worktrunk workspace management"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+zellij-tile = "0.43"
+
+[profile.release]
+opt-level = "s"

@@ -20,6 +20,7 @@ wt - Git worktree management
 Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
+  [1m[36mui[0m      Open workspace in zellij
   [1m[36mconfig[0m  Manage configuration and shell integration
   [1m[36mstep[0m    Workflow building blocks
   [1m[36mselect[0m  Interactive worktree selector

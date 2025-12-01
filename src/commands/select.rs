@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::Repository;
+use worktrunk::zellij::try_focus_seat;
 
 use super::list::collect;
 use super::list::model::ListItem;
@@ -761,11 +762,6 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         // Load config
         let config = WorktrunkConfig::load().context("Failed to load config")?;
 
-        // Switch to the selected worktree
-        // handle_switch can handle both branch names and worktree paths
-        let (result, resolved_branch) =
-            handle_switch(&identifier, false, None, false, false, &config)?;
-
         // Clear the terminal screen after skim exits to prevent artifacts
         // Use stderr for terminal control sequences - in directive mode, stdout goes to a FIFO
         // for directive parsing, so terminal control must go through stderr to reach the TTY
@@ -774,8 +770,29 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
-        // Show success message; emit cd directive if in directive mode
-        handle_switch_output(&result, &resolved_branch, false, is_directive_mode)?;
+        // Switch to the selected worktree
+        // handle_switch can handle both branch names and worktree paths
+        let (result, resolved_branch) =
+            handle_switch(&identifier, false, None, false, false, &config)?;
+
+        // Check if we're inside the worktrunk workspace
+        // If so, focus the seat instead of emitting a cd directive
+        let repo_root = repo.worktree_base()?;
+        let handled_by_workspace = try_focus_seat(&repo_root, result.path())?;
+
+        if handled_by_workspace {
+            // Show brief success message
+            use color_print::cformat;
+            use worktrunk::path::format_path_for_display;
+            crate::output::success(cformat!(
+                "Focusing seat for <bold>{}</>",
+                format_path_for_display(result.path())
+            ))?;
+        } else {
+            // Outside workspace: normal behavior with cd directive
+            // Show success message; emit cd directive if in directive mode
+            handle_switch_output(&result, &resolved_branch, false, is_directive_mode)?;
+        }
     }
 
     Ok(())
