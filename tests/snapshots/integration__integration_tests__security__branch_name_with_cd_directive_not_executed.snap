@@ -18,7 +18,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
@@ -28,4 +27,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mBranch [1m__WORKTRUNK_CD__/tmp[22m already exists[39m
 
-💡 [2mRemove --create flag to switch to it[22m
+💡 [2mRemove [22m--create[2m flag to switch to the existing branch[22m

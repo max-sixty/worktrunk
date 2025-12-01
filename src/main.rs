@@ -123,6 +123,28 @@ fn maybe_handle_help_with_pager() -> bool {
     }
 }
 
+/// Enhance clap errors with command-specific hints, then exit.
+///
+/// For `wt switch` missing the branch argument, adds hints about shortcuts.
+fn enhance_and_exit_error(err: clap::Error) -> ! {
+    use clap::error::ErrorKind;
+    use color_print::ceprintln;
+
+    // Enhance `wt switch` missing argument error with shortcut hints.
+    // Safe in directive mode: hints go to stderr, only stdout is eval'd.
+    if err.kind() == ErrorKind::MissingRequiredArgument && format!("{err}").contains("wt switch") {
+        eprint!("{}", err.render().ansi());
+        ceprintln!("<green,bold>Quick switches:</>");
+        ceprintln!("  <cyan,bold>wt switch ^</>    default branch's worktree");
+        ceprintln!("  <cyan,bold>wt switch -</>    previous worktree");
+        ceprintln!("  <cyan,bold>wt switch @</>    current branch's worktree");
+        ceprintln!("  <cyan,bold>wt select</>      interactive picker");
+        process::exit(2);
+    }
+
+    err.exit()
+}
+
 fn main() {
     // Tell crossterm to always emit ANSI sequences
     crossterm::style::force_color_output(true);
@@ -142,7 +164,9 @@ fn main() {
     // When available, use built-in setting. Until then, could use try_parse() to intercept
     // MissingRequiredArgument errors and print custom messages with ValueEnum::value_variants().
     let cmd = cli::build_command();
-    let matches = cmd.get_matches();
+    let matches = cmd.try_get_matches().unwrap_or_else(|e| {
+        enhance_and_exit_error(e);
+    });
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     // Initialize base path from -C flag if provided

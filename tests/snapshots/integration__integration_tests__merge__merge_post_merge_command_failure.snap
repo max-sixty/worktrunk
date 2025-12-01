@@ -17,7 +17,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
@@ -36,4 +35,4 @@ exit_code: 1
 [0m🟡 [33mCommand failed: exit status: 1[39m
 ❌ [31mpost-merge command failed: exit status: 1[39m
 
-💡 [2mUse --no-verify to skip post-merge commands[22m
+💡 [2mUse [22m--no-verify[2m to skip post-merge commands[22m

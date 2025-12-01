@@ -17,7 +17,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
@@ -31,4 +30,4 @@ exit_code: 1
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
 [0m❌ [31mpre-commit command failed: exit status: 1[39m
 
-💡 [2mUse --no-verify to skip pre-commit commands[22m
+💡 [2mUse [22m--no-verify[2m to skip pre-commit commands[22m

@@ -1,0 +1,13 @@
+.text-center {
+  text-align: center;
+}
+
+.pos-absolute {
+  right: 0;
+  left: 0;
+  position: absolute;
+}
+
+.box-shadow {
+  box-shadow: 0 2px 10px 2px var(--shadow-color);
+}

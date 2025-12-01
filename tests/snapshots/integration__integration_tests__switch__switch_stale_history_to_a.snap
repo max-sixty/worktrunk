@@ -17,7 +17,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -26,4 +25,4 @@ exit_code: 0
 
 ----- stderr -----
 ✅ [32m[32mSwitched to worktree for [1mbranch-a[22m at [1m[REPO].branch-a[39m[22m[39m
-💡 [2m[2mRun `wt config shell install` to enable automatic cd[22m[22m
+💡 [2mRun `wt config shell install` to enable automatic cd[22m

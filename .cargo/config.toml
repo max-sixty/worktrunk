@@ -1,0 +1,5 @@
+# Set terminal width for deterministic test output.
+# Unit tests call get_terminal_width() in-process and need this env var.
+# Integration tests override with COLUMNS=150 in their command setup.
+[env]
+COLUMNS = "80"

@@ -51,8 +51,12 @@ pub fn handle_config_create() -> anyhow::Result<()> {
             format_path_for_display(&config_path)
         ))?;
         output::blank()?;
-        output::hint("Use 'wt config show' to view existing configuration")?;
-        output::hint("Use 'wt config create --help' for config format reference")?;
+        output::print(cformat!(
+            "{HINT_EMOJI} <dim>Use </>wt config show<dim> to view existing configuration</>"
+        ))?;
+        output::print(cformat!(
+            "{HINT_EMOJI} <dim>Use </>wt config create --help<dim> for config format reference</>"
+        ))?;
         return Ok(());
     }
 
@@ -124,7 +128,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            cformat!("{HINT_EMOJI} <dim>Run 'wt config create' to create a config file</>")
+            cformat!("{HINT_EMOJI} <dim>Run </>wt config create<dim> to create a config file</>")
         )?;
         writeln!(out)?;
         let default_config =
@@ -323,7 +327,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             cformat!(
-                "{HINT_EMOJI} <dim>Run 'wt config shell install' to enable shell integration</>"
+                "{HINT_EMOJI} <dim>Run </>wt config shell install<dim> to enable shell integration</>"
             )
         )?;
     }
@@ -464,7 +468,7 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
     let repo = Repository::current();
 
     // Show default branch cache
-    crate::output::info(cformat!("<dim>Default branch cache:</>"))?;
+    crate::output::info("Default branch cache:")?;
     match repo.default_branch() {
         Ok(branch) => crate::output::data(format!("  {branch}"))?,
         Err(_) => crate::output::data("  (not cached)")?,
@@ -472,7 +476,7 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
     crate::output::blank()?;
 
     // Show CI status cache
-    crate::output::info(cformat!("<dim>CI status cache:</>"))?;
+    crate::output::info("CI status cache:")?;
 
     let entries = CachedCiStatus::list_all(&repo);
     if entries.is_empty() {

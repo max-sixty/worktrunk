@@ -1,0 +1,5 @@
+---
+source: tests/git_error_display.rs
+expression: err.to_string()
+---
+❌ [31mNo worktree found for branch [1mnonexistent[39m[22m

@@ -32,8 +32,8 @@ fn test_config_init_already_exists() {
         ----- stderr -----
         ⚪ User config already exists: [1m~/.config/worktrunk/config.toml[22m
 
-        💡 [2mUse 'wt config show' to view existing configuration[22m
-        💡 [2mUse 'wt config create --help' for config format reference[22m
+        💡 [2mUse [22mwt config show[2m to view existing configuration[22m
+        💡 [2mUse [22mwt config create --help[2m for config format reference[22m
         ");
     });
 }

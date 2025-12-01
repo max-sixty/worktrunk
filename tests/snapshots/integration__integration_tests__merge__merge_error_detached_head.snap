@@ -16,7 +16,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
@@ -26,4 +25,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mCannot merge: not on a branch (detached HEAD)[39m
 
-💡 [2mSwitch to a branch first with 'git switch <branch>'[22m
+💡 [2mSwitch to a branch first with [22mgit switch <branch>

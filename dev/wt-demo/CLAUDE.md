@@ -2,25 +2,26 @@
 
 ## Running the Demo
 
-Build and record the demo GIF:
-
 ```console
-python3 dev/wt-demo-build.py
+./dev/wt-demo-build
 ```
 
-This creates:
-- `dev/wt-demo/out/wt-demo.gif` - The animated demo
-- `dev/wt-demo/out/run.txt` - Text log of the output
+Creates:
+- `dev/wt-demo/out/wt-demo.gif` - Animated demo (~1.9 MB)
+- `dev/wt-demo/out/run.txt` - Text transcript
+- `dev/wt-demo/out/record.log` - Recording log
+
+The script creates a fresh temp repo under `dev/wt-demo/out/.demo-*/`, seeds 4 worktrees + 2 extra branches, shows `wt list`, creates a worktree, edits a file, merges with `wt merge`, then shows `wt list --branches --full`.
 
 ## Viewing Results
 
 **Do NOT use `open` on the GIF** - that's for the user to do manually.
 
-To inspect what the demo produces:
-- Read `dev/wt-demo/out/run.txt` to see the text output
-- The GIF can be viewed in a browser or image viewer by the user
+Inline viewing options:
+- Quick Look: `qlmanage -p dev/wt-demo/out/wt-demo.gif`
+- iTerm2: `imgcat dev/wt-demo/out/wt-demo.gif`
 
-Claude Code cannot view GIFs directly. Use `run.txt` for verification.
+For Claude Code: read `dev/wt-demo/out/run.txt` to see text output (cannot view GIFs directly).
 
 ## Prerequisites
 
@@ -34,6 +35,9 @@ Claude Code cannot view GIFs directly. Use `run.txt` for verification.
 ## Files
 
 - `demo.tape` - VHS tape file with recording script
-- `wt-demo-build.py` - Python build script that sets up demo repo and records
 - `fixtures/` - Extracted content files (README, lib.rs, etc.)
 - `out/` - Output directory (gitignored)
+
+## Defaults
+
+Light theme (GitHub-light-inspired palette), starship prompt, 1600x720 window.

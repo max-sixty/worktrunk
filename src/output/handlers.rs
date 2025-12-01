@@ -110,11 +110,13 @@ fn delete_branch_if_safe(
 
 /// Handle the result of a branch deletion attempt.
 ///
-/// Shows appropriate warnings for non-deleted branches.
+/// Shows appropriate messages for non-deleted branches:
+/// - `Ok(None)`: We checked and chose not to delete (not integrated) - show info
+/// - `Err(e)`: Git command failed - show warning with actual error
 ///
 /// Returns:
 /// - `Ok(Some(reason))` if branch was deleted (reason is None if force-deleted)
-/// - `Ok(None)` if branch was not deleted (warning shown)
+/// - `Ok(None)` if branch was not deleted
 fn handle_branch_deletion_result(
     result: anyhow::Result<Option<Option<IntegrationReason>>>,
     branch_name: &str,
@@ -122,22 +124,15 @@ fn handle_branch_deletion_result(
     match result {
         Ok(Some(reason)) => Ok(Some(reason)), // Deleted (with or without integration reason)
         Ok(None) => {
-            // Branch not integrated - show warning
-            super::warning(cformat!(
-                "<yellow>Could not delete branch <bold>{branch_name}</></>"
-            ))?;
-            super::gutter(format_with_gutter(
-                &format!("error: the branch '{}' is not fully merged", branch_name),
-                "",
-                None,
+            // Branch not integrated - we chose not to delete (not a failure)
+            super::info(cformat!(
+                "Branch <bold>{branch_name}</> retained; not integrated into HEAD"
             ))?;
             Ok(None)
         }
         Err(e) => {
-            // Git command failed - show warning with error details
-            super::warning(cformat!(
-                "<yellow>Could not delete branch <bold>{branch_name}</></>"
-            ))?;
+            // Git command failed - show warning with actual error details
+            super::warning(cformat!("Could not delete branch <bold>{branch_name}</>"))?;
             super::gutter(format_with_gutter(&e.to_string(), "", None))?;
             Ok(None)
         }
@@ -207,23 +202,23 @@ fn format_remove_worktree_message(
     if changed_directory {
         if let Some(b) = branch_display {
             cformat!(
-                "<green>Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}</>"
+                "Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}"
             )
         } else {
             cformat!(
-                "<green>Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}</>"
+                "Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}"
             )
         }
     } else if let Some(b) = branch_display {
-        cformat!("<green>Removed <bold>{b}</> {action_suffix}{flag_note}</>")
+        cformat!("Removed <bold>{b}</> {action_suffix}{flag_note}")
     } else {
-        cformat!("<green>Removed {action_suffix}{flag_note}</>")
+        format!("Removed {action_suffix}{flag_note}")
     }
 }
 
-/// Shell integration hint message (with HINT styling - emoji added by shell_integration_hint())
+/// Shell integration hint message (hint() adds dim styling)
 fn shell_integration_hint() -> String {
-    cformat!("<dim>Run `wt config shell install` to enable automatic cd</>")
+    "Run `wt config shell install` to enable automatic cd".to_string()
 }
 
 /// Handle output for a switch operation
@@ -261,7 +256,7 @@ pub fn handle_switch_output(
                 // Shell integration not configured - show warning and setup hint
                 let path_display = format_path_for_display(path);
                 super::warning(cformat!(
-                    "<yellow>Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)</>"
+                    "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)"
                 ))?;
                 super::shell_integration_hint(shell_integration_hint())?;
             }
@@ -298,7 +293,7 @@ pub fn execute_user_command(command: &str) -> anyhow::Result<()> {
     use worktrunk::styling::format_bash_with_gutter;
 
     // Show what command is being executed (section header + gutter content)
-    super::progress(cformat!("<cyan>Executing (--execute):</>"))?;
+    super::progress("Executing (--execute):")?;
     super::gutter(format_bash_with_gutter(command, ""))?;
 
     super::execute(command)?;
@@ -381,9 +376,9 @@ fn handle_branch_only_output(
     no_delete_branch: bool,
     force_delete: bool,
 ) -> anyhow::Result<()> {
-    // Show info message that no worktree was found
-    super::info(cformat!(
-        "<bright-black>No worktree found for branch {branch_name}</>"
+    // Warn that no worktree was found (user asked to remove it)
+    super::warning(cformat!(
+        "No worktree found for branch <bold>{branch_name}</>"
     ))?;
 
     // Attempt branch deletion (unless --no-delete-branch was specified)
@@ -398,11 +393,7 @@ fn handle_branch_only_output(
     let integration_reason = handle_branch_deletion_result(result, branch_name)?;
 
     if integration_reason.is_some() {
-        let flag_note = if force_delete {
-            " (--force-delete)"
-        } else {
-            ""
-        };
+        let flag_note = get_flag_note(no_delete_branch, force_delete, integration_reason, None);
         super::success(cformat!(
             "<green>Removed branch <bold>{branch_name}</>{flag_note}</>"
         ))?;

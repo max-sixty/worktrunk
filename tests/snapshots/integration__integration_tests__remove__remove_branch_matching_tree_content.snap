@@ -16,7 +16,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -24,5 +23,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ [90mNo worktree found for branch feature-squashed[39m
+🟡 [33mNo worktree found for branch [1mfeature-squashed[22m[39m
 ✅ [32m[32mRemoved branch [1mfeature-squashed[22m[39m[39m

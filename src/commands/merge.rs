@@ -259,7 +259,7 @@ pub fn handle_merge(
 fn handle_merge_summary_output(reason: PreserveReason) -> anyhow::Result<()> {
     let message = match reason {
         PreserveReason::IsMainWorktree => "Worktree preserved (main worktree)",
-        PreserveReason::AlreadyOnTarget => "Worktree preserved (already on target)",
+        PreserveReason::AlreadyOnTarget => "Worktree preserved (already on target branch)",
         PreserveReason::NoRemoveFlag => "Worktree preserved (--no-remove)",
     };
     crate::output::info(message)?;

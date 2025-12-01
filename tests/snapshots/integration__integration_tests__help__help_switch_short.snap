@@ -10,7 +10,6 @@ info:
     COLUMNS: "150"
     GIT_EDITOR: ""
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
 success: true
@@ -22,7 +21,7 @@ wt switch - Switch to a worktree
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
 
 [1m[32mArguments:[0m
-  [36m<BRANCH>[0m  Branch, path, '@' (HEAD), '-' (previous), or '^' (main)
+  [36m<BRANCH>[0m  Branch or worktree name
 
 [1m[32mOptions:[0m
   [1m[36m-c[0m, [1m[36m--create[0m             Create a new branch

@@ -16,7 +16,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -24,6 +23,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ [90mNo worktree found for branch feature-unmerged[39m
-🟡 [33m[33mCould not delete branch [1mfeature-unmerged[39m[22m[39m
-[107m [0m  error: the branch 'feature-unmerged' is not fully merged
+🟡 [33mNo worktree found for branch [1mfeature-unmerged[22m[39m
+⚪ Branch [1mfeature-unmerged[22m retained; not integrated into HEAD

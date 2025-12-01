@@ -2506,7 +2506,7 @@ fn test_merge_no_commit_with_dirty_tree() {
         ----- stderr -----
         ❌ [31mCannot merge with --no-commit: working tree has uncommitted changes[39m
 
-        💡 [2mCommit or stash them first[22m
+        💡 [2mCommit or stash changes first[22m
         ");
     });
 }

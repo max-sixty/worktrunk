@@ -16,7 +16,7 @@ info:
     GIT_EDITOR: ""
     LANG: C
     LC_ALL: C
-    SOURCE_DATE_EPOCH: "1761609600"
+    SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false

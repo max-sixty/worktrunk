@@ -684,3 +684,12 @@ fn test_switch_ping_pong_realistic() {
         repo.root_path(),
     );
 }
+
+/// Test that `wt switch` without arguments shows helpful hints about shortcuts.
+#[test]
+fn test_switch_missing_argument_shows_hints() {
+    let repo = setup_switch_repo();
+
+    // Run switch with no arguments - should show clap error plus hints
+    snapshot_switch("switch_missing_argument_hints", &repo, &[]);
+}

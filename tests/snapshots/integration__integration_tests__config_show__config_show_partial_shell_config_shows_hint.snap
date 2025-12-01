@@ -17,7 +17,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WT_ASSUME_COMPINIT: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
@@ -37,4 +36,4 @@ exit_code: 0
 ⚪ Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc
 [2m⚪ Skipped fish; ~/.config/fish/conf.d not found[22m
 
-💡 [2mRun 'wt config shell install' to enable shell integration[22m
+💡 [2mRun [22mwt config shell install[2m to enable shell integration[22m

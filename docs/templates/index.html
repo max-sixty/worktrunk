@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block hero %}
+<script async defer src="https://buttons.github.io/buttons.js"></script>
+<style>
+  .welcome {
+    animation: welcome-animation 1s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+    animation-delay: 0.25s;
+  }
+
+  .hero-image {
+    animation: logo-animation 2s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  }
+
+  .explore-more, .logo, nav {
+    animation: fade-in-animation 1.5s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+    animation-delay: 0.5s;
+  }
+
+  @keyframes logo-animation {
+    0% {
+      transform: rotateY(-40deg) rotateZ(90deg) translateX(-50%);
+      filter: blur(50px);
+      opacity: 0;
+    }
+    50% {
+      filter: blur(0);
+    }
+    70% {
+      opacity: 1;
+      transform: rotateY(-10deg) rotateZ(10deg) translateX(5%);
+    }
+    100% {
+      transform: rotateY(0) rotateZ(0) translateX(0);
+    }
+  }
+
+  @keyframes fade-in-animation {
+    0% {
+      filter: blur(10px);
+      opacity: 0;
+    }
+    30% {
+      filter: blur(0);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes welcome-animation {
+    0% {
+      transform: translateY(60%);
+      filter: blur(10px);
+      opacity: 0;
+    }
+    100% {
+      transform: translateY(0);
+      filter: blur(0);
+      opacity: 1;
+    }
+  }
+
+  .hero section {
+    padding: 0 5rem;
+  }
+  @media screen and (max-width: 768px) {
+    .hero section {
+      padding: 0 2rem;
+    }
+
+    .hero-image {
+      display: none;
+    }
+  }
+</style>
+<section class="text-center welcome">
+  <h1 class="heading-text" style="font-size: 50px">Worktrunk</h1>
+  <h3 class="title-text">
+    Git worktree management for <b>parallel AI agent workflows</b>
+  </h3>
+  <div style="display: flex; gap: 1rem; justify-content: center; align-items: center; margin-top: 1.5rem;">
+    <a href="/quickstart/" class="button">Get Started</a>
+    <a class="github-button" href="https://github.com/max-sixty/worktrunk" data-size="large" data-show-count="true"
+      aria-label="Star max-sixty/worktrunk on GitHub">Star</a>
+  </div>
+</section>
+<img class="hero-image" style="width: 40%" src="{{ get_url(path='logo.svg') }}" alt="Worktrunk logo">
+<div class="explore-more text" onclick="document.getElementById('features').scrollIntoView({behavior: 'smooth'})">
+  Explore More ⇩
+</div>
+{% endblock hero %}
+
+{% block toc %}
+{% set docs_section = get_section(path="_index.md") %}
+<div class="toc">
+    <div class="toc-sticky">
+        <div class="toc-item" style="margin-bottom: 0.5rem;">
+            <a class="subtext active" href="/" style="font-weight: 600;">
+                Documentation
+            </a>
+        </div>
+
+        <div class="toc-divider"></div>
+
+        {% for doc_page in docs_section.pages %}
+        <div class="toc-item">
+            <a class="subtext" href="{{ doc_page.permalink | safe }}">
+                {{ doc_page.title }}
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock toc %}
+
+{% block content %}
+{# Display quickstart content directly on homepage - relies on quickstart.md existing #}
+{% set docs_section = get_section(path="_index.md") %}
+{% set quickstart = docs_section.pages | filter(attribute="slug", value="quickstart") | first %}
+<div class="heading-text">{{ quickstart.title }}</div>
+{{ quickstart.content | safe }}
+
+<div class="page-nav" style="justify-content: flex-end;">
+    {% set concepts = docs_section.pages | filter(attribute="slug", value="concepts") | first %}
+    <a href="{{ concepts.permalink | safe }}">{{ concepts.title }} →</a>
+</div>
+{% endblock content %}

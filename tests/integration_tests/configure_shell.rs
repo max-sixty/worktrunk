@@ -31,9 +31,8 @@ fn test_configure_shell_with_yes() {
         ----- stdout -----
 
         ----- stderr -----
-        🟡 [33mCompletions won't work: zsh's compinit is not enabled.
-        Add this to ~/.zshrc before the wt line:
-        autoload -Uz compinit && compinit[39m
+        🟡 [33mCompletions won't work; add to ~/.zshrc before the wt line:[39m
+        [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         💡 [2mSkipped [1mbash[22m; ~/.bashrc not found[22m
         💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
@@ -77,9 +76,8 @@ fn test_configure_shell_specific_shell() {
         ----- stdout -----
 
         ----- stderr -----
-        🟡 [33mCompletions won't work: zsh's compinit is not enabled.
-        Add this to ~/.zshrc before the wt line:
-        autoload -Uz compinit && compinit[39m
+        🟡 [33mCompletions won't work; add to ~/.zshrc before the wt line:[39m
+        [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
 
         ✅ [32mConfigured 1 shell[39m
@@ -301,9 +299,8 @@ fn test_configure_shell_multiple_configs() {
         ----- stdout -----
 
         ----- stderr -----
-        🟡 [33mCompletions won't work: zsh's compinit is not enabled.
-        Add this to ~/.zshrc before the wt line:
-        autoload -Uz compinit && compinit[39m
+        🟡 [33mCompletions won't work; add to ~/.zshrc before the wt line:[39m
+        [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ✅ [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
@@ -363,9 +360,8 @@ fn test_configure_shell_mixed_states() {
         ----- stdout -----
 
         ----- stderr -----
-        🟡 [33mCompletions won't work: zsh's compinit is not enabled.
-        Add this to ~/.zshrc before the wt line:
-        autoload -Uz compinit && compinit[39m
+        🟡 [33mCompletions won't work; add to ~/.zshrc before the wt line:[39m
+        [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ⚪ Already configured shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
         💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m

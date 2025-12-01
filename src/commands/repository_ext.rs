@@ -205,15 +205,11 @@ impl RepositoryCliExt for Repository {
         }
 
         let push_files = self.changed_files(target_branch, "HEAD")?;
-        let wt_status_output = wt_repo.run_command(&["status", "--porcelain"])?;
+        // Use -z for NUL-separated output: handles filenames with spaces and renames correctly
+        // Format: "XY path\0" for normal files, "XY new_path\0old_path\0" for renames/copies
+        let wt_status_output = wt_repo.run_command(&["status", "--porcelain", "-z"])?;
 
-        let wt_files: Vec<String> = wt_status_output
-            .lines()
-            .filter_map(|line| {
-                line.split_once(' ')
-                    .map(|(_, filename)| filename.trim().to_string())
-            })
-            .collect();
+        let wt_files: Vec<String> = parse_porcelain_z(&wt_status_output);
 
         let overlapping: Vec<String> = push_files
             .iter()
@@ -282,6 +278,39 @@ fn load_project_config_at(repo_root: &Path) -> anyhow::Result<Option<ProjectConf
     ProjectConfig::load(repo_root).context("Failed to load project config")
 }
 
+/// Parse `git status --porcelain -z` output into a list of affected filenames.
+///
+/// The -z format uses NUL separators and handles renames specially:
+/// - Normal entries: `XY path\0`
+/// - Renames/copies: `XY new_path\0old_path\0`
+///
+/// This correctly handles filenames with spaces and ensures both old and new
+/// paths are included for renames/copies (important for overlap detection).
+fn parse_porcelain_z(output: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut entries = output.split('\0').filter(|s| !s.is_empty()).peekable();
+
+    while let Some(entry) = entries.next() {
+        // Each entry is "XY path" where XY is exactly 2 status chars
+        if entry.len() < 3 {
+            continue;
+        }
+
+        let status = &entry[0..2];
+        let path = &entry[3..];
+        files.push(path.to_string());
+
+        // For renames (R) and copies (C), the next NUL-separated field is the old path
+        if (status.starts_with('R') || status.starts_with('C'))
+            && let Some(old_path) = entries.next()
+        {
+            files.push(old_path.to_string());
+        }
+    }
+
+    files
+}
+
 struct AutoStageWarning {
     files: Vec<String>,
 }
@@ -339,12 +368,106 @@ impl TargetWorktreeStash {
             .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
         {
             crate::output::warning(cformat!(
-                "Failed to restore stash <bold>{stash_ref}</> - run 'git stash pop {stash_ref}' in <bold>{path}</>",
+                "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
                 stash_ref = self.stash_ref,
                 path = format_path_for_display(&self.path),
             ))?;
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_porcelain_z_modified_staged() {
+        // "M  file.txt\0" - staged modification
+        let output = "M  file.txt\0";
+        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_modified_unstaged() {
+        // " M file.txt\0" - unstaged modification (this was the bug case)
+        let output = " M file.txt\0";
+        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_modified_both() {
+        // "MM file.txt\0" - both staged and unstaged
+        let output = "MM file.txt\0";
+        assert_eq!(parse_porcelain_z(output), vec!["file.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_untracked() {
+        // "?? new.txt\0" - untracked file
+        let output = "?? new.txt\0";
+        assert_eq!(parse_porcelain_z(output), vec!["new.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_rename() {
+        // "R  new.txt\0old.txt\0" - rename includes both paths
+        let output = "R  new.txt\0old.txt\0";
+        let result = parse_porcelain_z(output);
+        assert_eq!(result, vec!["new.txt", "old.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_copy() {
+        // "C  copy.txt\0original.txt\0" - copy includes both paths
+        let output = "C  copy.txt\0original.txt\0";
+        let result = parse_porcelain_z(output);
+        assert_eq!(result, vec!["copy.txt", "original.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_multiple_files() {
+        // Multiple files with different statuses
+        let output = " M file1.txt\0M  file2.txt\0?? untracked.txt\0R  new.txt\0old.txt\0";
+        let result = parse_porcelain_z(output);
+        assert_eq!(
+            result,
+            vec![
+                "file1.txt",
+                "file2.txt",
+                "untracked.txt",
+                "new.txt",
+                "old.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_filename_with_spaces() {
+        // "M  file with spaces.txt\0"
+        let output = "M  file with spaces.txt\0";
+        assert_eq!(parse_porcelain_z(output), vec!["file with spaces.txt"]);
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_empty() {
+        assert_eq!(parse_porcelain_z(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_short_entry_skipped() {
+        // Entry too short to have path (malformed, shouldn't happen in practice)
+        let output = "M\0";
+        assert_eq!(parse_porcelain_z(output), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_porcelain_z_rename_missing_old_path() {
+        // Rename without old path (malformed, but should handle gracefully)
+        let output = "R  new.txt\0";
+        let result = parse_porcelain_z(output);
+        // Should include new.txt, old path is simply not added
+        assert_eq!(result, vec!["new.txt"]);
     }
 }

@@ -17,7 +17,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
@@ -27,4 +26,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mFound merge commits in push range[39m
 
-💡 [2mUse --allow-merge-commits to push non-linear history[22m
+💡 [2mUse [22m--allow-merge-commits[2m to push non-linear history[22m

@@ -14,7 +14,6 @@ info:
     LC_ALL: C
     NO_COLOR: ""
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true

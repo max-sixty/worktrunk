@@ -114,7 +114,7 @@ use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::{CommandPhase, WorktrunkConfig};
 use worktrunk::git::{GitError, Repository, ResolvedWorktree, is_command_not_approved};
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{HINT_EMOJI, format_with_gutter};
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
@@ -327,8 +327,8 @@ pub fn handle_switch(
             crate::output::warning(cformat!(
                 "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
             ))?;
-            crate::output::hint(format!(
-                "Use 'wt switch {resolved_branch}' (without --create) to switch to the remote branch"
+            crate::output::print(cformat!(
+                "{HINT_EMOJI} <dim>Use </>wt switch <bold>{resolved_branch}</><dim> (without </>--create<dim>) to switch to the remote branch</>"
             ))?;
         }
     }
@@ -526,8 +526,9 @@ pub fn handle_remove(
 
     // Show progress (unless running in background - output handler will show command)
     if !background {
-        let progress_msg = cformat!("<cyan>Removing worktree for <bold>{worktree_name}</>...</>");
-        crate::output::progress(progress_msg)?;
+        crate::output::progress(cformat!(
+            "Removing worktree for <bold>{worktree_name}</>..."
+        ))?;
     }
 
     repo.remove_worktree_by_name(worktree_name, no_delete_branch, force_delete)
@@ -546,7 +547,7 @@ pub fn handle_remove_current(
 
     // Show progress (unless running in background - output handler will show command)
     if !background {
-        crate::output::progress(cformat!("<cyan>Removing current worktree...</>"))?;
+        crate::output::progress("Removing current worktree...")?;
     }
 
     repo.remove_current_worktree(no_delete_branch, force_delete)
@@ -567,7 +568,7 @@ pub fn handle_remove_by_path(
 
     if !background {
         crate::output::progress(cformat!(
-            "<cyan>Removing worktree at <bold>{}</>...</>",
+            "Removing worktree at <bold>{}</>...",
             worktrunk::path::format_path_for_display(path)
         ))?;
     }

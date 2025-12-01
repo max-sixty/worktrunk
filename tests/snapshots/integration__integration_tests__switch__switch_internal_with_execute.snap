@@ -21,7 +21,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    WORKTRUNK_BIN: ""
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -33,6 +32,6 @@ echo 'line2'
 
 ----- stderr -----
 ✅ [32m[32mCreated new worktree for [1mexec-internal[22m from [1mmain[22m at [1m[REPO].exec-internal[39m[22m[39m
-🔄 [36m[36mExecuting (--execute):[39m[39m
+🔄 [36mExecuting (--execute):[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line1'[0m[2m[0m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line2'[0m[2m[0m

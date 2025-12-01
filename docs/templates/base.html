@@ -1,0 +1,31 @@
+{% import "juice/templates/_macros.html" as macros %}
+{% extends "juice/templates/index.html" %}
+
+{% block favicon %}
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+{% endblock favicon %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ get_url(path='custom.css') }}">
+{% endblock head %}
+
+{% block header %}
+<header class="box-shadow">
+    {{ macros::render_header() }}
+</header>
+{% endblock header %}
+
+{% block hero %}
+{% endblock hero %}
+
+{% block sidebar %}
+{% endblock sidebar %}
+
+{% block footer %}
+<footer>
+  <span><a href="https://github.com/max-sixty/worktrunk">GitHub</a></span>
+  <span><a href="https://crates.io/crates/worktrunk">Crates.io</a></span>
+  <span><a href="/">Documentation</a></span>
+  <span><a href="https://github.com/max-sixty/worktrunk/issues">Issues</a></span>
+</footer>
+{% endblock footer %}

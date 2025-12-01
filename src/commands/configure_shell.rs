@@ -174,10 +174,12 @@ pub fn handle_configure_shell(
         // If detection fails (None), stay silent - we can't be sure.
         if shell::detect_zsh_compinit() == Some(false) {
             let _ = crate::output::warning(
-                "Completions won't work: zsh's compinit is not enabled.\n\
-                    Add this to ~/.zshrc before the wt line:\n\
-                    autoload -Uz compinit && compinit",
+                "Completions won't work; add to ~/.zshrc before the wt line:",
             );
+            let _ = crate::output::gutter(format_bash_with_gutter(
+                "autoload -Uz compinit && compinit",
+                "",
+            ));
         }
     }
 
