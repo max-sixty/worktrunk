@@ -1,5 +1,3 @@
-name: CI
-
 on:
   push:
     branches: [ main ]
@@ -14,7 +12,6 @@ env:
 
 jobs:
   test:
-    name: Test
     strategy:
       fail-fast: false
       matrix:
@@ -109,7 +106,6 @@ jobs:
         args: --no-deps
 
   check-links:
-    name: Check links
     runs-on: ubuntu-latest
     steps:
     - name: 📂 Checkout code
@@ -153,7 +149,6 @@ jobs:
 
   # Check if Cargo files changed (for conditional jobs below)
   changes:
-    name: Detect changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -173,7 +168,6 @@ jobs:
             - 'rust-toolchain.toml'
 
   msrv:
-    name: MSRV
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
@@ -195,7 +189,6 @@ jobs:
       run: cargo msrv verify
 
   check-unused-dependencies:
-    name: Unused dependencies
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
@@ -222,7 +215,6 @@ jobs:
         args: --all-targets --locked
 
   benchmarks:
-    name: Benchmarks
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'

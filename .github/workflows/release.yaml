@@ -13,7 +13,6 @@
 # Note that the GitHub Release will be created with a generated
 # title/body based on your changelogs.
 
-name: Release
 permissions:
   "contents": "write"
 
@@ -89,7 +88,6 @@ jobs:
 
   # Build and packages all the platform-specific things
   build-local-artifacts:
-    name: build-local-artifacts (${{ join(matrix.targets, ', ') }})
     # Let the initial task tell us to not run (currently very blunt)
     needs:
       - plan
@@ -279,7 +277,6 @@ jobs:
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   publish-cargo:
-    name: Publish to crates.io
     needs:
       - plan
       - host
