@@ -52,7 +52,7 @@ env_logger = "0.11"
 indexmap = { version = "2.12", features = ["serde"] }
 etcetera = "0.11"
 log = "0.4"
-minijinja = "2.12"
+minijinja = "2.13"
 rayon = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -81,12 +81,12 @@ skim = "0.20"
 vergen-gitcl = { version = "1.0.8", features = ["build"] }
 
 [dev-dependencies]
-insta = { version = "1.44.1", features = ["yaml", "redactions", "filters"] }
+insta = { version = "1.44.3", features = ["yaml", "redactions", "filters"] }
 insta-cmd = "0.6"
 rstest = "0.26"
 tempfile = "3.23"
 toml = "0.9"
-criterion = "0.7"
+criterion = "0.8"
 portable-pty = "0.9"
 regex = "1.12"
 vt100 = "0.16"
