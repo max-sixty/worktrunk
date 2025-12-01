@@ -1,0 +1,27 @@
+name: build-docs
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Zola
+        uses: taiki-e/install-action@v2
+        with:
+          tool: zola@0.19.2
+
+      - name: 🕷️ Build docs
+        run: zola build
+        working-directory: docs
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/public/
+          retention-days: 1
