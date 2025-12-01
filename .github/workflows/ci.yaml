@@ -128,8 +128,8 @@ jobs:
       uses: actions/cache@v4
       with:
         path: .lycheecache
-        key: lychee-${{ github.sha }}
-        restore-keys: lychee-
+        key: lychee-${{ hashFiles('.config/lychee.toml') }}-${{ github.sha }}
+        restore-keys: lychee-${{ hashFiles('.config/lychee.toml') }}-
 
     - name: Get modified markdown files
       if: github.event_name == 'pull_request'

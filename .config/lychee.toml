@@ -1,5 +1,5 @@
 # Lychee link checker configuration
-# Based on PRQL's proven patterns: https://github.com/PRQL/prql
+# See: https://lychee.cli.rs/
 
 # Network resilience - handles transient failures
 max_retries = 5
@@ -16,25 +16,25 @@ max_cache_age = "1d"
 # Exclude sites that block GitHub Actions or have reliability issues
 exclude = [
     # Social media (blocks GitHub Actions)
-    "~twitter\\.com",
-    "~x\\.com",
-    "~reddit\\.com",
+    "twitter\\.com",
+    "x\\.com",
+    "reddit\\.com",
 
     # Sites with reliability issues in CI
-    "~stackoverflow\\.com",
-    "~npmjs\\.com",
+    "stackoverflow\\.com",
+    "npmjs\\.com",
 
     # Package registries (frequently return 429 or block CI)
-    "~crates\\.io",
-    "~docs\\.rs",
-    "~img\\.shields\\.io",
+    "crates\\.io",
+    "docs\\.rs",
+    "img\\.shields\\.io",
 
     # Sites already excluded in markdown-link-check
-    "~opensource\\.org",
-    "~llm\\.datasette\\.io",
+    "opensource\\.org",
+    "llm\\.datasette\\.io",
 
     # Local build artifacts (not checked into git)
-    "~wt-demo/out/wt-demo\\.gif",
+    "wt-demo/out/wt-demo\\.gif",
 ]
 
 # Exclude files with relative paths intended for different locations

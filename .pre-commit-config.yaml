@@ -61,5 +61,5 @@ repos:
 
 ci:
   # Currently network access isn't supported in the CI product.
-  skip: [fmt, lychee (PR mode)]
+  skip: [fmt, lychee]
   autoupdate_commit_msg: "chore: pre-commit autoupdate"
