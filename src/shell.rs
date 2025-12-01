@@ -289,6 +289,11 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         return Some(true); // Assume compinit is configured
     }
 
+    // Force compinit to be missing (for tests that expect the warning)
+    if std::env::var("WT_ASSUME_NO_COMPINIT").is_ok() {
+        return Some(false); // Force warning to appear
+    }
+
     // Probe command: check if compdef function exists (proof compinit ran).
     // We use unique markers (__WT_COMPINIT_*) to avoid false matches from any
     // output the user's zshrc might produce during startup.

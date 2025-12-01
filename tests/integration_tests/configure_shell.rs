@@ -19,6 +19,8 @@ fn test_configure_shell_with_yes() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -63,6 +65,8 @@ fn test_configure_shell_specific_shell() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -287,6 +291,8 @@ fn test_configure_shell_multiple_configs() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -348,6 +354,8 @@ fn test_configure_shell_mixed_states() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")

@@ -40,8 +40,9 @@ const STABILIZE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long screen must be unchanged to consider it "stable".
 /// Must be long enough for preview content to load (preview commands run async).
-/// 300ms balances reliability (allows preview to complete) with speed.
-const STABLE_DURATION: Duration = Duration::from_millis(300);
+/// 500ms balances reliability (allows preview to complete) with speed.
+/// Panel switches trigger async git commands that may take time.
+const STABLE_DURATION: Duration = Duration::from_millis(500);
 
 /// Polling interval when waiting for output.
 /// Fast polling ensures tests complete quickly when ready.

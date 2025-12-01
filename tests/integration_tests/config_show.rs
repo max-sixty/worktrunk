@@ -176,6 +176,8 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
