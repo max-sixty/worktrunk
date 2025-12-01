@@ -124,13 +124,6 @@ jobs:
     - name: Install pre-commit
       run: pip install pre-commit
 
-    - name: Cache lychee results
-      uses: actions/cache@v4
-      with:
-        path: .lycheecache
-        key: lychee-${{ hashFiles('.config/lychee.toml') }}-${{ github.sha }}
-        restore-keys: lychee-${{ hashFiles('.config/lychee.toml') }}-
-
     - name: Get modified markdown files
       if: github.event_name == 'pull_request'
       id: changed-files
