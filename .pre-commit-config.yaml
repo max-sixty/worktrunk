@@ -33,7 +33,7 @@ repos:
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          - --include=^(https://(github\.com/worktrunk|worktrunk\.dev)|file://)
+          - --include=^(https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)|file://)
       # Comprehensive mode - check all links with full config
       # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
       - id: lychee

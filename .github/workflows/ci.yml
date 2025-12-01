@@ -146,12 +146,10 @@ jobs:
     - name: Link checker (modified files - PRs)
       if: github.event_name == 'pull_request' && steps.changed-files.outputs.any_modified == 'true'
       run: pre-commit run lychee --files ${{ steps.changed-files.outputs.all_changed_files }}
-      continue-on-error: true
 
     - name: Link checker (all files - main branch)
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: pre-commit run lychee --all-files
-      continue-on-error: true
 
   # Check if Cargo files changed (for conditional jobs below)
   changes:
