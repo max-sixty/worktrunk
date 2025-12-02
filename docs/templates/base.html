@@ -33,6 +33,14 @@
 <!-- <meta name="twitter:image" content="{{ config.base_url }}social-card.png"> -->
 
 <link rel="stylesheet" href="{{ get_url(path='custom.css') }}">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6YY8BDJ4QH"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6YY8BDJ4QH');
+</script>
 <script>
 // Disable the Juice theme's scroll-spy by intercepting IntersectionObserver
 // Juice creates an observer with threshold: 1 to highlight TOC items on scroll
