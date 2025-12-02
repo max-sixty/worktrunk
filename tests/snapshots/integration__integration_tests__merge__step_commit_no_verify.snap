@@ -27,7 +27,7 @@ exit_code: 0
 
 ----- stderr -----
 💡 [2mSkipping pre-commit hook ([90m--no-verify[39m)[22m
-🟡 [33mAuto-staging 2 untracked files:[39m
+🟡 [33mAuto-staging 2 untracked paths:[39m
 [107m [0m  .config/
 [107m [0m  file1.txt
 🔄 [36mCommitting changes with default message... [90m(2 files, [32m+2[39m[39m[90m)[39m[39m

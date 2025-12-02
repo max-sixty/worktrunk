@@ -24,7 +24,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAuto-staging 1 untracked file:[39m
+🟡 [33mAuto-staging 1 untracked path:[39m
 [107m [0m  feature.txt
 🔄 [36mRunning pre-commit:[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m

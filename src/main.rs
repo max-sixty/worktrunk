@@ -362,13 +362,14 @@ fn main() {
                             }
 
                             // Restart hint: only shown if the current shell's extension changed
-                            // (completions are auto-sourced or sourced separately, no restart needed)
+                            // Fish completions are lazily loaded from ~/.config/fish/completions/
+                            // so no restart needed. Bash/Zsh completions are inline in the init script.
                             if shells_configured_count > 0 {
                                 let current_shell = std::env::var("SHELL")
                                     .ok()
                                     .and_then(|s| s.rsplit('/').next().map(String::from));
 
-                                // Find if current shell had its extension changed (not just completions)
+                                // Find if current shell had its extension changed
                                 let current_shell_result =
                                     current_shell.as_ref().and_then(|shell_name| {
                                         scan_result

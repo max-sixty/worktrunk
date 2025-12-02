@@ -23,7 +23,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAuto-staging 1 untracked file:[39m
+🟡 [33mAuto-staging 1 untracked path:[39m
 [107m [0m  dirty.txt
 🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
 💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m

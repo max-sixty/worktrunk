@@ -25,7 +25,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAuto-staging 2 untracked files:[39m
+🟡 [33mAuto-staging 2 untracked paths:[39m
 [107m [0m  untracked1.txt
 [107m [0m  untracked2.txt
 🔄 [36mSquashing 1 commit & working tree changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
