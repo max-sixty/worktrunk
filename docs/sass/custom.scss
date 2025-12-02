@@ -1,97 +1,596 @@
-// Custom styles for Worktrunk docs
-// Only add what the theme doesn't provide; prefer theme defaults
+// Warm Workbench Theme for Worktrunk Docs
+// A clean workbench in a sunlit garage: warm paper, neatly labeled trays
 
-// Terminal output styling (ANSI colors via inline styles from ansi-to-html crate)
-.terminal {
-    background-color: #ffffff;
-    border: 1px solid #e0e0e0;
-    border-radius: 6px;
-    padding: 1rem;
+// ============================================================================
+// Base
+// ============================================================================
+
+html {
+    // Reserve scrollbar space to prevent layout shift when navigating
+    // Browser support: Safari 17+, Chrome 94+, Firefox 97+. Graceful degradation.
+    scrollbar-gutter: stable;
+}
+
+// ============================================================================
+// Typography
+// ============================================================================
+
+body {
+    font-family: var(--wt-font-sans);
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--wt-color-text);
+    background-color: var(--wt-color-bg);
+}
+
+// Headings
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--wt-font-head);
+    color: var(--wt-color-text);
+    // Account for sticky header when scrolling to anchors
+    scroll-margin-top: calc(var(--wt-header-height) + var(--wt-main-padding-top));
+}
+
+h1, .heading-text {
+    font-size: 1.75rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    border-left: none;
+    padding-left: 0;
+}
+
+h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-top: 2.75rem;
+    margin-bottom: 0.75rem;
+    position: relative;
+    display: inline-block;
+
+    // Hand-drawn underline - slightly irregular width
+    &::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: -0.3rem;
+        width: 45%;
+        height: 2px;
+        background: var(--wt-color-craft-brown);
+        opacity: 0.5;
+        border-radius: 1px;
+    }
+}
+
+h3 {
+    font-size: 1.15rem;
+    font-weight: 550;
+    margin-top: 2rem;
+    margin-bottom: 0.6rem;
+    color: var(--wt-color-text-muted);
+}
+
+h4 {
+    font-size: 1rem;
+    font-weight: 550;
+}
+
+// ============================================================================
+// Header & Bench Rail
+// ============================================================================
+
+header {
+    height: var(--wt-header-height);
+    box-sizing: border-box; // Include border in height
+    background-color: var(--wt-color-bg-soft) !important;
+    border-bottom: 1px solid var(--wt-color-border-subtle);
+    padding: 0 50px;
+    box-shadow: none !important;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.logo {
+    font-family: var(--wt-font-sans);
+    font-weight: 600;
+    font-size: 1.25rem;
+    color: var(--wt-color-text);
+}
+
+// Navigation links
+.nav-item {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--wt-color-text-muted);
+    padding: 0.25rem 0.5rem;
+    border-radius: 999px;
+    transition: color 150ms, background 150ms;
+
+    &:hover {
+        color: var(--wt-color-text);
+        background: var(--wt-color-bg-soft);
+        text-decoration: none;
+    }
+}
+
+// ============================================================================
+// Main Content Area
+// ============================================================================
+
+main {
+    background-color: var(--wt-color-bg);
+    padding: var(--wt-main-padding-top) 80px;
+    gap: 2.5rem; // Space between TOC and content
+}
+
+.content {
+    max-width: 860px;
+    padding: 2rem 40px;
+    background-color: var(--wt-color-bg-elevated);
+    border-radius: 12px;
+    border: 1px solid var(--wt-color-border-subtle);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+// Paragraphs
+.content p {
+    max-width: 70ch;
+    margin-bottom: 1rem;
+}
+
+// Links
+.content a {
+    color: var(--wt-color-link);
+    transition: all 150ms;
+
+    &:hover {
+        text-decoration: underline;
+        text-decoration-thickness: 1.5px;
+    }
+}
+
+// ============================================================================
+// Inline Code
+// ============================================================================
+
+.content code {
+    background-color: var(--wt-color-code-bg);
+    border-radius: 0.2rem;
+    padding: 0.05rem 0.25rem;
+    color: var(--wt-color-text);
+    font-family: var(--wt-font-mono);
+    font-size: 0.92rem;
+    font-weight: 400;
+}
+
+// ============================================================================
+// Code Blocks - Paper Slip Look
+// ============================================================================
+
+.content pre {
+    background-color: var(--wt-color-code-bg);
+    border: 1px solid var(--wt-color-code-border);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
     overflow-x: auto;
-    margin: 1rem 0;
-    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+    margin: 1.5rem 0;
+
+    code {
+        background-color: transparent;
+        padding: 0;
+        font-family: var(--wt-font-mono);
+        font-size: 0.875rem;
+        line-height: 1.5;
+        color: var(--wt-color-text);
+    }
+}
+
+// Terminal output styling (ANSI colors)
+.terminal {
+    background-color: var(--wt-color-code-bg);
+    border: 1px solid var(--wt-color-code-border);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    font-family: var(--wt-font-mono);
     font-size: 0.875rem;
     line-height: 1.5;
 
     code {
         background-color: transparent;
-        color: #323232;
+        color: var(--wt-color-text);
         padding: 0;
     }
 
-    // Prompt styling (manually added, not from ANSI conversion)
-    .prompt { color: #666666; }
+    .prompt {
+        color: var(--wt-color-text-soft);
+    }
 }
 
-// Code block enhancements (theme handles colors via CSS vars)
-.content pre {
-    border: 1px solid #e0e0e0;
-    border-radius: 6px;
+// ============================================================================
+// Blockquotes / Callouts
+// ============================================================================
+
+.content blockquote {
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--wt-color-border-subtle);
+    border-left: 3px solid var(--wt-color-accent);
+    position: relative;
+    background: var(--wt-color-bg-elevated);
+    margin: 1.5rem 0;
+
+    p {
+        margin: 0;
+    }
 }
 
-// Table styling (theme doesn't provide)
+// ============================================================================
+// Tables
+// ============================================================================
+
 table {
     border-collapse: collapse;
     width: 100%;
     margin: 1.5rem 0;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    border: 1px solid var(--wt-color-border-subtle);
 
     th, td {
-        border: 1px solid #e0e0e0;
+        border: 1px solid var(--wt-color-border-subtle);
         padding: 0.75rem 1rem;
         text-align: left;
     }
 
     th {
-        background-color: #f8f8f8;
+        background-color: var(--wt-color-bg-soft);
         font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--wt-color-text);
     }
 
     tr:nth-child(even) {
-        background-color: #fafafa;
+        background-color: var(--wt-color-bg-soft);
+    }
+
+    tr:hover {
+        background-color: var(--wt-color-accent-soft);
     }
 }
 
-// TOC divider (theme doesn't have this element)
-.toc .toc-divider {
-    border-top: 1px solid #e0e0e0;
-    margin: 0.5rem 0;
+// ============================================================================
+// TOC / Sidebar
+// ============================================================================
+
+.toc {
+    width: 220px;
+    flex-shrink: 0;
 }
 
-// Page navigation (new element, theme doesn't have)
+.toc-sticky {
+    position: sticky;
+    top: calc(var(--wt-header-height) + var(--wt-main-padding-top)); // Definitionally matches natural position
+    border-radius: 0.5rem;
+    background-color: var(--wt-color-bg-elevated);
+    border: 1px solid var(--wt-color-border-subtle);
+    border-top: 3px solid var(--wt-color-accent);
+    padding: 0.75rem 0 1rem;
+    max-height: calc(100vh - var(--wt-header-height) - var(--wt-main-padding-top) - 20px); // Fill viewport minus sticky offset and bottom margin
+    overflow-y: auto;
+    overscroll-behavior: contain; // Trap scroll events within TOC
+}
+
+.toc-item {
+    padding: 0.1rem 0.5rem;
+    margin: 0 0.5rem;
+
+    a {
+        display: block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 0.35rem;
+        font-size: 0.875rem;
+        color: var(--wt-color-text-muted);
+        transition: all 150ms;
+
+        &:hover {
+            background: var(--wt-color-bg-soft);
+            color: var(--wt-color-text);
+            text-decoration: none;
+        }
+
+        &.active {
+            border-left: 3px solid var(--wt-color-accent);
+            background: var(--wt-color-accent-soft);
+            color: var(--wt-color-text);
+            font-weight: 550;
+            padding-left: calc(0.5rem - 3px);
+        }
+    }
+}
+
+.toc-item-child {
+    padding: 0 0.5rem 0.1rem 1.25rem;
+    margin: 0 0.5rem;
+
+    a {
+        font-size: 0.8rem;
+        color: var(--wt-color-text-soft);
+        padding: 0.1rem 0.4rem;
+        border-radius: 0.3rem;
+        display: block;
+        transition: all 150ms;
+
+        &:hover {
+            color: var(--wt-color-text-muted);
+            background: var(--wt-color-bg-soft);
+            text-decoration: none;
+        }
+    }
+
+    &.nested {
+        padding-left: 2.5rem;
+
+        a {
+            font-size: 0.75rem;
+        }
+    }
+}
+
+// ============================================================================
+// Page Navigation
+// ============================================================================
+
 .page-nav {
     display: flex;
     justify-content: space-between;
     margin-top: 3rem;
     padding-top: 1.5rem;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--wt-color-border-subtle);
 
     a {
-        color: var(--primary-link-color);
+        color: var(--wt-color-accent);
+        font-weight: 500;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        transition: all 150ms;
 
         &:hover {
-            text-decoration: underline;
+            background: var(--wt-color-accent-soft);
+            text-decoration: none;
         }
     }
 }
 
-// Footer (custom layout for our links)
+// ============================================================================
+// Footer
+// ============================================================================
+
 footer {
     padding: 1.5rem 0;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--wt-color-border-subtle);
     display: flex;
     flex-direction: row;
     justify-content: center;
     gap: 2rem;
     flex-wrap: wrap;
-    background-color: var(--secondary-color);
+    background-color: var(--wt-color-bg-soft);
 
     a {
-        color: var(--secondary-text-color);
-        opacity: 0.8;
+        color: var(--wt-color-text-muted);
+        font-size: 0.9rem;
+        transition: all 150ms;
 
         &:hover {
-            opacity: 1;
+            color: var(--wt-color-text);
             text-decoration: underline;
         }
+    }
+}
+
+// ============================================================================
+// Hero Section
+// ============================================================================
+
+.hero {
+    background-color: var(--wt-color-bg-soft) !important;
+    height: calc(100vh - var(--wt-header-height)) !important; // Exactly one viewport minus header
+    max-height: calc(100vh - var(--wt-header-height)) !important; // Enforce constraint
+    padding: 4rem 40px 3rem;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-evenly;
+    overflow: hidden;
+    box-sizing: border-box;
+
+    // Ensure flex children respect container bounds
+    > * {
+        flex-shrink: 1;
+        min-height: 0;
+    }
+
+    .hero-image {
+        max-height: 55vh;
+        width: auto;
+        flex-shrink: 1;
+    }
+
+    // Collapse when empty (subpages don't have hero content)
+    // :empty doesn't work with whitespace, so use :has()
+    &:not(:has(*)) {
+        display: none;
+    }
+
+    .heading-text {
+        font-size: 2.5rem;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+        color: var(--wt-color-text);
+    }
+
+    .title-text {
+        font-size: 1.25rem;
+        font-weight: 400;
+        color: var(--wt-color-text-muted);
+        border-left: none;
+        padding-left: 0;
+        max-width: 35ch;
+    }
+
+    .explore-more {
+        position: absolute;
+        bottom: 3.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        color: var(--wt-color-text-muted);
+        cursor: pointer;
+        transition: color 150ms;
+
+        &:hover {
+            color: var(--wt-color-text);
+        }
+    }
+}
+
+// Primary button
+.button {
+    display: inline-block;
+    background: var(--wt-color-accent);
+    color: white !important;
+    padding: 0.6rem 1.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 1rem;
+    border: none;
+    cursor: pointer;
+    transition: all 150ms;
+
+    &:hover {
+        background: var(--wt-color-accent-strong);
+        text-decoration: none;
+        transform: translateY(-1px);
+    }
+}
+
+// Reset button styles for non-button buttons
+button.explore-more {
+    background: none;
+    border: none;
+    font: inherit;
+}
+
+// ============================================================================
+// Lists
+// ============================================================================
+
+ul, ol {
+    padding-left: 1.5rem;
+}
+
+ul > li, ol > li {
+    padding: 0.25rem 0;
+    color: var(--wt-color-text);
+}
+
+ul > li::marker {
+    color: var(--wt-color-accent);
+}
+
+// ============================================================================
+// Responsive
+// ============================================================================
+
+@media screen and (max-width: 1024px) {
+    :root {
+        --wt-main-padding-top: 30px; // Override for tablet
+    }
+
+    main {
+        padding: var(--wt-main-padding-top) 40px;
+        gap: 1.5rem;
+    }
+
+    .content {
+        max-width: 100%;
+        padding: 1.5rem 24px;
+    }
+}
+
+@media screen and (max-width: 768px) {
+    :root {
+        --wt-header-height: 50px; // Approximate for auto height
+        --wt-main-padding-top: 20px;
+    }
+
+    body {
+        font-size: 16px;
+    }
+
+    header {
+        padding: 10px 20px;
+        height: auto;
+    }
+
+    main {
+        padding: var(--wt-main-padding-top);
+        flex-direction: column;
+    }
+
+    .content {
+        padding: 1rem 16px;
+        border-radius: 12px;
+    }
+
+    h1, .heading-text {
+        font-size: 1.5rem;
+    }
+
+    h2 {
+        font-size: 1.25rem;
+    }
+
+    .hero {
+        height: calc(100vh - var(--wt-header-height));
+        padding: 2rem 20px;
+        flex-direction: column;
+        gap: 2rem;
+
+        .heading-text {
+            font-size: 2rem;
+        }
+    }
+
+    .toc {
+        display: none;
+    }
+}
+
+// ============================================================================
+// Transitions & Accessibility
+// ============================================================================
+
+a, button, .toc-item a, .nav-item {
+    transition: color 150ms, background 150ms, box-shadow 150ms;
+}
+
+// Focus states
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--wt-color-accent);
+    outline-offset: 2px;
+}
+
+// Reduce motion for users who prefer it
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }

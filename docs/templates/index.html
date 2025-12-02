@@ -12,7 +12,7 @@
     animation: logo-animation 2s cubic-bezier(0.25, 0.1, 0.25, 1) both;
   }
 
-  .explore-more, .logo, nav {
+  .explore-more {
     animation: fade-in-animation 1.5s cubic-bezier(0.25, 0.1, 0.25, 1) both;
     animation-delay: 0.5s;
   }
@@ -80,29 +80,21 @@
     Git worktree management for <b>parallel AI agent workflows</b>
   </h3>
   <div style="display: flex; gap: 1rem; justify-content: center; align-items: center; margin-top: 1.5rem;">
-    <a href="/quickstart/" class="button">Get Started</a>
+    <button class="button" onclick="window.scrollTo({top: document.querySelector('main').offsetTop - document.querySelector('header').offsetHeight, behavior: 'smooth'})">Get Started</button>
     <a class="github-button" href="https://github.com/max-sixty/worktrunk" data-size="large" data-show-count="true"
       aria-label="Star max-sixty/worktrunk on GitHub">Star</a>
   </div>
 </section>
 <img class="hero-image" style="width: 40%" src="{{ get_url(path='logo.svg') }}" alt="Worktrunk logo">
-<div class="explore-more text" onclick="document.getElementById('features').scrollIntoView({behavior: 'smooth'})">
+<button class="explore-more text" onclick="window.scrollTo({top: document.querySelector('main').offsetTop - document.querySelector('header').offsetHeight, behavior: 'smooth'})" aria-label="Scroll to content">
   Explore More ⇩
-</div>
+</button>
 {% endblock hero %}
 
 {% block toc %}
 {% set docs_section = get_section(path="_index.md") %}
 <div class="toc">
     <div class="toc-sticky">
-        <div class="toc-item" style="margin-bottom: 0.5rem;">
-            <a class="subtext active" href="/" style="font-weight: 600;">
-                Documentation
-            </a>
-        </div>
-
-        <div class="toc-divider"></div>
-
         {% for doc_page in docs_section.pages %}
         <div class="toc-item">
             <a class="subtext" href="{{ doc_page.permalink | safe }}">

@@ -5,19 +5,49 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 {% endblock favicon %}
 
+{% block fonts %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preload" href="{{ get_url(path='logo.svg') }}" as="image" type="image/svg+xml">
+{% endblock fonts %}
+
 {% block head %}
+{% include "_variables.html" %}
 <meta name="description" content="{{ config.extra.site_description }}">
 <link rel="stylesheet" href="{{ get_url(path='custom.css') }}">
+<script>
+// Disable the Juice theme's scroll-spy by intercepting IntersectionObserver
+// Juice creates an observer with threshold: 1 to highlight TOC items on scroll
+// This causes confusing behavior - we want TOC to show current PAGE, not viewport
+(function() {
+    const RealIntersectionObserver = window.IntersectionObserver;
+    window.IntersectionObserver = function(callback, options) {
+        // Juice's scroll-spy uses threshold: 1 - return a no-op observer
+        if (options && options.threshold === 1) {
+            return {
+                observe: function() {},
+                unobserve: function() {},
+                disconnect: function() {}
+            };
+        }
+        // For other observers, use the real implementation
+        return new RealIntersectionObserver(callback, options);
+    };
+    // Preserve prototype for instanceof checks
+    window.IntersectionObserver.prototype = RealIntersectionObserver.prototype;
+})();
+</script>
 {% endblock head %}
 
 {% block header %}
-<header class="box-shadow">
+<header>
     {{ macros::render_header() }}
 </header>
+<div class="hero">
+    {% block hero %}{% endblock hero %}
+</div>
 {% endblock header %}
-
-{% block hero %}
-{% endblock hero %}
 
 {% block sidebar %}
 {% endblock sidebar %}
