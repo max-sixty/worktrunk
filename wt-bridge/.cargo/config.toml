@@ -1,2 +1,11 @@
+# No global target - cargo test works natively, use alias for wasm builds
+
 [target.wasm32-wasip1]
-rustflags = ["-Clink-arg=--export=_start"]
+# Restrict to features supported by zellij's wasmtime runtime
+# (matches working zellij-tab-name.wasm)
+rustflags = [
+    "-C", "target-feature=-bulk-memory-opt,-call-indirect-overlong,-extended-const,-nontrapping-fptoint"
+]
+
+[alias]
+build-plugin = "build --target wasm32-wasip1 --features plugin"

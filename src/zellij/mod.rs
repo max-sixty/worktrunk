@@ -9,13 +9,13 @@
 //!
 //! # Architecture
 //!
-//! The integration has two layers:
+//! The integration has three layers:
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                         CLI Commands                            │
 //! │  wt ui          - Enter/create workspace                        │
-//! │  wt ui setup    - Install plugin (for permission caching)       │
+//! │  wt ui setup    - Install plugin                                │
 //! │  wt ui status   - Show context                                  │
 //! │  wt switch foo  - Focus/create tab (when inside workspace)      │
 //! └──────────────────────────┬──────────────────────────────────────┘
@@ -25,15 +25,28 @@
 //! │                    Library Layer (this module)                  │
 //! │  detect_context()       - Where are we running?                 │
 //! │  session_name_for_repo() - Deterministic session naming         │
-//! │  focus_or_create_tab()  - Tab management via zellij action      │
+//! │  focus_or_create_tab()  - Tab management via plugin protocol    │
 //! │  create_session()       - Launch zellij with layout             │
+//! └──────────────────────────┬──────────────────────────────────────┘
+//!                            │ zellij pipe --name wt
+//!                            ▼
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │                    Plugin Layer (wt-bridge)                     │
+//! │  Runs as WASM inside zellij via load_plugins                    │
+//! │  Tracks: worktree_path -> tab_index mapping                     │
+//! │  Protocol:                                                      │
+//! │    "sync|path" → "synced" (register current tab with path)      │
+//! │    "select|name|path" → "focused" or "not_found:unique_name"    │
+//! │    "register|name|path" → "registered"                          │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! Tab management uses `zellij action` commands directly:
-//! - `zellij action query-tab-names` - Check existing tabs
-//! - `zellij action go-to-tab-name` - Focus existing tab
-//! - `zellij action new-tab` - Create new tab with cwd
+//! # Why a Plugin?
+//!
+//! The plugin solves the "main/main collision" problem: when two repos both have
+//! a `main` branch, we get two tabs named `main`. Using `go-to-tab-name "main"`
+//! is ambiguous. The plugin tracks tabs by worktree path and routes by tab INDEX,
+//! which is unambiguous.
 //!
 //! # Terminology
 //!
@@ -55,20 +68,30 @@
 //! Manual testing inside zellij:
 //!
 //! ```bash
-//! # 1. Enter a workspace
+//! # 1. Install the plugin
+//! wt ui setup
+//!
+//! # 2. Enter a workspace
 //! wt ui
 //!
-//! # 2. Test tab switching
+//! # 3. Test tab switching
 //! wt switch feature  # Creates or focuses "feature" tab
 //! wt switch main     # Creates or focuses "main" tab
 //! ```
 
 use std::env;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Session name prefix for worktrunk-managed zellij sessions.
 const SESSION_PREFIX: &str = "wt:";
+
+/// Pipe name for wt-bridge plugin communication.
+const PIPE_NAME: &str = "wt";
+
+/// Plugin path for targeting pipe messages.
+const PLUGIN_PATH: &str = "file:~/.config/zellij/plugins/wt-bridge.wasm";
 
 /// Environment variable set by zellij when running inside a session.
 const ZELLIJ_ENV: &str = "ZELLIJ";
@@ -286,40 +309,103 @@ pub fn create_session(session_name: &str, cwd: &Path, layout: Option<&Path>) -> 
     Err(anyhow::anyhow!("Failed to create session: {}", err))
 }
 
-/// Focus an existing tab by name.
+/// Timeout for waiting for plugin response.
 ///
-/// Uses `zellij action go-to-tab-name` to switch to the tab.
+/// Plugin responds immediately after permission grant. This timeout only triggers
+/// if permissions haven't been granted yet (plugin queues but never responds).
+/// 3s chosen as: fast enough to fail quickly, slow enough for system lag.
+const PIPE_TIMEOUT_SECS: u64 = 3;
+
+/// Send a message to the wt-bridge plugin and read the response.
 ///
-/// Note: zellij stores tab names with a leading space in their internal
-/// representation (visible in `query-tab-names` output). The `go-to-tab-name`
-/// command requires this leading space to match correctly.
-fn go_to_tab(name: &str) -> anyhow::Result<()> {
-    // Prepend leading space to match zellij's internal tab name format
-    let tab_name = format!(" {}", name.trim());
+/// Uses `zellij pipe` for bidirectional communication with the plugin.
+/// The plugin responds via `cli_pipe_output`.
+///
+/// Includes a timeout to prevent hanging if the plugin hasn't been granted
+/// permissions yet (in which case it queues messages but never responds).
+fn pipe_message(payload: &str) -> anyhow::Result<String> {
+    use std::io::Write;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
-    let output = Command::new("zellij")
-        .args(["action", "go-to-tab-name", &tab_name])
-        .output()?;
+    let mut child = Command::new("zellij")
+        .args(["pipe", "--plugin", PLUGIN_PATH, "--name", PIPE_NAME])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to go to tab '{}': {}", name, stderr.trim());
+    // Write payload to stdin and close it
+    if let Some(mut stdin) = child.stdin.take() {
+        writeln!(stdin, "{}", payload)?;
+        // stdin is dropped here, closing it
     }
 
-    Ok(())
+    // Read response from stdout with timeout (plugin may not respond if permissions not granted)
+    let stdout = child.stdout.take().expect("stdout was piped");
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut response = String::new();
+        let result = reader.read_line(&mut response);
+        let _ = tx.send((result, response));
+    });
+
+    let timeout = Duration::from_secs(PIPE_TIMEOUT_SECS);
+    let (read_result, response) = rx.recv_timeout(timeout).map_err(|_| {
+        // Kill child process; reader thread will unblock when stdout closes
+        let _ = child.kill();
+        anyhow::anyhow!(
+            "Timed out waiting for wt-bridge plugin response after {}s. \
+             The plugin may not have been granted permissions yet. \
+             Run: zellij action launch-or-focus-plugin \"file:~/.config/zellij/plugins/wt-bridge.wasm\" --floating\n\
+             Then grant permissions and try again.",
+            PIPE_TIMEOUT_SECS
+        )
+    })?;
+
+    let bytes_read = read_result?;
+
+    let status = child.wait()?;
+    if !status.success() {
+        let stderr_msg = match child.stderr.take() {
+            Some(s) => {
+                let mut buf = String::new();
+                BufReader::new(s).read_line(&mut buf).unwrap_or(0);
+                buf
+            }
+            None => String::new(),
+        };
+        let stderr_trimmed = stderr_msg.trim();
+        if stderr_trimmed.is_empty() {
+            anyhow::bail!("Pipe command failed (no error details)");
+        } else {
+            anyhow::bail!("Pipe command failed: {}", stderr_trimmed);
+        }
+    }
+
+    if bytes_read == 0 {
+        anyhow::bail!(
+            "No response from wt-bridge plugin. \
+             Is the plugin loaded? Run 'wt ui setup' to install."
+        );
+    }
+
+    Ok(response.trim_end().to_string())
 }
 
 /// Create a new tab with the given name and working directory.
 ///
-/// Uses `zellij action new-tab` to create the tab.
-///
-/// Note: zellij adds a leading space to tab names internally after creation.
-/// We pass the name without the leading space here.
-fn create_tab(name: &str, cwd: &Path) -> anyhow::Result<()> {
+/// Uses `zellij action new-tab` to create the tab, then registers it with
+/// the wt-bridge plugin so it can be tracked by path.
+fn create_and_register_tab(name: &str, cwd: &Path) -> anyhow::Result<()> {
     let cwd_str = cwd
         .to_str()
-        .expect("worktree path from git should be valid UTF-8");
+        .ok_or_else(|| anyhow::anyhow!("Worktree path is not valid UTF-8: {:?}", cwd))?;
 
+    // Create the tab with zellij action (plugin API doesn't support cwd)
     let output = Command::new("zellij")
         .args(["action", "new-tab", "--name", name, "--cwd", cwd_str])
         .output()?;
@@ -329,49 +415,87 @@ fn create_tab(name: &str, cwd: &Path) -> anyhow::Result<()> {
         anyhow::bail!("Failed to create tab '{}': {}", name, stderr.trim());
     }
 
+    // Register the new tab with the plugin for path tracking
+    let register_payload = format!("register|{}|{}", name, cwd_str);
+    pipe_message(&register_payload)?;
+
     Ok(())
 }
 
-/// Check if a tab with the given name exists.
+/// Sync the current tab with the plugin (register if not tracked).
 ///
-/// Uses `zellij action query-tab-names` to list all tabs.
-///
-/// Note: zellij returns tab names with leading spaces, so we trim both sides.
-/// On error (e.g., zellij not running), returns false to allow tab creation.
-fn tab_exists(name: &str) -> bool {
-    let output = match Command::new("zellij")
-        .args(["action", "query-tab-names"])
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return false, // Can't query → assume doesn't exist
-    };
+/// This ensures the currently active tab is associated with the given worktree path.
+/// Critical for the first switch: the layout creates an initial tab without registering it,
+/// so we must sync before the first `select` or the plugin won't know about the starting tab.
+fn sync_current_tab(current_worktree: &Path) -> anyhow::Result<()> {
+    let path_str = current_worktree.to_str().ok_or_else(|| {
+        anyhow::anyhow!("Worktree path is not valid UTF-8: {:?}", current_worktree)
+    })?;
 
-    if !output.status.success() {
-        return false; // Query failed → assume doesn't exist
+    let sync_payload = format!("sync|{}", path_str);
+    log::debug!("[zellij] sync_current_tab: sending {:?}", sync_payload);
+    let response = pipe_message(&sync_payload)?;
+    log::debug!("[zellij] sync_current_tab: response {:?}", response);
+
+    if response == "synced" {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Unexpected sync response from wt-bridge plugin: {}",
+            response
+        )
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let name_trimmed = name.trim();
-    stdout.lines().any(|line| line.trim() == name_trimmed)
 }
 
 /// Focus or create a tab for a worktree.
 ///
-/// The tab name is derived from the worktree directory name (typically the branch name).
-/// If a tab with that name exists, it will be focused. Otherwise, a new tab is created.
-pub fn focus_or_create_tab(worktree_path: &Path) -> anyhow::Result<()> {
-    // Extract the tab name from the worktree directory name
-    let tab_name = worktree_path
+/// Uses the wt-bridge plugin protocol:
+/// 1. Sync the current tab with the plugin (register if not tracked)
+/// 2. Send "select|{name}|{path}" to plugin
+/// 3. If response is "focused", the plugin switched to the tab by index
+/// 4. If response is "not_found:{unique_name}", create a new tab with that name
+///
+/// The plugin handles the "main/main collision" problem by tracking tabs by path
+/// and routing by index rather than by name.
+pub fn focus_or_create_tab(current_worktree: &Path, target_worktree: &Path) -> anyhow::Result<()> {
+    log::debug!(
+        "[zellij] focus_or_create_tab: current={:?} target={:?}",
+        current_worktree,
+        target_worktree
+    );
+
+    // First, sync the current tab to ensure it's tracked
+    sync_current_tab(current_worktree)?;
+
+    let path_str = target_worktree.to_str().ok_or_else(|| {
+        anyhow::anyhow!("Worktree path is not valid UTF-8: {:?}", target_worktree)
+    })?;
+
+    // Extract the display name from the worktree directory name (typically the branch name)
+    let display_name = target_worktree
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("worktree");
 
-    // Check if tab exists and focus it, or create a new one
-    if tab_exists(tab_name) {
-        go_to_tab(tab_name)
+    // Ask plugin to select the tab by path
+    let select_payload = format!("select|{}|{}", display_name, path_str);
+    log::debug!("[zellij] focus_or_create_tab: sending {:?}", select_payload);
+    let response = pipe_message(&select_payload)?;
+    log::debug!("[zellij] focus_or_create_tab: response {:?}", response);
+
+    if response == "focused" {
+        // Plugin found the tab and focused it by index
+        Ok(())
+    } else if let Some(unique_name) = response.strip_prefix("not_found:") {
+        // Tab doesn't exist - create with the unique name provided by plugin
+        // (may have hash suffix if display_name collides with existing tabs)
+        log::debug!(
+            "[zellij] focus_or_create_tab: creating new tab {:?}",
+            unique_name
+        );
+        create_and_register_tab(unique_name, target_worktree)
     } else {
-        create_tab(tab_name, worktree_path)
+        anyhow::bail!("Unexpected response from wt-bridge plugin: {}", response)
     }
 }
 
@@ -380,13 +504,28 @@ pub fn focus_or_create_tab(worktree_path: &Path) -> anyhow::Result<()> {
 /// Returns `Ok(true)` if we're inside a workspace and handled the tab focus,
 /// `Ok(false)` if we're outside a workspace (caller should use normal cd behavior),
 /// or an error if tab focusing failed.
-pub fn try_focus_tab(repo_root: &Path, worktree_path: &Path) -> anyhow::Result<bool> {
+///
+/// # Arguments
+/// * `repo_root` - The repository root (for context detection)
+/// * `current_worktree` - The worktree we're currently in (will be synced with plugin)
+/// * `target_worktree` - The worktree to switch to
+pub fn try_focus_tab(
+    repo_root: &Path,
+    current_worktree: &Path,
+    target_worktree: &Path,
+) -> anyhow::Result<bool> {
     let context = detect_context(repo_root);
+    log::debug!(
+        "[zellij] try_focus_tab: repo_root={:?} context={:?}",
+        repo_root,
+        context
+    );
 
     if context.is_in_workspace() {
-        focus_or_create_tab(worktree_path)?;
+        focus_or_create_tab(current_worktree, target_worktree)?;
         Ok(true)
     } else {
+        log::debug!("[zellij] try_focus_tab: not in workspace, skipping");
         Ok(false)
     }
 }

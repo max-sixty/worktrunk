@@ -778,7 +778,8 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         // Check if we're inside the worktrunk workspace
         // If so, focus the tab instead of emitting a cd directive
         let repo_root = repo.worktree_base()?;
-        let handled_by_workspace = try_focus_tab(&repo_root, result.path())?;
+        let current_worktree = repo.worktree_root()?;
+        let handled_by_workspace = try_focus_tab(&repo_root, &current_worktree, result.path())?;
 
         if handled_by_workspace {
             // Show brief success message

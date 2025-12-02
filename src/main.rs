@@ -692,7 +692,8 @@ fn main() {
                 let handled_by_workspace = {
                     let repo = Repository::current();
                     let repo_root = repo.worktree_base()?;
-                    let focused = try_focus_tab(&repo_root, result.path())?;
+                    let current_worktree = repo.worktree_root()?;
+                    let focused = try_focus_tab(&repo_root, &current_worktree, result.path())?;
                     if focused {
                         output::success(cformat!(
                             "Focused seat for <bold>{}</>",

@@ -26,20 +26,24 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
 
     # Override {{ cmd_prefix }} command to add --internal flag
     function {{ cmd_prefix }}
-        # Commands that need direct terminal access (bypass directive mode)
-        # ui uses exec() to replace process with zellij - can't capture stdout
-        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
-        # exit code (wt exits 200 to request direct access) or compile-time codegen.
-        if test (count $argv) -gt 0; and test "$argv[1]" = "ui"
-            command $WORKTRUNK_BIN $argv
-            return $status
-        end
-
         set -l use_source false
         set -l args
 
         for arg in $argv
             if test "$arg" = "--source"; set use_source true; else; set -a args $arg; end
+        end
+
+        # Commands that need direct terminal access (bypass directive mode)
+        # ui uses exec() to replace process with zellij - can't capture stdout
+        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
+        # exit code (wt exits 200 to request direct access) or compile-time codegen.
+        if test (count $args) -gt 0; and test "$args[1]" = "ui"
+            if test $use_source = true
+                cargo run --quiet -- $args
+            else
+                command $WORKTRUNK_BIN $args
+            end
+            return $status
         end
 
         # Force colors if stderr is a TTY (respects NO_COLOR/CLICOLOR_FORCE)

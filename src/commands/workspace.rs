@@ -116,7 +116,14 @@ pub fn handle_setup() -> anyhow::Result<()> {
 
     // Build the plugin for wasm32-wasip1
     let output = Command::new("cargo")
-        .args(["build", "--target", "wasm32-wasip1", "--release"])
+        .args([
+            "build",
+            "--target",
+            "wasm32-wasip1",
+            "--features",
+            "plugin",
+            "--release",
+        ])
         .current_dir(&bridge_dir)
         .output()?;
 
@@ -125,7 +132,7 @@ pub fn handle_setup() -> anyhow::Result<()> {
         anyhow::bail!("Failed to build wt-bridge plugin:\n{}", stderr);
     }
 
-    // Verify the built file exists (binary name uses hyphen)
+    // Verify the built file exists
     let built_wasm = bridge_dir
         .join("target")
         .join("wasm32-wasip1")
@@ -293,10 +300,7 @@ pub fn handle_ui() -> anyhow::Result<()> {
 ///
 /// Shows current workspace context and setup status for debugging.
 pub fn handle_status() -> anyhow::Result<()> {
-    use crate::output;
-    use worktrunk::zellij::{ZellijContext, detect_context};
-
-    let repo = worktrunk::git::Repository::current();
+    let repo = Repository::current();
     let repo_root = repo.worktree_base()?;
 
     // Show context
@@ -372,7 +376,7 @@ pub fn handle_status() -> anyhow::Result<()> {
         detect_context(&repo_root),
         ZellijContext::InsideWorkspace { .. }
     ) {
-        output::hint("Test with: zellij pipe --name wt -- 'select|/tmp'")?;
+        output::hint("Test with: zellij pipe --name wt -- 'select|main|/tmp/test'")?;
     }
 
     Ok(())

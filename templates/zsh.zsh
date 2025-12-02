@@ -10,21 +10,26 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
 
     # Override {{ cmd_prefix }} command to add --internal flag
     {{ cmd_prefix }}() {
-        # Commands that need direct terminal access (bypass directive mode)
-        # ui uses exec() to replace process with zellij - can't capture stdout
-        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
-        # exit code (wt exits 200 to request direct access) or compile-time codegen.
-        if [[ "$1" == "ui" ]]; then
-            command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" "$@"
-            return $?
-        fi
-
         local use_source=false
         local -a args
 
         for arg in "$@"; do
             if [[ "$arg" == "--source" ]]; then use_source=true; else args+=("$arg"); fi
         done
+
+        # Commands that need direct terminal access (bypass directive mode)
+        # ui uses exec() to replace process with zellij - can't capture stdout
+        # Note: zsh arrays are 1-indexed, so args[1] is the first element
+        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
+        # exit code (wt exits 200 to request direct access) or compile-time codegen.
+        if [[ "${args[1]:-}" == "ui" ]]; then
+            if [[ "$use_source" == true ]]; then
+                cargo run --quiet -- "${args[@]}"
+            else
+                command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" "${args[@]}"
+            fi
+            return $?
+        fi
 
         # Force colors if stderr is a TTY (respects NO_COLOR/CLICOLOR_FORCE)
         if [[ -z "${NO_COLOR:-}" && -z "${CLICOLOR_FORCE:-}" && -t 2 ]]; then
