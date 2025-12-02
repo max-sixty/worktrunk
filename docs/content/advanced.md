@@ -1,7 +1,9 @@
 +++
 title = "Advanced Features"
-weight = 5
+weight = 7
 +++
+
+Most Worktrunk users get everything they need from `wt switch`, `wt list`, `wt merge`, and `wt remove`. The features below are optional power-user capabilities.
 
 ## Claude Code Integration
 
@@ -11,14 +13,20 @@ Worktrunk includes a Claude Code plugin for tracking agent status across worktre
 
 The plugin adds status indicators to `wt list`:
 
-```bash
-$ wt list
-  Branch       Status         HEAD±    main↕  Path                Remote⇅  Commit    Age   Message
-@ main             ^                          ./repo                       b834638e  1d    Initial commit
-+ feature-api      ↑  🤖              ↑1      ./repo.feature-api           9606cd0f  1d    Add REST API endpoints
-+ review-ui      ? ↑  💬              ↑1      ./repo.review-ui             afd3b353  1d    Add dashboard component
-+ wip-docs       ?_                           ./repo.wip-docs              b834638e  1d    Initial commit
-```
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__with_user_marker.snap — edit source to update -->
+
+{% terminal() %}
+<span class="prompt">$</span> wt list
+  <b>Branch</b>       <b>Status</b>         <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
+@ <b>main</b>             <span style='opacity:0.67'>^</span>                          <b>./repo</b>                       <span style='opacity:0.67'>b834638e</span>  <span style='opacity:0.67'>1d</span>    <span style='opacity:0.67'>Initial commit</span>
++ feature-api      <span style='opacity:0.67'>↑</span>  🤖              <span style='color:var(--green,#0a0)'>↑1</span>      ./repo.feature-api           <span style='opacity:0.67'>9606cd0f</span>  <span style='opacity:0.67'>1d</span>    <span style='opacity:0.67'>Add REST API endpoints</span>
++ review-ui      <span style='color:var(--cyan,#0aa)'>?</span> <span style='opacity:0.67'>↑</span>  💬              <span style='color:var(--green,#0a0)'>↑1</span>      ./repo.review-ui             <span style='opacity:0.67'>afd3b353</span>  <span style='opacity:0.67'>1d</span>    <span style='opacity:0.67'>Add dashboard component</span>
++ <span style='opacity:0.67'>wip-docs</span>       <span style='color:var(--cyan,#0aa)'>?</span><span style='opacity:0.67'>_</span>                           <span style='opacity:0.67'>./repo.wip-docs</span>              <span style='opacity:0.67'>b834638e</span>  <span style='opacity:0.67'>1d</span>    <span style='opacity:0.67'>Initial commit</span>
+
+⚪ <span style='opacity:0.67'>Showing 4 worktrees, 2 ahead</span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 - `🤖` — Claude is working
 - `💬` — Claude is waiting for input
@@ -35,14 +43,16 @@ $ claude plugin install worktrunk@worktrunk
 Set status markers manually for any workflow:
 
 ```bash
-$ wt config status set "🚧"                    # Current branch
-$ wt config status set "✅" --branch feature   # Specific branch
-$ git config worktrunk.status.feature "💬"     # Direct git config
+$ wt config var set marker "🚧"                   # Current branch
+$ wt config var set marker "✅" --branch feature  # Specific branch
+$ git config worktrunk.marker.feature "💬"        # Direct git config
 ```
 
 ## Statusline Integration
 
-`wt list statusline` outputs a single-line status for shell prompts, starship, or editor integrations.
+`wt list statusline` outputs a single-line status for shell prompts, starship, or editor integrations.[^1]
+
+[^1]: Currently this grabs CI status, so is too slow to use in synchronous contexts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 
 ### Claude Code statusline
 
@@ -65,75 +75,8 @@ Add to `~/.claude/settings.json`:
 
 ## Interactive Worktree Picker
 
-`wt select` opens a fzf-like fuzzy-search worktree picker with diff preview.
+`wt select` opens a fuzzy-search worktree picker with diff preview (Unix only).
 
-### Preview tabs
+Type to filter, use arrow keys or `j`/`k` to navigate, Enter to switch. Preview tabs show working tree changes, commit history, or branch diff — toggle with `1`/`2`/`3`.
 
-Toggle with number keys:
-
-1. **Tab 1**: Working tree changes (uncommitted)
-2. **Tab 2**: Commit history (commits not on main highlighted)
-3. **Tab 3**: Branch diff (changes ahead of main)
-
-## Tips & Patterns
-
-### Alias for new worktree + agent
-
-```bash
-alias wsc='wt switch --create --execute=claude'
-wsc new-feature  # Creates worktree, runs hooks, launches Claude
-```
-
-### Eliminate cold starts
-
-`post-create` hooks install deps and copy caches. Use copy-on-write on macOS:
-
-```toml
-[post-create]
-"cache" = "cp -c -r ../.cache .cache"  # Uses APFS clones
-"install" = "npm ci"
-```
-
-### Local CI gate
-
-`pre-merge` hooks run before merging. Failures abort:
-
-```toml
-[pre-merge]
-"test" = "cargo test"
-"lint" = "cargo clippy -- -D warnings"
-```
-
-### Monitor CI across branches
-
-```bash
-$ wt list --full --branches
-```
-
-Shows PR/CI status for all branches, including those without worktrees.
-
-### JSON API
-
-```bash
-$ wt list --format=json
-```
-
-For dashboards, statuslines, and scripts.
-
-### Task runners in hooks
-
-```toml
-[post-create]
-"setup" = "task install"
-
-[pre-merge]
-"validate" = "just test lint"
-```
-
-### Stacked branches
-
-```bash
-$ wt switch --create feature-part2 --base=@
-```
-
-Branches from current HEAD, not main.
+See [wt select](/commands/#wt-select) for full keyboard shortcuts and details.

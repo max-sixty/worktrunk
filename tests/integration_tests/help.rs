@@ -124,18 +124,25 @@ fn help_config_show() {
 }
 
 #[test]
-fn help_config_status_set() {
-    snapshot_help(
-        "help_config_status_set",
-        &["config", "status", "set", "--help"],
-    );
+fn help_config_var() {
+    snapshot_help("help_config_var", &["config", "var", "--help"]);
 }
 
 #[test]
-fn help_config_status_unset() {
+fn help_config_var_get() {
+    snapshot_help("help_config_var_get", &["config", "var", "get", "--help"]);
+}
+
+#[test]
+fn help_config_var_set() {
+    snapshot_help("help_config_var_set", &["config", "var", "set", "--help"]);
+}
+
+#[test]
+fn help_config_var_clear() {
     snapshot_help(
-        "help_config_status_unset",
-        &["config", "status", "unset", "--help"],
+        "help_config_var_clear",
+        &["config", "var", "clear", "--help"],
     );
 }
 

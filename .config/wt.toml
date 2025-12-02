@@ -23,6 +23,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
 [post-merge]
 build = "cargo build --all-targets"
 install = "cargo install --path ."
+sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
 # Pre-commit hooks
 # These run sequentially before committing changes during merge (both squash and no-squash)

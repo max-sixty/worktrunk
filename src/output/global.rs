@@ -105,6 +105,14 @@ pub fn warning(message: impl Into<String>) -> io::Result<()> {
     with_output(|h| h.warning(message.into()))
 }
 
+/// Emit an error message
+///
+/// Error messages indicate failures like "❌ Failed to delete branch"
+/// They use ERROR_EMOJI (❌) and red styling.
+pub fn error(message: impl Into<String>) -> io::Result<()> {
+    with_output(|h| h.error(message.into()))
+}
+
 /// Print a message (written as-is)
 ///
 /// The caller is responsible for formatting.

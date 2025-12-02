@@ -294,10 +294,36 @@ If a config file doesn't exist, shows defaults that would be used."#
         action: CacheCommand,
     },
 
-    /// Manage branch status markers
-    Status {
+    /// Get or set runtime variables (stored in git config)
+    #[command(
+        after_long_help = r#"Variables are runtime values stored in git config, separate from
+configuration files. Use `wt config show` to view file-based configuration.
+
+## Available Variables
+
+- **default-branch**: The repository's default branch (read-only, cached)
+- **marker**: Custom status marker for a branch (shown in `wt list`)
+
+## Examples
+
+Get the default branch:
+```console
+wt config var get default-branch
+```
+
+Set a marker for current branch:
+```console
+wt config var set marker "🚧 WIP"
+```
+
+Clear markers:
+```console
+wt config var clear marker --all
+```"#
+    )]
+    Var {
         #[command(subcommand)]
-        action: StatusAction,
+        action: VarCommand,
     },
 
     /// Manage command approvals
@@ -343,35 +369,6 @@ wt config approvals clear --global
 }
 
 #[derive(Subcommand)]
-pub enum StatusAction {
-    /// Set status emoji for branch
-    #[command(
-        after_long_help = r#"Sets a custom status marker that appears in `wt list` output.
-
-Use emojis or short text to indicate work state (e.g., 🚧 WIP, ✅ ready, 🔒 blocked).
-Stored in git config under `worktrunk.status.<branch>`."#
-    )]
-    Set {
-        /// Status emoji to display
-        value: String,
-
-        /// Target branch (defaults to current)
-        #[arg(long, add = crate::completion::branch_value_completer())]
-        branch: Option<String>,
-    },
-
-    /// Clear status emoji
-    #[command(
-        after_long_help = r#"Removes status marker from branch(es). Use '*' to clear all statuses."#
-    )]
-    Unset {
-        /// Branch or '*' for all
-        #[arg(default_value = "", add = crate::completion::branch_value_completer())]
-        target: String,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum CacheCommand {
     /// Show cached data
     #[command(after_long_help = r#"Shows all cached data including:
@@ -399,34 +396,123 @@ Use when the remote default branch has changed. The cached value is used by
     Refresh,
 }
 
-#[cfg(unix)]
 #[derive(Subcommand)]
-pub enum UiCommand {
-    /// Install the wt-bridge zellij plugin
-    #[command(
-        after_long_help = r#"Builds and installs the wt-bridge plugin for zellij integration.
+pub enum VarCommand {
+    /// Get a variable value
+    #[command(after_long_help = r#"Variables:
 
-This command:
-1. Builds the plugin from source (requires wasm32-wasip1 target)
-2. Installs it to ~/.config/zellij/plugins/wt-bridge.wasm
-3. Adds load_plugins entry to ~/.config/zellij/config.kdl
-4. Creates the workspace layout at ~/.config/zellij/layouts/worktrunk.kdl
+- **default-branch**: The repository's default branch (main, master, etc.)
+- **marker**: Custom status marker for a branch (shown in `wt list`)
+- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
 
-Run this once before using `wt ui` for the first time."#
-    )]
-    Setup,
+## Examples
 
-    /// Show workspace context and setup status
-    #[command(
-        after_long_help = r#"Displays diagnostic information about the zellij integration:
+Get the default branch:
+```console
+wt config var get default-branch
+```
 
-- Current context (inside/outside workspace)
-- Plugin installation status
-- Config file status
+Force refresh from remote:
+```console
+wt config var get default-branch --refresh
+```
 
-Use this to debug issues with the workspace integration."#
-    )]
-    Status,
+Get marker for current branch:
+```console
+wt config var get marker
+```
+
+Get marker for a specific branch:
+```console
+wt config var get marker --branch=feature
+```
+
+Get CI status for current branch:
+```console
+wt config var get ci-status
+```
+
+Force refresh CI status (bypass cache):
+```console
+wt config var get ci-status --refresh
+```"#)]
+    Get {
+        /// Variable: 'default-branch', 'marker', or 'ci-status'
+        #[arg(value_parser = ["default-branch", "marker", "ci-status"])]
+        key: String,
+
+        /// Force refresh (for cached variables)
+        #[arg(long)]
+        refresh: bool,
+
+        /// Target branch (for branch-scoped variables)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// Set a variable value
+    #[command(after_long_help = r#"Variables:
+
+- **marker**: Custom status marker displayed in `wt list` output
+
+## Examples
+
+Set marker for current branch:
+```console
+wt config var set marker "🚧 WIP"
+```
+
+Set marker for a specific branch:
+```console
+wt config var set marker "✅ ready" --branch=feature
+```"#)]
+    Set {
+        /// Variable: 'marker'
+        #[arg(value_parser = ["marker"])]
+        key: String,
+
+        /// Value to set
+        value: String,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// Clear a variable value
+    #[command(after_long_help = r#"Variables:
+
+- **marker**: Custom status marker for a branch
+
+## Examples
+
+Clear marker for current branch:
+```console
+wt config var clear marker
+```
+
+Clear marker for a specific branch:
+```console
+wt config var clear marker --branch=feature
+```
+
+Clear all markers:
+```console
+wt config var clear marker --all
+```"#)]
+    Clear {
+        /// Variable: 'marker'
+        #[arg(value_parser = ["marker"])]
+        key: String,
+
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        branch: Option<String>,
+
+        /// Clear all values
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 /// Workflow building blocks
@@ -529,6 +615,17 @@ pub enum StepCommand {
     },
 }
 
+/// Subcommands for `wt ui` (zellij workspace integration)
+#[cfg(unix)]
+#[derive(Subcommand)]
+pub enum UiCommand {
+    /// Install wt-bridge plugin
+    Setup,
+
+    /// Show current zellij context
+    Status,
+}
+
 /// Subcommands for `wt list`
 #[derive(Subcommand)]
 pub enum ListSubcommand {
@@ -550,60 +647,6 @@ pub enum ListSubcommand {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Open workspace in zellij
-    ///
-    /// Attaches to or creates a dedicated zellij session for this repository.
-    /// Each worktree gets a "seat" (canonical pane) within the session.
-    #[cfg(unix)]
-    #[command(
-        name = "ui",
-        after_long_help = r#"## Operation
-
-When run from a normal shell (outside zellij):
-1. Computes a unique session ID for this repository (wt:<hash>)
-2. If a session with that ID exists, attaches to it
-3. Otherwise, creates a new zellij session rooted at the repository
-
-When run inside a non-worktrunk zellij session:
-- Prints an error; you must run `wt ui` from a normal shell
-
-When run inside the worktrunk session for this repo:
-- No-op; you're already in the workspace
-
-## Inside the Workspace
-
-Once inside the workspace, `wt select` and `wt switch` behavior changes:
-- Instead of changing directories, they focus/create "seats" (panes)
-- Each worktree gets a stable, persistent shell with its own scrollback
-- Exit the workspace by quitting zellij normally
-
-## Setup
-
-Before first use, install the wt-bridge plugin:
-```console
-wt ui setup
-```
-
-This builds and installs the zellij plugin to ~/.config/zellij/.
-
-## Examples
-
-Enter the workspace for the current repository:
-```console
-wt ui
-```
-
-Detach from workspace (standard zellij):
-Press Ctrl+O, then D
-
-Exit workspace completely:
-Press Ctrl+O, then Q (or exit all panes)"#
-    )]
-    Ui {
-        #[command(subcommand)]
-        command: Option<UiCommand>,
-    },
-
     /// Manage configuration and shell integration
     #[command(
         about = "Manage configuration and shell integration",
@@ -690,6 +733,16 @@ Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
     #[cfg(unix)]
     Select,
 
+    /// Zellij workspace integration
+    ///
+    /// Enter or create a zellij workspace for this repository.
+    /// Without subcommand: attach to existing workspace or create new one.
+    #[cfg(unix)]
+    Ui {
+        #[command(subcommand)]
+        command: Option<UiCommand>,
+    },
+
     /// List worktrees and optionally branches
     #[command(after_long_help = "## Columns
 
@@ -749,7 +802,7 @@ with the same fields in the same order as Status Symbols above:
 - `git_operation`: `\"\"` | `\"Rebase\"` | `\"Merge\"`
 - `main_divergence`: `\"\"` | `\"Ahead\"` | `\"Behind\"` | `\"Diverged\"`
 - `upstream_divergence`: `\"\"` | `\"Ahead\"` | `\"Behind\"` | `\"Diverged\"`
-- `user_status`: string (optional)
+- `user_marker`: string (optional)
 
 **`status_symbols`** - Unicode symbols for display (same fields, plus `worktree_attrs`: ⎇/⌫/⊠)
 
@@ -987,10 +1040,12 @@ branch `foo` has a different worktree at `repo.bar/`, an error is raised.
 
 ### Branch deletion
 
-By default, branches are deleted only when their content has been integrated:
+By default, branches are deleted only when their content is already in the target branch:
 
-- Traditional merge: branch is an ancestor of the target (git's `-d` behavior)
-- Squash merge/rebase: branch's tree SHA matches target's tree SHA
+- no changes beyond the common ancestor — `git diff --name-only target...branch` is empty:
+  no files changed between the merge base of `target`/`branch` and the tip of `branch`.
+- same content as target — `git rev-parse branch^{tree}` equals `git rev-parse target^{tree}`:
+  both branches point at the same tracked-files snapshot (tree), even if the commits differ.
 
 This handles workflows where PRs are squash-merged or rebased, which don't preserve
 commit ancestry but do integrate the content. Use `-D` to delete unintegrated

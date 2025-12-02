@@ -100,7 +100,7 @@ exit_code: 0
       "main_divergence": "",
       "upstream_divergence": "",
       "worktree_state": "",
-      "user_status": "🔧"
+      "user_marker": "🔧"
     },
     "status_symbols": {
       "working_tree": "",
@@ -108,7 +108,7 @@ exit_code: 0
       "main_divergence": "",
       "upstream_divergence": "",
       "worktree_state": "",
-      "user_status": "🔧"
+      "user_marker": "🔧"
     },
     "status_line": "with-status  /u001b[2m_/u001b[22m🔧",
     "type": "worktree",

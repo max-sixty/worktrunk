@@ -271,18 +271,18 @@ impl Repository {
         })
     }
 
-    /// Read a user-defined status from `worktrunk.status.<branch>` in git config.
-    pub fn branch_keyed_status(&self, branch: &str) -> Option<String> {
-        let config_key = format!("worktrunk.status.{}", branch);
+    /// Read a user-defined marker from `worktrunk.marker.<branch>` in git config.
+    pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
+        let config_key = format!("worktrunk.marker.{}", branch);
         self.run_command(&["config", "--get", &config_key])
             .ok()
             .map(|output| output.trim().to_string())
             .filter(|s| !s.is_empty())
     }
 
-    /// Read user-defined branch-keyed status.
-    pub fn user_status(&self, branch: Option<&str>) -> Option<String> {
-        branch.and_then(|branch| self.branch_keyed_status(branch))
+    /// Read user-defined branch-keyed marker.
+    pub fn user_marker(&self, branch: Option<&str>) -> Option<String> {
+        branch.and_then(|branch| self.branch_keyed_marker(branch))
     }
 
     /// Record the previous branch in worktrunk.history for `wt switch -` support.
@@ -580,9 +580,44 @@ impl Repository {
         Ok(git_dir.join("MERGE_HEAD").exists())
     }
 
+    /// Check if git's builtin fsmonitor daemon is enabled.
+    ///
+    /// Returns true only for `core.fsmonitor=true` (the builtin daemon).
+    /// Returns false for Watchman hooks, disabled, or unset.
+    pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
+        self.run_command(&["config", "--get", "core.fsmonitor"])
+            .ok()
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false)
+    }
+
+    /// Start the fsmonitor daemon for this worktree.
+    ///
+    /// This is idempotent - if the daemon is already running, this is a no-op.
+    /// Used to avoid auto-start races when running many parallel git commands.
+    pub fn start_fsmonitor_daemon(&self) {
+        // Best effort - log errors at debug level for troubleshooting
+        if let Err(e) = self.run_command(&["fsmonitor--daemon", "start"]) {
+            log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+        }
+    }
+
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
     pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
         self.run_command_check(&["merge-base", "--is-ancestor", base, head])
+    }
+
+    /// Check if a branch has changes that would contribute to target.
+    ///
+    /// Uses `git diff --name-only target...branch` to see files changed from
+    /// the merge-base to the branch. Returns true if there are any changes,
+    /// false if the branch has no marginal contribution (is an ancestor or
+    /// was merged back to base).
+    pub fn has_marginal_contribution(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
+        // git diff --name-only target...branch shows files changed from merge-base to branch
+        let range = format!("{target}...{branch}");
+        let stdout = self.run_command(&["diff", "--name-only", &range])?;
+        Ok(!stdout.trim().is_empty())
     }
 
     /// Count commits between base and head.
@@ -1076,6 +1111,44 @@ impl Repository {
         // run_command_check returns true for exit 0, false otherwise
         let clean_merge = self.run_command_check(&["merge-tree", "--write-tree", base, head])?;
         Ok(!clean_merge)
+    }
+
+    /// Check if merging a branch into target would add anything (not already integrated).
+    ///
+    /// Uses `git merge-tree` to simulate merging the branch into the target. If the
+    /// resulting tree matches the target's tree, then merging would add nothing,
+    /// meaning the branch's content is already integrated.
+    ///
+    /// This handles cases that simple tree comparison misses:
+    /// - Squash-merged branches where main has advanced with additional commits
+    /// - Rebased branches where the base has moved forward
+    ///
+    /// Returns:
+    /// - `Ok(true)` if merging would change the target (branch has unintegrated changes)
+    /// - `Ok(false)` if merging would NOT change target (branch is already integrated)
+    /// - `Ok(true)` if merge would have conflicts (conservative: treat as not integrated)
+    /// - `Err` if git commands fail
+    pub fn would_merge_add_to_target(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
+        // Simulate merging branch into target
+        // On conflict, merge-tree exits non-zero and we can't get a clean tree
+        let merge_result = self.run_command(&["merge-tree", "--write-tree", target, branch]);
+
+        let Ok(merge_tree) = merge_result else {
+            // merge-tree failed (likely conflicts) - conservatively treat as having changes
+            return Ok(true);
+        };
+
+        let merge_tree = merge_tree.trim();
+        if merge_tree.is_empty() {
+            // Empty output is unexpected - treat as having changes
+            return Ok(true);
+        }
+
+        // Get target's tree for comparison
+        let target_tree = self.rev_parse_tree(&format!("{target}^{{tree}}"))?;
+
+        // If merge result differs from target's tree, merging would add something
+        Ok(merge_tree != target_tree)
     }
 
     /// Get commit subjects (first line of commit message) from a range.

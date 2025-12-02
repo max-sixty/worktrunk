@@ -27,8 +27,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-💡 [2mSkipping pre-commit hook (--no-verify)[22m
+💡 [2mSkipping pre-commit hook ([90m--no-verify[39m)[22m
 🔄 [36mCommitting tracked changes with default message... [90m(1 file, [32m+1[39m, [31m-1[39m[39m[90m)[39m[39m
-💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
 [107m [0m  [1mChanges to tracked.txt[22m
 ✅ [32mCommitted changes @ [2ma5890cb[22m[39m

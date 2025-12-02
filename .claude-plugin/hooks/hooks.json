@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git branch --show-current 2>/dev/null | xargs -I {} git config worktrunk.status.{} 🤖"
+            "command": "git branch --show-current 2>/dev/null | xargs -I {} git config worktrunk.marker.{} 🤖"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git branch --show-current 2>/dev/null | xargs -I {} git config worktrunk.status.{} 💬"
+            "command": "git branch --show-current 2>/dev/null | xargs -I {} git config worktrunk.marker.{} 💬"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git branch --show-current 2>/dev/null | xargs -I {} git config --unset worktrunk.status.{} 2>/dev/null || true"
+            "command": "git branch --show-current 2>/dev/null | xargs -I {} git config --unset worktrunk.marker.{} 2>/dev/null || true"
           }
         ]
       }

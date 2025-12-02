@@ -4,4 +4,4 @@ expression: output.normalized()
 ---
 ❌ [31mBranch [1mexisting[22m already exists[39m
 
-💡 [2mRemove [22m--create[2m flag to switch to the existing branch[22m
+💡 [2mRemove [90m--create[39m flag to switch to the existing branch[22m

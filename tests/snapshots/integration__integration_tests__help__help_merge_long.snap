@@ -67,30 +67,30 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
 Commit → Squash → Rebase → Pre-merge hooks → Push → Cleanup → Post-merge hooks
 
-### Commit
+[1mCommit[0m
 
 Uncommitted changes are staged and committed with LLM commit message.
 Use [2m--stage=tracked[0m to stage only tracked files, or [2m--stage=none[0m to commit only what's already staged.
 
-### Squash
+[1mSquash[0m
 
 Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM commit message.
 Skip with [2m--no-squash[0m. Safety backup: [2mgit reflog show refs/wt-backup/<branch>[0m
 
-### Rebase
+[1mRebase[0m
 
 Branch is rebased onto target. Conflicts abort the merge immediately.
 
-### Hooks
+[1mHooks[0m
 
 Pre-merge commands run after rebase (failures abort). Post-merge commands
 run after cleanup (failures logged). Skip all with [2m--no-verify[0m.
 
-### Push
+[1mPush[0m
 
 Fast-forward push to local target branch. Non-fast-forward pushes are rejected.
 
-### Cleanup
+[1mCleanup[0m
 
 Worktree and branch are removed. Skip with [2m--no-remove[0m.
 

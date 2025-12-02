@@ -4,4 +4,4 @@ expression: err.to_string()
 ---
 ❌ [31mAmbiguous: [1m/tmp/repo.feature[22m has a worktree on a different branch, but branch [1mfeature[22m exists at [1m/tmp/repo.other[39m[22m
 
-💡 [2mUse [22mwt list[2m to see worktree-branch mappings[22m
+💡 [2mUse [90mwt list[39m to see worktree-branch mappings[22m

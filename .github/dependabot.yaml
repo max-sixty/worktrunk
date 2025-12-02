@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore: "
+    # Bump all patch versions of rust dependencies as a single PR
+    groups:
+      patch:
+        update-types:
+          - patch
+    # Exclude labels due to https://github.com/dependabot/dependabot-core/issues/7645#issuecomment-1986212847
+    labels: []
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    commit-message:
+      prefix: "chore: "
+    schedule:
+      interval: daily
+    labels: []

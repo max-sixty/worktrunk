@@ -26,4 +26,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mWorktree directory missing for [1mmissing-wt[39m[22m
 
-💡 [2mRun [22mgit worktree prune[2m to clean up[22m
+💡 [2mRun [90mgit worktree prune[39m to clean up[22m

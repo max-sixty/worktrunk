@@ -14,7 +14,6 @@ env:
 
 jobs:
   test:
-    name: Test
     strategy:
       fail-fast: false
       matrix:
@@ -23,7 +22,7 @@ jobs:
 
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -109,11 +108,10 @@ jobs:
         args: --no-deps
 
   check-links:
-    name: Check links
     runs-on: ubuntu-latest
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install lychee
       uses: baptiste0928/cargo-install@v3
@@ -121,19 +119,12 @@ jobs:
         crate: lychee
 
     - name: Setup Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.12"
 
     - name: Install pre-commit
       run: pip install pre-commit
-
-    - name: Cache lychee results
-      uses: actions/cache@v4
-      with:
-        path: .lycheecache
-        key: lychee-${{ github.sha }}
-        restore-keys: lychee-
 
     - name: Get modified markdown files
       if: github.event_name == 'pull_request'
@@ -146,16 +137,13 @@ jobs:
     - name: Link checker (modified files - PRs)
       if: github.event_name == 'pull_request' && steps.changed-files.outputs.any_modified == 'true'
       run: pre-commit run lychee --files ${{ steps.changed-files.outputs.all_changed_files }}
-      continue-on-error: true
 
     - name: Link checker (all files - main branch)
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: pre-commit run lychee --all-files
-      continue-on-error: true
 
   # Check if Cargo files changed (for conditional jobs below)
   changes:
-    name: Detect changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -164,7 +152,7 @@ jobs:
       cargo: ${{ steps.filter.outputs.cargo }}
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
     - uses: dorny/paths-filter@v3
       id: filter
       with:
@@ -175,13 +163,12 @@ jobs:
             - 'rust-toolchain.toml'
 
   msrv:
-    name: MSRV
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
@@ -197,13 +184,12 @@ jobs:
       run: cargo msrv verify
 
   check-unused-dependencies:
-    name: Unused dependencies
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     # cargo-udeps requires nightly; update date periodically
     - run: rustup override set nightly-2025-11-10
@@ -224,13 +210,12 @@ jobs:
         args: --all-targets --locked
 
   benchmarks:
-    name: Benchmarks
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || github.event_name == 'workflow_dispatch'
     steps:
     - name: 📂 Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable

@@ -33,7 +33,7 @@ use super::model::{
 /// Context for status symbol computation during result processing
 struct StatusContext {
     has_merge_tree_conflicts: bool,
-    user_status: Option<String>,
+    user_marker: Option<String>,
     working_tree_symbols: Option<String>,
     has_conflicts: bool,
 }
@@ -99,9 +99,9 @@ pub(super) enum TaskResult {
         git_operation: GitOperationState,
     },
     /// User-defined status from git config
-    UserStatus {
+    UserMarker {
         item_idx: usize,
-        user_status: Option<String>,
+        user_marker: Option<String>,
     },
     /// Upstream tracking status
     Upstream {
@@ -126,7 +126,7 @@ impl TaskResult {
             | TaskResult::WorkingTreeDiff { item_idx, .. }
             | TaskResult::MergeTreeConflicts { item_idx, .. }
             | TaskResult::GitOperation { item_idx, .. }
-            | TaskResult::UserStatus { item_idx, .. }
+            | TaskResult::UserMarker { item_idx, .. }
             | TaskResult::Upstream { item_idx, .. }
             | TaskResult::CiStatus { item_idx, .. } => *item_idx,
         }
@@ -228,7 +228,7 @@ fn drain_results(
     let mut status_contexts: Vec<StatusContext> = (0..items.len())
         .map(|_| StatusContext {
             has_merge_tree_conflicts: false,
-            user_status: None,
+            user_marker: None,
             working_tree_symbols: None,
             has_conflicts: false,
         })
@@ -340,12 +340,12 @@ fn drain_results(
                     data.git_operation = git_operation;
                 }
             }
-            TaskResult::UserStatus {
+            TaskResult::UserMarker {
                 item_idx,
-                user_status,
+                user_marker,
             } => {
                 // Store for status_symbols computation
-                status_contexts[item_idx].user_status = user_status;
+                status_contexts[item_idx].user_marker = user_marker;
             }
             TaskResult::Upstream { item_idx, upstream } => {
                 items[item_idx].upstream = Some(upstream);
@@ -646,6 +646,25 @@ pub fn collect(
         return Ok(None);
     }
 
+    // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
+    //
+    // Git's builtin fsmonitor on macOS has race conditions under parallel load that can
+    // cause git commands to hang. When multiple git status commands try to auto-start
+    // the daemon simultaneously, they can wedge. Pre-starting the daemons before parallel
+    // operations avoids this race.
+    //
+    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's workaround)
+    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
+    #[cfg(target_os = "macos")]
+    {
+        let main_repo = Repository::at(&main_worktree.path);
+        if main_repo.is_builtin_fsmonitor_enabled() {
+            for wt in &sorted_worktrees {
+                Repository::at(&wt.path).start_fsmonitor_daemon();
+            }
+        }
+    }
+
     // Cache last rendered (unclamped) message per row to avoid redundant updates.
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
 
@@ -740,7 +759,7 @@ pub fn collect(
             item.compute_status_symbols(
                 item_default_branch,
                 ctx.has_merge_tree_conflicts,
-                ctx.user_status.clone(),
+                ctx.user_marker.clone(),
                 ctx.working_tree_symbols.as_deref(),
                 ctx.has_conflicts,
             );
@@ -1019,7 +1038,7 @@ pub fn populate_items(
         item.compute_status_symbols(
             item_default_branch,
             ctx.has_merge_tree_conflicts,
-            ctx.user_status.clone(),
+            ctx.user_marker.clone(),
             ctx.working_tree_symbols.as_deref(),
             ctx.has_conflicts,
         );

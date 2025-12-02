@@ -766,11 +766,11 @@ fn test_list_primary_on_different_branch() {
 }
 
 #[test]
-fn test_list_with_user_status() {
+fn test_list_with_user_marker() {
     let mut repo = TestRepo::new();
     repo.commit_with_age("Initial commit", DAY);
 
-    // Branch ahead of main with commits and user status 🤖
+    // Branch ahead of main with commits and user marker 🤖
     let feature_wt = repo.add_worktree("feature-api");
     std::fs::write(feature_wt.join("api.rs"), "// API implementation").unwrap();
     let mut cmd = Command::new("git");
@@ -785,15 +785,15 @@ fn test_list_with_user_status() {
         .current_dir(&feature_wt)
         .output()
         .unwrap();
-    // Set user status
+    // Set user marker
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.feature-api", "🤖"])
+    cmd.args(["config", "worktrunk.marker.feature-api", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
 
-    // Branch with uncommitted changes and user status 💬
+    // Branch with uncommitted changes and user marker 💬
     let review_wt = repo.add_worktree("review-ui");
     std::fs::write(review_wt.join("component.tsx"), "// UI component").unwrap();
     let mut cmd = Command::new("git");
@@ -810,41 +810,41 @@ fn test_list_with_user_status() {
         .unwrap();
     // Add uncommitted changes
     std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
-    // Set user status
+    // Set user marker
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.review-ui", "💬"])
+    cmd.args(["config", "worktrunk.marker.review-ui", "💬"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
 
-    // Branch with uncommitted changes only (no user status)
+    // Branch with uncommitted changes only (no user marker)
     let wip_wt = repo.add_worktree("wip-docs");
     std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
 
-    snapshot_list("with_user_status", &repo);
+    snapshot_list("with_user_marker", &repo);
 }
 
 #[test]
-fn test_list_json_with_user_status() {
+fn test_list_json_with_user_marker() {
     let mut repo = TestRepo::new();
     repo.commit_with_age("Initial commit", DAY);
 
-    // Worktree with user status (emoji only)
+    // Worktree with user marker (emoji only)
     repo.add_worktree("with-status");
 
-    // Set user status (branch-keyed)
+    // Set user marker (branch-keyed)
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.with-status", "🔧"])
+    cmd.args(["config", "worktrunk.marker.with-status", "🔧"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
 
-    // Worktree without user status
+    // Worktree without user marker
     repo.add_worktree("without-status");
 
-    snapshot_list_json("json_with_user_status", &repo);
+    snapshot_list_json("json_with_user_marker", &repo);
 }
 
 #[test]
@@ -937,7 +937,7 @@ fn test_list_branch_only_with_status() {
     // Set branch-keyed status for the branch-only entry
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.branch-only", "🌿"])
+    cmd.args(["config", "worktrunk.marker.branch-only", "🌿"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -947,7 +947,7 @@ fn test_list_branch_only_with_status() {
 }
 
 #[test]
-fn test_list_user_status_with_special_characters() {
+fn test_list_user_marker_with_special_characters() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
 
@@ -956,7 +956,7 @@ fn test_list_user_status_with_special_characters() {
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.emoji", "🔄"])
+    cmd.args(["config", "worktrunk.marker.emoji", "🔄"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -966,12 +966,12 @@ fn test_list_user_status_with_special_characters() {
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.multi", "👨‍💻"])
+    cmd.args(["config", "worktrunk.marker.multi", "👨‍💻"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
 
-    snapshot_list("user_status_special_chars", &repo);
+    snapshot_list("user_marker_special_chars", &repo);
 }
 
 /// Generate README example: List output for Quick Start narrative
@@ -1424,10 +1424,10 @@ fn test_list_large_diffs_alignment() {
         .join("\n");
     std::fs::write(large_wt.join("another.txt"), &another_large).unwrap();
 
-    // Set user status
+    // Set user marker
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.feature-changes", "🤖"])
+    cmd.args(["config", "worktrunk.marker.feature-changes", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -1436,10 +1436,10 @@ fn test_list_large_diffs_alignment() {
     let short_wt = repo.add_worktree("fix");
     std::fs::write(short_wt.join("quick.txt"), "quick fix").unwrap();
 
-    // Set user status for short branch
+    // Set user marker for short branch
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.fix", "💬"])
+    cmd.args(["config", "worktrunk.marker.fix", "💬"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -1473,10 +1473,10 @@ fn test_list_large_diffs_alignment() {
         .join("\n");
     std::fs::write(diverged_wt.join("test.txt"), &modified_diverged).unwrap();
 
-    // Set user status
+    // Set user marker
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.diverged", "💬"])
+    cmd.args(["config", "worktrunk.marker.diverged", "💬"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -1528,10 +1528,10 @@ fn test_list_status_column_padding_with_emoji() {
         .join("\n");
     std::fs::write(wli_seq.join("new.txt"), &new_content).unwrap();
 
-    // Set user status emoji 🤖
+    // Set user marker emoji 🤖
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.wli-sequence", "🤖"])
+    cmd.args(["config", "worktrunk.marker.wli-sequence", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -1557,7 +1557,7 @@ fn test_list_status_column_padding_with_emoji() {
     // Set same emoji type
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.pr-link", "🤖"])
+    cmd.args(["config", "worktrunk.marker.pr-link", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -1580,7 +1580,7 @@ fn test_list_status_column_padding_with_emoji() {
 
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.main-symbol", "💬"])
+    cmd.args(["config", "worktrunk.marker.main-symbol", "💬"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -1656,7 +1656,7 @@ fn test_list_maximum_working_tree_symbols() {
 #[test]
 fn test_list_maximum_status_with_git_operation() {
     // Test maximum status symbols including git operation (rebase/merge):
-    // ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user status)
+    // ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // This pushes the Status column to ~10-11 chars of actual content
     let mut repo = TestRepo::new();
 
@@ -1751,15 +1751,15 @@ fn test_list_maximum_status_with_git_operation() {
         .output()
         .unwrap();
 
-    // Set user status emoji (🤖)
+    // Set user marker emoji (🤖)
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.feature", "🤖"])
+    cmd.args(["config", "worktrunk.marker.feature", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
 
-    // Result should show: ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user status)
+    // Result should show: ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // Use --full to enable conflict detection
     let settings = list_snapshots::standard_settings(&repo);
     settings.bind(|| {
@@ -1918,10 +1918,10 @@ fn test_list_maximum_status_symbols() {
         .output()
         .unwrap();
 
-    // Set user status emoji (🤖)
+    // Set user marker emoji (🤖)
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.feature", "🤖"])
+    cmd.args(["config", "worktrunk.marker.feature", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();

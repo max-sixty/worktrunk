@@ -122,10 +122,18 @@ fn normalize_output(output: &str) -> String {
     }
 
     // Remove blank line between prompt and subsequent message
-    // The prompt ends with "] " followed by newline, then we may have blank line
-    // Pattern: [y/N] followed by ANSI codes, space, newline, blank line, then emoji
-    output_str = output_str.replace("[y/N]\x1b[0m \n\n🔄", "[y/N]\x1b[0m \n🔄");
-    output_str = output_str.replace("[y/N]\x1b[0m \n\n⚪", "[y/N]\x1b[0m \n⚪");
+    // The prompt ends with "] " followed by ANSI codes (like [0m or [22m), space, newline,
+    // then we may have a blank line. Use regex to handle varying ANSI sequences.
+    let blank_after_prompt = regex::Regex::new(r"\[y/N\](\x1b\[\d+m)* \n\n(🔄|⚪)").unwrap();
+    output_str = blank_after_prompt
+        .replace_all(&output_str, |caps: &regex::Captures| {
+            format!(
+                "[y/N]{} \n{}",
+                caps.get(1).map_or("", |m| m.as_str()),
+                &caps[2]
+            )
+        })
+        .to_string();
 
     output_str
 }

@@ -24,4 +24,4 @@ exit_code: 0
 
 ----- stderr -----
 🟡 [33mNo worktree found for branch [1mfeature-merged[22m[39m
-✅ [32m[32mRemoved branch [1mfeature-merged[22m[39m[39m
+✅ [32mRemoved branch [1mfeature-merged[22m (already in main)[39m

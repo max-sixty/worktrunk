@@ -51,11 +51,11 @@ pub fn handle_config_create() -> anyhow::Result<()> {
             format_path_for_display(&config_path)
         ))?;
         output::blank()?;
-        output::print(cformat!(
-            "{HINT_EMOJI} <dim>Use </>wt config show<dim> to view existing configuration</>"
+        output::hint(cformat!(
+            "Use <bright-black>wt config show</> to view existing configuration"
         ))?;
-        output::print(cformat!(
-            "{HINT_EMOJI} <dim>Use </>wt config create --help<dim> for config format reference</>"
+        output::hint(cformat!(
+            "Use <bright-black>wt config create --help</> for config format reference"
         ))?;
         return Ok(());
     }
@@ -128,7 +128,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         writeln!(
             out,
             "{}",
-            cformat!("{HINT_EMOJI} <dim>Run </>wt config create<dim> to create a config file</>")
+            cformat!(
+                "{HINT_EMOJI} <dim>Run <bright-black>wt config create</> to create a config file</>"
+            )
         )?;
         writeln!(out)?;
         let default_config =
@@ -327,7 +329,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             cformat!(
-                "{HINT_EMOJI} <dim>Run </>wt config shell install<dim> to enable shell integration</>"
+                "{HINT_EMOJI} <dim>Run <bright-black>wt config shell install</> to enable shell integration</>"
             )
         )?;
     }
@@ -345,6 +347,11 @@ fn check_zsh_compinit_missing() -> bool {
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WT_ASSUME_COMPINIT").is_ok() {
         return false; // Assume compinit is configured
+    }
+
+    // Force compinit to be missing (for tests that expect the warning)
+    if std::env::var("WT_ASSUME_NO_COMPINIT").is_ok() {
+        return true; // Force warning to appear
     }
 
     // Probe zsh to check if compdef function exists (indicates compinit has run)
@@ -395,69 +402,160 @@ fn require_user_config_path() -> anyhow::Result<PathBuf> {
     })
 }
 
-/// Handle the config status set command
-pub fn handle_config_status_set(value: String, branch: Option<String>) -> anyhow::Result<()> {
+/// Handle the var get command
+pub fn handle_var_get(key: &str, refresh: bool, branch: Option<String>) -> anyhow::Result<()> {
+    use super::list::ci_status::PrStatus;
+
     let repo = Repository::current();
 
-    // TODO: Worktree-specific status (worktrunk.status with --worktree flag) would allow
-    // different statuses per worktree, but requires extensions.worktreeConfig which adds
-    // complexity. Our intended workflow is one branch per worktree, so branch-keyed status
-    // is sufficient for now.
+    match key {
+        "default-branch" => {
+            let branch_name = if refresh {
+                crate::output::progress("Querying remote for default branch...")?;
+                repo.refresh_default_branch()?
+            } else {
+                repo.default_branch()?
+            };
+            crate::output::data(branch_name)?;
+        }
+        "marker" => {
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("get marker for current branch")?,
+            };
+            match repo.branch_keyed_marker(&branch_name) {
+                Some(marker) => crate::output::data(marker)?,
+                None => crate::output::data("")?,
+            }
+        }
+        "ci-status" => {
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("get ci-status for current branch")?,
+            };
 
-    let branch_name = match branch {
-        Some(b) => b,
-        None => repo.require_current_branch("set status for current branch")?,
-    };
+            let repo_root = repo.worktree_root()?;
 
-    let config_key = format!("worktrunk.status.{}", branch_name);
-    repo.run_command(&["config", &config_key, &value])?;
+            // Get the HEAD commit for this branch
+            let head = repo
+                .run_command(&["rev-parse", &branch_name])
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
 
-    crate::output::success(cformat!(
-        "Set status for <bold>{branch_name}</> to <bold>{value}</>"
-    ))?;
+            if head.is_empty() {
+                anyhow::bail!("Branch '{branch_name}' not found");
+            }
+
+            if refresh {
+                crate::output::progress("Fetching CI status...")?;
+                // Clear cache to force refresh
+                let config_key = format!(
+                    "worktrunk.ci.{}",
+                    super::list::ci_status::CachedCiStatus::escape_branch(&branch_name)
+                );
+                let _ = repo.run_command(&["config", "--unset", &config_key]);
+            }
+
+            match PrStatus::detect(&branch_name, &head, &repo_root) {
+                Some(status) => {
+                    // Output the CI status as a simple string for piping
+                    let status_str = match status.ci_status {
+                        super::list::ci_status::CiStatus::Passed => "passed",
+                        super::list::ci_status::CiStatus::Running => "running",
+                        super::list::ci_status::CiStatus::Failed => "failed",
+                        super::list::ci_status::CiStatus::Conflicts => "conflicts",
+                        super::list::ci_status::CiStatus::NoCI => "noci",
+                        super::list::ci_status::CiStatus::Error => "error",
+                    };
+                    crate::output::data(status_str)?;
+                }
+                None => {
+                    crate::output::data("noci")?;
+                }
+            }
+        }
+        _ => anyhow::bail!(
+            "Unknown variable: {key}. Valid variables: default-branch, marker, ci-status"
+        ),
+    }
 
     Ok(())
 }
 
-/// Handle the config status unset command
-pub fn handle_config_status_unset(target: String) -> anyhow::Result<()> {
+/// Handle the var set command
+pub fn handle_var_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
     let repo = Repository::current();
 
-    if target == "*" {
-        // Clear all branch-keyed statuses
-        let output = repo
-            .run_command(&["config", "--get-regexp", "^worktrunk\\.status\\."])
-            .unwrap_or_default();
+    match key {
+        "marker" => {
+            // TODO: Worktree-specific marker (worktrunk.marker with --worktree flag) would allow
+            // different markers per worktree, but requires extensions.worktreeConfig which adds
+            // complexity. Our intended workflow is one branch per worktree, so branch-keyed marker
+            // is sufficient for now.
 
-        let mut cleared_count = 0;
-        for line in output.lines() {
-            if let Some(key) = line.split_whitespace().next() {
-                repo.run_command(&["config", "--unset", key])?;
-                cleared_count += 1;
-            }
-        }
+            let branch_name = match branch {
+                Some(b) => b,
+                None => repo.require_current_branch("set marker for current branch")?,
+            };
 
-        if cleared_count == 0 {
-            crate::output::info("No statuses to clear")?;
-        } else {
+            let config_key = format!("worktrunk.marker.{}", branch_name);
+            repo.run_command(&["config", &config_key, &value])?;
+
             crate::output::success(cformat!(
-                "Cleared <bold>{cleared_count}</> status{}",
-                if cleared_count == 1 { "" } else { "es" }
+                "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
             ))?;
         }
-    } else {
-        // Clear specific branch status
-        let branch_name = if target.is_empty() {
-            repo.require_current_branch("clear status for current branch")?
-        } else {
-            target
-        };
+        _ => anyhow::bail!("Unknown variable: {key}. Valid variables: marker"),
+    }
 
-        let config_key = format!("worktrunk.status.{}", branch_name);
-        repo.run_command(&["config", "--unset", &config_key])
-            .context("Failed to unset status (may not be set)")?;
+    Ok(())
+}
 
-        crate::output::success(cformat!("Cleared status for <bold>{branch_name}</>"))?;
+/// Handle the var clear command
+pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
+    let repo = Repository::current();
+
+    match key {
+        "marker" => {
+            if all {
+                // Clear all branch-keyed markers
+                // Note: git config --get-regexp exits with code 1 when no matches found,
+                // so we treat errors the same as empty output (both mean "no markers")
+                let output = repo
+                    .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+                    .unwrap_or_default();
+
+                let mut cleared_count = 0;
+                for line in output.lines() {
+                    if let Some(config_key) = line.split_whitespace().next() {
+                        repo.run_command(&["config", "--unset", config_key])?;
+                        cleared_count += 1;
+                    }
+                }
+
+                if cleared_count == 0 {
+                    crate::output::info("No markers to clear")?;
+                } else {
+                    crate::output::success(cformat!(
+                        "Cleared <bold>{cleared_count}</> marker{}",
+                        if cleared_count == 1 { "" } else { "s" }
+                    ))?;
+                }
+            } else {
+                // Clear specific branch marker
+                let branch_name = match branch {
+                    Some(b) => b,
+                    None => repo.require_current_branch("clear marker for current branch")?,
+                };
+
+                let config_key = format!("worktrunk.marker.{}", branch_name);
+                repo.run_command(&["config", "--unset", &config_key])
+                    .context("Failed to clear marker (may not be set)")?;
+
+                crate::output::success(cformat!("Cleared marker for <bold>{branch_name}</>"))?;
+            }
+        }
+        _ => anyhow::bail!("Unknown variable: {key}. Valid variables: marker"),
     }
 
     Ok(())
@@ -470,8 +568,8 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
     // Show default branch cache
     crate::output::info("Default branch cache:")?;
     match repo.default_branch() {
-        Ok(branch) => crate::output::data(format!("  {branch}"))?,
-        Err(_) => crate::output::data("  (not cached)")?,
+        Ok(branch) => crate::output::gutter(format_with_gutter(&branch, "", None))?,
+        Err(_) => crate::output::gutter(format_with_gutter("(not cached)", "", None))?,
     }
     crate::output::blank()?;
 
@@ -480,7 +578,7 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
 
     let entries = CachedCiStatus::list_all(&repo);
     if entries.is_empty() {
-        crate::output::data("  (no CI cache entries)")?;
+        crate::output::gutter(format_with_gutter("(empty)", "", None))?;
         return Ok(());
     }
 
@@ -489,6 +587,7 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
+    let mut ci_lines = Vec::new();
     for (branch, cached) in entries {
         let status = serde_json::to_string(&cached.status.ci_status)
             .map(|s| s.trim_matches('"').to_string())
@@ -496,8 +595,9 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
         let age = now_secs.saturating_sub(cached.checked_at);
         let head: String = cached.head.chars().take(8).collect();
 
-        crate::output::data(format!("  {branch}: {status} (age: {age}s, head: {head})"))?;
+        ci_lines.push(format!("{branch}: {status} (age: {age}s, head: {head})"));
     }
+    crate::output::gutter(format_with_gutter(&ci_lines.join("\n"), "", None))?;
 
     Ok(())
 }

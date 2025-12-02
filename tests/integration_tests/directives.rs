@@ -31,7 +31,7 @@ fn test_switch_internal_directive() {
         ----- stderr -----
         ❌ [31mBranch [1mmy-feature[22m not found[39m
 
-        💡 [2mUse [22m--create[2m to create a new branch, or [22mwt list --branches --remotes[2m for available branches[22m
+        💡 [2mUse [90m--create[39m to create a new branch, or [90mwt list --branches --remotes[39m for available branches[22m
         ");
     });
 }
@@ -60,7 +60,7 @@ fn test_switch_without_internal() {
         ----- stderr -----
         ❌ [31mBranch [1mmy-feature[22m not found[39m
 
-        💡 [2mUse [22m--create[2m to create a new branch, or [22mwt list --branches --remotes[2m for available branches[22m
+        💡 [2mUse [90m--create[39m to create a new branch, or [90mwt list --branches --remotes[39m for available branches[22m
         ");
     });
 }

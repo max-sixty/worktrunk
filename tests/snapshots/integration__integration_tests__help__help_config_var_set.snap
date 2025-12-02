@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - config
-    - status
+    - var
     - set
     - "--help"
   env:
@@ -19,12 +19,17 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config status set - Set status emoji for branch
-Usage: [1m[36mwt config status set[0m [36m[OPTIONS][0m [36m<VALUE>[0m
+wt config var set - Set a variable value
+Usage: [1m[36mwt config var set[0m [36m[OPTIONS][0m [36m<KEY>[0m [36m<VALUE>[0m
 
 [1m[32mArguments:[0m
+  [36m<KEY>[0m
+          Variable: 'marker'
+          
+          [possible values: marker]
+
   [36m<VALUE>[0m
-          Status emoji to display
+          Value to set
 
 [1m[32mOptions:[0m
       [1m[36m--branch[0m[36m [0m[36m<BRANCH>[0m
@@ -43,7 +48,14 @@ Usage: [1m[36mwt config status set[0m [36m[OPTIONS][0m [36m<VALUE>[0m
   [1m[36m-v[0m, [1m[36m--verbose[0m
           Show commands and debug info
 
-Sets a custom status marker that appears in [2mwt list[0m output.
+Variables:
 
-Use emojis or short text to indicate work state (e.g., 🚧 WIP, ✅ ready, 🔒 blocked).
-Stored in git config under [2mworktrunk.status.<branch>[0m.
+- [1mmarker[0m: Custom status marker displayed in [2mwt list[0m output
+
+[32mExamples[0m
+
+Set marker for current branch:
+  [2mwt config var set marker "🚧 WIP"[0m
+
+Set marker for a specific branch:
+  [2mwt config var set marker "✅ ready" --branch=feature[0m

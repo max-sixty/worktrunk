@@ -28,6 +28,6 @@ exit_code: 0
 🔄 [36mRunning post-create:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setup done'[0m[2m [0m[2m[36m>[0m[2m setup.txt[0m
 [0m✅ [32m[32mCreated new worktree for [1mfeature[22m from [1mmain[22m at [1m[REPO].feature[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
 🔄 [36mRunning post-start [1mserver[22m:[39m
 [107m [0m  [2m[0m[2m[34msleep[0m[2m 0.05 [0m[2m[36m&&[0m[2m [0m[2m[34mecho[0m[2m [0m[2m[32m'Server running'[0m[2m [0m[2m[36m>[0m[2m server.txt[0m

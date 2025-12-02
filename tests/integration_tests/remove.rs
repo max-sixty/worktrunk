@@ -622,3 +622,95 @@ fn test_remove_default_branch_no_tautology() {
         assert_cmd_snapshot!("remove_default_branch_no_tautology", cmd);
     });
 }
+
+/// Test that a squash-merged branch is detected as integrated even when main advances.
+///
+/// This tests the scenario:
+/// 1. Create feature branch from main and make changes (file A)
+/// 2. Squash-merge feature into main (main now has A via squash commit)
+/// 3. Main advances with more commits (file B)
+/// 4. Try to remove feature
+///
+/// The branch should be detected as integrated because its content (A) is
+/// already in main, even though main has additional content (B).
+///
+/// This is detected via merge simulation: `git merge-tree --write-tree main feature`
+/// produces the same tree as main, meaning merging feature would add nothing.
+#[test]
+fn test_remove_squash_merged_then_main_advanced() {
+    let repo = setup_remove_repo();
+
+    // Create feature branch
+    repo.git_command(&["checkout", "-b", "feature-squash"])
+        .output()
+        .unwrap();
+
+    // Make changes on feature branch (file A)
+    std::fs::write(repo.root_path().join("feature-a.txt"), "feature content").unwrap();
+    repo.git_command(&["add", "feature-a.txt"])
+        .output()
+        .unwrap();
+    repo.git_command(&["commit", "-m", "Add feature A"])
+        .output()
+        .unwrap();
+
+    // Go back to main
+    repo.git_command(&["checkout", "main"]).output().unwrap();
+
+    // Squash merge feature into main (simulating GitHub squash merge)
+    // This creates a NEW commit on main with the same content changes
+    std::fs::write(repo.root_path().join("feature-a.txt"), "feature content").unwrap();
+    repo.git_command(&["add", "feature-a.txt"])
+        .output()
+        .unwrap();
+    repo.git_command(&["commit", "-m", "Add feature A (squash merged)"])
+        .output()
+        .unwrap();
+
+    // Main advances with another commit (file B)
+    std::fs::write(repo.root_path().join("main-b.txt"), "main content").unwrap();
+    repo.git_command(&["add", "main-b.txt"]).output().unwrap();
+    repo.git_command(&["commit", "-m", "Main advances with B"])
+        .output()
+        .unwrap();
+
+    // Verify setup: feature-squash is NOT an ancestor of main (squash creates different SHAs)
+    let is_ancestor = repo
+        .git_command(&["merge-base", "--is-ancestor", "feature-squash", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        !is_ancestor.status.success(),
+        "feature-squash should NOT be an ancestor of main (squash merge)"
+    );
+
+    // Verify setup: trees don't match (main has file B that feature doesn't)
+    let feature_tree = String::from_utf8(
+        repo.git_command(&["rev-parse", "feature-squash^{tree}"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let main_tree = String::from_utf8(
+        repo.git_command(&["rev-parse", "main^{tree}"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_ne!(
+        feature_tree.trim(),
+        main_tree.trim(),
+        "Tree SHAs should differ (main has file B that feature doesn't)"
+    );
+
+    // Remove the feature branch - should succeed because content is integrated
+    // (detected via merge simulation using git merge-tree)
+    snapshot_remove(
+        "remove_squash_merged_then_main_advanced",
+        &repo,
+        &["feature-squash"],
+        None,
+    );
+}

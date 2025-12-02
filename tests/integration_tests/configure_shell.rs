@@ -19,6 +19,8 @@ fn test_configure_shell_with_yes() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -34,8 +36,8 @@ fn test_configure_shell_with_yes() {
         🟡 [33mCompletions won't work; add to ~/.zshrc before the wt line:[39m
         [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mSkipped [1mbash[22m; ~/.bashrc not found[22m
-        💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
+        💡 [2mSkipped [90mbash[39m; ~/.bashrc not found[22m
+        💡 [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
 
         ✅ [32mConfigured 1 shell[39m
         💡 [2mRestart shell or run: source ~/.zshrc[22m
@@ -63,6 +65,8 @@ fn test_configure_shell_specific_shell() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -224,7 +228,7 @@ fn test_configure_shell_fish_extension_exists() {
         ");
     });
 
-    // Fish completions should be in a separate file using $WORKTRUNK_BIN
+    // Fish completions should be in a separate file with WORKTRUNK_BIN fallback
     let completions_file = temp_home.path().join(".config/fish/completions/wt.fish");
     assert!(
         completions_file.exists(),
@@ -232,8 +236,8 @@ fn test_configure_shell_fish_extension_exists() {
     );
     let contents = std::fs::read_to_string(&completions_file).unwrap();
     assert!(
-        contents.contains("$WORKTRUNK_BIN"),
-        "Fish completions should use $WORKTRUNK_BIN to bypass shell wrapper"
+        contents.contains(r#"test -n \"\$WORKTRUNK_BIN\""#),
+        "Fish completions should check WORKTRUNK_BIN is non-empty with fallback"
     );
 }
 
@@ -261,9 +265,9 @@ fn test_configure_shell_no_files() {
         ----- stdout -----
 
         ----- stderr -----
-        💡 [2mSkipped [1mbash[22m; ~/.bashrc not found[22m
-        💡 [2mSkipped [1mzsh[22m; ~/.zshrc not found[22m
-        💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
+        💡 [2mSkipped [90mbash[39m; ~/.bashrc not found[22m
+        💡 [2mSkipped [90mzsh[39m; ~/.zshrc not found[22m
+        💡 [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
         ❌ [31mNo shell config files found[39m
         ");
     });
@@ -287,6 +291,8 @@ fn test_configure_shell_multiple_configs() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -303,7 +309,7 @@ fn test_configure_shell_multiple_configs() {
         [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ✅ [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
+        💡 [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
 
         ✅ [32mConfigured 2 shells[39m
         💡 [2mRestart shell or run: source ~/.zshrc[22m
@@ -348,6 +354,8 @@ fn test_configure_shell_mixed_states() {
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Force compinit warning for deterministic tests across environments
+        cmd.env("WT_ASSUME_NO_COMPINIT", "1");
         cmd.arg("config")
             .arg("shell")
             .arg("install")
@@ -364,7 +372,7 @@ fn test_configure_shell_mixed_states() {
         [107m [0m  [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
         ⚪ Already configured shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
+        💡 [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
 
         ✅ [32mConfigured 1 shell[39m
         💡 [2mRestart shell or run: source ~/.zshrc[22m
@@ -420,9 +428,9 @@ fn test_uninstall_shell() {
 
         ----- stderr -----
         ✅ [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mNo bash shell extension & completions in ~/.bashrc[22m
-        💡 [2mNo fish shell extension in ~/.config/fish/conf.d/wt.fish[22m
-        💡 [2mNo fish completions in ~/.config/fish/completions/wt.fish[22m
+        💡 [2mNo [90mbash[39m shell extension & completions in ~/.bashrc[22m
+        💡 [2mNo [90mfish[39m shell extension in ~/.config/fish/conf.d/wt.fish[22m
+        💡 [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         ✅ [32mRemoved integration from 1 shell[39m
         💡 [2mRestart shell to complete uninstall[22m
@@ -481,8 +489,8 @@ fn test_uninstall_shell_multiple() {
         ----- stderr -----
         ✅ [32mRemoved shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         ✅ [32mRemoved shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mNo fish shell extension in ~/.config/fish/conf.d/wt.fish[22m
-        💡 [2mNo fish completions in ~/.config/fish/completions/wt.fish[22m
+        💡 [2mNo [90mfish[39m shell extension in ~/.config/fish/conf.d/wt.fish[22m
+        💡 [2mNo [90mfish[39m completions in ~/.config/fish/completions/wt.fish[22m
 
         ✅ [32mRemoved integration from 2 shells[39m
         💡 [2mRestart shell to complete uninstall[22m
@@ -728,7 +736,7 @@ fn test_configure_shell_no_warning_for_bash_user() {
         ----- stderr -----
         ✅ [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
+        💡 [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
 
         ✅ [32mConfigured 2 shells[39m
         💡 [2mRestart shell or run: source ~/.bashrc[22m
@@ -848,7 +856,7 @@ fn test_configure_shell_no_warning_when_shell_unset() {
         ----- stderr -----
         ✅ [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         ✅ [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        💡 [2mSkipped [1mfish[22m; ~/.config/fish/conf.d not found[22m
+        💡 [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
 
         ✅ [32mConfigured 2 shells[39m
         ");

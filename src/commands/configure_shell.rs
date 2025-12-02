@@ -557,16 +557,16 @@ fn prompt_yes_no() -> Result<bool, String> {
     Ok(response == "y" || response == "yes")
 }
 
-/// Fish completion content - uses $WORKTRUNK_BIN to bypass shell wrapper
-const FISH_COMPLETION: &str = r#"# worktrunk completions for fish - uses $WORKTRUNK_BIN to bypass shell wrapper
-complete --keep-order --exclusive --command wt --arguments "(COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
+/// Fish completion content - finds wt in PATH, with WORKTRUNK_BIN as optional override
+const FISH_COMPLETION: &str = r#"# worktrunk completions for fish
+complete --keep-order --exclusive --command wt --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P wt); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
 "#;
 
 /// Process shell completions - either preview or write based on dry_run flag
 ///
 /// Note: Bash and Zsh use inline lazy completions in the init script.
 /// Fish uses a separate completion file at ~/.config/fish/completions/wt.fish
-/// that calls $WORKTRUNK_BIN directly to bypass the shell wrapper.
+/// that finds wt in PATH (with WORKTRUNK_BIN as optional override) to bypass the shell wrapper.
 pub fn process_shell_completions(
     shells: &[Shell],
     dry_run: bool,

@@ -20,12 +20,12 @@
 //! - Show error placeholder in UI
 //! - Continue silently (current behavior)
 
+use crate::output;
 use crossbeam_channel::Sender;
 use std::path::PathBuf;
 use std::sync::Arc;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::eprintln;
 
 use super::ci_status::PrStatus;
 use super::collect::{ExpectedResults, TaskKind, TaskResult, detect_git_operation};
@@ -324,17 +324,17 @@ impl Task for GitOperationTask {
 }
 
 /// Task 8 (worktree only): User-defined status from git config
-pub struct UserStatusTask;
+pub struct UserMarkerTask;
 
-impl Task for UserStatusTask {
-    const KIND: TaskKind = TaskKind::UserStatus;
+impl Task for UserMarkerTask {
+    const KIND: TaskKind = TaskKind::UserMarker;
 
     fn compute(ctx: TaskContext) -> TaskResult {
         let repo = Repository::at(&ctx.repo_path);
-        let user_status = repo.user_status(ctx.branch.as_deref());
-        TaskResult::UserStatus {
+        let user_marker = repo.user_marker(ctx.branch.as_deref());
+        TaskResult::UserMarker {
             item_idx: ctx.item_idx,
-            user_status,
+            user_marker,
         }
     }
 }
@@ -361,11 +361,11 @@ impl Task for UpstreamTask {
                         }),
                         Err(e) => {
                             if ctx.verbose_errors {
-                                eprintln!(
-                                    "Warning: ahead_behind failed for {}: {}",
+                                let _ = output::warning(format!(
+                                    "ahead_behind failed for {}: {}",
                                     format_path_for_display(&ctx.repo_path),
                                     e
-                                );
+                                ));
                             }
                             None
                         }
@@ -374,11 +374,11 @@ impl Task for UpstreamTask {
                 Ok(None) => None,
                 Err(e) => {
                     if ctx.verbose_errors {
-                        eprintln!(
-                            "Warning: upstream_branch failed for {}: {}",
+                        let _ = output::warning(format!(
+                            "upstream_branch failed for {}: {}",
                             format_path_for_display(&ctx.repo_path),
                             e
-                        );
+                        ));
                     }
                     None
                 }
@@ -461,7 +461,7 @@ pub fn collect_worktree_progressive(
         spawner.spawn::<WorkingTreeDiffTask>(s, &ctx);
         spawner.spawn::<MergeTreeConflictsTask>(s, &ctx);
         spawner.spawn::<GitOperationTask>(s, &ctx);
-        spawner.spawn::<UserStatusTask>(s, &ctx);
+        spawner.spawn::<UserMarkerTask>(s, &ctx);
         spawner.spawn::<UpstreamTask>(s, &ctx);
         spawner.spawn::<CiStatusTask>(s, &ctx);
     });

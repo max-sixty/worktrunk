@@ -25,4 +25,4 @@ exit_code: 0
 
 ----- stderr -----
 🟡 [33mWorktree for [1mfeature-z[22m at [1m[REPO].feature-z[22m; cannot cd (no shell integration)[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

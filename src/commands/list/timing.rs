@@ -21,7 +21,7 @@ pub enum OpName {
     // TODO(timing): Add PrStatus timing when CI/PR status collection is instrumented
     PrStatus,
     MergeConflicts,
-    UserStatus,
+    UserMarker,
 }
 
 /// Collects timing data for list operations.

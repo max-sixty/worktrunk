@@ -6,7 +6,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk)
 [![License: MIT](https://img.shields.io/badge/LICENSE-MIT-blue?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![GitHub CI Status](https://img.shields.io/github/actions/workflow/status/max-sixty/worktrunk/ci.yml?event=push&branch=main&logo=github&style=for-the-badge)](https://github.com/max-sixty/worktrunk/actions?query=branch%3Amain+workflow%3Aci)
+[![GitHub CI Status](https://img.shields.io/github/actions/workflow/status/max-sixty/worktrunk/ci.yaml?event=push&branch=main&logo=github&style=for-the-badge)](https://github.com/max-sixty/worktrunk/actions?query=branch%3Amain+workflow%3Aci)
 
 <!-- Dev badges (uncomment when repo is public and has traction) -->
 <!-- [![Downloads](https://img.shields.io/crates/d/worktrunk?style=for-the-badge&logo=rust)](https://crates.io/crates/worktrunk) -->
@@ -112,7 +112,7 @@ Say we merged via CI, our changes are on main, and we're finished with the workt
 
 ```console
 $ wt remove
-🔄 Removing feature-api worktree & branch in background (ancestor of main)
+🔄 Removing feature-api worktree & branch in background (already in main)
 ```
 
 <!-- END AUTO-GENERATED -->
@@ -320,7 +320,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
     jwt.rs       |  8 ++++++++
     3 files changed, 33 insertions(+)
 ✅ Merged to main (1 commit, 3 files, +33)
-🔄 Removing feature-auth worktree & branch in background (ancestor of main)
+🔄 Removing feature-auth worktree & branch in background (already in main)
 🔄 Running post-merge install:
    cargo install --path .
   Installing worktrunk v0.1.0
@@ -336,7 +336,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 The Worktrunk plugin adds Claude Code session tracking to `wt list`:
 
-<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__with_user_status.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__with_user_marker.snap — edit source to update -->
 
 ```console
 $ wt list
@@ -367,9 +367,9 @@ claude plugin install worktrunk@worktrunk
 Set status markers manually for any workflow:
 
 ```console
-wt config status set "🚧"           # Current branch
-wt config status set "✅" --branch feature  # Specific branch
-git config worktrunk.status.feature "💬"    # Direct git config
+wt config var set marker "🚧"                   # Current branch
+wt config var set marker "✅" --branch feature  # Specific branch
+git config worktrunk.marker.feature "💬"        # Direct git config
 ```
 
 </details>
@@ -505,9 +505,9 @@ Global Options:
 
 ```
 
-## Operation
+### Operation
 
-### Worktree resolution
+#### Worktree resolution
 
 Arguments are resolved using **path-first lookup**:
 
@@ -520,13 +520,13 @@ Arguments are resolved using **path-first lookup**:
 - `wt switch foo` switches to `repo.foo/` (the `bar` branch worktree)
 - `wt switch bar` also works (falls back to branch lookup)
 
-### Switching to Existing Worktree
+#### Switching to Existing Worktree
 
 - If worktree exists at expected path or for branch, changes directory via shell integration
 - No hooks run
 - No branch creation
 
-### Creating New Worktree (`--create`)
+#### Creating New Worktree (`--create`)
 
 1. Creates new branch (defaults to current default branch as base)
 2. Creates worktree in configured location (default: `../{{ main_worktree }}.{{ branch }}`)
@@ -535,16 +535,16 @@ Arguments are resolved using **path-first lookup**:
 5. Spawns post-start hooks in background (non-blocking)
 6. Changes directory to new worktree via shell integration
 
-## Hooks
+### Hooks
 
-### post-create (sequential, blocking)
+#### post-create (sequential, blocking)
 
 - Run after worktree creation, before success message
 - Typically: `npm install`, `cargo build`, setup tasks
 - Failures block the operation
 - Skip with `--no-verify`
 
-### post-start (parallel, background)
+#### post-start (parallel, background)
 
 - Spawned after success message shown
 - Typically: dev servers, file watchers, editors
@@ -558,7 +558,7 @@ Arguments are resolved using **path-first lookup**:
 Approvals are saved to user config. Use `--force` to bypass prompts.
 See `wt config approvals --help`.
 
-## Examples
+### Examples
 
 Switch to existing worktree:
 
@@ -596,7 +596,7 @@ Skip hooks during creation:
 wt switch --create temp --no-verify
 ```
 
-## Shortcuts
+### Shortcuts
 
 Use `@` for current HEAD, `-` for previous, `^` for main:
 
@@ -666,34 +666,34 @@ Global Options:
 
 ```
 
-## Operation
+### Operation
 
 Commit → Squash → Rebase → Pre-merge hooks → Push → Cleanup → Post-merge hooks
 
-### Commit
+#### Commit
 
 Uncommitted changes are staged and committed with LLM commit message.
 Use `--stage=tracked` to stage only tracked files, or `--stage=none` to commit only what's already staged.
 
-### Squash
+#### Squash
 
 Multiple commits are squashed into one (like GitHub's "Squash and merge") with LLM commit message.
 Skip with `--no-squash`. Safety backup: `git reflog show refs/wt-backup/<branch>`
 
-### Rebase
+#### Rebase
 
 Branch is rebased onto target. Conflicts abort the merge immediately.
 
-### Hooks
+#### Hooks
 
 Pre-merge commands run after rebase (failures abort). Post-merge commands
 run after cleanup (failures logged). Skip all with `--no-verify`.
 
-### Push
+#### Push
 
 Fast-forward push to local target branch. Non-fast-forward pushes are rejected.
 
-### Cleanup
+#### Cleanup
 
 Worktree and branch are removed. Skip with `--no-remove`.
 
@@ -703,7 +703,7 @@ Worktree and branch are removed. Skip with `--no-remove`.
 Approvals are saved to user config. Use `--force` to bypass prompts.
 See `wt config approvals --help`.
 
-## Examples
+### Examples
 
 Basic merge to main:
 
@@ -771,21 +771,21 @@ Global Options:
 
 ```
 
-## Operation
+### Operation
 
 Removes worktree directory, git metadata, and branch. Requires clean working tree.
 
-### No arguments (remove current)
+#### No arguments (remove current)
 
 - Removes current worktree and switches to main worktree
 - In main worktree: switches to default branch
 
-### By name (remove specific)
+#### By name (remove specific)
 
 - Removes specified worktree(s) and branches
 - Current worktree removed last (switches to main first)
 
-### Worktree resolution
+#### Worktree resolution
 
 Arguments are resolved to worktrees using **path-first lookup**:
 
@@ -807,28 +807,30 @@ branch `foo` has a different worktree at `repo.bar/`, an error is raised.
 - `-` - previous worktree (from switch history)
 - `^` - main worktree
 
-### Branch deletion
+#### Branch deletion
 
-By default, branches are deleted only when their content has been integrated:
+By default, branches are deleted only when their content is already in the target branch:
 
-- Traditional merge: branch is an ancestor of the target (git's `-d` behavior)
-- Squash merge/rebase: branch's tree SHA matches target's tree SHA
+- no changes beyond the common ancestor — `git diff --name-only target...branch` is empty:
+  no files changed between the merge base of `target`/`branch` and the tip of `branch`.
+- same content as target — `git rev-parse branch^{tree}` equals `git rev-parse target^{tree}`:
+  both branches point at the same tracked-files snapshot (tree), even if the commits differ.
 
 This handles workflows where PRs are squash-merged or rebased, which don't preserve
 commit ancestry but do integrate the content. Use `-D` to delete unintegrated
 branches, or `--no-delete-branch` to always keep branches.
 
-### Background removal (default)
+#### Background removal (default)
 
 - Returns immediately for continued work
 - Logs: `.git/wt-logs/{branch}-remove.log`
 - Use `--no-background` for foreground (blocking)
 
-### Cleanup
+#### Cleanup
 
 Stops any git fsmonitor daemon for the worktree before removal. This prevents orphaned processes when using builtin fsmonitor (`core.fsmonitor=true`). No effect on Watchman users.
 
-## Examples
+### Examples
 
 Remove current worktree and branch:
 
@@ -918,7 +920,7 @@ Global Options:
 
 ```
 
-## Columns
+### Columns
 
 - **Branch:** Branch name
 - **Status:** Quick status symbols (see Status Symbols below)
@@ -939,7 +941,7 @@ Global Options:
 - **Age:** Time since last commit (relative)
 - **Message:** Last commit message (truncated)
 
-## Status Symbols
+### Status Symbols
 
 Order: `+!? ✖⚠≡_ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠`
 
@@ -964,7 +966,7 @@ Order: `+!? ✖⚠≡_ ↻⋈ ↑↓↕ ⇡⇣⇅ ⎇⌫⊠`
 
 Rows are dimmed when there's no marginal contribution (`≡` matches main OR `_` no commits).
 
-## JSON Output
+### JSON Output
 
 Use `--format=json` for structured data. Each object contains two status maps
 with the same fields in the same order as Status Symbols above:
@@ -976,7 +978,7 @@ with the same fields in the same order as Status Symbols above:
 - `git_operation`: `""` | `"Rebase"` | `"Merge"`
 - `main_divergence`: `""` | `"Ahead"` | `"Behind"` | `"Diverged"`
 - `upstream_divergence`: `""` | `"Ahead"` | `"Behind"` | `"Diverged"`
-- `user_status`: string (optional)
+- `user_marker`: string (optional)
 
 **`status_symbols`** - Unicode symbols for display (same fields, plus `worktree_attrs`: ⎇/⌫/⊠)
 
@@ -1028,7 +1030,7 @@ Commands:
   create     Create user configuration file
   show       Show configuration files & locations
   cache      Manage caches (CI status, default branch)
-  status     Manage branch status markers
+  var        Get or set runtime variables (stored in git config)
   approvals  Manage command approvals
 
 Options:
@@ -1047,7 +1049,7 @@ Global Options:
 
 ```
 
-## Setup Guide
+### Setup Guide
 
 1. Set up shell integration
 
@@ -1080,7 +1082,7 @@ Global Options:
    command = "llm"
    ```
 
-## LLM Setup Details
+### LLM Setup Details
 
 For Claude:
 
@@ -1099,7 +1101,7 @@ llm keys set openai
 Use `wt config show` to view the current configuration.
 Docs: <https://llm.datasette.io/> | <https://github.com/sigoden/aichat>
 
-## Configuration Files
+### Configuration Files
 
 **User config**:
 

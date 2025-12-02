@@ -29,4 +29,4 @@ exit_code: 0
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
 [0m🟡 [33mCommand failed: exit status: 1[39m
 ✅ [32m[32mCreated new worktree for [1mfeature[22m from [1mmain[22m at [1m[REPO].feature[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

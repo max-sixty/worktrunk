@@ -10,7 +10,7 @@ repos:
         # rustfmt handles rust files, and in snapshots we expect trailing spaces.
         exclude: '.*\.(rs|snap)$'
   - repo: https://github.com/crate-ci/typos
-    rev: v1.37.2
+    rev: v1
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347
@@ -25,7 +25,7 @@ repos:
       - id: clippy
         args: ["--all-targets", "--", "-D", "warnings"]
   - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.21.0
+    rev: nightly
     hooks:
       # Fast PR mode - only check worktrunk domains and local files
       - id: lychee
@@ -33,7 +33,7 @@ repos:
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          - --include=^(https://(github\.com/worktrunk|worktrunk\.dev)|file://)
+          - --include=^(https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)|file://)
       # Comprehensive mode - check all links with full config
       # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
       - id: lychee
@@ -60,6 +60,7 @@ repos:
         exclude: '^(tests/|.*_test\.rs$|src/styling/(line|mod|format)\.rs$|src/output/directive\.rs$|src/cli\.rs$)'
 
 ci:
-  # Currently network access isn't supported in the CI product.
-  skip: [fmt, lychee (PR mode)]
+  # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
+  # Network access also isn't supported, so skip lychee.
+  skip: [fmt, clippy, lychee]
   autoupdate_commit_msg: "chore: pre-commit autoupdate"

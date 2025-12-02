@@ -4,8 +4,8 @@ info:
   program: wt
   args:
     - config
-    - status
-    - unset
+    - var
+    - clear
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -19,16 +19,22 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config status unset - Clear status emoji
-Usage: [1m[36mwt config status unset[0m [36m[OPTIONS][0m [36m[TARGET][0m
+wt config var clear - Clear a variable value
+Usage: [1m[36mwt config var clear[0m [36m[OPTIONS][0m [36m<KEY>[0m
 
 [1m[32mArguments:[0m
-  [36m[TARGET][0m
-          Branch or '*' for all
+  [36m<KEY>[0m
+          Variable: 'marker'
           
-          [default: ]
+          [possible values: marker]
 
 [1m[32mOptions:[0m
+      [1m[36m--branch[0m[36m [0m[36m<BRANCH>[0m
+          Target branch (defaults to current)
+
+      [1m[36m--all[0m
+          Clear all values
+
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
@@ -42,4 +48,17 @@ Usage: [1m[36mwt config status unset[0m [36m[OPTIONS][0m [36m[TARGET][0m
   [1m[36m-v[0m, [1m[36m--verbose[0m
           Show commands and debug info
 
-Removes status marker from branch(es). Use '*' to clear all statuses.
+Variables:
+
+- [1mmarker[0m: Custom status marker for a branch
+
+[32mExamples[0m
+
+Clear marker for current branch:
+  [2mwt config var clear marker[0m
+
+Clear marker for a specific branch:
+  [2mwt config var clear marker --branch=feature[0m
+
+Clear all markers:
+  [2mwt config var clear marker --all[0m

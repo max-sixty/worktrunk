@@ -428,7 +428,7 @@ impl ListItem {
         &mut self,
         default_branch: Option<&str>,
         has_merge_tree_conflicts: bool,
-        user_status: Option<String>,
+        user_marker: Option<String>,
         working_tree_symbols: Option<&str>,
         has_conflicts: bool,
     ) {
@@ -491,7 +491,7 @@ impl ListItem {
                     main_divergence,
                     upstream_divergence,
                     working_tree: working_tree_symbols.unwrap_or("").to_string(),
-                    user_status,
+                    user_marker,
                 });
             }
             ItemKind::Branch => {
@@ -518,7 +518,7 @@ impl ListItem {
                     main_divergence,
                     upstream_divergence,
                     working_tree: String::new(),
-                    user_status,
+                    user_marker,
                 });
             }
         }
@@ -856,7 +856,7 @@ pub enum GitOperationState {
 /// 1. Only allocate space for positions that have data
 /// 2. Pad each position to a consistent width for vertical alignment
 ///
-/// Stores maximum character width for each of 8 positions (including user status).
+/// Stores maximum character width for each of 8 positions (including user marker).
 /// A width of 0 means the position is unused.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PositionMask {
@@ -875,7 +875,7 @@ impl PositionMask {
     const MAIN_DIVERGENCE: usize = 4;
     const UPSTREAM_DIVERGENCE: usize = 5;
     const WORKTREE_STATE: usize = 6;
-    const USER_STATUS: usize = 7;
+    const USER_MARKER: usize = 7;
 
     /// Full mask with all positions enabled (for JSON output and progressive rendering)
     /// Allocates realistic widths based on common symbol sizes to ensure proper grid alignment
@@ -888,7 +888,7 @@ impl PositionMask {
             1, // MAIN_DIVERGENCE: ^, ↑, ↓, ↕ (1 char)
             1, // UPSTREAM_DIVERGENCE: ⇡, ⇣, ⇅ (1 char)
             1, // WORKTREE_STATE: ⎇ for branches, ⚐⌫⊠ for worktrees (priority: path_mismatch > prunable > locked)
-            2, // USER_STATUS: single emoji or two chars (allocate 2)
+            2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],
     };
 
@@ -906,7 +906,7 @@ impl PositionMask {
 /// - Main divergence: ^, ↑, ↓, ↕
 /// - Upstream divergence: ⇡, ⇣, ⇅
 /// - Worktree state: ⎇ for branches, ⚐⌫⊠ for worktrees (priority-only)
-/// - User status: custom labels, emoji
+/// - User marker: custom labels, emoji
 ///
 /// ## Mutual Exclusivity
 ///
@@ -948,7 +948,7 @@ pub struct StatusSymbols {
     pub(crate) working_tree: String,
 
     /// User-defined status annotation (custom labels, e.g., 💬, 🤖)
-    pub(crate) user_status: Option<String>,
+    pub(crate) user_marker: Option<String>,
 }
 
 impl StatusSymbols {
@@ -999,7 +999,7 @@ impl StatusSymbols {
             && self.main_divergence == MainDivergence::None
             && self.upstream_divergence == UpstreamDivergence::None
             && self.working_tree.is_empty()
-            && self.user_status.is_none()
+            && self.user_marker.is_none()
     }
 
     /// Render status symbols in compact form for statusline (no grid alignment).
@@ -1016,7 +1016,7 @@ impl StatusSymbols {
     ///
     /// Returns: `[(position_mask, styled_string, has_data); 8]`
     ///
-    /// Order: working_tree (+!?) → branch_op_state → main_divergence → upstream_divergence → worktree_state → user_status
+    /// Order: working_tree (+!?) → branch_op_state → main_divergence → upstream_divergence → worktree_state → user_marker
     ///
     /// Styling follows semantic meaning:
     /// - Cyan: Working tree changes (activity indicator)
@@ -1058,7 +1058,7 @@ impl StatusSymbols {
             _ => cformat!("<yellow>{}</>", self.worktree_state),
         };
 
-        let user_status_str = self.user_status.as_deref().unwrap_or("").to_string();
+        let user_marker_str = self.user_marker.as_deref().unwrap_or("").to_string();
 
         // CRITICAL: Display order is working_tree first (staged, modified, untracked), then other symbols.
         // NEVER change this order - it ensures progressive and final rendering match exactly.
@@ -1087,9 +1087,9 @@ impl StatusSymbols {
                 self.worktree_state != WorktreeState::None,
             ),
             (
-                PositionMask::USER_STATUS,
-                user_status_str,
-                self.user_status.is_some(),
+                PositionMask::USER_MARKER,
+                user_marker_str,
+                self.user_marker.is_some(),
             ),
         ]
     }
@@ -1128,7 +1128,7 @@ struct QueryableStatus {
     upstream_divergence: &'static str,
     worktree_state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    user_status: Option<String>,
+    user_marker: Option<String>,
 }
 
 /// Status symbols (for display)
@@ -1142,7 +1142,7 @@ struct DisplaySymbols {
     upstream_divergence: String,
     worktree_state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    user_status: Option<String>,
+    user_marker: Option<String>,
 }
 
 impl serde::Serialize for StatusSymbols {
@@ -1167,7 +1167,7 @@ impl serde::Serialize for StatusSymbols {
             main_divergence: main_divergence_variant,
             upstream_divergence: upstream_divergence_variant,
             worktree_state: worktree_state_variant,
-            user_status: self.user_status.clone(),
+            user_marker: self.user_marker.clone(),
         };
 
         let display_symbols = DisplaySymbols {
@@ -1176,7 +1176,7 @@ impl serde::Serialize for StatusSymbols {
             main_divergence: self.main_divergence.to_string(),
             upstream_divergence: self.upstream_divergence.to_string(),
             worktree_state: self.worktree_state.to_string(),
-            user_status: self.user_status.clone(),
+            user_marker: self.user_marker.clone(),
         };
 
         state.serialize_field("status", &queryable_status)?;

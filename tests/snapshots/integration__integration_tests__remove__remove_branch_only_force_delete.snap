@@ -25,4 +25,4 @@ exit_code: 0
 
 ----- stderr -----
 🟡 [33mNo worktree found for branch [1mfeature-force[22m[39m
-✅ [32m[32mRemoved branch [1mfeature-force[22m (--force-delete)[39m[39m
+✅ [32mRemoved branch [1mfeature-force[22m (--force-delete)[39m

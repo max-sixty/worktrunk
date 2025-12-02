@@ -117,7 +117,7 @@ fn normalize_pty_output(output: &str) -> String {
 }
 
 // Flaky: PTY progressive rendering has timing-dependent output that changes between runs.
-// The non-PTY tests already verify status column rendering with emoji user status.
+// The non-PTY tests already verify status column rendering with emoji user marker.
 #[test]
 #[ignore]
 fn test_list_pty_status_column_padding_with_emoji() {
@@ -163,9 +163,9 @@ fn test_list_pty_status_column_padding_with_emoji() {
     // Add untracked and modified files for Status symbols
     std::fs::write(wli_seq.join("untracked.txt"), "new file").unwrap();
 
-    // Set user status emoji for wli-sequence
+    // Set user marker emoji for wli-sequence
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.wli-sequence", "🤖"])
+    cmd.args(["config", "worktrunk.marker.wli-sequence", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -185,7 +185,7 @@ fn test_list_pty_status_column_padding_with_emoji() {
         .unwrap();
 
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.pr-link", "🤖"])
+    cmd.args(["config", "worktrunk.marker.pr-link", "🤖"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
@@ -205,7 +205,7 @@ fn test_list_pty_status_column_padding_with_emoji() {
         .unwrap();
 
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.status.main-symbol", "💬"])
+    cmd.args(["config", "worktrunk.marker.main-symbol", "💬"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();

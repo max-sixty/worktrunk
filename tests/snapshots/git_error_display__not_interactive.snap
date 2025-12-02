@@ -4,4 +4,4 @@ expression: err.to_string()
 ---
 ❌ [31mCannot prompt for approval in non-interactive environment[39m
 
-💡 [2mIn CI/CD, use [22m--force[2m to skip prompts. To pre-approve commands, use [22mwt config approvals add
+💡 [2mIn CI/CD, use [90m--force[39m to skip prompts. To pre-approve commands, use [90mwt config approvals add[39m[22m

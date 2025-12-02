@@ -14,7 +14,7 @@ pub mod completion_validation;
 pub mod config_cache;
 pub mod config_init;
 pub mod config_show;
-pub mod config_status;
+pub mod config_var;
 pub mod configure_shell;
 pub mod default_branch;
 pub mod directives;

@@ -21,7 +21,7 @@ pub mod worktree;
 
 pub use config::{
     handle_cache_clear, handle_cache_refresh, handle_cache_show, handle_config_create,
-    handle_config_show, handle_config_status_set, handle_config_status_unset,
+    handle_config_show, handle_var_clear, handle_var_get, handle_var_set,
 };
 pub use configure_shell::{ConfigAction, handle_configure_shell, handle_unconfigure_shell};
 pub use init::handle_init;

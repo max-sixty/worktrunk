@@ -1,7 +1,10 @@
 +++
 title = "Configuration"
-weight = 3
+weight = 4
 +++
+
+<!-- TODO: This user config vs project config distinction is a good organizing
+     principle - consider orienting more of the docs around it -->
 
 Worktrunk uses two configuration files:
 
@@ -45,17 +48,21 @@ Create `.config/wt.toml` in your repository:
 
 ### Hook execution
 
-```bash
-$ wt switch --create feature-x
-🔄 Running post-create install:
-   uv sync
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_hooks_post_create.snap — edit source to update -->
+
+{% terminal() %}
+<span class="prompt">$</span> wt switch --create feature-x
+🔄 <span style='color:var(--cyan,#0aa)'>Running post-create <b>install</b>:</span>
+<span style='background:var(--bright-white,#fff)'> </span>  <span style='opacity:0.67'><span style='color:var(--blue,#00a)'>uv</span></span><span style='opacity:0.67'> sync</span>
 
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
-✅ Created new worktree for feature-x from main at ../repo.feature-x
-🔄 Running post-start dev:
-   uv run dev
-```
+✅ <span style='color:var(--green,#0a0)'>Created new worktree for <b>feature-x</b> from <b>main</b> at <b>../repo.feature-x</b></span>
+🔄 <span style='color:var(--cyan,#0aa)'>Running post-start <b>dev</b>:</span>
+<span style='background:var(--bright-white,#fff)'> </span>  <span style='opacity:0.67'><span style='color:var(--blue,#00a)'>uv</span></span><span style='opacity:0.67'> run dev</span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
 
 **Security**: Project commands require approval on first run. Approvals are saved to user config. Use `--force` to bypass prompts or `--no-verify` to skip hooks entirely.
 
@@ -146,6 +153,12 @@ wt config shell init fish | source
 
 ## Environment Variables
 
-- `WORKTRUNK_CONFIG_PATH` — Override user config location
-- `NO_COLOR` — Disable colored output
-- `CLICOLOR_FORCE` — Force colored output
+Override default behavior with environment variables:
+
+| Variable | Effect |
+|----------|--------|
+| `WORKTRUNK_CONFIG_PATH` | Override user config location (default: `~/.config/worktrunk/config.toml`) |
+| `NO_COLOR` | Disable colored output |
+| `CLICOLOR_FORCE` | Force colored output even when not a TTY |
+
+These follow standard conventions — `NO_COLOR` is the [no-color.org](https://no-color.org/) standard.

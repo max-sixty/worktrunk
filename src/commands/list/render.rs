@@ -1103,7 +1103,7 @@ mod tests {
             "Unicode and ASCII status should pad to same visual width"
         );
 
-        // Case 3: Complex status with multiple emoji (git symbols + user status)
+        // Case 3: Complex status with multiple emoji (git symbols + user marker)
         let complex_status = "↑⇡🤖📝";
         // ↑ (1) + ⇡ (1) + 🤖 (2) + 📝 (2) = 6 visual columns
         assert_eq!(

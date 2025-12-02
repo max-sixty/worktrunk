@@ -25,7 +25,7 @@ Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mcreate[0m     Create user configuration file
   [1m[36mshow[0m       Show configuration files & locations
   [1m[36mcache[0m      Manage caches (CI status, default branch)
-  [1m[36mstatus[0m     Manage branch status markers
+  [1m[36mvar[0m        Get or set runtime variables (stored in git config)
   [1m[36mapprovals[0m  Manage command approvals
 
 [1m[32mOptions:[0m

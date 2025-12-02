@@ -1,22 +1,87 @@
-{% import "juice/templates/_macros.html" as macros %}
 {% extends "juice/templates/index.html" %}
 
 {% block favicon %}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 {% endblock favicon %}
 
+{% block fonts %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preload" href="{{ get_url(path='logo.svg') }}" as="image" type="image/svg+xml">
+{% endblock fonts %}
+
 {% block head %}
+{% include "_variables.html" %}
+<meta name="description" content="{{ config.extra.site_description }}">
+
+<!-- OpenGraph -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ current_url | default(value=config.base_url) }}">
+<meta property="og:title" content="{% if page.title %}{{ page.title }} | {{ config.title }}{% else %}{{ config.title }}{% endif %}">
+<meta property="og:description" content="{{ config.extra.site_description }}">
+<!-- TODO: Add social-card.png (1200x630) to static/ when logo is finalized -->
+<!-- <meta property="og:image" content="{{ config.base_url }}social-card.png"> -->
+<!-- <meta property="og:image:width" content="1200"> -->
+<!-- <meta property="og:image:height" content="630"> -->
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{% if page.title %}{{ page.title }} | {{ config.title }}{% else %}{{ config.title }}{% endif %}">
+<meta name="twitter:description" content="{{ config.extra.site_description }}">
+<!-- <meta name="twitter:image" content="{{ config.base_url }}social-card.png"> -->
+
 <link rel="stylesheet" href="{{ get_url(path='custom.css') }}">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-6YY8BDJ4QH"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-6YY8BDJ4QH');
+</script>
+<script>
+// Disable the Juice theme's scroll-spy by intercepting IntersectionObserver
+// Juice creates an observer with threshold: 1 to highlight TOC items on scroll
+// This causes confusing behavior - we want TOC to show current PAGE, not viewport
+(function() {
+    const RealIntersectionObserver = window.IntersectionObserver;
+    window.IntersectionObserver = function(callback, options) {
+        // Juice's scroll-spy uses threshold: 1 - return a no-op observer
+        if (options && options.threshold === 1) {
+            return {
+                observe: function() {},
+                unobserve: function() {},
+                disconnect: function() {}
+            };
+        }
+        // For other observers, use the real implementation
+        return new RealIntersectionObserver(callback, options);
+    };
+    // Preserve prototype for instanceof checks
+    window.IntersectionObserver.prototype = RealIntersectionObserver.prototype;
+})();
+</script>
 {% endblock head %}
 
 {% block header %}
-<header class="box-shadow">
-    {{ macros::render_header() }}
+<header>
+    <a href="/">
+        <div class="logo">
+            <img src="{{ get_url(path=config.extra.juice_logo_path) }}" alt="logo">
+            {{ config.extra.juice_logo_name }}
+        </div>
+    </a>
+    <nav>
+        {% for menu in config.extra.juice_extra_menu %}
+        <a class="nav-item subtitle-text" href="{{ menu.link | safe }}">{{ menu.title }}</a>
+        {% endfor %}
+    </nav>
 </header>
+<div class="hero">
+    {% block hero %}{% endblock hero %}
+</div>
 {% endblock header %}
-
-{% block hero %}
-{% endblock hero %}
 
 {% block sidebar %}
 {% endblock sidebar %}

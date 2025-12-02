@@ -799,8 +799,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Filter out Git hint messages that vary across Git versions
     // These hints appear during rebase conflicts and can differ between versions
     // Pattern matches lines with gutter formatting + "hint:" + message + newline
-    // The gutter is: ESC[40m ESC[0m followed by spaces
-    settings.add_filter(r"(?m)^\x1b\[40m \x1b\[0m {1,2}hint:.*\n", "");
+    // The gutter is: ESC[107m (bright white bg) ESC[0m followed by spaces
+    settings.add_filter(r"(?m)^\x1b\[107m \x1b\[0m {1,2}hint:.*\n", "");
 
     // Normalize Git error message format differences across versions
     // Older Git (< 2.43): "Could not apply SHA... # commit message"

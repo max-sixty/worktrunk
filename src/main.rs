@@ -29,18 +29,18 @@ use commands::handle_ui;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     ConfigAction, RebaseResult, SquashResult, handle_cache_clear, handle_cache_refresh,
-    handle_cache_show, handle_config_create, handle_config_show, handle_config_status_set,
-    handle_config_status_unset, handle_configure_shell, handle_init, handle_list, handle_merge,
-    handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current, handle_squash,
-    handle_standalone_add_approvals, handle_standalone_clear_approvals, handle_standalone_commit,
-    handle_standalone_run_hook, handle_switch, handle_unconfigure_shell,
+    handle_cache_show, handle_config_create, handle_config_show, handle_configure_shell,
+    handle_init, handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_by_path,
+    handle_remove_current, handle_squash, handle_standalone_add_approvals,
+    handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
+    handle_switch, handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
     resolve_worktree_path_first,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{
     ApprovalsCommand, CacheCommand, Cli, Commands, ConfigCommand, ConfigShellCommand,
-    ListSubcommand, StatusAction, StepCommand,
+    ListSubcommand, StepCommand, VarCommand,
 };
 use worktrunk::HookType;
 
@@ -111,7 +111,8 @@ fn maybe_handle_help_with_pager() -> bool {
                 }
                 ErrorKind::DisplayVersion => {
                     // Print to stderr - stdout is reserved for data/scripts
-                    eprintln!("{}", err);
+                    // Use eprint! because clap's Error Display already includes a trailing newline
+                    eprint!("{}", err);
                     process::exit(0);
                 }
                 _ => {
@@ -340,7 +341,7 @@ fn main() {
                             for (shell, path) in &scan_result.skipped {
                                 let path = format_path_for_display(path);
                                 crate::output::hint(cformat!(
-                                    "Skipped <bold>{shell}</>; {path} not found"
+                                    "Skipped <bright-black>{shell}</>; {path} not found"
                                 ))?;
                             }
 
@@ -365,13 +366,14 @@ fn main() {
                             }
 
                             // Restart hint: only shown if the current shell's extension changed
-                            // (completions are auto-sourced or sourced separately, no restart needed)
+                            // Fish completions are lazily loaded from ~/.config/fish/completions/
+                            // so no restart needed. Bash/Zsh completions are inline in the init script.
                             if shells_configured_count > 0 {
                                 let current_shell = std::env::var("SHELL")
                                     .ok()
                                     .and_then(|s| s.rsplit('/').next().map(String::from));
 
-                                // Find if current shell had its extension changed (not just completions)
+                                // Find if current shell had its extension changed
                                 let current_shell_result =
                                     current_shell.as_ref().and_then(|shell_name| {
                                         scan_result
@@ -460,8 +462,8 @@ fn main() {
                                             "No {what} found in {path}"
                                         ))?;
                                     } else {
-                                        crate::output::hint(format!(
-                                            "No {shell} {what} in {path}"
+                                        crate::output::hint(cformat!(
+                                            "No <bright-black>{shell}</> {what} in {path}"
                                         ))?;
                                     }
                                 }
@@ -481,8 +483,8 @@ fn main() {
                                             "No completions found in {path}"
                                         ))?;
                                     } else {
-                                        crate::output::hint(format!(
-                                            "No {shell} completions in {path}"
+                                        crate::output::hint(cformat!(
+                                            "No <bright-black>{shell}</> completions in {path}"
                                         ))?;
                                     }
                                 }
@@ -534,9 +536,14 @@ fn main() {
                 CacheCommand::Clear { cache_type } => handle_cache_clear(cache_type),
                 CacheCommand::Refresh => handle_cache_refresh(),
             },
-            ConfigCommand::Status { action } => match action {
-                StatusAction::Set { value, branch } => handle_config_status_set(value, branch),
-                StatusAction::Unset { target } => handle_config_status_unset(target),
+            ConfigCommand::Var { action } => match action {
+                VarCommand::Get {
+                    key,
+                    refresh,
+                    branch,
+                } => handle_var_get(&key, refresh, branch),
+                VarCommand::Set { key, value, branch } => handle_var_set(&key, value, branch),
+                VarCommand::Clear { key, branch, all } => handle_var_clear(&key, branch, all),
             },
             ConfigCommand::Approvals { action } => match action {
                 ApprovalsCommand::Add { force, all } => handle_standalone_add_approvals(force, all),

@@ -12,4 +12,4 @@ n
 💡 Allow and remember? [1m[y/N][22m 
 ⚪ Commands declined, continuing worktree creation
 ✅ [32m[32mCreated new worktree for [1mtest-decline[22m from [1mmain[22m at [1m[REPO]/repo.test-decline[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

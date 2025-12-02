@@ -27,4 +27,4 @@ exit_code: 0
 🔄 [36mRunning post-create:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'approved'[0m[2m [0m[2m[36m>[0m[2m output.txt[0m
 [0m✅ [32m[32mCreated new worktree for [1mtest-approved[22m from [1mmain[22m at [1m[REPO].test-approved[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

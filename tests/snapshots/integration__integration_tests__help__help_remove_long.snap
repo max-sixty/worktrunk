@@ -51,17 +51,17 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[WORKTREES]...[0m
 
 Removes worktree directory, git metadata, and branch. Requires clean working tree.
 
-### No arguments (remove current)
+[1mNo arguments (remove current)[0m
 
 - Removes current worktree and switches to main worktree
 - In main worktree: switches to default branch
 
-### By name (remove specific)
+[1mBy name (remove specific)[0m
 
 - Removes specified worktree(s) and branches
 - Current worktree removed last (switches to main first)
 
-### Worktree resolution
+[1mWorktree resolution[0m
 
 Arguments are resolved to worktrees using [1mpath-first lookup[0m:
 
@@ -83,24 +83,26 @@ branch [2mfoo[0m has a different worktree at [2mrepo.bar/[0m, an error is ra
 - [2m-[0m - previous worktree (from switch history)
 - [2m^[0m - main worktree
 
-### Branch deletion
+[1mBranch deletion[0m
 
-By default, branches are deleted only when their content has been integrated:
+By default, branches are deleted only when their content is already in the target branch:
 
-- Traditional merge: branch is an ancestor of the target (git's [2m-d[0m behavior)
-- Squash merge/rebase: branch's tree SHA matches target's tree SHA
+- no changes beyond the common ancestor — [2mgit diff --name-only target...branch[0m is empty:
+  no files changed between the merge base of [2mtarget[0m/[2mbranch[0m and the tip of [2mbranch[0m.
+- same content as target — [2mgit rev-parse branch^{tree}[0m equals [2mgit rev-parse target^{tree}[0m:
+  both branches point at the same tracked-files snapshot (tree), even if the commits differ.
 
 This handles workflows where PRs are squash-merged or rebased, which don't preserve
 commit ancestry but do integrate the content. Use [2m-D[0m to delete unintegrated
 branches, or [2m--no-delete-branch[0m to always keep branches.
 
-### Background removal (default)
+[1mBackground removal (default)[0m
 
 - Returns immediately for continued work
 - Logs: [2m.git/wt-logs/{branch}-remove.log[0m
 - Use [2m--no-background[0m for foreground (blocking)
 
-### Cleanup
+[1mCleanup[0m
 
 Stops any git fsmonitor daemon for the worktree before removal. This prevents orphaned processes when using builtin fsmonitor ([2mcore.fsmonitor=true[0m). No effect on Watchman users.
 

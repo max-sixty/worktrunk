@@ -9,7 +9,7 @@ use worktrunk::git::GitError;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{HINT_EMOJI, format_with_gutter};
 
 /// Format a switch success message with a consistent location phrase
 ///
@@ -48,17 +48,21 @@ fn format_switch_success_message(
 /// Why a branch is considered integrated into the target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IntegrationReason {
-    /// Branch is an ancestor of target (traditional merge)
-    Merged,
+    /// Branch has no marginal contribution to target (ancestor, merged back to base, etc.)
+    NoMarginalContribution,
     /// Branch's tree SHA matches target's tree SHA (squash merge/rebase)
     ContentsMatch,
+    /// Merge simulation shows branch would add nothing to target
+    /// (squash merge where target has since advanced)
+    MergeAddsNothing,
 }
 
 /// Check if a branch's content has been integrated into the target.
 ///
 /// Returns the reason if the branch is safe to delete:
-/// - `Merged`: The branch is an ancestor of the target (traditional merge)
+/// - `NoMarginalContribution`: The branch has no marginal contribution to target (ancestor, merged back, etc.)
 /// - `ContentsMatch`: The branch's tree SHA matches the target's tree SHA (squash merge/rebase)
+/// - `MergeAddsNothing`: Merge simulation shows branch would add nothing (squash + target advanced)
 ///
 /// Returns None if neither condition is met, or if an error occurs (e.g., invalid refs).
 /// This fail-safe default prevents accidental branch deletion when integration cannot
@@ -68,14 +72,28 @@ fn get_integration_reason(
     branch_name: &str,
     target: &str,
 ) -> Option<IntegrationReason> {
-    // Check traditional merge relationship
-    if repo.is_ancestor(branch_name, target).unwrap_or(false) {
-        return Some(IntegrationReason::Merged);
+    // Check if branch has no marginal contribution to target (covers ancestors and merged-back-to-base)
+    // On error, conservatively assume branch HAS marginal contribution (won't delete)
+    if !repo
+        .has_marginal_contribution(branch_name, target)
+        .unwrap_or(true)
+    {
+        return Some(IntegrationReason::NoMarginalContribution);
     }
 
     // Check if tree content matches (handles squash merge/rebase)
     if repo.trees_match(branch_name, target).unwrap_or(false) {
         return Some(IntegrationReason::ContentsMatch);
+    }
+
+    // Check via merge simulation: would merging this branch into target add anything?
+    // This handles squash-merged branches where target has since advanced.
+    // If merge would NOT add anything, the branch's content is already in target.
+    if !repo
+        .would_merge_add_to_target(branch_name, target)
+        .unwrap_or(true)
+    {
+        return Some(IntegrationReason::MergeAddsNothing);
     }
 
     None
@@ -126,15 +144,18 @@ fn handle_branch_deletion_result(
         Ok(None) => {
             // Branch not integrated - we chose not to delete (not a failure)
             super::info(cformat!(
-                "Branch <bold>{branch_name}</> retained; not integrated into HEAD"
+                "Branch <bold>{branch_name}</> retained; has unmerged changes"
+            ))?;
+            super::print(cformat!(
+                "{HINT_EMOJI} <dim>Use </>wt remove -D<dim> to delete unmerged branches</>"
             ))?;
             Ok(None)
         }
         Err(e) => {
-            // Git command failed - show warning with actual error details
-            super::warning(cformat!("Could not delete branch <bold>{branch_name}</>"))?;
+            // Git command failed - this is an error (we decided to delete but couldn't)
+            super::error(cformat!("Failed to delete branch <bold>{branch_name}</>"))?;
             super::gutter(format_with_gutter(&e.to_string(), "", None))?;
-            Ok(None)
+            Err(e)
         }
     }
 }
@@ -156,8 +177,13 @@ fn get_flag_note(
     } else if let Some(target) = target_branch {
         // Show integration reason when branch is deleted (both wt merge and wt remove)
         match deletion_result {
-            Some(Some(IntegrationReason::Merged)) => format!(" (ancestor of {target})"),
-            Some(Some(IntegrationReason::ContentsMatch)) => format!(" (contents match {target})"),
+            Some(Some(IntegrationReason::NoMarginalContribution)) => {
+                format!(" (already in {target})")
+            }
+            Some(Some(IntegrationReason::ContentsMatch)) => format!(" (files match {target})"),
+            Some(Some(IntegrationReason::MergeAddsNothing)) => {
+                format!(" (all changes in {target})")
+            }
             Some(None) | None => String::new(),
         }
     } else {
@@ -216,9 +242,9 @@ fn format_remove_worktree_message(
     }
 }
 
-/// Shell integration hint message (hint() adds dim styling)
+/// Shell integration hint message
 fn shell_integration_hint() -> String {
-    "Run `wt config shell install` to enable automatic cd".to_string()
+    cformat!("Run <bright-black>wt config shell install</> to enable automatic cd")
 }
 
 /// Handle output for a switch operation
@@ -389,14 +415,23 @@ fn handle_branch_only_output(
     }
 
     let repo = worktrunk::git::Repository::current();
-    let result = delete_branch_if_safe(&repo, branch_name, "HEAD", force_delete);
+
+    // Get default branch for integration check and reason display
+    // Falls back to HEAD if default branch can't be determined
+    let default_branch = repo.default_branch().ok();
+    let check_target = default_branch.as_deref().unwrap_or("HEAD");
+
+    let result = delete_branch_if_safe(&repo, branch_name, check_target, force_delete);
     let integration_reason = handle_branch_deletion_result(result, branch_name)?;
 
     if integration_reason.is_some() {
-        let flag_note = get_flag_note(no_delete_branch, force_delete, integration_reason, None);
-        super::success(cformat!(
-            "<green>Removed branch <bold>{branch_name}</>{flag_note}</>"
-        ))?;
+        let flag_note = get_flag_note(
+            no_delete_branch,
+            force_delete,
+            integration_reason,
+            default_branch.as_deref(),
+        );
+        super::success(cformat!("Removed branch <bold>{branch_name}</>{flag_note}"))?;
     }
 
     super::flush()?;
@@ -500,6 +535,13 @@ fn handle_removed_worktree_output(
             )
         };
         super::progress(action)?;
+
+        // Show hint for unmerged branches (same as synchronous path)
+        if !no_delete_branch && !should_delete_branch {
+            super::print(cformat!(
+                "{HINT_EMOJI} <dim>Use </>wt remove -D<dim> to delete unmerged branches</>"
+            ))?;
+        }
 
         // Build command with the decision we already made
         let remove_command =

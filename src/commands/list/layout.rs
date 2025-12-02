@@ -15,7 +15,7 @@
 //! - Empty positions render as single space for grid alignment
 //! - No leading spaces before the first symbol
 //!
-//! Example with branch_state, working_tree, and user_status used:
+//! Example with branch_state, working_tree, and user_marker used:
 //! ```text
 //! Row 1: "≡   🤖"   (branch=≡, working=space, user=🤖)
 //! Row 2: "≡?!   "   (branch=≡, working=?!, user=space)
@@ -35,11 +35,11 @@
 //!
 //! **Single canonical system:**
 //! - One alignment mechanism for all status indicators
-//! - User status treated consistently with git symbols
+//! - User marker treated consistently with git symbols
 //!
 //! **Eliminates wasted space:**
 //! - Position mask removes columns for symbols that appear in zero rows
-//! - User status only takes space when present
+//! - User marker only takes space when present
 //!
 //! **Maintains alignment:**
 //! - All symbols align vertically at their positions (vertical scannability)

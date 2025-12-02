@@ -59,7 +59,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
 
 [32mOperation[0m
 
-### Worktree resolution
+[1mWorktree resolution[0m
 
 Arguments are resolved using [1mpath-first lookup[0m:
 
@@ -72,13 +72,13 @@ Arguments are resolved using [1mpath-first lookup[0m:
 - [2mwt switch foo[0m switches to [2mrepo.foo/[0m (the [2mbar[0m branch worktree)
 - [2mwt switch bar[0m also works (falls back to branch lookup)
 
-### Switching to Existing Worktree
+[1mSwitching to Existing Worktree[0m
 
 - If worktree exists at expected path or for branch, changes directory via shell integration
 - No hooks run
 - No branch creation
 
-### Creating New Worktree ([2m--create[0m)
+[1mCreating New Worktree (`--create`)[0m
 
 1. Creates new branch (defaults to current default branch as base)
 2. Creates worktree in configured location (default: [2m../{{ main_worktree }}.{{ branch }}[0m)
@@ -89,14 +89,14 @@ Arguments are resolved using [1mpath-first lookup[0m:
 
 [32mHooks[0m
 
-### post-create (sequential, blocking)
+[1mpost-create (sequential, blocking)[0m
 
 - Run after worktree creation, before success message
 - Typically: [2mnpm install[0m, [2mcargo build[0m, setup tasks
 - Failures block the operation
 - Skip with [2m--no-verify[0m
 
-### post-start (parallel, background)
+[1mpost-start (parallel, background)[0m
 
 - Spawned after success message shown
 - Typically: dev servers, file watchers, editors

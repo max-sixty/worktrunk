@@ -1,16 +1,11 @@
 # worktrunk shell integration for fish
 
 # Only initialize if {{ cmd_prefix }} is available (in PATH or via WORKTRUNK_BIN)
-if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
-    # TODO: Consider time-of-use pattern like bash/zsh instead of init-time setup.
-    # Fish lacks ${:-} syntax; would require verbose workaround at each call site.
-    if not set -q WORKTRUNK_BIN
-        set -gx WORKTRUNK_BIN (type -p {{ cmd_prefix }})
-    end
-
+if type -q {{ cmd_prefix }}; or test -n "$WORKTRUNK_BIN"
     # Capture stdout (shell script), eval in parent shell. stderr streams to terminal.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     function wt_exec
+        test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd_prefix }})
         set -l script (command $WORKTRUNK_BIN $argv | string collect)
         set -l exit_code $pipestatus[1]
 
@@ -31,19 +26,6 @@ if type -q {{ cmd_prefix }}; or set -q WORKTRUNK_BIN
 
         for arg in $argv
             if test "$arg" = "--source"; set use_source true; else; set -a args $arg; end
-        end
-
-        # Commands that need direct terminal access (bypass directive mode)
-        # ui uses exec() to replace process with zellij - can't capture stdout
-        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
-        # exit code (wt exits 200 to request direct access) or compile-time codegen.
-        if test (count $args) -gt 0; and test "$args[1]" = "ui"
-            if test $use_source = true
-                cargo run --quiet -- $args
-            else
-                command $WORKTRUNK_BIN $args
-            end
-            return $status
         end
 
         # Force colors if stderr is a TTY (respects NO_COLOR/CLICOLOR_FORCE)

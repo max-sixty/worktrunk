@@ -142,7 +142,9 @@ pub fn handle_squash(
         .unwrap_or(false);
 
     if skip_pre_commit && has_pre_commit {
-        crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
+        crate::output::hint(cformat!(
+            "Skipping pre-commit hook (<bright-black>--no-verify</>)"
+        ))?;
     } else if let Some(ref config) = project_config {
         HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust)?;
     }

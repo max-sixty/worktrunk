@@ -150,21 +150,21 @@ impl std::fmt::Display for GitError {
             GitError::BranchAlreadyExists { branch } => {
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Branch <bold>{branch}</> already exists</>\n\n{HINT_EMOJI} <dim>Remove </>--create<dim> flag to switch to the existing branch</>"
+                    "{ERROR_EMOJI} <red>Branch <bold>{branch}</> already exists</>\n\n{HINT_EMOJI} <dim>Remove <bright-black>--create</> flag to switch to the existing branch</>"
                 )
             }
 
             GitError::InvalidReference { reference } => {
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Branch <bold>{reference}</> not found</>\n\n{HINT_EMOJI} <dim>Use </>--create<dim> to create a new branch, or </>wt list --branches --remotes<dim> for available branches</>"
+                    "{ERROR_EMOJI} <red>Branch <bold>{reference}</> not found</>\n\n{HINT_EMOJI} <dim>Use <bright-black>--create</> to create a new branch, or <bright-black>wt list --branches --remotes</> for available branches</>"
                 )
             }
 
             GitError::WorktreeMissing { branch } => {
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Worktree directory missing for <bold>{branch}</></>\n\n{HINT_EMOJI} <dim>Run </>git worktree prune<dim> to clean up</>"
+                    "{ERROR_EMOJI} <red>Worktree directory missing for <bold>{branch}</></>\n\n{HINT_EMOJI} <dim>Run <bright-black>git worktree prune</> to clean up</>"
                 )
             }
 
@@ -211,7 +211,7 @@ impl std::fmt::Display for GitError {
                 let actual = format_path_for_display(actual_path);
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Ambiguous: <bold>{expected}</> has a worktree on a different branch, but branch <bold>{branch}</> exists at <bold>{actual}</></>\n\n{HINT_EMOJI} <dim>Use </>wt list<dim> to see worktree-branch mappings</>"
+                    "{ERROR_EMOJI} <red>Ambiguous: <bold>{expected}</> has a worktree on a different branch, but branch <bold>{branch}</> exists at <bold>{actual}</></>\n\n{HINT_EMOJI} <dim>Use <bright-black>wt list</> to see worktree-branch mappings</>"
                 )
             }
 
@@ -286,12 +286,12 @@ impl std::fmt::Display for GitError {
                 if *in_merge_context {
                     cwrite!(
                         f,
-                        "\n{HINT_EMOJI} <dim>Run </>wt merge<dim> again to incorporate these changes</>"
+                        "\n{HINT_EMOJI} <dim>Run <bright-black>wt merge</> again to incorporate these changes</>"
                     )
                 } else {
                     cwrite!(
                         f,
-                        "\n{HINT_EMOJI} <dim>Use </>wt step rebase<dim> or </>wt merge<dim> to rebase onto <bold>{target_branch}</></>"
+                        "\n{HINT_EMOJI} <dim>Use <bright-black>wt step rebase</> or <bright-black>wt merge</> to rebase onto <bold>{target_branch}</></>"
                     )
                 }
             }
@@ -299,7 +299,7 @@ impl std::fmt::Display for GitError {
             GitError::MergeCommitsFound => {
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Found merge commits in push range</>\n\n{HINT_EMOJI} <dim>Use </>--allow-merge-commits<dim> to push non-linear history</>"
+                    "{ERROR_EMOJI} <red>Found merge commits in push range</>\n\n{HINT_EMOJI} <dim>Use <bright-black>--allow-merge-commits</> to push non-linear history</>"
                 )
             }
 
@@ -316,7 +316,7 @@ impl std::fmt::Display for GitError {
                 } else {
                     cwrite!(
                         f,
-                        "\n\n{HINT_EMOJI} <dim>Resolve conflicts and run </>git rebase --continue\n{HINT_EMOJI} <dim>Or abort with </>git rebase --abort"
+                        "\n\n{HINT_EMOJI} <dim>Resolve conflicts and run <bright-black>git rebase --continue</></>\n{HINT_EMOJI} <dim>Or abort with <bright-black>git rebase --abort</></>"
                     )
                 }
             }
@@ -329,7 +329,7 @@ impl std::fmt::Display for GitError {
             GitError::NotInteractive => {
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Cannot prompt for approval in non-interactive environment</>\n\n{HINT_EMOJI} <dim>In CI/CD, use </>--force<dim> to skip prompts. To pre-approve commands, use </>wt config approvals add"
+                    "{ERROR_EMOJI} <red>Cannot prompt for approval in non-interactive environment</>\n\n{HINT_EMOJI} <dim>In CI/CD, use <bright-black>--force</> to skip prompts. To pre-approve commands, use <bright-black>wt config approvals add</></>"
                 )
             }
 
@@ -399,12 +399,12 @@ impl std::fmt::Display for WorktrunkError {
                 if let Some(name) = command_name {
                     cwrite!(
                         f,
-                        "{ERROR_EMOJI} <red>{hook_type} command failed: <bold>{name}</>: {error}</>\n\n{HINT_EMOJI} <dim>Use </>--no-verify<dim> to skip {hook_type} commands</>"
+                        "{ERROR_EMOJI} <red>{hook_type} command failed: <bold>{name}</>: {error}</>\n\n{HINT_EMOJI} <dim>Use <bright-black>--no-verify</> to skip {hook_type} commands</>"
                     )
                 } else {
                     cwrite!(
                         f,
-                        "{ERROR_EMOJI} <red>{hook_type} command failed: {error}</>\n\n{HINT_EMOJI} <dim>Use </>--no-verify<dim> to skip {hook_type} commands</>"
+                        "{ERROR_EMOJI} <red>{hook_type} command failed: {error}</>\n\n{HINT_EMOJI} <dim>Use <bright-black>--no-verify</> to skip {hook_type} commands</>"
                     )
                 }
             }

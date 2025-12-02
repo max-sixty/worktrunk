@@ -25,4 +25,4 @@ exit_code: 0
 
 ----- stderr -----
 ✅ [32m[32mSwitched to worktree for [1mmain[22m at [1m[REPO].main[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

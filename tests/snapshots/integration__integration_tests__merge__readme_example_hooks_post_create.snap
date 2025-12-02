@@ -32,6 +32,6 @@ exit_code: 0
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
 ✅ [32m[32mCreated new worktree for [1mfeature-x[22m from [1mmain[22m at [1m[REPO].feature-x[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
 🔄 [36mRunning post-start [1mdev[22m:[39m
 [107m [0m  [2m[0m[2m[34muv[0m[2m run dev[0m

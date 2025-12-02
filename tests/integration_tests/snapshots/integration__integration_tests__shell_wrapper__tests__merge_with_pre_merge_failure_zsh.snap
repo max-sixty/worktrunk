@@ -10,4 +10,4 @@ expression: output.normalized()
 ✗ Test suite failed: 3 tests failing
 ❌ [31mpre-merge command failed: [1mtest[22m: exit status: 1[39m
 
-💡 [2mUse [22m--no-verify[2m to skip pre-merge commands[22m
+💡 [2mUse [90m--no-verify[39m to skip pre-merge commands[22m

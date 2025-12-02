@@ -2,7 +2,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::{HINT_EMOJI, format_with_gutter};
+use worktrunk::styling::format_with_gutter;
 
 use super::command_executor::CommandContext;
 use super::hooks::HookPipeline;
@@ -67,8 +67,8 @@ impl<'a> CommitGenerator<'a> {
 
     pub fn emit_hint_if_needed(&self) -> anyhow::Result<()> {
         if !self.config.is_configured() {
-            crate::output::print(cformat!(
-                "{HINT_EMOJI} <dim>Using fallback commit message. Run </>wt config --help<dim> for LLM setup guide</>"
+            crate::output::hint(cformat!(
+                "Using fallback commit message. Run <bright-black>wt config --help</> for LLM setup guide"
             ))?;
         }
         Ok(())
@@ -143,7 +143,9 @@ impl CommitOptions<'_> {
             .unwrap_or(false);
 
         if self.no_verify && has_pre_commit {
-            crate::output::hint("Skipping pre-commit hook (--no-verify)")?;
+            crate::output::hint(cformat!(
+                "Skipping pre-commit hook (<bright-black>--no-verify</>)"
+            ))?;
         } else if let Some(ref config) = project_config {
             let pipeline = HookPipeline::new(*self.ctx);
             pipeline.run_pre_commit(config, self.target_branch, self.auto_trust)?;

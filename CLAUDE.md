@@ -4,22 +4,21 @@
 
 ## Project Status
 
-**This project has no users yet and zero backward compatibility concerns.**
+**This project was released very recently and has very few backward compatibility concerns.**
 
-We are in **pre-release development** mode:
-- Breaking changes are acceptable and expected
-- No migration paths needed for config changes, API changes, or behavior changes
+We are in **early release** mode:
+- Breaking changes are generally acceptable
 - Optimize for the best solution, not compatibility with previous versions
-- Move fast and make bold improvements
+- No Rust library compatibility concerns (this is a CLI tool only)
+
+**CLI deprecation policy:** When renaming or removing CLI options, retain the old option with a deprecation warning if there's no code complication cost. If supporting both old and new would add complexity, just make the breaking change.
 
 When making decisions, prioritize:
 1. **Best technical solution** over backward compatibility
 2. **Clean design** over maintaining old patterns
 3. **Modern conventions** over legacy approaches
 
-Acceptable breaking changes: config locations, command/flag names, output formats, dependencies, codebase structure.
-
-When the project reaches v1.0 or gains users, we'll adopt stability commitments. Until then, we're free to iterate rapidly.
+Acceptable breaking changes: config locations, output formats, dependencies, codebase structure. CLI flag changes can be breaking if deprecation warnings would complicate the code.
 
 ## Code Quality
 
@@ -168,8 +167,9 @@ Use consistent punctuation and structure for related messages:
 ```rust
 // ✅ GOOD - parallel structure with integration reason explaining branch deletion
 // Both wt merge and wt remove show integration reason when branch is deleted
-"Removing feature worktree & branch in background (ancestor of main)"       // Branch is integrated (ancestor)
-"Removing feature worktree & branch in background (contents match main)"    // Branch is integrated (squash/rebase)
+"Removing feature worktree & branch in background (already in main)"       // Branch is integrated (ancestor)
+"Removing feature worktree & branch in background (files match main)"      // Branch is integrated (squash/rebase)
+"Removing feature worktree & branch in background (all changes in main)"   // Branch is integrated (squash + main advanced)
 "Removing feature worktree in background; retaining unmerged branch"        // Unmerged (system keeps)
 "Removing feature worktree in background; retaining branch (--no-delete-branch)"  // User flag (user keeps)
 ```
@@ -306,13 +306,14 @@ Use `output::` functions with `cformat!` for styled content. The output function
 // ✅ GOOD - output:: handles emoji + outer color, cformat! handles inner styling
 output::success(cformat!("Created <bold>{branch}</> from <bold>{base}</>"))?;
 output::warning(cformat!("Branch <bold>{name}</> has <dim>uncommitted changes</>"))?;
-output::hint(cformat!("<dim>Run </>wt merge<dim> to continue</>"))?;
+output::hint(cformat!("Run <bright-black>wt merge</> to continue"))?;
 
 // ✅ GOOD - plain strings work too (no inner styling needed)
 output::progress("Rebasing onto main...")?;
+output::hint("No changes to commit")?;
 ```
 
-**Available color-print tags:** `<bold>`, `<dim>`, `<red>`, `<green>`, `<yellow>`, `<cyan>`, `<magenta>`
+**Available color-print tags:** `<bold>`, `<dim>`, `<bright-black>`, `<red>`, `<green>`, `<yellow>`, `<cyan>`, `<magenta>`
 
 **Emoji constants in cformat!:** Use `{ERROR_EMOJI}`, `{HINT_EMOJI}`, etc. for messages that bypass output:: functions (e.g., GitError Display impl):
 
@@ -327,14 +328,17 @@ Branch names in messages should be bolded. Tables (`wt list`) use `StyledLine` w
 Never quote commands or branch names. Use styling to make them stand out:
 
 - **In normal font context**: Use `<bold>` for commands and branches
-- **In dim font context** (hints): Close dim, show in normal font, reopen dim
+- **In hints**: Use `<bright-black>` for commands (hint() already applies dimming—no explicit `<dim>` needed)
 
 ```rust
 // ✅ GOOD - bold in normal context
 output::info(cformat!("Use <bold>wt merge</> to continue"))?;
 
-// ✅ GOOD - normal font in dim context (close/reopen dim)
-output::hint(cformat!("<dim>Run </>wt list<dim> to see worktrees</>"))?;
+// ✅ GOOD - bright-black for commands in hints
+output::hint(cformat!("Run <bright-black>wt list</> to see worktrees"))?;
+
+// ✅ GOOD - plain hint without commands
+output::hint("No changes to commit")?;
 
 // ❌ BAD - quoted commands
 output::hint("Run 'wt list' to see worktrees")?;

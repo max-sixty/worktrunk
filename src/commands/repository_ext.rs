@@ -332,8 +332,8 @@ impl AutoStageWarning {
         }
 
         let count = self.files.len();
-        let file_word = if count == 1 { "file" } else { "files" };
-        crate::output::warning(format!("Auto-staging {count} untracked {file_word}:"))?;
+        let path_word = if count == 1 { "path" } else { "paths" };
+        crate::output::warning(format!("Auto-staging {count} untracked {path_word}:"))?;
 
         let joined_files = self.files.join("\n");
         crate::output::gutter(format_with_gutter(&joined_files, "", None))?;

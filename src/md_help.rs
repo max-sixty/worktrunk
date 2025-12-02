@@ -27,7 +27,11 @@ pub fn render_markdown_in_help(help: &str) -> String {
         }
 
         // Outside code blocks, render markdown headers
-        if let Some(header_text) = trimmed.strip_prefix("## ") {
+        if let Some(header_text) = trimmed.strip_prefix("### ") {
+            // Subheadings: bold (differentiated from green ## section headers)
+            let bold = Style::new().bold();
+            result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
+        } else if let Some(header_text) = trimmed.strip_prefix("## ") {
             result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else if let Some(header_text) = trimmed.strip_prefix("# ") {
             result.push_str(&format!("{green}{header_text}{green:#}\n"));

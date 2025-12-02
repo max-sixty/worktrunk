@@ -28,7 +28,7 @@ exit_code: 0
 🔄 [36mSquashing 2 commits & working tree changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
 💡 [2mBackup created @ 330ccd6[22m
 🔄 [36mGenerating squash commit message...[39m
-💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
 [107m [0m  [1mSquash commits from main[22m
 [107m [0m  
 [107m [0m  Combined commits:
@@ -41,4 +41,4 @@ exit_code: 0
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+2[39m[39m[90m)[39m[39m
-🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (ancestor of main)[39m[39m
+🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (already in main)[39m[39m

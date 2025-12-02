@@ -27,7 +27,7 @@ exit_code: 1
 
 ----- stderr -----
 🔄 [36mCommitting changes with default message...[39m
-💡 [2mUsing fallback commit message. Run [22mwt config --help[2m for LLM setup guide[22m
+💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
 [107m [0m  [1mWIP: Changes[22m
 ❌ [31mFailed to commit[39m
 [107m [0m  On branch main

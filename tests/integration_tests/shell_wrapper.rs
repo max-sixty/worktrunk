@@ -158,9 +158,14 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
     // Configure environment
     repo.clean_cli_env(&mut cmd);
 
-    let output = cmd
-        .output()
-        .unwrap_or_else(|_| panic!("Failed to run wt config shell init {}", shell));
+    let output = cmd.output().unwrap_or_else(|e| {
+        panic!(
+            "Failed to run wt config shell init {}: {} (binary: {})",
+            shell,
+            e,
+            wt_bin.display()
+        )
+    });
 
     if !output.status.success() {
         panic!(

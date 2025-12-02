@@ -26,4 +26,4 @@ exit_code: 0
 
 ----- stderr -----
 ✅ [32m[32mCreated new worktree for [1mfeature-from-main[22m from [1mmain[22m at [1m[REPO].feature-from-main[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

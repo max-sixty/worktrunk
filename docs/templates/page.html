@@ -6,14 +6,6 @@
 {% set docs_section = get_section(path="_index.md") %}
 <div class="toc">
     <div class="toc-sticky">
-        <div class="toc-item" style="margin-bottom: 0.5rem;">
-            <a class="subtext" href="{{ docs_section.permalink | safe }}" style="font-weight: 600;">
-                ← Home
-            </a>
-        </div>
-
-        <div class="toc-divider"></div>
-
         {% for doc_page in docs_section.pages %}
         {% set is_current = doc_page.permalink == page.permalink %}
         <div class="toc-item">

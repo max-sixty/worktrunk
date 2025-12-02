@@ -14,4 +14,4 @@ y
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test command'[0m[2m[0m
 [0mtest command
 ✅ [32m[32mCreated new worktree for [1mtest-approve[22m from [1mmain[22m at [1m[REPO]/repo.test-approve[39m[22m[39m
-💡 [2mRun `wt config shell install` to enable automatic cd[22m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

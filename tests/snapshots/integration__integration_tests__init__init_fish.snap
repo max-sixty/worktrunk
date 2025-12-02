@@ -26,16 +26,11 @@ exit_code: 0
 # worktrunk shell integration for fish
 
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
-if type -q wt; or set -q WORKTRUNK_BIN
-    # TODO: Consider time-of-use pattern like bash/zsh instead of init-time setup.
-    # Fish lacks ${:-} syntax; would require verbose workaround at each call site.
-    if not set -q WORKTRUNK_BIN
-        set -gx WORKTRUNK_BIN (type -p wt)
-    end
-
+if type -q wt; or test -n "$WORKTRUNK_BIN"
     # Capture stdout (shell script), eval in parent shell. stderr streams to terminal.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     function wt_exec
+        test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P wt)
         set -l script (command $WORKTRUNK_BIN $argv | string collect)
         set -l exit_code $pipestatus[1]
 
@@ -51,15 +46,6 @@ if type -q wt; or set -q WORKTRUNK_BIN
 
     # Override wt command to add --internal flag
     function wt
-        # Commands that need direct terminal access (bypass directive mode)
-        # ui uses exec() to replace process with zellij - can't capture stdout
-        # TODO: If this list grows to 5+ commands, consider dynamic signaling via
-        # exit code (wt exits 200 to request direct access) or compile-time codegen.
-        if test (count $argv) -gt 0; and test "$argv[1]" = "ui"
-            command $WORKTRUNK_BIN $argv
-            return $status
-        end
-
         set -l use_source false
         set -l args
 

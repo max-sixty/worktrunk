@@ -36,4 +36,4 @@ exit_code: 0
 ⚪ Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc
 [2m⚪ Skipped fish; ~/.config/fish/conf.d not found[22m
 
-💡 [2mRun [22mwt config shell install[2m to enable shell integration[22m
+💡 [2mRun [90mwt config shell install[39m to enable shell integration[22m

@@ -27,4 +27,4 @@ exit_code: 1
 ❌ [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
 [107m [0m  * [33m5ca21c8[m Main commit
 
-💡 [2mUse [22mwt step rebase[2m or [22mwt merge[2m to rebase onto [1mmain[22m[22m
+💡 [2mUse [90mwt step rebase[39m or [90mwt merge[39m to rebase onto [1mmain[22m[22m

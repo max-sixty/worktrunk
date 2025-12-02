@@ -24,8 +24,10 @@ fn test_config_cache_show_empty() {
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
     ⚪ Default branch cache:
+    [107m [0m  main
 
     ⚪ CI status cache:
+    [107m [0m  (empty)
     ");
 }
 
@@ -43,8 +45,10 @@ fn test_config_cache_show_with_default_branch() {
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
     ⚪ Default branch cache:
+    [107m [0m  main
 
     ⚪ CI status cache:
+    [107m [0m  (empty)
     ");
 }
 

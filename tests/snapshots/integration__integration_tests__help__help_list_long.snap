@@ -115,7 +115,7 @@ with the same fields in the same order as Status Symbols above:
 - [2mgit_operation[0m: [2m""[0m | [2m"Rebase"[0m | [2m"Merge"[0m
 - [2mmain_divergence[0m: [2m""[0m | [2m"Ahead"[0m | [2m"Behind"[0m | [2m"Diverged"[0m
 - [2mupstream_divergence[0m: [2m""[0m | [2m"Ahead"[0m | [2m"Behind"[0m | [2m"Diverged"[0m
-- [2muser_status[0m: string (optional)
+- [2muser_marker[0m: string (optional)
 
 [1m`status_symbols`[0m - Unicode symbols for display (same fields, plus [2mworktree_attrs[0m: ⎇/⌫/⊠)
 
