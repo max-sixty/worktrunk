@@ -22,6 +22,12 @@ cd docs && zola serve
 
 If the server isn't already running, start it as a background process or in a separate terminal session before completing work. The user should be able to immediately see rendered changes without needing to manually start the server.
 
+**Always include the dev server link in your response** when returning to the user after making doc changes:
+
+```
+View changes: http://127.0.0.1:1111
+```
+
 ## Theme Architecture
 
 The docs use a "warm workbench" theme built on top of the Juice Zola theme. Key files:
