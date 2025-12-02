@@ -646,6 +646,25 @@ pub fn collect(
         return Ok(None);
     }
 
+    // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
+    //
+    // Git's builtin fsmonitor on macOS has race conditions under parallel load that can
+    // cause git commands to hang. When multiple git status commands try to auto-start
+    // the daemon simultaneously, they can wedge. Pre-starting the daemons before parallel
+    // operations avoids this race.
+    //
+    // See: https://gitlab.com/gitlab-org/git/-/merge_requests/148 (scalar's workaround)
+    // See: https://github.com/jj-vcs/jj/issues/6440 (jj hit same issue)
+    #[cfg(target_os = "macos")]
+    {
+        let main_repo = Repository::at(&main_worktree.path);
+        if main_repo.is_builtin_fsmonitor_enabled() {
+            for wt in &sorted_worktrees {
+                Repository::at(&wt.path).start_fsmonitor_daemon();
+            }
+        }
+    }
+
     // Cache last rendered (unclamped) message per row to avoid redundant updates.
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
 

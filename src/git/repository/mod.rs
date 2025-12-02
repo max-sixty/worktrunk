@@ -580,6 +580,28 @@ impl Repository {
         Ok(git_dir.join("MERGE_HEAD").exists())
     }
 
+    /// Check if git's builtin fsmonitor daemon is enabled.
+    ///
+    /// Returns true only for `core.fsmonitor=true` (the builtin daemon).
+    /// Returns false for Watchman hooks, disabled, or unset.
+    pub fn is_builtin_fsmonitor_enabled(&self) -> bool {
+        self.run_command(&["config", "--get", "core.fsmonitor"])
+            .ok()
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false)
+    }
+
+    /// Start the fsmonitor daemon for this worktree.
+    ///
+    /// This is idempotent - if the daemon is already running, this is a no-op.
+    /// Used to avoid auto-start races when running many parallel git commands.
+    pub fn start_fsmonitor_daemon(&self) {
+        // Best effort - log errors at debug level for troubleshooting
+        if let Err(e) = self.run_command(&["fsmonitor--daemon", "start"]) {
+            log::debug!("fsmonitor daemon start failed (usually fine): {e}");
+        }
+    }
+
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
     pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
         self.run_command_check(&["merge-base", "--is-ancestor", base, head])
