@@ -559,7 +559,7 @@ fn prompt_yes_no() -> Result<bool, String> {
 
 /// Fish completion content - finds wt in PATH, with WORKTRUNK_BIN as optional override
 const FISH_COMPLETION: &str = r#"# worktrunk completions for fish
-complete --keep-order --exclusive --command wt --arguments "(set -q WORKTRUNK_BIN; or set -l WORKTRUNK_BIN (type -P wt); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
+complete --keep-order --exclusive --command wt --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P wt); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
 "#;
 
 /// Process shell completions - either preview or write based on dry_run flag

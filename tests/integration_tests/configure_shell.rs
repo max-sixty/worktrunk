@@ -236,8 +236,8 @@ fn test_configure_shell_fish_extension_exists() {
     );
     let contents = std::fs::read_to_string(&completions_file).unwrap();
     assert!(
-        contents.contains("set -q WORKTRUNK_BIN; or set -l WORKTRUNK_BIN"),
-        "Fish completions should use WORKTRUNK_BIN with fallback"
+        contents.contains(r#"test -n \"\$WORKTRUNK_BIN\""#),
+        "Fish completions should check WORKTRUNK_BIN is non-empty with fallback"
     );
 }
 
