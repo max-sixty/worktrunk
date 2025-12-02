@@ -107,7 +107,8 @@ fn maybe_handle_help_with_pager() -> bool {
                 }
                 ErrorKind::DisplayVersion => {
                     // Print to stderr - stdout is reserved for data/scripts
-                    eprintln!("{}", err);
+                    // Use eprint! because clap's Error Display already includes a trailing newline
+                    eprint!("{}", err);
                     process::exit(0);
                 }
                 _ => {
