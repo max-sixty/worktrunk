@@ -83,18 +83,6 @@ For interactive selection, use [[2mwt select[0m](/select/).
   [2mwt switch ^                      # Main worktree[0m
   [2mwt switch --create fix --base=@  # Branch from current HEAD[0m
 
-[32mPath-First Lookup[0m
-
-Arguments resolve by checking the filesystem before git branches:
-
-1. Compute expected path from argument (using configured path template)
-2. If worktree exists at that path, switch to it
-3. Otherwise, treat argument as branch name
-
-[1mEdge case[0m: If [2mrepo.foo/[0m exists but tracks branch [2mbar[0m:
-- [2mwt switch foo[0m → switches to [2mrepo.foo/[0m (the [2mbar[0m worktree)
-- [2mwt switch bar[0m → also works (branch lookup finds same worktree)
-
 [32mCreating Worktrees[0m
 
 With [2m--create[0m, worktrunk:
@@ -109,6 +97,18 @@ With [2m--create[0m, worktrunk:
   [2mwt switch --create fix --base release-2.0[0m
   [2mwt switch --create docs --execute "code ."[0m
   [2mwt switch --create temp --no-verify      # Skip hooks[0m
+
+[32mPath-First Lookup[0m
+
+Arguments resolve by checking the filesystem before git branches:
+
+1. Compute expected path from argument (using configured path template)
+2. If worktree exists at that path, switch to it
+3. Otherwise, treat argument as branch name
+
+[1mEdge case[0m: If [2mrepo.foo/[0m exists but tracks branch [2mbar[0m:
+- [2mwt switch foo[0m → switches to [2mrepo.foo/[0m (the [2mbar[0m worktree)
+- [2mwt switch bar[0m → also works (branch lookup finds same worktree)
 
 [32mSee Also[0m
 
