@@ -269,38 +269,54 @@ main {
 }
 
 // ============================================================================
-// Code Blocks - Paper Slip Look
+// Code Blocks - Distinctive card style with left accent
 // ============================================================================
 
 .content pre {
+    position: relative;
     background-color: var(--wt-color-code-bg);
     border: 1px solid var(--wt-color-code-border);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--wt-color-accent);
+    border-radius: 0 0.5rem 0.5rem 0;
+    padding: 0.875rem 1rem;
     overflow-x: auto;
-    margin: 1rem 0;
+    margin: 1.25rem 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+    transition: box-shadow 150ms, border-color 150ms;
+
+    &:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.08);
+    }
 
     code {
         background-color: transparent;
         padding: 0;
         font-family: var(--wt-font-mono);
         font-size: 0.875rem;
-        line-height: 1.5;
+        line-height: 1.6;
         color: var(--wt-color-text);
     }
 }
 
 // Terminal output styling (ANSI colors)
 .terminal {
+    position: relative;
     background-color: var(--wt-color-code-bg);
     border: 1px solid var(--wt-color-code-border);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--wt-color-accent);
+    border-radius: 0 0.5rem 0.5rem 0;
+    padding: 0.875rem 1rem;
     overflow-x: auto;
-    margin: 1rem 0;
+    margin: 1.25rem 0;
     font-family: var(--wt-font-mono);
     font-size: 0.875rem;
-    line-height: 1.4;
+    line-height: 1.5;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+    transition: box-shadow 150ms;
+
+    &:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.08);
+    }
 
     code {
         background-color: transparent;
@@ -314,11 +330,11 @@ main {
 
     // Gutter spans - extend vertically to form continuous line
     // These are single-space spans with background color at line start
-    // Math: gap = (line-height - 1) / 2 = (1.4 - 1) / 2 = 0.2
+    // Math: gap = (line-height - 1) / 2 = (1.5 - 1) / 2 = 0.25
     span[style*="background:var(--bright-white"] {
         display: inline-block;
-        margin: -0.2em 0;
-        padding: 0.2em 0;
+        margin: -0.25em 0;
+        padding: 0.25em 0;
     }
 }
 
@@ -545,9 +561,12 @@ footer {
 // ============================================================================
 
 .hero {
-    background-color: var(--wt-color-bg-soft) !important;
-    height: calc(100vh - var(--wt-header-height)) !important; // Exactly one viewport minus header
-    max-height: calc(100vh - var(--wt-header-height)) !important; // Enforce constraint
+    // Warm gradient background with subtle radial glow
+    background: radial-gradient(ellipse 80% 60% at 70% 40%, rgba(232, 245, 237, 0.7) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 30% 70%, rgba(251, 243, 219, 0.5) 0%, transparent 50%),
+                var(--wt-color-bg-soft) !important;
+    height: calc(100vh - var(--wt-header-height)) !important;
+    max-height: calc(100vh - var(--wt-header-height)) !important;
     padding: 4rem 40px 3rem;
     position: relative;
     display: flex;
@@ -568,10 +587,17 @@ footer {
         aspect-ratio: 1;
         object-fit: contain;
         flex-shrink: 1;
+        // Subtle glow behind the logo
+        filter: drop-shadow(0 8px 24px rgba(27, 127, 75, 0.15));
+        transition: filter 300ms, transform 300ms;
+
+        &:hover {
+            filter: drop-shadow(0 12px 32px rgba(27, 127, 75, 0.25));
+            transform: scale(1.02);
+        }
     }
 
     // Collapse when empty (subpages don't have hero content)
-    // :empty doesn't work with whitespace, so use :has()
     &:not(:has(*)) {
         display: none;
     }
@@ -600,9 +626,34 @@ footer {
         color: var(--wt-color-text-muted);
         cursor: pointer;
         transition: color 150ms;
+        // Gentle floating animation
+        animation: float 3s ease-in-out infinite;
 
         &:hover {
             color: var(--wt-color-text);
+            animation-play-state: paused;
+        }
+    }
+}
+
+@keyframes float {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50% { transform: translateX(-50%) translateY(-6px); }
+}
+
+// Dark mode hero adjustments
+@media (prefers-color-scheme: dark) {
+    .hero {
+        background: radial-gradient(ellipse 80% 60% at 70% 40%, rgba(46, 168, 99, 0.08) 0%, transparent 60%),
+                    radial-gradient(ellipse 50% 40% at 30% 70%, rgba(139, 115, 85, 0.06) 0%, transparent 50%),
+                    var(--wt-color-bg-soft) !important;
+
+        .hero-image {
+            filter: drop-shadow(0 8px 24px rgba(46, 168, 99, 0.2));
+
+            &:hover {
+                filter: drop-shadow(0 12px 32px rgba(46, 168, 99, 0.3));
+            }
         }
     }
 }
