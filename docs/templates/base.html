@@ -8,7 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="preload" href="{{ get_url(path='logo.png') }}" as="image" type="image/png">
+<link rel="preload" href="{{ get_url(path='logo@2x.png') }}" as="image" media="(-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi)">
+<link rel="preload" href="{{ get_url(path='logo.png') }}" as="image" media="not all and (-webkit-min-device-pixel-ratio: 2), not all and (min-resolution: 192dpi)">
 {% endblock fonts %}
 
 {% block head %}
@@ -61,8 +62,11 @@
     window.IntersectionObserver.prototype = RealIntersectionObserver.prototype;
 })();
 </script>
+<link rel="preload" href="/custom.css" as="style">
 <link rel="stylesheet" href="/custom.css">
-<!-- Syntax highlighting themes - loaded conditionally by color scheme -->
+<!-- Syntax highlighting themes - preload and load conditionally by color scheme -->
+<link rel="preload" href="/syntax-light.css" as="style" media="(prefers-color-scheme: light)">
+<link rel="preload" href="/syntax-dark.css" as="style" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="/syntax-light.css" media="(prefers-color-scheme: light)">
 <link rel="stylesheet" href="/syntax-dark.css" media="(prefers-color-scheme: dark)">
 <script src="/elasticlunr.min.js" defer></script>
@@ -74,7 +78,7 @@
 <header>
     <a href="/">
         <div class="logo">
-            <img src="{{ get_url(path=config.extra.juice_logo_path) }}" srcset="{{ get_url(path='logo.png') }} 1x, {{ get_url(path='logo@2x.png') }} 2x" alt="logo">
+            <img src="{{ get_url(path=config.extra.juice_logo_path) }}" srcset="{{ get_url(path='logo.png') }} 1x, {{ get_url(path='logo@2x.png') }} 2x" alt="logo" width="44" height="44" decoding="sync" fetchpriority="high">
             {{ config.extra.juice_logo_name }}
         </div>
     </a>

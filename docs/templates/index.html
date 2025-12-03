@@ -86,7 +86,7 @@
       aria-label="Star max-sixty/worktrunk on GitHub">Star</a>
   </div>
 </section>
-<img class="hero-image" src="{{ get_url(path='logo.png') }}" srcset="{{ get_url(path='logo.png') }} 1x, {{ get_url(path='logo@2x.png') }} 2x" alt="Worktrunk logo">
+<img class="hero-image" src="{{ get_url(path='logo.png') }}" srcset="{{ get_url(path='logo.png') }} 1x, {{ get_url(path='logo@2x.png') }} 2x" alt="Worktrunk logo" decoding="sync" fetchpriority="high">
 <button class="explore-more text" onclick="window.scrollTo({top: document.querySelector('main').offsetTop - document.querySelector('header').offsetHeight, behavior: 'smooth'})" aria-label="Scroll to content">
   Explore More ⇩
 </button>
