@@ -594,8 +594,8 @@ footer {
     background: radial-gradient(ellipse 80% 60% at 70% 40%, rgba(232, 245, 237, 0.7) 0%, transparent 60%),
                 radial-gradient(ellipse 50% 40% at 30% 70%, rgba(251, 243, 219, 0.5) 0%, transparent 50%),
                 var(--wt-color-bg-soft) !important;
-    height: calc(100vh - var(--wt-header-height)) !important;
-    max-height: calc(100vh - var(--wt-header-height)) !important;
+    height: calc(100dvh - var(--wt-header-height)) !important;
+    max-height: calc(100dvh - var(--wt-header-height)) !important;
     padding: 4rem 40px 3rem;
     position: relative;
     display: flex;
@@ -788,7 +788,7 @@ ul > li::marker {
     }
 
     .hero {
-        height: calc(100vh - var(--wt-header-height));
+        height: calc(100dvh - var(--wt-header-height));
         padding: 2rem 20px;
         flex-direction: column;
         gap: 2rem;
