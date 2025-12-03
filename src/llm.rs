@@ -123,12 +123,15 @@ fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::
     let mut child = cmd.spawn().context("Failed to spawn LLM command")?;
 
     // Write prompt to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(prompt.as_bytes())
-            .context("Failed to write prompt to LLM stdin")?;
-        // stdin is dropped here, closing the pipe
+    // Note: We ignore BrokenPipe errors because some commands (like `echo`) exit
+    // immediately without reading stdin. This is fine as long as they produce output.
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(prompt.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(e).context("Failed to write prompt to LLM stdin");
     }
+    // stdin is dropped here, closing the pipe
 
     let output = child
         .wait_with_output()
