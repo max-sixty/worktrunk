@@ -3,6 +3,7 @@
 #
 # Requirements:
 #   - gemimg: uv tool install gemimg (or run with: uvx gemimg)
+#   - rembg: uv tool install rembg[cli]
 #   - imagemagick: brew install imagemagick
 #
 # Usage:
@@ -21,9 +22,6 @@ RAW_FILE=".tmp/logo-raw.png"
 SIZE_1X=512
 SIZE_2X=1024
 SIZE_FAVICON=32
-CORNER_RADIUS_1X=48
-CORNER_RADIUS_2X=96
-CORNER_RADIUS_FAVICON=3
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
     echo "Error: $PROMPT_FILE not found"
@@ -40,6 +38,11 @@ if ! command -v magick &> /dev/null; then
     exit 1
 fi
 
+if ! command -v rembg &> /dev/null; then
+    echo "Error: rembg not found. Install with: uv tool install rembg[cli]"
+    exit 1
+fi
+
 mkdir -p .tmp
 
 echo "Generating logo..."
@@ -48,34 +51,19 @@ gemimg "$(cat "$PROMPT_FILE")" \
     --aspect-ratio 1:1 \
     -o "$RAW_FILE"
 
+echo "Removing background..."
+rembg i "$RAW_FILE" "$RAW_FILE"
+
 echo "Processing sizes..."
 
 # 1x version (512px)
-magick "$RAW_FILE" -resize "${SIZE_1X}x${SIZE_1X}" \
-    \( +clone -alpha extract \
-        -draw "fill black polygon 0,0 0,$CORNER_RADIUS_1X $CORNER_RADIUS_1X,0 fill white circle $CORNER_RADIUS_1X,$CORNER_RADIUS_1X $CORNER_RADIUS_1X,0" \
-        \( +clone -flip \) -compose Multiply -composite \
-        \( +clone -flop \) -compose Multiply -composite \
-    \) -alpha off -compose CopyOpacity -composite \
-    "$STATIC_DIR/logo.png"
+magick "$RAW_FILE" -resize "${SIZE_1X}x${SIZE_1X}" "$STATIC_DIR/logo.png"
 
 # 2x version (1024px)
-magick "$RAW_FILE" -resize "${SIZE_2X}x${SIZE_2X}" \
-    \( +clone -alpha extract \
-        -draw "fill black polygon 0,0 0,$CORNER_RADIUS_2X $CORNER_RADIUS_2X,0 fill white circle $CORNER_RADIUS_2X,$CORNER_RADIUS_2X $CORNER_RADIUS_2X,0" \
-        \( +clone -flip \) -compose Multiply -composite \
-        \( +clone -flop \) -compose Multiply -composite \
-    \) -alpha off -compose CopyOpacity -composite \
-    "$STATIC_DIR/logo@2x.png"
+magick "$RAW_FILE" -resize "${SIZE_2X}x${SIZE_2X}" "$STATIC_DIR/logo@2x.png"
 
 # Favicon (32px)
-magick "$RAW_FILE" -resize "${SIZE_FAVICON}x${SIZE_FAVICON}" \
-    \( +clone -alpha extract \
-        -draw "fill black polygon 0,0 0,$CORNER_RADIUS_FAVICON $CORNER_RADIUS_FAVICON,0 fill white circle $CORNER_RADIUS_FAVICON,$CORNER_RADIUS_FAVICON $CORNER_RADIUS_FAVICON,0" \
-        \( +clone -flip \) -compose Multiply -composite \
-        \( +clone -flop \) -compose Multiply -composite \
-    \) -alpha off -compose CopyOpacity -composite \
-    "$STATIC_DIR/favicon.png"
+magick "$RAW_FILE" -resize "${SIZE_FAVICON}x${SIZE_FAVICON}" "$STATIC_DIR/favicon.png"
 
 rm "$RAW_FILE"
 
