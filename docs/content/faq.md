@@ -41,7 +41,7 @@ Use `--force` to bypass prompts (useful for CI/automation).
 
 ## How does Worktrunk compare to alternatives?
 
-### vs. Branch Switching
+### vs. branch switching
 
 Branch switching uses one directory, so only one agent can work at a time. Worktrees give each agent its own directory.
 

@@ -99,7 +99,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 Any CI dot appears dimmed when there are unpushed local changes (stale status).
 
-## Status Symbols
+## Status symbols
 
 Symbols appear in the Status column in this order:
 
@@ -126,7 +126,7 @@ Symbols appear in the Status column in this order:
 
 Rows are dimmed when the branch has no marginal contribution (`≡` matches main or `_` no commits).
 
-## JSON Output
+## JSON output
 
 Query structured data with `--format=json`:
 
@@ -156,13 +156,13 @@ wt list --format=json | jq '.[] | select(.status.main_divergence == "Ahead")'
 - `is_current` — Current directory
 - `is_previous` — Previous worktree from [wt switch](@/switch.md)
 
-## See Also
+## See also
 
 - [wt select](@/select.md) — Interactive worktree picker with live preview
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit cli.rs to update -->
 

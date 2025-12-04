@@ -13,7 +13,7 @@ Worktrunk uses two configuration files:
 | **User config** | `~/.config/worktrunk/config.toml` | Personal settings, command defaults, approved project commands |
 | **Project config** | `.config/wt.toml` | Lifecycle hooks, checked into version control |
 
-## User Config
+## User config
 
 The user config stores personal preferences that apply across all repositories. Create it with:
 
@@ -23,7 +23,7 @@ wt config create
 
 This creates `~/.config/worktrunk/config.toml` with documented examples. View the current configuration with `wt config show`.
 
-### Worktree Path Template
+### Worktree path template
 
 Controls where new worktrees are created. The template is relative to the repository root:
 
@@ -42,7 +42,7 @@ worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
 - `{{ main_worktree }}` — main worktree directory name
 - `{{ branch }}` — branch name (slashes replaced with dashes)
 
-### Command Defaults
+### Command defaults
 
 Override default flag behavior for commands. Settings here apply unless explicitly overridden on the command line.
 
@@ -73,7 +73,7 @@ remove = false  # --no-remove: keep worktree after merge
 verify = false  # --no-verify: skip project hooks
 ```
 
-### LLM Commit Messages
+### LLM commit messages
 
 Configure automatic commit message generation. Requires an external tool like [llm](https://llm.datasette.io/):
 
@@ -85,7 +85,7 @@ args = ["-m", "claude-haiku-4.5"]
 
 See [LLM Commit Messages](@/llm-commits.md) for setup details and template customization.
 
-### Approved Commands
+### Approved commands
 
 When project hooks run for the first time, Worktrunk prompts for approval. Approved commands are saved here automatically:
 
@@ -99,7 +99,7 @@ approved-commands = [
 
 Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
 
-## Project Config
+## Project config
 
 The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version control and shared across the team.
 
@@ -116,7 +116,7 @@ lint = "npm run lint"
 
 See [Hooks](@/hooks.md) for complete documentation on hook types, execution order, and template variables.
 
-## Shell Integration
+## Shell integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:
 
@@ -136,7 +136,7 @@ wt config shell init fish | source
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
-## Environment Variables
+## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
 

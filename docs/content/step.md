@@ -51,13 +51,13 @@ wt step push
 - `pre-merge` — Before pushing to target
 - `post-merge` — After merge cleanup
 
-## See Also
+## See also
 
 - [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt step --help-page` — edit cli.rs to update -->
 

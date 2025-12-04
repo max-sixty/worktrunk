@@ -37,26 +37,26 @@ Force-delete an unmerged branch:
 wt remove -D experimental
 ```
 
-## Branch Cleanup
+## Branch cleanup
 
 Branches delete automatically when their content is already in the target branch (typically main). This works with squash-merge and rebase workflows where commit history differs but file changes match.
 
 Use `-D` to force-delete unmerged branches. Use `--no-delete-branch` to keep the branch.
 
-## Background Removal
+## Background removal
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--no-background` to run in the foreground.
 
 Arguments resolve by path first, then branch name—see [wt switch](@/switch.md#path-first-lookup). Shortcuts: `@` (current), `-` (previous), `^` (main worktree).
 
-## See Also
+## See also
 
 - [wt merge](@/merge.md) — Remove worktree after merging
 - [wt list](@/list.md) — View all worktrees
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
 

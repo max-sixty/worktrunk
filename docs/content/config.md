@@ -30,7 +30,7 @@ Show current configuration and file locations:
 wt config show
 ```
 
-## Shell Integration
+## Shell integration
 
 Shell integration allows Worktrunk to change the shell's working directory after `wt switch`. Without it, commands run in a subprocess and directory changes don't persist.
 
@@ -47,7 +47,7 @@ eval "$(wt config shell init zsh)"
 wt config shell init fish | source
 ```
 
-## Configuration Files
+## Configuration files
 
 **User config** — `~/.config/worktrunk/config.toml` (or `$WORKTRUNK_CONFIG_PATH`):
 
@@ -57,7 +57,7 @@ Personal settings like LLM commit generation, path templates, and default behavi
 
 Project-specific hooks: post-create, post-start, pre-commit, pre-merge, post-merge. See [Hooks](@/hooks.md) for details.
 
-## LLM Commit Messages
+## LLM commit messages
 
 Worktrunk can generate commit messages using an LLM. Enable in user config:
 
@@ -70,7 +70,7 @@ See [LLM Commits](@/llm-commits.md) for installation, provider setup, and custom
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt config --help-page` — edit cli.rs to update -->
 

@@ -18,7 +18,7 @@ Open the selector:
 wt select
 ```
 
-## Preview Tabs
+## Preview tabs
 
 Toggle between views with number keys:
 
@@ -38,14 +38,14 @@ Toggle between views with number keys:
 | `Alt+p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
-## See Also
+## See also
 
 - [wt list](@/list.md) — Static table view with all worktree metadata
 - [wt switch](@/switch.md) — Direct switching when you know the target branch
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt select --help-page` — edit cli.rs to update -->
 

@@ -58,7 +58,7 @@ wt merge --no-commit
 
 Use `--no-commit` to skip steps 1-3 and only run hooks and push. Requires a clean working tree and `--no-remove`.
 
-## See Also
+## See also
 
 - [wt step](@/step.md) — Run individual merge steps (commit, squash, rebase, push)
 - [wt remove](@/remove.md) — Remove worktrees without merging
@@ -66,7 +66,7 @@ Use `--no-commit` to skip steps 1-3 and only run hooks and push. Requires a clea
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
