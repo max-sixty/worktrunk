@@ -675,7 +675,7 @@ footer {
     }
 
     .hero-image {
-        max-height: 55vh;
+        max-height: 55svh;
         width: auto;
         aspect-ratio: 1;
         object-fit: contain;
@@ -872,7 +872,8 @@ ul > li::marker {
     top: calc(var(--wt-header-height) + env(safe-area-inset-top, 0px));
     left: 0;
     width: min(260px, 70vw);
-    height: calc(100dvh - var(--wt-header-height) - env(safe-area-inset-top, 0px));
+    // Use svh (small viewport) not dvh - dvh resizes during scroll, causing jank
+    height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px));
     background: var(--wt-color-bg-elevated);
     border-right: 1px solid var(--wt-color-border-subtle);
     z-index: 200;
