@@ -117,8 +117,8 @@ const STABLE_READ_THRESHOLD: u32 = 4;
 /// On slow CI systems (especially Ubuntu), the PTY may return spurious EOFs before
 /// all data has been flushed from the kernel buffer. This ensures we wait long enough
 /// for the kernel to complete its PTY buffer flush, regardless of how many EOFs we've seen.
-/// 500ms provides enough margin for slow CI runners under load.
-const MIN_DRAIN_WAIT_MS: u64 = 500;
+/// 1000ms provides enough margin for slow CI runners under load with many worktrees.
+const MIN_DRAIN_WAIT_MS: u64 = 1000;
 
 /// Strategy for capturing progressive output snapshots
 #[derive(Debug, Clone)]

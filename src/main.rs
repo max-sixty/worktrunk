@@ -146,7 +146,7 @@ fn maybe_handle_help_with_pager() -> bool {
 ///
 /// ---
 ///
-/// ## Command Reference
+/// ## Command reference
 ///
 /// ```bash
 /// wt merge — ...
@@ -270,7 +270,7 @@ fn handle_help_page(args: &[String]) {
     println!();
     println!("---");
     println!();
-    println!("## Command Reference");
+    println!("## Command reference");
     println!();
     println!(
         "<!-- ⚠️ AUTO-GENERATED from `wt {subcommand} --help-page` — edit cli.rs to update -->"

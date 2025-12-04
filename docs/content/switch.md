@@ -24,7 +24,7 @@ wt switch --create hotfix --base production
 
 For interactive selection, use [`wt select`](@/select.md).
 
-## Creating Worktrees
+## Creating worktrees
 
 With `--create`, worktrunk:
 
@@ -55,7 +55,7 @@ wt switch ^                      # Main worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
 
-## Path-First Lookup
+## Path-first lookup
 
 Arguments resolve by checking the filesystem before git branches:
 
@@ -67,7 +67,7 @@ Arguments resolve by checking the filesystem before git branches:
 - `wt switch foo` → switches to `repo.foo/` (the `bar` worktree)
 - `wt switch bar` → also works (branch lookup finds same worktree)
 
-## See Also
+## See also
 
 - [wt select](@/select.md) — Interactive worktree selection
 - [wt list](@/list.md) — View all worktrees
@@ -76,7 +76,7 @@ Arguments resolve by checking the filesystem before git branches:
 
 ---
 
-## Command Reference
+## Command reference
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 

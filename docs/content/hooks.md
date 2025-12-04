@@ -8,7 +8,7 @@ group = "Reference"
 
 Hooks automate setup and validation at worktree lifecycle events. They're defined in `.config/wt.toml` (project config) and run automatically during `wt switch --create` and `wt merge`.
 
-## Hook Types
+## Hook types
 
 | Hook | When | Blocking? | Fail-Fast? | Execution |
 |------|------|-----------|------------|-----------|
@@ -21,23 +21,23 @@ Hooks automate setup and validation at worktree lifecycle events. They're define
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
 
-## Configuration Formats
+## Configuration formats
 
 All hooks support three formats in `.config/wt.toml`:
 
-### Single Command (String)
+### Single command (string)
 
 ```toml
 post-create = "npm install"
 ```
 
-### Multiple Commands (Array)
+### Multiple commands (array)
 
 ```toml
 post-create = ["npm install", "npm run build"]
 ```
 
-### Named Commands (Table)
+### Named commands (table)
 
 ```toml
 [post-create]
@@ -63,11 +63,11 @@ Named commands appear in output with their labels:
 
 <!-- END AUTO-GENERATED -->
 
-## Template Variables
+## Template variables
 
 Hooks can use template variables that expand at runtime:
 
-### Basic Variables (All Hooks)
+### Basic variables (all hooks)
 
 - `{{ repo }}` — Repository name (e.g., "my-project")
 - `{{ branch }}` — Branch name (slashes replaced with dashes)
@@ -76,14 +76,14 @@ Hooks can use template variables that expand at runtime:
 - `{{ repo_root }}` — Absolute path to the repository root
 - `{{ default_branch }}` — Default branch name (e.g., "main")
 
-### Git Variables (All Hooks)
+### Git variables (all hooks)
 
 - `{{ commit }}` — Current HEAD commit SHA (full 40-character hash)
 - `{{ short_commit }}` — Current HEAD commit SHA (short 7-character hash)
 - `{{ remote }}` — Primary remote name (e.g., "origin")
 - `{{ upstream }}` — Upstream tracking branch (e.g., "origin/feature"), if configured
 
-### Merge Variables (pre-commit, pre-merge, post-merge)
+### Merge variables (pre-commit, pre-merge, post-merge)
 
 - `{{ target }}` — Target branch for the merge (e.g., "main")
 
@@ -95,7 +95,7 @@ post-create = "echo '{{ short_commit }}' > .version"
 pre-merge = "echo 'Merging {{ branch }} into {{ target }}'"
 ```
 
-## Hook Details
+## Hook details
 
 ### post-create
 
@@ -181,7 +181,7 @@ post-merge = "cargo install --path ."
 - Runs after push succeeds, before cleanup
 - Failures show errors but cleanup proceeds
 
-## Execution Order During Merge
+## Execution order during merge
 
 The complete sequence when running `wt merge`:
 
@@ -196,7 +196,7 @@ The complete sequence when running `wt merge`:
 9. **Run `post-merge`** — best-effort, failures logged
 10. Clean up (delete branch, remove worktree)
 
-## Security & Approval
+## Security & approval
 
 Project commands require approval on first run. When a project defines hooks, the first execution prompts for approval:
 
@@ -231,7 +231,7 @@ wt config approvals list           # Show all approvals
 wt config approvals clear <repo>   # Remove approvals for a repo
 ```
 
-## Skipping Hooks
+## Skipping hooks
 
 Use `--no-verify` to skip all project hooks:
 
@@ -251,7 +251,7 @@ Background operations log to `.git/wt-logs/` in the main worktree:
 
 Logs overwrite on repeated runs for the same branch/operation. Stale logs from deleted branches persist but are bounded by branch count.
 
-## Running Hooks Manually
+## Running hooks manually
 
 Use `wt step` to run individual hooks:
 
@@ -261,7 +261,7 @@ wt step pre-merge      # Run pre-merge hooks
 wt step post-merge     # Run post-merge hooks
 ```
 
-## Example Configurations
+## Example configurations
 
 ### Node.js / TypeScript
 
@@ -343,9 +343,9 @@ backend-tests = "cd backend && cargo test"
 integration = "./scripts/integration-tests.sh"
 ```
 
-## Common Patterns
+## Common patterns
 
-### Fast Dependencies + Slow Build
+### Fast dependencies + slow build
 
 Install dependencies blocking (must complete before work), build in background:
 
@@ -354,7 +354,7 @@ post-create = "npm install"
 post-start = "npm run build"
 ```
 
-### Progressive Validation
+### Progressive validation
 
 Quick checks before commit, thorough validation before merge:
 
@@ -368,7 +368,7 @@ test = "npm test"
 build = "npm run build"
 ```
 
-### Target-Specific Behavior
+### Target-specific behavior
 
 Different behavior based on merge target:
 
@@ -382,7 +382,7 @@ fi
 """
 ```
 
-### Symlinks and Caches
+### Symlinks and caches
 
 Set up shared resources that shouldn't be duplicated:
 

@@ -8,7 +8,7 @@ group = "Reference"
 
 Most Worktrunk users get everything they need from `wt switch`, `wt list`, `wt merge`, and `wt remove`. The features below are optional power-user capabilities.
 
-## Claude Code Integration
+## Claude Code integration
 
 Worktrunk includes a Claude Code plugin for tracking agent status across worktrees.
 
@@ -51,7 +51,7 @@ $ wt config var set marker "✅" --branch feature  # Specific branch
 $ git config worktrunk.marker.feature "💬"        # Direct git config
 ```
 
-## Statusline Integration
+## Statusline integration
 
 `wt list statusline` outputs a single-line status for shell prompts, starship, or editor integrations.[^1]
 
@@ -76,7 +76,7 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-## Interactive Worktree Picker
+## Interactive worktree picker
 
 `wt select` opens a fuzzy-search worktree picker with diff preview (Unix only).
 

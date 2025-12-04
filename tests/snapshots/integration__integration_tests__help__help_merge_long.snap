@@ -105,7 +105,7 @@ Skip git operations, only run hooks and push:
 
 Use [2m--no-commit[0m to skip steps 1-3 and only run hooks and push. Requires a clean working tree and [2m--no-remove[0m.
 
-[32mSee Also[0m
+[32mSee also[0m
 
 - wt step — Run individual merge steps (commit, squash, rebase, push)
 - wt remove — Remove worktrees without merging

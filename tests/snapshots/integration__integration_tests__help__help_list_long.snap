@@ -108,7 +108,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 Any CI dot appears dimmed when there are unpushed local changes (stale status).
 
-[32mStatus Symbols[0m
+[32mStatus symbols[0m
 
 Symbols appear in the Status column in this order:
 
@@ -135,7 +135,7 @@ Symbols appear in the Status column in this order:
 
 Rows are dimmed when the branch has no marginal contribution ([2m≡[0m matches main or [2m_[0m no commits).
 
-[32mJSON Output[0m
+[32mJSON output[0m
 
 Query structured data with [2m--format=json[0m:
 
@@ -163,6 +163,6 @@ Query structured data with [2m--format=json[0m:
 - [2mis_current[0m — Current directory
 - [2mis_previous[0m — Previous worktree from wt switch
 
-[32mSee Also[0m
+[32mSee also[0m
 
 - wt select — Interactive worktree picker with live preview
