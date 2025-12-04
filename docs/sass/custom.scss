@@ -21,9 +21,10 @@ body {
     line-height: 1.5;
     color: var(--wt-color-text);
     background-color: var(--wt-color-bg);
-    // Override Juice theme's min-height: 100vh to prevent scroll jank on mobile
-    // when browser chrome appears/disappears (svh = stable small viewport height)
-    min-height: 100svh;
+    // Override Juice theme's min-height: 100vh. Use --vh-full (JS-set on Firefox/
+    // Chrome iOS) with svh fallback to prevent scroll jank when browser chrome
+    // appears/disappears. See .hero comment for full explanation.
+    min-height: var(--vh-full, 100svh);
 }
 
 // Override Juice theme's .text class (sets font-size: 18px, we want 15px)
@@ -659,10 +660,13 @@ footer {
     background: radial-gradient(ellipse 80% 60% at 70% 40%, rgba(254, 243, 199, 0.7) 0%, transparent 60%),
                 radial-gradient(ellipse 50% 40% at 30% 70%, rgba(251, 243, 219, 0.5) 0%, transparent 50%),
                 var(--wt-color-bg-soft) !important;
-    // Use svh (small viewport) not dvh (dynamic viewport) - dvh resizes as mobile
-    // browser chrome appears/disappears during scroll, causing jank
-    height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
-    max-height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
+    // Use --vh-full (JS-set on Firefox/Chrome iOS) with svh fallback.
+    // Firefox/Chrome iOS incorrectly implement svh as dvh, causing scroll jank
+    // when browser chrome appears/disappears. The JS fix sets --vh-full from
+    // window.innerHeight on load, providing a stable value.
+    // See: https://github.com/mozilla-mobile/firefox-ios/issues/11574
+    height: calc(var(--vh-full, 100svh) - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
+    max-height: calc(var(--vh-full, 100svh) - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
     padding: 4rem 40px 3rem;
     position: relative;
     display: flex;
@@ -875,8 +879,8 @@ ul > li::marker {
     top: calc(var(--wt-header-height) + env(safe-area-inset-top, 0px));
     left: 0;
     width: min(260px, 70vw);
-    // Use svh (small viewport) not dvh - dvh resizes during scroll, causing jank
-    height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px));
+    // Use --vh-full (JS-set) with svh fallback for Firefox/Chrome iOS fix
+    height: calc(var(--vh-full, 100svh) - var(--wt-header-height) - env(safe-area-inset-top, 0px));
     background: var(--wt-color-bg-elevated);
     border-right: 1px solid var(--wt-color-border-subtle);
     z-index: 200;
@@ -1007,8 +1011,8 @@ body.mobile-menu-open {
     }
 
     .hero {
-        // svh = stable height during scroll (see main .hero comment)
-        height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px));
+        // Use --vh-full (JS-set) with svh fallback for Firefox/Chrome iOS fix
+        height: calc(var(--vh-full, 100svh) - var(--wt-header-height) - env(safe-area-inset-top, 0px));
         padding: 2rem 20px;
         flex-direction: column;
         gap: 2rem;

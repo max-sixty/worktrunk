@@ -15,6 +15,20 @@
 {% block head %}
 {# _variables.html is already included by the theme at line 12 of juice/templates/index.html #}
 {# Zola resolves it to our custom templates/_variables.html, so no need to include it again #}
+<script>
+// Firefox iOS/Chrome iOS viewport fix: svh incorrectly behaves like dvh
+// causing scroll jank when browser chrome appears/disappears.
+// Root cause: Missing minimumViewportInset/maximumViewportInset WebKit APIs
+// https://github.com/mozilla-mobile/firefox-ios/issues/11574
+(function() {
+    var ua = navigator.userAgent;
+    if (/FxiOS/.test(ua) || /CriOS/.test(ua)) {
+        // Capture initial viewport height (with browser chrome visible)
+        // and use it as a stable value instead of broken svh
+        document.documentElement.style.setProperty('--vh-full', window.innerHeight + 'px');
+    }
+})();
+</script>
 <meta name="view-transition" content="same-origin">
 <meta name="description" content="{{ config.extra.site_description }}">
 
