@@ -656,9 +656,10 @@ footer {
     background: radial-gradient(ellipse 80% 60% at 70% 40%, rgba(254, 243, 199, 0.7) 0%, transparent 60%),
                 radial-gradient(ellipse 50% 40% at 30% 70%, rgba(251, 243, 219, 0.5) 0%, transparent 50%),
                 var(--wt-color-bg-soft) !important;
-    // Account for header height (which includes safe-area-inset on iOS)
-    height: calc(100dvh - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
-    max-height: calc(100dvh - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
+    // Use svh (small viewport) not dvh (dynamic viewport) - dvh resizes as mobile
+    // browser chrome appears/disappears during scroll, causing jank
+    height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
+    max-height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px)) !important;
     padding: 4rem 40px 3rem;
     position: relative;
     display: flex;
@@ -1002,8 +1003,8 @@ body.mobile-menu-open {
     }
 
     .hero {
-        // Account for header height (which includes safe-area-inset on iOS)
-        height: calc(100dvh - var(--wt-header-height) - env(safe-area-inset-top, 0px));
+        // svh = stable height during scroll (see main .hero comment)
+        height: calc(100svh - var(--wt-header-height) - env(safe-area-inset-top, 0px));
         padding: 2rem 20px;
         flex-direction: column;
         gap: 2rem;
