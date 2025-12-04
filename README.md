@@ -521,7 +521,7 @@ wt switch --create hotfix --base production
 
 For interactive selection, use [`wt select`](@/select.md).
 
-### Creating Worktrees
+### Creating worktrees
 
 With `--create`, worktrunk:
 
@@ -552,7 +552,7 @@ wt switch ^                      # Main worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
 
-### Path-First Lookup
+### Path-first lookup
 
 Arguments resolve by checking the filesystem before git branches:
 
@@ -564,7 +564,7 @@ Arguments resolve by checking the filesystem before git branches:
 - `wt switch foo` → switches to `repo.foo/` (the `bar` worktree)
 - `wt switch bar` → also works (branch lookup finds same worktree)
 
-### See Also
+### See also
 
 - [wt select](@/select.md) — Interactive worktree selection
 - [wt list](@/list.md) — View all worktrees
@@ -679,7 +679,7 @@ wt merge --no-commit
 
 Use `--no-commit` to skip steps 1-3 and only run hooks and push. Requires a clean working tree and `--no-remove`.
 
-### See Also
+### See also
 
 - [wt step](@/step.md) — Run individual merge steps (commit, squash, rebase, push)
 - [wt remove](@/remove.md) — Remove worktrees without merging
@@ -756,19 +756,19 @@ Force-delete an unmerged branch:
 wt remove -D experimental
 ```
 
-### Branch Cleanup
+### Branch cleanup
 
 Branches delete automatically when their content is already in the target branch (typically main). This works with squash-merge and rebase workflows where commit history differs but file changes match.
 
 Use `-D` to force-delete unmerged branches. Use `--no-delete-branch` to keep the branch.
 
-### Background Removal
+### Background removal
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--no-background` to run in the foreground.
 
 Arguments resolve by path first, then branch name—see [wt switch](@/switch.md#path-first-lookup). Shortcuts: `@` (current), `-` (previous), `^` (main worktree).
 
-### See Also
+### See also
 
 - [wt merge](@/merge.md) — Remove worktree after merging
 - [wt list](@/list.md) — View all worktrees
@@ -887,7 +887,7 @@ The CI column shows GitHub/GitLab pipeline status:
 
 Any CI dot appears dimmed when there are unpushed local changes (stale status).
 
-### Status Symbols
+### Status symbols
 
 Symbols appear in the Status column in this order:
 
@@ -914,7 +914,7 @@ Symbols appear in the Status column in this order:
 
 Rows are dimmed when the branch has no marginal contribution (`≡` matches main or `_` no commits).
 
-### JSON Output
+### JSON output
 
 Query structured data with `--format=json`:
 
@@ -944,7 +944,7 @@ wt list --format=json | jq '.[] | select(.status.main_divergence == "Ahead")'
 - `is_current` — Current directory
 - `is_previous` — Previous worktree from [wt switch](@/switch.md)
 
-### See Also
+### See also
 
 - [wt select](@/select.md) — Interactive worktree picker with live preview
 
@@ -1007,7 +1007,7 @@ Show current configuration and file locations:
 wt config show
 ```
 
-### Shell Integration
+### Shell integration
 
 Shell integration allows Worktrunk to change the shell's working directory after `wt switch`. Without it, commands run in a subprocess and directory changes don't persist.
 
@@ -1024,7 +1024,7 @@ eval "$(wt config shell init zsh)"
 wt config shell init fish | source
 ```
 
-### Configuration Files
+### Configuration files
 
 **User config** — `~/.config/worktrunk/config.toml` (or `$WORKTRUNK_CONFIG_PATH`):
 
@@ -1034,7 +1034,7 @@ Personal settings like LLM commit generation, path templates, and default behavi
 
 Project-specific hooks: post-create, post-start, pre-commit, pre-merge, post-merge. See [Hooks](@/hooks.md) for details.
 
-### LLM Commit Messages
+### LLM commit messages
 
 Worktrunk can generate commit messages using an LLM. Enable in user config:
 
@@ -1128,7 +1128,7 @@ wt step push
 - `pre-merge` — Before pushing to target
 - `post-merge` — After merge cleanup
 
-### See Also
+### See also
 
 - [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
 

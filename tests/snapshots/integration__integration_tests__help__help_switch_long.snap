@@ -71,7 +71,7 @@ Two distinct operations:
 
 For interactive selection, use `wt select`.
 
-[32mCreating Worktrees[0m
+[32mCreating worktrees[0m
 
 With [2m--create[0m, worktrunk:
 
@@ -98,7 +98,7 @@ With [2m--create[0m, worktrunk:
   [2mwt switch ^                      # Main worktree[0m
   [2mwt switch --create fix --base=@  # Branch from current HEAD[0m
 
-[32mPath-First Lookup[0m
+[32mPath-first lookup[0m
 
 Arguments resolve by checking the filesystem before git branches:
 
@@ -110,7 +110,7 @@ Arguments resolve by checking the filesystem before git branches:
 - [2mwt switch foo[0m → switches to [2mrepo.foo/[0m (the [2mbar[0m worktree)
 - [2mwt switch bar[0m → also works (branch lookup finds same worktree)
 
-[32mSee Also[0m
+[32mSee also[0m
 
 - wt select — Interactive worktree selection
 - wt list — View all worktrees

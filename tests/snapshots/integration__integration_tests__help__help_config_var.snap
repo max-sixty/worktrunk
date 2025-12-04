@@ -43,7 +43,7 @@ Usage: [1m[36mwt config var[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 Variables are runtime values stored in git config, separate from
 configuration files. Use [2mwt config show[0m to view file-based configuration.
 
-[32mAvailable Variables[0m
+[32mAvailable variables[0m
 
 - [1mdefault-branch[0m: The repository's default branch (read-only, cached)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)

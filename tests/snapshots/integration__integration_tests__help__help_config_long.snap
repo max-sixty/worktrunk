@@ -58,7 +58,7 @@ Show current configuration and file locations:
 
   [2mwt config show[0m
 
-[32mShell Integration[0m
+[32mShell integration[0m
 
 Shell integration allows Worktrunk to change the shell's working directory after [2mwt switch[0m. Without it, commands run in a subprocess and directory changes don't persist.
 
@@ -73,7 +73,7 @@ The [2mwt config shell install[0m command adds integration to the shell's conf
   [2m# For fish: add to ~/.config/fish/config.fish[0m
   [2mwt config shell init fish | source[0m
 
-[32mConfiguration Files[0m
+[32mConfiguration files[0m
 
 [1mUser config[0m — [2m~/.config/worktrunk/config.toml[0m (or [2m$WORKTRUNK_CONFIG_PATH[0m):
 
@@ -83,7 +83,7 @@ Personal settings like LLM commit generation, path templates, and default behavi
 
 Project-specific hooks: post-create, post-start, pre-commit, pre-merge, post-merge. See Hooks for details.
 
-[32mLLM Commit Messages[0m
+[32mLLM commit messages[0m
 
 Worktrunk can generate commit messages using an LLM. Enable in user config:
 
