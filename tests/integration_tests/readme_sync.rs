@@ -681,8 +681,9 @@ fn test_config_example_templates_are_in_sync() {
 
     if updated_count > 0 {
         fs::write(&config_path, &updated_content).unwrap();
-        println!(
-            "✅ Updated {} template sections in config.example.toml",
+        panic!(
+            "Templates out of sync: updated {} section(s) in config.example.toml. \
+             Run tests locally and commit the changes.",
             updated_count
         );
     }
@@ -703,11 +704,6 @@ fn sync_help_markers(file_path: &Path, project_root: &Path) -> Result<usize, Vec
         Ok((new_content, updated_count, _total_count)) => {
             if updated_count > 0 {
                 fs::write(file_path, &new_content).unwrap();
-                println!(
-                    "✅ Updated {} help sections in {}",
-                    updated_count,
-                    file_path.display()
-                );
             }
             Ok(updated_count)
         }
@@ -775,7 +771,6 @@ fn test_readme_examples_are_in_sync() {
     // Write updates
     if total_updated > 0 {
         fs::write(&readme_path, &updated_content).unwrap();
-        println!("✅ Updated {} sections in README.md", total_updated);
     }
 
     if !errors.is_empty() {
@@ -785,6 +780,14 @@ fn test_readme_examples_are_in_sync() {
             errors.join("\n"),
             checked,
             errors.len()
+        );
+    }
+
+    if total_updated > 0 {
+        panic!(
+            "README out of sync: updated {} section(s). \
+             Run tests locally and commit the changes.",
+            total_updated
         );
     }
 }
@@ -850,7 +853,16 @@ fn test_docs_commands_are_in_sync() {
     }
 
     match sync_help_markers(&commands_path, project_root) {
-        Ok(_) => {}
+        Ok(updated_count) => {
+            if updated_count > 0 {
+                panic!(
+                    "Docs commands out of sync: updated {} section(s) in {}. \
+                     Run tests locally and commit the changes.",
+                    updated_count,
+                    commands_path.display()
+                );
+            }
+        }
         Err(errors) => {
             panic!("Docs commands are out of sync:\n\n{}\n", errors.join("\n"));
         }
@@ -904,11 +916,6 @@ fn sync_docs_snapshots(doc_path: &Path, project_root: &Path) -> Result<usize, Ve
         Ok((new_content, updated_count, _total_count)) => {
             if updated_count > 0 {
                 fs::write(doc_path, &new_content).unwrap();
-                println!(
-                    "✅ Updated {} sections in {}",
-                    updated_count,
-                    doc_path.display()
-                );
             }
             Ok(updated_count)
         }
@@ -928,11 +935,13 @@ fn test_docs_quickstart_examples_are_in_sync() {
     ];
 
     let mut all_errors = Vec::new();
+    let mut total_updated = 0;
 
     for doc_file in doc_files {
         let doc_path = project_root.join(doc_file);
-        if let Err(errors) = sync_docs_snapshots(&doc_path, project_root) {
-            all_errors.extend(errors);
+        match sync_docs_snapshots(&doc_path, project_root) {
+            Ok(updated) => total_updated += updated,
+            Err(errors) => all_errors.extend(errors),
         }
     }
 
@@ -940,6 +949,14 @@ fn test_docs_quickstart_examples_are_in_sync() {
         panic!(
             "Docs examples are out of sync:\n\n{}\n",
             all_errors.join("\n")
+        );
+    }
+
+    if total_updated > 0 {
+        panic!(
+            "Docs examples out of sync: updated {} section(s). \
+             Run tests locally and commit the changes.",
+            total_updated
         );
     }
 }
@@ -1014,17 +1031,20 @@ fn test_command_pages_are_in_sync() {
         if current != expected {
             fs::write(&doc_path, &expected)
                 .unwrap_or_else(|e| panic!("Failed to write {}: {}", doc_path.display(), e));
-            println!("Updated docs/content/{}.md", cmd);
             updated += 1;
         }
     }
 
-    if updated > 0 {
-        println!("Updated {} command page(s)", updated);
-    }
-
     if !errors.is_empty() {
         panic!("Command pages out of sync:\n\n{}\n", errors.join("\n"));
+    }
+
+    if updated > 0 {
+        panic!(
+            "Command pages out of sync: updated {} page(s). \
+             Run tests locally and commit the changes.",
+            updated
+        );
     }
 }
 
