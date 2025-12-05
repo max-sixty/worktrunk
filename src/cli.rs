@@ -783,6 +783,8 @@ wt step push
     #[command(
         after_long_help = r#"Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
 
+<!-- demo: wt-select.gif -->
+
 ## Examples
 
 Open the selector:

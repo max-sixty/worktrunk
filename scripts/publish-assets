@@ -4,8 +4,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-DEMO_OUT="$REPO_ROOT/dev/wt-demo/out"
 ASSETS_REPO="$REPO_ROOT/../worktrunk-assets"
+
+# Demo sources: name|source_path
+DEMOS=(
+    "wt-demo.gif|$REPO_ROOT/demos/wt-demo/out/wt-demo.gif"
+    "wt-select.gif|$REPO_ROOT/demos/wt-select/out/wt-select.gif"
+)
 
 # Clone assets repo if needed
 if [[ ! -d "$ASSETS_REPO/.git" ]]; then
@@ -20,13 +25,6 @@ if [[ ! -d "$ASSETS_REPO/.git" ]]; then
     fi
 fi
 
-# Check for demo output
-if [[ ! -f "$DEMO_OUT/wt-demo.gif" ]]; then
-    echo "Demo GIF not found at $DEMO_OUT/wt-demo.gif"
-    echo "Build it first: ./dev/wt-demo-build"
-    exit 1
-fi
-
 # Update assets repo
 cd "$ASSETS_REPO"
 if ! git pull --ff-only; then
@@ -34,9 +32,25 @@ if ! git pull --ff-only; then
     exit 1
 fi
 
-# Copy new assets
+# Copy available assets
 echo "Copying assets..."
-cp "$DEMO_OUT/wt-demo.gif" "$ASSETS_REPO/demos/"
+copied=()
+for entry in "${DEMOS[@]}"; do
+    name="${entry%%|*}"
+    src="${entry#*|}"
+    if [[ -f "$src" ]]; then
+        cp "$src" "$ASSETS_REPO/demos/"
+        copied+=("$name")
+        echo "  $name"
+    fi
+done
+
+if [[ ${#copied[@]} -eq 0 ]]; then
+    echo "No demo GIFs found. Build them first:"
+    echo "  ./dev/wt-demo-build"
+    echo "  ./demos/wt-select/build"
+    exit 1
+fi
 
 # Check for changes
 if git diff --quiet demos/; then
@@ -45,6 +59,7 @@ if git diff --quiet demos/; then
 fi
 
 # Show what changed
+echo ""
 echo "Changes:"
 git diff --stat demos/
 
@@ -54,5 +69,12 @@ git commit -m "Update demo assets"
 git push
 
 echo ""
-echo "Published: https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/wt-demo.gif"
-echo "CDN (~1 min to update): https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/wt-demo.gif"
+echo "Published:"
+for name in "${copied[@]}"; do
+    echo "  https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/$name"
+done
+echo ""
+echo "CDN (~1 min to update):"
+for name in "${copied[@]}"; do
+    echo "  https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/$name"
+done

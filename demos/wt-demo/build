@@ -5,47 +5,24 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Add demos/ to path for shared library
 SCRIPT_DIR = Path(__file__).parent
-REPO_ROOT = SCRIPT_DIR.parent
-DEMO_DIR = SCRIPT_DIR / "wt-demo"
-FIXTURES_DIR = DEMO_DIR / "fixtures"
-OUT_DIR = DEMO_DIR / "out"
-TAPE_TEMPLATE = DEMO_DIR / "demo.tape"
+DEMOS_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(DEMOS_DIR))
+
+from lib import DemoEnv, run, git, render_tape, record_vhs, build_wt, REAL_HOME
+
+REPO_ROOT = DEMOS_DIR.parent
+FIXTURES_DIR = SCRIPT_DIR / "fixtures"
+OUT_DIR = SCRIPT_DIR / "out"
+TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
 TAPE_RENDERED = OUT_DIR / ".rendered.tape"
 STARSHIP_CONFIG = OUT_DIR / "starship.toml"
 OUTPUT_GIF = OUT_DIR / "wt-demo.gif"
-LOG = OUT_DIR / "record.log"
-
-REAL_HOME = Path.home()
-
-
-class DemoEnv:
-    """Isolated demo environment with its own repo and home directory."""
-
-    def __init__(self, name: str):
-        self.name = name
-        self.root = OUT_DIR / f".demo-{name}"
-        self.home = self.root
-        self.work_base = self.home / "w"
-        self.repo = self.work_base / "acme"
-        self.bare_remote = self.root / "remote.git"
-
-
-def run(cmd, cwd=None, env=None, check=True, capture=False):
-    """Run a command."""
-    result = subprocess.run(
-        cmd, cwd=cwd, env=env, check=check,
-        capture_output=capture, text=True
-    )
-    return result.stdout if capture else None
-
-
-def git(args, cwd=None, env=None):
-    """Run git command."""
-    run(["git"] + args, cwd=cwd, env=env)
 
 
 def commit_dated(repo, message, offset):
@@ -128,7 +105,7 @@ def prepare_repo(env: DemoEnv):
     gh_mock.chmod(0o755)
 
     # Build wt binary
-    run(["cargo", "build", "--quiet"], cwd=REPO_ROOT)
+    build_wt(REPO_ROOT)
 
     # User config
     config_dir = env.home / ".config" / "worktrunk"
@@ -248,18 +225,6 @@ def create_branch_hooks(env: DemoEnv):
     lib_rs.write_text(lib_rs.read_text() + "// TODO: add division\n")
 
 
-def render_tape(env: DemoEnv):
-    """Render the VHS tape template with variables."""
-    template = TAPE_TEMPLATE.read_text()
-    rendered = template.replace("{{DEMO_REPO}}", str(env.repo))
-    rendered = rendered.replace("{{DEMO_HOME}}", str(env.home))
-    rendered = rendered.replace("{{REAL_HOME}}", str(REAL_HOME))
-    rendered = rendered.replace("{{STARSHIP_CONFIG}}", str(STARSHIP_CONFIG))
-    rendered = rendered.replace("{{OUTPUT_GIF}}", str(OUTPUT_GIF))
-    rendered = rendered.replace("{{TARGET_DEBUG}}", str(REPO_ROOT / "target" / "debug"))
-    TAPE_RENDERED.write_text(rendered)
-
-
 def record_text(demo_env: DemoEnv):
     """Record text output by running demo commands."""
     # Extract commands from tape
@@ -317,12 +282,6 @@ def record_text(demo_env: DemoEnv):
     (OUT_DIR / "run.txt").write_text(clean)
 
 
-def record_vhs():
-    """Record the demo GIF using VHS."""
-    with open(LOG, "w") as f:
-        run(["vhs", str(TAPE_RENDERED)], check=True)
-
-
 def main():
     # Check dependencies
     for cmd in ["wt", "vhs", "starship"]:
@@ -336,15 +295,23 @@ def main():
 
     # Create separate environments for text and VHS recording
     # so they don't interfere with each other (different LLM-generated commits)
-    text_env = DemoEnv("text")
-    vhs_env = DemoEnv("vhs")
+    text_env = DemoEnv(name="text", out_dir=OUT_DIR, repo_name="acme")
+    vhs_env = DemoEnv(name="vhs", out_dir=OUT_DIR, repo_name="acme")
 
     prepare_repo(text_env)
     record_text(text_env)
 
     prepare_repo(vhs_env)
-    render_tape(vhs_env)
-    record_vhs()
+    replacements = {
+        "DEMO_REPO": vhs_env.repo,
+        "DEMO_HOME": vhs_env.home,
+        "REAL_HOME": REAL_HOME,
+        "STARSHIP_CONFIG": STARSHIP_CONFIG,
+        "OUTPUT_GIF": OUTPUT_GIF,
+        "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
+    }
+    render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements)
+    record_vhs(TAPE_RENDERED)
 
     # Cleanup
     TAPE_RENDERED.unlink(missing_ok=True)

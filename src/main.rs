@@ -185,11 +185,12 @@ fn handle_help_page(args: &[String]) {
     };
 
     // Get the after_long_help content
-    // Transform for web docs: console→bash, status colors
+    // Transform for web docs: console→bash, status colors, demo images
     let after_help = sub
         .get_after_long_help()
         .map(|s| {
             let text = s.to_string().replace("```console\n", "```bash\n");
+            let text = expand_demo_placeholders(&text);
             colorize_ci_status_for_html(&text)
         })
         .unwrap_or_default();
@@ -295,6 +296,32 @@ fn colorize_ci_status_for_html(text: &str) -> String {
         .replace("`●` red", "<span style='color:#a00'>●</span> red")
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
+}
+
+/// Expand demo GIF placeholders for web docs.
+///
+/// Transforms `<!-- demo: filename.gif -->` into `![wt command demo](/assets/filename.gif)`.
+/// The HTML comment is invisible in terminal --help output, but expands to a markdown image
+/// for web docs generated via --help-page.
+fn expand_demo_placeholders(text: &str) -> String {
+    const PREFIX: &str = "<!-- demo: ";
+    const SUFFIX: &str = " -->";
+
+    let mut result = text.to_string();
+    while let Some(start) = result.find(PREFIX) {
+        let after_prefix = start + PREFIX.len();
+        if let Some(end_offset) = result[after_prefix..].find(SUFFIX) {
+            let filename = &result[after_prefix..after_prefix + end_offset];
+            // Extract command name from filename (e.g., "wt-select.gif" -> "wt select")
+            let alt_text = filename.trim_end_matches(".gif").replace('-', " ");
+            let replacement = format!("![{alt_text} demo](/assets/{filename})");
+            let end = after_prefix + end_offset + SUFFIX.len();
+            result.replace_range(start..end, &replacement);
+        } else {
+            break;
+        }
+    }
+    result
 }
 
 /// Enhance clap errors with command-specific hints, then exit.

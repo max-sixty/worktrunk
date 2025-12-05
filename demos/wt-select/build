@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""Build script for wt select demo GIF.
+
+Creates a demo environment using cherry-picked commits from this repo,
+records the GIF, and saves output to demos/wt-select/out/.
+
+DEMO GOALS
+==========
+The demo showcases `wt select` with realistic variety in the list columns.
+The target output looks like:
+
+    Branch         Status         HEAD±    main↕     main…±  Remote⇅  CI  Age
+    @ main               ^                                              ○   now
+    + streaming      +           +54   -5                               ●   now
+    + doctor             ↕                  ↑1  ↓1  +320  -14           ●   2d
+    + llm-templates   !  ↕        +8        ↑1  ↓1  +263 -192               3d
+
+Key demonstration points:
+- **CI column variety**: hollow ○ (branch CI) vs filled ● (PR CI) vs none
+- **HEAD± column**: Large staged diff (+54), small unstaged (+8), none
+- **Status column**: Staged changes (+), unstaged (!), ahead/behind (↕)
+- **main↕ column**: Some branches ahead-only, some ahead-and-behind
+- **main…± column**: Meaningful commit diffs ranging from small to 300+ lines
+
+SETUP STRATEGY
+==============
+We start from v0.1.11 (BASE_COMMIT) because:
+1. It's a stable release point
+2. We can cherry-pick real commits for realistic diffs
+3. Many newer commits conflict with v0.1.11 files, so we use manual changes
+
+The setup process:
+1. Clone repo at BASE_COMMIT
+2. Create feature branches with cherry-picked commits (for main…± diffs)
+3. Advance main with MAIN_ADVANCE_COMMIT (so branches are "behind")
+4. Soft-reset streaming to main (creates large staged HEAD± diff)
+5. Add manual code changes (for additional HEAD± variety)
+6. Inject fake CI status cache (with future timestamp to prevent expiration)
+
+CI CACHE TRICK
+==============
+The CI status is cached in git config (`worktrunk.ci.{branch}`). To show CI
+status without actual GitHub/GitLab access, we:
+1. Write fake CI cache entries directly to git config
+2. Use a future timestamp (1 hour ahead) so the cache never expires during recording
+3. VHS recording runs `wt select` which reads the cached CI status
+
+Without the future timestamp, the cache would expire during VHS recording,
+causing `wt list` to try to fetch CI status (which fails without remote),
+and then clear the cache.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# Add demos/ to path for shared library
+SCRIPT_DIR = Path(__file__).parent
+DEMOS_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(DEMOS_DIR))
+
+from lib import DemoEnv, run, git, render_tape, record_vhs, build_wt, REAL_HOME
+
+REPO_ROOT = DEMOS_DIR.parent
+FIXTURES_DIR = SCRIPT_DIR / "fixtures"
+OUT_DIR = SCRIPT_DIR / "out"
+TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
+TAPE_RENDERED = OUT_DIR / ".rendered.tape"
+STARSHIP_CONFIG = OUT_DIR / "starship.toml"
+OUTPUT_GIF = OUT_DIR / "wt-select.gif"
+
+# Custom VHS binary with keystroke overlay
+# Clone and build from: https://github.com/max-sixty/vhs/tree/keypress-overlay
+# Set to "vhs" to use system VHS (no keystroke overlay), or path to custom build
+VHS_BINARY = os.environ.get("VHS_KEYSTROKES", str(SCRIPT_DIR / "vhs-keystrokes" / "vhs-keystrokes"))
+
+# Base point for demo - v0.1.11 release
+BASE_COMMIT = "005db9ad"
+
+# Commit to advance main (makes feature branches "behind" main)
+MAIN_ADVANCE_COMMIT = "50ffe925"  # feat(tests): test env vars (+19/-20)
+
+# Branch configuration - real commits to cherry-pick onto branches
+# branch_name: (commit_hash, days_ago)
+# NOTE: Use simple branch names without / to avoid path mismatch issues
+CHERRY_PICKS = {
+    "streaming": ("cf667917", 1),        # Handle BrokenPipe when LLM ignores stdin
+    "doctor": ("e286e847", 2),           # Add wt config show --doctor option
+    "llm-templates": ("74fe46ff", 3),    # Enhance squash message generation
+}
+
+# Working tree changes - applied manually to create material diffs in HEAD± column
+# (cherry-picking fails because many commits touch files that don't exist in v0.1.11)
+
+
+def commit_dated(repo, days_ago):
+    """Amend commit with a date offset in days."""
+    now = datetime.now()
+    delta = timedelta(days=days_ago)
+    date_str = (now - delta).strftime("%Y-%m-%dT%H:%M:%S")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = date_str
+    env["GIT_COMMITTER_DATE"] = date_str
+    git(["-C", str(repo), "commit", "--amend", "--no-edit", "--date", date_str], env=env)
+
+
+def prepare_repo(env: DemoEnv):
+    """Set up the demo repository with variety in all columns.
+
+    This is carefully orchestrated to produce the target output. The sequence matters!
+
+    Step 1: Clone at BASE_COMMIT (v0.1.11)
+        - Stable base point where cherry-picks work
+        - Creates: main at BASE_COMMIT
+
+    Step 2: Create feature branches with cherry-picks (CHERRY_PICKS)
+        - Each branch gets one real commit cherry-picked
+        - Creates main…± diffs (doctor: +320, llm-templates: +263)
+        - Backdates commits for Age column variety
+
+    Step 3: Advance main with MAIN_ADVANCE_COMMIT
+        - Makes feature branches "behind" main (↓1 in main↕)
+        - doctor and llm-templates now show ↑1 ↓1
+
+    Step 4: Add MAIN_ADVANCE_COMMIT to streaming
+        - Makes streaming only "ahead" (not behind)
+        - Prepares for soft reset in next step
+
+    Step 5: Soft reset streaming to main
+        - Moves HEAD back to main, keeping cherry-picked changes as staged
+        - Creates large HEAD± diff (+54 -5) from staged changes
+
+    Step 6: Add manual uncommitted changes
+        - streaming: Additional staged code (+46 lines of error_handling.rs)
+        - llm-templates: Unstaged changes (+8 lines) for ! in Status column
+        - doctor: Left clean for variety
+
+    Step 7: Inject fake CI status cache
+        - main: green hollow ○ (branch CI, passed)
+        - streaming: green filled ● (PR CI, passed)
+        - doctor: blue filled ● (PR CI, running)
+        - Uses future timestamp to prevent expiration during VHS recording
+    """
+    # Clean previous
+    shutil.rmtree(env.root, ignore_errors=True)
+    env.root.mkdir(parents=True)
+    env.work_base.mkdir(parents=True)
+
+    # Clone with enough depth to have the commits we need
+    print(f"Cloning to {env.repo}...")
+    run(["git", "clone", "--quiet", "--depth", "200", str(REPO_ROOT), str(env.repo)])
+
+    # Configure repo
+    git(["-C", str(env.repo), "config", "user.name", "Demo User"])
+    git(["-C", str(env.repo), "config", "user.email", "demo@example.com"])
+    git(["-C", str(env.repo), "config", "commit.gpgsign", "false"])
+
+    # Get current branch name and rename to main if needed
+    current_branch = run(["git", "-C", str(env.repo), "rev-parse", "--abbrev-ref", "HEAD"], capture=True).strip()
+    if current_branch != "main":
+        git(["-C", str(env.repo), "branch", "-m", current_branch, "main"])
+
+    # Reset main to base commit (v0.1.12)
+    git(["-C", str(env.repo), "reset", "--hard", BASE_COMMIT])
+
+    # Remove origin to avoid remote comparisons
+    git(["-C", str(env.repo), "remote", "remove", "origin"])
+
+    # User config for wt
+    config_dir = env.home / ".config" / "worktrunk"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text("""# Demo config
+[worktree]
+base-path = "~/w"
+""")
+
+    # Create feature branches with cherry-picked commits
+    for branch_name, (commit_hash, days_ago) in CHERRY_PICKS.items():
+        create_branch_with_cherry_pick(env, branch_name, commit_hash, days_ago)
+
+    # Advance main so some branches are "behind"
+    advance_main(env)
+
+    # Make streaming also have the advance commit (so it's only ahead, not behind)
+    add_commit_to_branch(env, "streaming", MAIN_ADVANCE_COMMIT)
+
+    # Soft reset streaming to main - all committed work becomes uncommitted
+    # This creates a large HEAD± diff showing real feature work
+    soft_reset_to_main(env, "streaming")
+
+    # Add smaller uncommitted working tree changes to other branches
+    add_uncommitted_changes(env)
+
+    # Add fake CI status for demo
+    add_ci_status(env)
+
+
+def create_branch_with_cherry_pick(env: DemoEnv, branch_name: str, commit_hash: str, days_ago: int):
+    """Create a branch with a cherry-picked commit and worktree."""
+    print(f"Creating branch {branch_name} (cherry-pick {commit_hash})...")
+
+    # Create branch from main (at BASE_COMMIT)
+    git(["-C", str(env.repo), "checkout", "-q", "main"])
+    git(["-C", str(env.repo), "checkout", "-q", "-b", branch_name])
+
+    # Cherry-pick the commit
+    git(["-C", str(env.repo), "cherry-pick", "--no-commit", commit_hash])
+
+    # Get original commit message
+    msg = run(["git", "-C", str(env.repo), "log", "-1", "--format=%s", commit_hash], capture=True).strip()
+    git(["-C", str(env.repo), "commit", "-m", msg])
+
+    # Adjust commit date for realistic history display
+    commit_dated(env.repo, days_ago)
+
+    # Create worktree
+    worktree_path = env.work_base / f"worktrunk.{branch_name}"
+    git(["-C", str(env.repo), "checkout", "-q", "main"])
+    git(["-C", str(env.repo), "worktree", "add", "-q", str(worktree_path), branch_name])
+
+
+def advance_main(env: DemoEnv):
+    """Advance main branch so feature branches are behind."""
+    print(f"Advancing main with {MAIN_ADVANCE_COMMIT}...")
+    git(["-C", str(env.repo), "checkout", "-q", "main"])
+    git(["-C", str(env.repo), "cherry-pick", "--no-commit", MAIN_ADVANCE_COMMIT])
+    msg = run(["git", "-C", str(env.repo), "log", "-1", "--format=%s", MAIN_ADVANCE_COMMIT], capture=True).strip()
+    git(["-C", str(env.repo), "commit", "-m", msg])
+
+
+def add_commit_to_branch(env: DemoEnv, branch_name: str, commit_hash: str):
+    """Add a commit to an existing branch (in its worktree)."""
+    print(f"Adding {commit_hash} to {branch_name}...")
+    worktree_path = env.work_base / f"worktrunk.{branch_name}"
+    git(["-C", str(worktree_path), "cherry-pick", "--no-commit", commit_hash])
+    msg = run(["git", "-C", str(worktree_path), "log", "-1", "--format=%s", commit_hash], capture=True).strip()
+    git(["-C", str(worktree_path), "commit", "-m", msg])
+
+
+def soft_reset_to_main(env: DemoEnv, branch_name: str):
+    """Soft reset a branch to main, keeping all changes as uncommitted.
+
+    This creates a large HEAD± diff showing the full feature work.
+    """
+    print(f"Soft resetting {branch_name} to main...")
+    worktree_path = env.work_base / f"worktrunk.{branch_name}"
+    git(["-C", str(worktree_path), "reset", "--soft", "main"])
+
+
+def add_uncommitted_changes(env: DemoEnv):
+    """Add uncommitted working tree changes manually.
+
+    Creates realistic WIP changes that look like in-progress work.
+    - streaming: Large staged diff (~+50 -30) from soft reset + manual additions
+    - llm-templates: Working on template validation (adds new function)
+    - doctor: Clean (no uncommitted changes) to show variety
+    """
+    # streaming: Add substantial changes to create ~+50 -30 diff
+    # The soft reset gives us +8 -5, so we add more to reach target
+    streaming_path = env.work_base / "worktrunk.streaming"
+
+    # Add new error handling module (~40 lines)
+    error_file = streaming_path / "src" / "error_handling.rs"
+    print("Adding staged changes to streaming...")
+    error_file.write_text('''//! Error handling utilities for pipe operations.
+//!
+//! This module provides robust error handling for cases where
+//! the LLM process ignores stdin or terminates unexpectedly.
+
+use std::io::{self, ErrorKind};
+
+/// Errors that can occur during pipe operations.
+#[derive(Debug)]
+pub enum PipeError {
+    /// The receiving end closed the pipe.
+    BrokenPipe,
+    /// The operation timed out.
+    Timeout { elapsed_ms: u64 },
+    /// An I/O error occurred.
+    Io(io::Error),
+}
+
+impl From<io::Error> for PipeError {
+    fn from(err: io::Error) -> Self {
+        match err.kind() {
+            ErrorKind::BrokenPipe => PipeError::BrokenPipe,
+            ErrorKind::TimedOut => PipeError::Timeout { elapsed_ms: 0 },
+            _ => PipeError::Io(err),
+        }
+    }
+}
+
+impl std::fmt::Display for PipeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PipeError::BrokenPipe => write!(f, "pipe closed by receiver"),
+            PipeError::Timeout { elapsed_ms } => {
+                write!(f, "operation timed out after {}ms", elapsed_ms)
+            }
+            PipeError::Io(e) => write!(f, "I/O error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PipeError {}
+
+/// Check if an error indicates the pipe was broken.
+pub fn is_broken_pipe(err: &io::Error) -> bool {
+    err.kind() == ErrorKind::BrokenPipe
+}
+''')
+    # Stage the new file
+    git(["-C", str(streaming_path), "add", "src/error_handling.rs"])
+
+    # llm-templates: Add template validation WIP (+12 lines)
+    templates_path = env.work_base / "worktrunk.llm-templates"
+    llm_file = templates_path / "src" / "llm.rs"
+    if llm_file.exists():
+        print("Adding uncommitted changes to llm-templates...")
+        content = llm_file.read_text()
+        content = content.replace(
+            "use std::io::Write;",
+            """use std::io::Write;
+
+// TODO(wip): Add template validation before rendering
+fn validate_template(template: &str) -> Result<(), String> {
+    if template.is_empty() {
+        return Err("Template cannot be empty".to_string());
+    }
+    Ok(())
+}""",
+        )
+        llm_file.write_text(content)
+
+    # doctor: No changes (leave clean to show variety in demo)
+
+
+def add_ci_status(env: DemoEnv):
+    """Add fake CI status to git config for demo.
+
+    CI status is cached in git config as worktrunk.ci.{branch} with JSON value.
+    The cache uses a future timestamp to prevent expiration during VHS recording.
+    """
+    import json
+    import time
+
+    # Use future timestamp to prevent cache expiration (TTL is 30-60 seconds)
+    # VHS recording can take several minutes, so we set checked_at to 1 hour ahead
+    future_time = int(time.time()) + 3600
+
+    # Get HEAD commits for each branch
+    def get_head(branch):
+        if branch == "main":
+            # main is in the repo directly, not a linked worktree
+            return run(["git", "-C", str(env.repo), "rev-parse", "HEAD"], capture=True).strip()
+        worktree = env.work_base / f"worktrunk.{branch}"
+        return run(["git", "-C", str(worktree), "rev-parse", "HEAD"], capture=True).strip()
+
+    # CI statuses to set:
+    # - main: passed (green ○ hollow - branch CI, not PR)
+    # - streaming: passed (green ● filled - PR CI)
+    # - doctor: running (blue ● filled - PR CI)
+    ci_configs = {
+        "main": {
+            "status": {
+                "ci_status": "passed",
+                "source": "branch",  # hollow circle ○
+                "is_stale": False,
+                "url": None
+            },
+            "checked_at": future_time,
+            "head": get_head("main"),
+        },
+        "streaming": {
+            "status": {
+                "ci_status": "passed",
+                "source": "pullrequest",  # filled circle ●
+                "is_stale": False,
+                "url": "https://github.com/example/worktrunk/pull/85"
+            },
+            "checked_at": future_time,
+            "head": get_head("streaming"),
+        },
+        "doctor": {
+            "status": {
+                "ci_status": "running",
+                "source": "pullrequest",  # filled circle ●
+                "is_stale": False,
+                "url": "https://github.com/example/worktrunk/pull/92"
+            },
+            "checked_at": future_time,
+            "head": get_head("doctor"),
+        },
+    }
+
+    print("Adding CI status cache...")
+    for branch, config in ci_configs.items():
+        config_key = f"worktrunk.ci.{branch}"
+        config_json = json.dumps(config)
+        git(["-C", str(env.repo), "config", config_key, config_json])
+
+
+def main():
+    if not shutil.which("git"):
+        raise SystemExit("Missing dependency: git")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Copy starship config if exists
+    starship_fixture = FIXTURES_DIR / "starship.toml"
+    if starship_fixture.exists():
+        shutil.copy(starship_fixture, STARSHIP_CONFIG)
+
+    # Build wt binary
+    build_wt(REPO_ROOT)
+
+    # Create demo environment
+    demo_env = DemoEnv(name="select", out_dir=OUT_DIR)
+    prepare_repo(demo_env)
+
+    print(f"\nDemo repo created at: {demo_env.repo}")
+    print(f"Worktrees at: {demo_env.work_base}")
+
+    # Record if VHS is available and tape exists
+    vhs_available = Path(VHS_BINARY).exists() if "/" in VHS_BINARY else shutil.which(VHS_BINARY)
+    if vhs_available:
+        replacements = {
+            "DEMO_REPO": demo_env.repo,
+            "DEMO_HOME": demo_env.home,
+            "REAL_HOME": REAL_HOME,
+            "STARSHIP_CONFIG": STARSHIP_CONFIG,
+            "OUTPUT_GIF": OUTPUT_GIF,
+            "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
+        }
+        if render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements):
+            print(f"\nRecording GIF with {VHS_BINARY}...")
+            record_vhs(TAPE_RENDERED, VHS_BINARY)
+            TAPE_RENDERED.unlink(missing_ok=True)
+            print(f"GIF saved to {OUTPUT_GIF}")
+    else:
+        print(f"\nSkipping GIF recording ({VHS_BINARY} not available)")
+        print("\nTo test manually:")
+        print(f"  cd {demo_env.repo}")
+        print(f"  HOME={demo_env.home} wt select")
+
+
+if __name__ == "__main__":
+    main()
