@@ -50,8 +50,6 @@ exclude = [
     "127\\.0\\.0\\.1",
     "localhost",
 
-    # Root-relative paths - validated by zola check during site build, not lychee
-    "^/",
 ]
 
 # Exclude files with relative paths intended for different locations
@@ -59,4 +57,8 @@ exclude_path = [
     ".claude-plugin/skills/worktrunk/reference/README.md",
     # Third-party theme - has its own linking conventions
     "docs/themes/juice/README.md",
+    # Root-relative asset paths (e.g., /assets/wt-demo.gif) fail lychee URL parsing.
+    # These are validated by zola check during site build instead.
+    "docs/content/select.md",
+    "docs/content/why-worktrunk.md",
 ]
