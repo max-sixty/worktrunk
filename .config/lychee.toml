@@ -1,10 +1,6 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
-# NOTE: root_dir was removed because asset GIFs are gitignored (stored in
-# separate worktrunk-assets repo). Root-relative paths like /assets/*.gif
-# are excluded below instead.
-
 # Network resilience - handles transient failures
 max_retries = 5
 timeout = 20
@@ -47,9 +43,6 @@ exclude = [
     "opensource\\.org",
     "llm\\.datasette\\.io",
 
-    # Asset GIFs stored in separate worktrunk-assets repo (gitignored, fetched at deploy)
-    "/assets/wt-.*\\.gif",
-
     # Local build artifacts (not checked into git)
     "wt-demo/out/wt-demo\\.gif",
 
@@ -59,9 +52,13 @@ exclude = [
 
 ]
 
-# Exclude files with relative paths intended for different locations
+# Exclude source files from link checking
 exclude_path = [
     ".claude-plugin/skills/worktrunk/reference/README.md",
     # Third-party theme - has its own linking conventions
     "docs/themes/juice/README.md",
+    # Files with root-relative GIF paths (assets stored in separate repo, fetched at deploy)
+    # Lychee 0.22+ requires base_url/root_dir to resolve these, but base_url breaks other links
+    "docs/content/select.md",
+    "docs/content/why-worktrunk.md",
 ]
