@@ -26,26 +26,27 @@ repos:
     hooks:
       - id: clippy
         args: ["--all-targets", "--", "-D", "warnings"]
-  # Commit hash silences mutable ref warning; autoupdate reverts to nightly tag
-  # TODO: Update periodically
-  - repo: https://github.com/lycheeverse/lychee
-    rev: c513e7ee5d74d85aaaeaf2b4c67fb063f93e46e8
+  # Local hook with pinned version - lychee's script hook downloads latest, causing version drift
+  - repo: local
     hooks:
       # Fast PR mode - only check worktrunk domains (internal links validated by zola check)
       - id: lychee
         name: lychee (PR mode)
+        language: rust
+        entry: lychee --no-progress --config=.config/lychee.toml --include=^https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)
         types: [markdown]
-        args:
-          - --config=.config/lychee.toml
-          - --include=^https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)
+        require_serial: true
+        additional_dependencies: ["cli:lychee:0.18.0"]
       # Comprehensive mode - check all links with full config
       # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
-      - id: lychee
+      - id: lychee-all
         name: lychee-all (comprehensive)
+        language: rust
+        entry: lychee --no-progress --config=.config/lychee.toml
         types: [markdown]
         stages: [manual]
-        args:
-          - --config=.config/lychee.toml
+        require_serial: true
+        additional_dependencies: ["cli:lychee:0.18.0"]
   - repo: local
     hooks:
       - id: no-dbg
@@ -66,5 +67,5 @@ repos:
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
   # Network access also isn't supported, so skip lychee.
-  skip: [fmt, clippy, lychee]
+  skip: [fmt, clippy, lychee, lychee-all]
   autoupdate_commit_msg: "chore: pre-commit autoupdate"

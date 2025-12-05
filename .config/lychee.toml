@@ -57,8 +57,4 @@ exclude_path = [
     ".claude-plugin/skills/worktrunk/reference/README.md",
     # Third-party theme - has its own linking conventions
     "docs/themes/juice/README.md",
-    # Files with root-relative GIF paths (assets stored in separate repo, fetched at deploy)
-    # Lychee 0.22+ requires base_url/root_dir to resolve these, but base_url breaks other links
-    "docs/content/select.md",
-    "docs/content/why-worktrunk.md",
 ]
