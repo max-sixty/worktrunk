@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block hero %}
+<style>
+  .error-404 {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 2rem;
+    min-height: calc(50vh - var(--wt-header-height));
+  }
+
+  .error-code {
+    font-family: var(--wt-font-mono);
+    font-size: clamp(4rem, 15vw, 8rem);
+    font-weight: 700;
+    color: var(--wt-color-accent);
+    line-height: 1;
+    margin-bottom: 0.5rem;
+    letter-spacing: -0.02em;
+  }
+
+  .error-title {
+    font-family: var(--wt-font-head);
+    font-size: clamp(1.25rem, 4vw, 1.75rem);
+    font-weight: 600;
+    color: var(--wt-color-text);
+    margin-bottom: 1rem;
+  }
+
+  .error-message {
+    color: var(--wt-color-text-muted);
+    font-size: 1rem;
+    max-width: 28rem;
+    margin-bottom: 2rem;
+    line-height: 1.6;
+  }
+
+  .error-actions {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .error-actions a {
+    padding: 0.625rem 1.25rem;
+    border-radius: 6px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .error-actions .primary {
+    background: var(--wt-color-accent);
+    color: white;
+  }
+
+  .error-actions .primary:hover {
+    background: var(--wt-color-accent-strong);
+  }
+
+  .error-actions .secondary {
+    background: transparent;
+    color: var(--wt-color-text);
+    border: 1px solid var(--wt-color-border-subtle);
+  }
+
+  .error-actions .secondary:hover {
+    border-color: var(--wt-color-text-muted);
+  }
+</style>
+<section class="error-404">
+  <div class="error-code">404</div>
+  <h1 class="error-title">Worktree not found</h1>
+  <p class="error-message">
+    This worktree has been pruned or never existed.
+  </p>
+  <div class="error-actions">
+    <a href="/" class="primary">Back to Docs</a>
+    <a href="https://github.com/max-sixty/worktrunk" class="secondary">View on GitHub</a>
+  </div>
+</section>
+{% endblock hero %}
+
+{% block toc %}
+{% endblock toc %}
+
+{% block content %}
+{% endblock content %}
