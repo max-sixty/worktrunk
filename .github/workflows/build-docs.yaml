@@ -18,8 +18,11 @@ jobs:
       - name: Fetch demo assets
         run: |
           mkdir -p docs/static/assets
-          curl -fsSL -o docs/static/assets/wt-demo.gif \
-            https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/wt-demo.gif
+          for file in $(curl -fsSL https://api.github.com/repos/max-sixty/worktrunk-assets/contents/demos \
+                        | jq -r '.[].name'); do
+            curl -fsSL -o "docs/static/assets/$file" \
+              "https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/$file"
+          done
 
       - name: 🕷️ Build docs
         run: zola build
