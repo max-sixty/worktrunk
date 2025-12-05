@@ -3,7 +3,7 @@ title = "Why Worktrunk?"
 weight = 1
 +++
 
-Worktrunk is a CLI for git worktree management, designed for parallel AI agent workflows. Git worktrees give each agent an isolated branch and directory; Worktrunk adds branch-based navigation, unified status, and lifecycle hooks. Creating a new agent workspace is as quick as `git switch`.
+Worktrunk is a CLI for git worktree management, designed for parallel AI agent workflows. Git worktrees give each agent an isolated branch and directory; Worktrunk adds branch-based navigation, unified status, and lifecycle hooks. Creating a new agent workspace is as immediate as `git switch`.
 
 ![Worktrunk Demo](/assets/wt-demo.gif)
 
@@ -30,13 +30,15 @@ Worktrunk makes worktrees easy to use. Branch names replace paths:
 | Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feature && git branch -d feature` |
 | List with status | `wt list` | `git worktree list` (paths only) |
 
-Plus:
+Beyond navigation, Worktrunk automates common tasks:
 
 - **[Lifecycle hooks](@/hooks.md)** — run commands on create, switch, merge (deps install, dev servers, test suites)
 - **[LLM commit messages](@/llm-commits.md)** — generate commits from diffs via [llm](https://llm.datasette.io/)
 - **[Merge workflow](@/merge.md)** — squash, rebase, push, clean up in one command
 
 ## In practice
+
+Create a worktree for a new task:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_simple_switch.snap — edit source to update -->
 
@@ -47,7 +49,7 @@ Plus:
 
 <!-- END AUTO-GENERATED -->
 
-This creates `../repo.fix-auth` on branch `fix-auth`.
+Switch to an existing worktree:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_switch_back.snap — edit source to update -->
 
@@ -57,6 +59,8 @@ This creates `../repo.fix-auth` on branch `fix-auth`.
 {% end %}
 
 <!-- END AUTO-GENERATED -->
+
+See all worktrees at a glance:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__readme_example_list.snap — edit source to update -->
 
@@ -72,9 +76,9 @@ This creates `../repo.fix-auth` on branch `fix-auth`.
 
 <!-- END AUTO-GENERATED -->
 
-Add `--full` for CI status and conflicts, `--branches` to include all branches.
+The `--full` flag adds CI status and conflict detection.
 
-When done with a worktree (e.g., after merging via CI):
+Clean up when done:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_remove.snap — edit source to update -->
 
