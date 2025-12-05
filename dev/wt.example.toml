@@ -31,7 +31,7 @@
 # Post-Start Hook
 # Runs in BACKGROUND as detached processes (parallel)
 # Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,
-# long-running tasks
+# downloading assets too large for git (images, ML models, binaries), long-running tasks
 # The worktree switch completes immediately, these run in parallel
 # Output is logged to .git/wt-logs/{branch}-post-start-{name}.log
 #

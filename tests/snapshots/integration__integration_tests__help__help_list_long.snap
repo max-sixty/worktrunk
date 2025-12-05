@@ -113,7 +113,7 @@ Any CI dot appears dimmed when there are unpushed local changes (stale status). 
 Symbols appear in the Status column in this order:
 
   Category           Symbol  Meaning                                       
-  ─────────────────  ──────  ──────────────────────────────────────────────  ───────────────────
+  ─────────────────  ──────  ──────────────────────────────────────────────
   Working tree       [2m+[0m       Staged files                                  
                      [2m![0m       Modified files (unstaged)                     
                      [2m?[0m       Untracked files                               
@@ -127,7 +127,7 @@ Symbols appear in the Status column in this order:
                      [2m↑[0m       Ahead of main                                 
                      [2m↓[0m       Behind main                                   
                      [2m↕[0m       Diverged from main                            
-  Remote divergence  [2m\[0m       [2m[0m                                                In sync with remote
+  Remote divergence  [2m|[0m       In sync with remote                           
                      [2m⇡[0m       Ahead of remote                               
                      [2m⇣[0m       Behind remote                                 
                      [2m⇅[0m       Diverged from remote                          

@@ -21,15 +21,17 @@ Worktrunk is a CLI for git worktree management, designed for parallel AI agent w
 
 ## Git worktrees
 
-AI agents like Claude and Codex can increasingly handle longer tasks without supervision. Running several in parallel is practical. But on a single checkout they step on each other's uncommitted changes.
+AI agents like Claude and Codex can increasingly handle longer tasks without supervision, and it's very practical to run several in parallel. But on a single file tree they step on each other's uncommitted changes.
 
 Git worktrees solve this: multiple working directories sharing one `.git`.
 
-But the built-in commands are path-oriented: `git worktree add -b feature ../repo.feature`, then `cd ../repo.feature`, then `git worktree remove ../repo.feature`.
+But git worktrees' UX is clunky: `git worktree add -b feature ../repo.feature`, then `cd ../repo.feature`, then `git worktree remove ../repo.feature`.
 
 ## What Worktrunk adds
 
-Worktrunk makes worktrees easy to use — branch-based navigation, unified status, and workflow automation:
+Worktrunk makes worktrees easy to use — branch-based navigation, unified status, and workflow automation.
+
+**Core commands:**
 
 | Task | Worktrunk | Plain git |
 |------|-----------|-----------|
@@ -38,11 +40,15 @@ Worktrunk makes worktrees easy to use — branch-based navigation, unified statu
 | Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feature && git branch -d feature` |
 | List with status | `wt list` | `git worktree list` (paths only) |
 
+**Workflow automation:**
+
 - **[Lifecycle hooks](https://worktrunk.dev/hooks/)** — run commands on create, pre-merge, post-merge
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 
-## In practice
+## Core commands in practice
+
+Create a worktree for a new task:
 
 <!-- ⚠️ AUTO-GENERATED from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_simple_switch.snap — edit source to update -->
 
@@ -53,7 +59,7 @@ $ wt switch --create fix-auth
 
 <!-- END AUTO-GENERATED -->
 
-This creates `../repo.fix-auth` on branch `fix-auth`.
+Switch to an existing worktree:
 
 <!-- ⚠️ AUTO-GENERATED from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_switch_back.snap — edit source to update -->
 
@@ -63,6 +69,8 @@ $ wt switch feature-api
 ```
 
 <!-- END AUTO-GENERATED -->
+
+See all worktrees at a glance:
 
 <!-- ⚠️ AUTO-GENERATED from tests/snapshots/integration__integration_tests__list__readme_example_list.snap — edit source to update -->
 
@@ -110,6 +118,7 @@ $ wt config shell install
 - Learn the core commands: [wt switch](https://worktrunk.dev/switch/), [wt list](https://worktrunk.dev/list/), [wt merge](https://worktrunk.dev/merge/), [wt remove](https://worktrunk.dev/remove/)
 - Set up [project hooks](https://worktrunk.dev/hooks/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [fzf-like picker](https://worktrunk.dev/select/), [Claude Code integration](https://worktrunk.dev/claude-code/)
+- Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading
 

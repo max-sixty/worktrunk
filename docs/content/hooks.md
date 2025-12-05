@@ -113,12 +113,13 @@ env = "cp .env.example .env"
 
 Runs after worktree creation, **in background**. The worktree switch completes immediately; these run in parallel.
 
-**Use cases**: Long builds, dev servers, file watchers — anything slow that doesn't need to block.
+**Use cases**: Long builds, dev servers, file watchers, downloading assets too large for git — anything slow that doesn't need to block.
 
 ```toml
 [post-start]
 build = "npm run build"
 server = "npm run dev"
+assets = "./scripts/fetch-large-assets"
 ```
 
 **Behavior**:

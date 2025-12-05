@@ -83,11 +83,19 @@ fn render_table(lines: &[&str]) -> String {
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut separator_idx: Option<usize> = None;
 
+    // Placeholder for escaped pipes (use a character sequence unlikely to appear)
+    const ESCAPED_PIPE_PLACEHOLDER: &str = "\x00PIPE\x00";
+
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         // Remove leading/trailing pipes and split
         let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
-        let cells: Vec<String> = inner.split('|').map(|s| s.trim().to_string()).collect();
+        // Replace escaped pipes before splitting, then restore after
+        let inner_escaped = inner.replace("\\|", ESCAPED_PIPE_PLACEHOLDER);
+        let cells: Vec<String> = inner_escaped
+            .split('|')
+            .map(|s| s.trim().replace(ESCAPED_PIPE_PLACEHOLDER, "|").to_string())
+            .collect();
 
         // Check if this is the separator row (contains only dashes and colons)
         if cells
@@ -399,6 +407,23 @@ mod tests {
         assert_eq!(
             render_inline_formatting("**bold** and `code`"),
             "\u{1b}[1mbold\u{1b}[0m and \u{1b}[2mcode\u{1b}[0m"
+        );
+    }
+
+    #[test]
+    fn test_render_table_escaped_pipe() {
+        // In markdown tables, \| represents a literal pipe character
+        let lines = vec![
+            "| Category | Symbol | Meaning |",
+            "| --- | --- | --- |",
+            "| Remote | `\\|` | In sync |",
+        ];
+        let result = render_table(&lines);
+        // The \| should be rendered as | (pipe character)
+        assert!(result.contains("|"), "Escaped pipe should render as |");
+        assert!(
+            !result.contains("\\|"),
+            "Escaped sequence should not appear literally"
         );
     }
 }
