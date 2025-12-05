@@ -67,7 +67,7 @@ Usage: wt step [OPTIONS] <COMMAND>
 
 Commands:
   commit       Commit changes with LLM commit message
-  squash       Squash commits with LLM commit message
+  squash       Squash commits down to target
   push         Push changes to local target branch
   rebase       Rebase onto target
   post-create  Run post-create hook

@@ -534,6 +534,10 @@ wt config var clear marker --all
 #[derive(Subcommand)]
 pub enum StepCommand {
     /// Commit changes with LLM commit message
+    ///
+    /// Stages working tree changes based on `--stage` and commits them.
+    /// Generates the commit message using an LLM. Runs pre-commit hooks
+    /// unless `--no-verify` is passed.
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
@@ -548,7 +552,12 @@ pub enum StepCommand {
         stage: Option<crate::commands::commit::StageMode>,
     },
 
-    /// Squash commits with LLM commit message
+    /// Squash commits down to target
+    ///
+    /// Combines all commits since diverging from the target branch into a single
+    /// commit. Stages and includes working tree changes based on `--stage`.
+    /// Generates the commit message using an LLM. Runs pre-commit hooks
+    /// unless `--no-verify` is passed.
     Squash {
         /// Target branch
         ///
