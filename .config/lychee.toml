@@ -43,6 +43,9 @@ exclude = [
     "opensource\\.org",
     "llm\\.datasette\\.io",
 
+    # Asset GIFs stored in separate worktrunk-assets repo (gitignored, fetched at deploy)
+    "file://.*wt-.*\\.gif",
+
     # Local build artifacts (not checked into git)
     "wt-demo/out/wt-demo\\.gif",
 
@@ -51,6 +54,10 @@ exclude = [
     "localhost",
 
 ]
+
+# Root directory for resolving root-relative paths like /assets/wt-demo.gif
+# Assets are fetched from separate repo at deploy time (gitignored locally)
+root_dir = "docs/static"
 
 # Exclude source files from link checking
 exclude_path = [

@@ -26,7 +26,7 @@ repos:
     hooks:
       - id: clippy
         args: ["--all-targets", "--", "-D", "warnings"]
-  # Local hook with pinned version - lychee's script hook downloads latest, causing version drift
+  # Local hook with pinned version - lychee's script hook uses system install if present
   - repo: local
     hooks:
       # Fast PR mode - only check worktrunk domains (internal links validated by zola check)
@@ -36,7 +36,7 @@ repos:
         entry: lychee --no-progress --config=.config/lychee.toml --include=^https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)
         types: [markdown]
         require_serial: true
-        additional_dependencies: ["cli:lychee:0.18.0"]
+        additional_dependencies: ["cli:lychee:0.22.0"]
       # Comprehensive mode - check all links with full config
       # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
       - id: lychee-all
@@ -46,7 +46,7 @@ repos:
         types: [markdown]
         stages: [manual]
         require_serial: true
-        additional_dependencies: ["cli:lychee:0.18.0"]
+        additional_dependencies: ["cli:lychee:0.22.0"]
   - repo: local
     hooks:
       - id: no-dbg
