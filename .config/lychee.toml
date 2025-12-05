@@ -1,9 +1,9 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
-# NOTE: base_url was removed because it converts ALL relative paths (including
-# docs/static/logo.png in README for GitHub display) to worktrunk.dev URLs.
-# Root-relative paths like /assets/foo.gif now need absolute URLs in source files.
+# Root directory for resolving root-relative paths (e.g., /assets/wt-demo.gif)
+# These resolve to docs/static/assets/wt-demo.gif for local validation
+root_dir = "docs/static"
 
 # Network resilience - handles transient failures
 max_retries = 5
