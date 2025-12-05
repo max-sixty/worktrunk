@@ -9,8 +9,6 @@ html {
     // Reserve scrollbar space to prevent layout shift when navigating
     // Browser support: Safari 17+, Chrome 94+, Firefox 97+. Graceful degradation.
     scrollbar-gutter: stable;
-    // Enable -webkit-fill-available to work correctly for child elements on iOS
-    height: -webkit-fill-available;
 }
 
 // ============================================================================
@@ -132,24 +130,6 @@ header {
         // Below header (201) so header remains interactive
         z-index: 200;
         pointer-events: none;
-    }
-
-    // iOS WebKit viewport height fix: -webkit-fill-available is stable
-    // against browser chrome animation, unlike svh/lvh which may jank on
-    // Firefox iOS and Chrome iOS due to missing WebKit viewport inset APIs.
-    // See: https://github.com/mozilla-mobile/firefox-ios/issues/11574
-    body {
-        min-height: -webkit-fill-available;
-    }
-
-    .hero {
-        // Use string interpolation to bypass SCSS calc() parsing
-        height: #{"calc(-webkit-fill-available - var(--wt-header-height) - env(safe-area-inset-top, 0px))"} !important;
-        max-height: #{"calc(-webkit-fill-available - var(--wt-header-height) - env(safe-area-inset-top, 0px))"} !important;
-    }
-
-    .mobile-menu {
-        height: #{"calc(-webkit-fill-available - var(--wt-header-height) - env(safe-area-inset-top, 0px))"};
     }
 }
 

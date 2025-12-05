@@ -16,47 +16,34 @@
 {# _variables.html is already included by the theme at line 12 of juice/templates/index.html #}
 {# Zola resolves it to our custom templates/_variables.html, so no need to include it again #}
 <script>
-// iOS viewport height polyfill: svh/lvh are broken on Firefox iOS and Chrome iOS
-// due to missing minimumViewportInset/maximumViewportInset WebKit APIs.
-// This sets a stable --vh-full CSS variable by tracking the minimum viewport height.
+// iOS viewport height fix: Capture a STABLE height once on page load.
+// Do NOT update on resize/scroll - that's what causes the jank!
+// On Firefox iOS and Chrome iOS, svh/lvh behave like dvh due to missing
+// minimumViewportInset/maximumViewportInset WebKit APIs.
 // See: https://github.com/mozilla-mobile/firefox-ios/issues/11574
 (function() {
-    // Only run on iOS WebKit browsers (Safari, Chrome iOS, Firefox iOS, in-app webviews)
+    // Only run on iOS WebKit browsers
     var isIOS = /iP(hone|ad|od)/.test(navigator.platform) ||
                 (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
     if (!isIOS) return;
 
-    var raf, lastHeight;
-
-    function setViewportHeight() {
-        // Use the smallest of available height measurements to approximate "small viewport"
-        var c1 = window.innerHeight;
-        var c2 = document.documentElement.clientHeight;
-        var c3 = (window.visualViewport && window.visualViewport.height) || c1;
-        var h = Math.min(c1 || Infinity, c2 || Infinity, c3 || Infinity);
-        if (h && h !== lastHeight) {
-            lastHeight = h;
-            document.documentElement.style.setProperty('--vh-full', h + 'px');
-        }
+    // Capture initial viewport height ONCE (with browser chrome visible)
+    // and use it as a stable value. Never update on resize.
+    var h = window.innerHeight;
+    if (h) {
+        document.documentElement.style.setProperty('--vh-full', h + 'px');
     }
 
-    function schedule() {
-        if (raf) return;
-        raf = requestAnimationFrame(function() {
-            raf = null;
-            setViewportHeight();
-        });
-    }
-
-    // Set initial value immediately
-    setViewportHeight();
-
-    // Update on relevant events (passive for performance)
-    window.addEventListener('resize', schedule, { passive: true });
-    window.addEventListener('orientationchange', schedule, { passive: true });
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', schedule, { passive: true });
-    }
+    // Only update on orientation change (actual device rotation)
+    window.addEventListener('orientationchange', function() {
+        // Small delay to let the new orientation settle
+        setTimeout(function() {
+            var newH = window.innerHeight;
+            if (newH) {
+                document.documentElement.style.setProperty('--vh-full', newH + 'px');
+            }
+        }, 100);
+    });
 })();
 </script>
 <meta name="view-transition" content="same-origin">
