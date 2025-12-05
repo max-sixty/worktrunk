@@ -41,6 +41,10 @@ exclude = [
 
     # Local build artifacts (not checked into git)
     "wt-demo/out/wt-demo\\.gif",
+
+    # Local dev server URLs (not running during CI)
+    "127\\.0\\.0\\.1",
+    "localhost",
 ]
 
 # Exclude files with relative paths intended for different locations

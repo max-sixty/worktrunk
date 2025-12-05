@@ -1,0 +1,19 @@
+#!/bin/bash
+# Fetch demo assets from worktrunk-assets repo for local development
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+ASSETS_DIR="$REPO_ROOT/docs/static/assets"
+
+mkdir -p "$ASSETS_DIR"
+
+echo "Fetching demo assets..."
+for file in $(curl -fsSL https://api.github.com/repos/max-sixty/worktrunk-assets/contents/demos \
+              | jq -r '.[].name'); do
+    echo "  $file"
+    curl -fsSL -o "$ASSETS_DIR/$file" \
+        "https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/$file"
+done
+
+echo "Done. Assets in docs/static/assets/"

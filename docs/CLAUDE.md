@@ -2,13 +2,20 @@
 
 ## Demo GIF workflow
 
-See `dev/wt-demo/CLAUDE.md` for the full workflow. Quick reference:
+**For local development**, fetch existing assets from the CDN:
 
 ```bash
-./dev/wt-demo-build      # Build (auto-copies to docs/static/assets/)
-# View at http://127.0.0.1:1111/why-worktrunk/
+./scripts/fetch-assets    # Download assets for local dev
+```
+
+**To update demos**, see `dev/wt-demo/CLAUDE.md` for the full workflow:
+
+```bash
+./dev/wt-demo-build       # Build new demo (auto-copies to docs/static/assets/)
 ./scripts/publish-assets  # Publish to assets repo
 ```
+
+View at http://127.0.0.1:1111/why-worktrunk/
 
 ---
 
