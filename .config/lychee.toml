@@ -1,6 +1,10 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
+# Base URL for resolving root-relative paths (e.g., /assets/wt-demo.gif)
+# This rewrites them to https://worktrunk.dev/assets/wt-demo.gif for validation
+base = "https://worktrunk.dev"
+
 # Network resilience - handles transient failures
 max_retries = 5
 timeout = 20
@@ -57,8 +61,4 @@ exclude_path = [
     ".claude-plugin/skills/worktrunk/reference/README.md",
     # Third-party theme - has its own linking conventions
     "docs/themes/juice/README.md",
-    # Root-relative asset paths (e.g., /assets/wt-demo.gif) fail lychee URL parsing.
-    # These are validated by zola check during site build instead.
-    "docs/content/select.md",
-    "docs/content/why-worktrunk.md",
 ]
