@@ -1,9 +1,9 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
-# Root directory for resolving root-relative paths (e.g., /assets/wt-demo.gif)
-# These resolve to docs/static/assets/wt-demo.gif for local validation
-root_dir = "docs/static"
+# NOTE: root_dir was removed because asset GIFs are gitignored (stored in
+# separate worktrunk-assets repo). Root-relative paths like /assets/*.gif
+# are excluded below instead.
 
 # Network resilience - handles transient failures
 max_retries = 5
@@ -46,6 +46,9 @@ exclude = [
     # Sites already excluded in markdown-link-check
     "opensource\\.org",
     "llm\\.datasette\\.io",
+
+    # Asset GIFs stored in separate worktrunk-assets repo (gitignored, fetched at deploy)
+    "/assets/wt-.*\\.gif",
 
     # Local build artifacts (not checked into git)
     "wt-demo/out/wt-demo\\.gif",
