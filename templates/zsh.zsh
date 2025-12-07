@@ -42,16 +42,23 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
     _{{ cmd_prefix }}_lazy_complete() {
         # Generate completions function once (check if clap's function exists)
         if ! (( $+functions[_clap_dynamic_completer_{{ cmd_prefix }}] )); then
-            eval "$(COMPLETE=zsh "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" 2>/dev/null)" || return
+            # Generate completion script, then:
+            # 1. Strip compdef lines (we handle registration; fails in completion context)
+            # 2. Replace 'wt --' with 'command wt --' to bypass shell function
+            local _script
+            _script="$(COMPLETE=zsh command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" 2>/dev/null)" || return
+            _script="${_script//{{ cmd_prefix }} --/command {{ cmd_prefix }} --}"
+            eval "$(echo "$_script" | grep -v '^#\?compdef ')" || return
         fi
         _clap_dynamic_completer_{{ cmd_prefix }} "$@"
     }
 
-    # Register completion (silently skip if compinit hasn't run yet).
+    # Register completion (silently skip if compinit hasn't run yet or if
+    # registration fails in nested contexts like wt_exec).
     # We don't warn here because this script runs on every shell startup - users
     # shouldn't see warnings every time they open a terminal. Instead, `wt config
     # shell install` detects missing compinit and shows a one-time advisory.
     if (( $+functions[compdef] )); then
-        compdef _{{ cmd_prefix }}_lazy_complete {{ cmd_prefix }}
+        compdef _{{ cmd_prefix }}_lazy_complete {{ cmd_prefix }} 2>/dev/null || :
     fi
 fi
