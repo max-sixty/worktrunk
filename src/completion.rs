@@ -7,6 +7,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
+use worktrunk::config::ProjectConfig;
 use worktrunk::git::{BranchCategory, Repository};
 
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
@@ -49,6 +50,95 @@ pub fn local_branches_completer() -> ArgValueCompleter {
         suppress_with_create: false,
         exclude_remote_only: true,
     })
+}
+
+/// Hook command name completion for `wt step <hook-type> <name>`.
+/// Completes with command names from the project config for the hook type being invoked.
+pub fn hook_command_name_completer() -> ArgValueCompleter {
+    ArgValueCompleter::new(HookCommandCompleter)
+}
+
+#[derive(Clone, Copy)]
+struct HookCommandCompleter;
+
+impl ValueCompleter for HookCommandCompleter {
+    fn complete(&self, current: &OsStr) -> Vec<CompletionCandidate> {
+        // If user is typing an option (starts with -), don't suggest command names
+        if current.to_str().is_some_and(|s| s.starts_with('-')) {
+            return Vec::new();
+        }
+
+        let prefix = current.to_string_lossy();
+        complete_hook_commands()
+            .into_iter()
+            .filter(|candidate| {
+                candidate
+                    .get_value()
+                    .to_string_lossy()
+                    .starts_with(&*prefix)
+            })
+            .collect()
+    }
+}
+
+fn complete_hook_commands() -> Vec<CompletionCandidate> {
+    // Get the hook type from the command line context
+    let hook_type = CONTEXT.with(|ctx| {
+        ctx.borrow().as_ref().and_then(|ctx| {
+            // Look for the hook subcommand in the args
+            for hook in &[
+                "post-create",
+                "post-start",
+                "pre-commit",
+                "pre-merge",
+                "post-merge",
+                "pre-remove",
+            ] {
+                if ctx.contains(hook) {
+                    return Some(*hook);
+                }
+            }
+            None
+        })
+    });
+
+    let Some(hook_type) = hook_type else {
+        return Vec::new();
+    };
+
+    // Load project config
+    let repo = Repository::current();
+    let repo_root = match repo.worktree_root() {
+        Ok(root) => root,
+        Err(_) => return Vec::new(),
+    };
+
+    let project_config = match ProjectConfig::load(&repo_root) {
+        Ok(Some(config)) => config,
+        _ => return Vec::new(),
+    };
+
+    // Get command names for the hook type
+    let command_config = match hook_type {
+        "post-create" => &project_config.post_create,
+        "post-start" => &project_config.post_start,
+        "pre-commit" => &project_config.pre_commit,
+        "pre-merge" => &project_config.pre_merge,
+        "post-merge" => &project_config.post_merge,
+        "pre-remove" => &project_config.pre_remove,
+        _ => return Vec::new(),
+    };
+
+    let Some(config) = command_config else {
+        return Vec::new();
+    };
+
+    config
+        .commands()
+        .iter()
+        .filter_map(|cmd| cmd.name.as_ref())
+        .map(|name| CompletionCandidate::new(name.clone()))
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -198,5 +288,12 @@ fn adjust_completion_command(cmd: Command) -> Command {
             .mut_subcommand("rebase", |rebase| {
                 rebase.mut_arg("target", |arg| arg.last(true))
             })
+            // Hook subcommands - allow name after --force
+            .mut_subcommand("post-create", |c| c.mut_arg("name", |arg| arg.last(true)))
+            .mut_subcommand("post-start", |c| c.mut_arg("name", |arg| arg.last(true)))
+            .mut_subcommand("pre-commit", |c| c.mut_arg("name", |arg| arg.last(true)))
+            .mut_subcommand("pre-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
+            .mut_subcommand("post-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
+            .mut_subcommand("pre-remove", |c| c.mut_arg("name", |arg| arg.last(true)))
     })
 }

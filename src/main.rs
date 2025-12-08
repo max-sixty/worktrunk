@@ -821,23 +821,23 @@ fn main() {
                     }
                 })
             }
-            StepCommand::PostCreate { force } => {
-                handle_standalone_run_hook(HookType::PostCreate, force)
+            StepCommand::PostCreate { name, force } => {
+                handle_standalone_run_hook(HookType::PostCreate, force, name.as_deref())
             }
-            StepCommand::PostStart { force } => {
-                handle_standalone_run_hook(HookType::PostStart, force)
+            StepCommand::PostStart { name, force } => {
+                handle_standalone_run_hook(HookType::PostStart, force, name.as_deref())
             }
-            StepCommand::PreCommit { force } => {
-                handle_standalone_run_hook(HookType::PreCommit, force)
+            StepCommand::PreCommit { name, force } => {
+                handle_standalone_run_hook(HookType::PreCommit, force, name.as_deref())
             }
-            StepCommand::PreMerge { force } => {
-                handle_standalone_run_hook(HookType::PreMerge, force)
+            StepCommand::PreMerge { name, force } => {
+                handle_standalone_run_hook(HookType::PreMerge, force, name.as_deref())
             }
-            StepCommand::PostMerge { force } => {
-                handle_standalone_run_hook(HookType::PostMerge, force)
+            StepCommand::PostMerge { name, force } => {
+                handle_standalone_run_hook(HookType::PostMerge, force, name.as_deref())
             }
-            StepCommand::PreRemove { force } => {
-                handle_standalone_run_hook(HookType::PreRemove, force)
+            StepCommand::PreRemove { name, force } => {
+                handle_standalone_run_hook(HookType::PreRemove, force, name.as_deref())
             }
         },
         #[cfg(unix)]

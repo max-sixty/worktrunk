@@ -173,7 +173,7 @@ pub fn handle_merge(
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify && let Some(project_config) = repo.load_project_config()? {
         let ctx = env.context(force);
-        run_pre_merge_commands(&project_config, &ctx, &target_branch, true)?;
+        run_pre_merge_commands(&project_config, &ctx, &target_branch, true, None)?;
     }
 
     // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
@@ -239,7 +239,7 @@ pub fn handle_merge(
             &destination_repo_root,
             force,
         );
-        execute_post_merge_commands(&ctx, &target_branch, true)?;
+        execute_post_merge_commands(&ctx, &target_branch, true, None)?;
     }
 
     Ok(())
@@ -267,6 +267,7 @@ pub fn run_pre_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
     auto_trust: bool,
+    name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     let Some(pre_merge_config) = &project_config.pre_merge else {
         return Ok(());
@@ -282,6 +283,7 @@ pub fn run_pre_merge_commands(
         "pre-merge",
         HookType::PreMerge,
         HookFailureStrategy::FailFast,
+        name_filter,
     )
 }
 
@@ -294,6 +296,7 @@ pub fn execute_post_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
     auto_trust: bool,
+    name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     // Load project config from the main worktree path directly
     let project_config = match ctx.repo.load_project_config()? {
@@ -315,6 +318,7 @@ pub fn execute_post_merge_commands(
         "post-merge",
         HookType::PostMerge,
         HookFailureStrategy::Warn,
+        name_filter,
     )
 }
 
@@ -325,7 +329,11 @@ pub fn execute_post_merge_commands(
 /// # Arguments
 /// * `ctx` - Command context pointing to the worktree being removed
 /// * `auto_trust` - When true, skip approval prompts
-pub fn execute_pre_remove_commands(ctx: &CommandContext, auto_trust: bool) -> anyhow::Result<()> {
+pub fn execute_pre_remove_commands(
+    ctx: &CommandContext,
+    auto_trust: bool,
+    name_filter: Option<&str>,
+) -> anyhow::Result<()> {
     let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(()),
@@ -345,5 +353,6 @@ pub fn execute_pre_remove_commands(ctx: &CommandContext, auto_trust: bool) -> an
         "pre-remove",
         HookType::PreRemove,
         HookFailureStrategy::FailFast,
+        name_filter,
     )
 }

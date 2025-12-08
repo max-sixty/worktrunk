@@ -111,6 +111,10 @@ pub enum GitError {
 
     // Validation/other errors
     NotInteractive,
+    HookCommandNotFound {
+        name: String,
+        available: Vec<String>,
+    },
     ParseError {
         message: String,
     },
@@ -414,6 +418,31 @@ impl std::fmt::Display for GitError {
                         "In CI/CD, use <bright-black>--force</> to skip prompts. To pre-approve commands, use <bright-black>wt config approvals add</>"
                     ))
                 )
+            }
+
+            GitError::HookCommandNotFound { name, available } => {
+                if available.is_empty() {
+                    write!(
+                        f,
+                        "{}",
+                        error_message(cformat!(
+                            "No command named <bold>{name}</> (hook has no named commands)"
+                        ))
+                    )
+                } else {
+                    let available_str = available
+                        .iter()
+                        .map(|s| cformat!("<bold>{s}</>"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(
+                        f,
+                        "{}",
+                        error_message(cformat!(
+                            "No command named <bold>{name}</> (available: {available_str})"
+                        ))
+                    )
+                }
             }
 
             GitError::LlmCommandFailed { command, error } => {

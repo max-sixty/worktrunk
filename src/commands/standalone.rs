@@ -16,7 +16,11 @@ use super::project_config::collect_commands_for_hooks;
 use super::repository_ext::RepositoryCliExt;
 
 /// Handle `wt step hook` command
-pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> anyhow::Result<()> {
+pub fn handle_standalone_run_hook(
+    hook_type: HookType,
+    force: bool,
+    name_filter: Option<&str>,
+) -> anyhow::Result<()> {
     // Derive context from current environment
     let env = CommandEnv::for_action(&format!("run {hook_type} hook"))?;
     let repo = &env.repo;
@@ -32,37 +36,98 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> anyhow::R
     match hook_type {
         HookType::PostCreate => {
             check_hook_configured(&project_config.post_create, hook_type)?;
-            ctx.execute_post_create_commands()
+            run_hook_with_filter(
+                &ctx,
+                &project_config.post_create,
+                hook_type,
+                &[],
+                name_filter,
+            )
         }
         HookType::PostStart => {
             check_hook_configured(&project_config.post_start, hook_type)?;
-            ctx.execute_post_start_commands_sequential()
+            run_hook_with_filter(
+                &ctx,
+                &project_config.post_start,
+                hook_type,
+                &[],
+                name_filter,
+            )
         }
         HookType::PreCommit => {
             check_hook_configured(&project_config.pre_commit, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             let target_branch = repo.default_branch().ok();
-            HookPipeline::new(ctx).run_pre_commit(&project_config, target_branch.as_deref(), false)
+            let extra_vars: Vec<(&str, &str)> = target_branch
+                .as_deref()
+                .into_iter()
+                .map(|t| ("target", t))
+                .collect();
+            run_hook_with_filter(
+                &ctx,
+                &project_config.pre_commit,
+                hook_type,
+                &extra_vars,
+                name_filter,
+            )
         }
         HookType::PreMerge => {
             check_hook_configured(&project_config.pre_merge, hook_type)?;
             // Use current branch as target - when running standalone, the "target"
             // represents what branch we're on (vs. in `wt merge` where it's the
             // branch being merged into)
-            run_pre_merge_commands(&project_config, &ctx, &env.branch, false)
+            run_pre_merge_commands(&project_config, &ctx, &env.branch, false, name_filter)
         }
         HookType::PostMerge => {
             check_hook_configured(&project_config.post_merge, hook_type)?;
             // Use current branch as target - when running standalone, the "target"
             // represents what branch we're on (vs. in `wt merge` where it's the
             // branch being merged into)
-            execute_post_merge_commands(&ctx, &env.branch, false)
+            execute_post_merge_commands(&ctx, &env.branch, false, name_filter)
         }
         HookType::PreRemove => {
             check_hook_configured(&project_config.pre_remove, hook_type)?;
-            execute_pre_remove_commands(&ctx, false)
+            execute_pre_remove_commands(&ctx, false, name_filter)
         }
     }
+}
+
+/// Run a hook with optional name filter (used by standalone hook commands)
+fn run_hook_with_filter(
+    ctx: &super::command_executor::CommandContext,
+    config: &Option<worktrunk::config::CommandConfig>,
+    hook_type: HookType,
+    extra_vars: &[(&str, &str)],
+    name_filter: Option<&str>,
+) -> anyhow::Result<()> {
+    use super::hooks::{HookFailureStrategy, HookPipeline};
+    use worktrunk::config::CommandPhase;
+
+    let Some(command_config) = config else {
+        return Ok(());
+    };
+
+    let pipeline = HookPipeline::new(*ctx);
+    let phase = match hook_type {
+        HookType::PostCreate => CommandPhase::PostCreate,
+        HookType::PostStart => CommandPhase::PostStart,
+        HookType::PreCommit => CommandPhase::PreCommit,
+        HookType::PreMerge => CommandPhase::PreMerge,
+        HookType::PostMerge => CommandPhase::PostMerge,
+        HookType::PreRemove => CommandPhase::PreRemove,
+    };
+    let label = hook_type.to_string().to_lowercase().replace(' ', "-");
+
+    pipeline.run_sequential(
+        command_config,
+        phase,
+        false, // auto_trust=false, require approval for standalone
+        extra_vars,
+        &label,
+        hook_type,
+        HookFailureStrategy::FailFast,
+        name_filter,
+    )
 }
 
 fn check_hook_configured<T>(hook: &Option<T>, hook_type: HookType) -> anyhow::Result<()> {
@@ -158,7 +223,7 @@ pub fn handle_squash(
             "Skipping pre-commit hook (<bright-black>--no-verify</>)"
         )))?;
     } else if let Some(ref config) = project_config {
-        HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust)?;
+        HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust, None)?;
     }
 
     // Get merge base with target branch

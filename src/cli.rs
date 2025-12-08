@@ -614,6 +614,10 @@ pub enum StepCommand {
 
     /// Run post-create hook
     PostCreate {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -621,6 +625,10 @@ pub enum StepCommand {
 
     /// Run post-start hook
     PostStart {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -628,6 +636,10 @@ pub enum StepCommand {
 
     /// Run pre-commit hook
     PreCommit {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -635,6 +647,10 @@ pub enum StepCommand {
 
     /// Run pre-merge hook
     PreMerge {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -642,6 +658,10 @@ pub enum StepCommand {
 
     /// Run post-merge hook
     PostMerge {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -649,6 +669,10 @@ pub enum StepCommand {
 
     /// Run pre-remove hook
     PreRemove {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,

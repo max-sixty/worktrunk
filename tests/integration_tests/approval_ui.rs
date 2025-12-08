@@ -443,3 +443,136 @@ fn test_step_pre_merge_target_is_current_branch() {
         "{{ target }} should be current branch, not default branch"
     );
 }
+
+/// Test running a specific named hook command
+#[test]
+fn test_step_hook_run_named_command() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Config with multiple named commands
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo 'running test' > test.txt"
+lint = "echo 'running lint' > lint.txt"
+build = "echo 'running build' > build.txt"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    // Run only the "lint" command with --force to skip approval
+    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["step", "pre-merge", "lint", "--force"])
+        .current_dir(repo.root_path())
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt step pre-merge lint");
+
+    assert!(
+        output.status.success(),
+        "wt step pre-merge lint failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Only lint.txt should exist
+    assert!(
+        repo.root_path().join("lint.txt").exists(),
+        "lint.txt should exist (lint command ran)"
+    );
+    assert!(
+        !repo.root_path().join("test.txt").exists(),
+        "test.txt should NOT exist (test command should not have run)"
+    );
+    assert!(
+        !repo.root_path().join("build.txt").exists(),
+        "build.txt should NOT exist (build command should not have run)"
+    );
+}
+
+/// Test error message when named hook command doesn't exist
+#[test]
+fn test_step_hook_unknown_name_error() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Config with multiple named commands
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo 'test'"
+lint = "echo 'lint'"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    // Run with a name that doesn't exist
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(
+            &repo,
+            "step",
+            &["pre-merge", "nonexistent", "--force"],
+            None,
+        );
+        assert_cmd_snapshot!("step_hook_unknown_name_error", cmd);
+    });
+}
+
+/// Test error message when hook has no named commands
+#[test]
+fn test_step_hook_name_filter_on_unnamed_command() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Config with a single unnamed command (no table)
+    repo.write_project_config(r#"pre-merge = "echo 'test'""#);
+    repo.commit("Add pre-merge hook");
+
+    // Run with a name filter on a hook that has no named commands
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "step", &["pre-merge", "test", "--force"], None);
+        assert_cmd_snapshot!("step_hook_name_filter_on_unnamed", cmd);
+    });
+}
+
+/// Test running all hooks (no name filter) still works
+#[test]
+fn test_step_hook_run_all_commands() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Config with multiple named commands
+    repo.write_project_config(
+        r#"[pre-merge]
+first = "echo 'first' >> output.txt"
+second = "echo 'second' >> output.txt"
+third = "echo 'third' >> output.txt"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    // Run without name filter (all commands should run)
+    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["step", "pre-merge", "--force"])
+        .current_dir(repo.root_path())
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt step pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt step pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // All three commands should have written to output.txt
+    let output_file = repo.root_path().join("output.txt");
+    let content = fs::read_to_string(&output_file).expect("output.txt should exist");
+    let lines: Vec<&str> = content.lines().collect();
+
+    assert_eq!(
+        lines,
+        vec!["first", "second", "third"],
+        "All commands should have run in order"
+    );
+}

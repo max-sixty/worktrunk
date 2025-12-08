@@ -150,7 +150,7 @@ impl CommitOptions<'_> {
             )))?;
         } else if let Some(ref config) = project_config {
             let pipeline = HookPipeline::new(*self.ctx);
-            pipeline.run_pre_commit(config, self.target_branch, self.auto_trust)?;
+            pipeline.run_pre_commit(config, self.target_branch, self.auto_trust, None)?;
         }
 
         if self.warn_about_untracked && self.stage_mode == StageMode::All {

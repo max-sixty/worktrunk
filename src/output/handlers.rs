@@ -483,7 +483,7 @@ fn handle_removed_worktree_output(
             main_path,
             false, // force=false, prompt for approval
         );
-        execute_pre_remove_commands(&ctx, false)?;
+        execute_pre_remove_commands(&ctx, false, None)?;
     }
 
     // Handle detached HEAD case (no branch known)
