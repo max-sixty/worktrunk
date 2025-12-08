@@ -464,7 +464,14 @@ fn handle_removed_worktree_output(
                 "Removing worktree in background (detached HEAD, no branch to delete)",
             )?;
             let remove_command = build_remove_command(worktree_path, None);
-            spawn_detached(&repo, main_path, &remove_command, "detached", "remove")?;
+            spawn_detached(
+                &repo,
+                main_path,
+                &remove_command,
+                "detached",
+                "remove",
+                None,
+            )?;
         } else {
             let target_repo = worktrunk::git::Repository::at(worktree_path);
             let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
@@ -545,7 +552,14 @@ fn handle_removed_worktree_output(
             build_remove_command(worktree_path, should_delete_branch.then_some(branch_name));
 
         // Spawn the removal in background - runs from main_path (where we cd'd to)
-        spawn_detached(&repo, main_path, &remove_command, branch_name, "remove")?;
+        spawn_detached(
+            &repo,
+            main_path,
+            &remove_command,
+            branch_name,
+            "remove",
+            None,
+        )?;
 
         super::flush()?;
         Ok(())
@@ -603,6 +617,8 @@ fn handle_removed_worktree_output(
 /// stdout into stderr. This ensures deterministic output ordering (all output flows through stderr).
 /// Per CLAUDE.md: child process output goes to stderr, worktrunk output goes to stdout.
 ///
+/// If `stdin_content` is provided, it will be piped to the command's stdin (used for hook context JSON).
+///
 /// Returns error if command exits with non-zero status.
 ///
 /// ## Signal Handling (Unix)
@@ -616,7 +632,9 @@ pub(crate) fn execute_streaming(
     command: &str,
     working_dir: &std::path::Path,
     redirect_stdout_to_stderr: bool,
+    stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
+    use std::io::Write;
     use std::process::Command;
     use worktrunk::git::WorktrunkError;
 
@@ -628,11 +646,17 @@ pub(crate) fn execute_streaming(
         command.to_string()
     };
 
+    let stdin_mode = if stdin_content.is_some() {
+        std::process::Stdio::piped()
+    } else {
+        std::process::Stdio::null()
+    };
+
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(&command_to_run)
         .current_dir(working_dir)
-        .stdin(std::process::Stdio::null()) // Null stdin - child gets EOF immediately
+        .stdin(stdin_mode)
         .stdout(std::process::Stdio::inherit()) // Preserve TTY for output
         .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
         // Prevent vergen "overridden" warning in nested cargo builds when run via `cargo run`.
@@ -644,6 +668,19 @@ pub(crate) fn execute_streaming(
                 message: format!("Failed to execute command: {}", e),
             })
         })?;
+
+    // Write stdin content if provided (used for hook context JSON)
+    // We ignore write errors here because:
+    // 1. The child may have already exited (broken pipe)
+    // 2. Hooks that don't read stdin will still work
+    // 3. Hooks that need stdin will fail with their own error message
+    if let Some(content) = stdin_content
+        && let Some(mut stdin) = child.stdin.take()
+    {
+        // Write and close stdin immediately so the child doesn't block waiting for more input
+        let _ = stdin.write_all(content.as_bytes());
+        // stdin is dropped here, closing the pipe
+    }
 
     // Wait for command to complete
     let status = child.wait().map_err(|e| {
@@ -682,6 +719,9 @@ pub(crate) fn execute_streaming(
 /// Merges stdout into stderr using shell redirection (1>&2) to ensure deterministic output ordering.
 /// Per CLAUDE.md guidelines: child process output goes to stderr, worktrunk output goes to stdout.
 ///
+/// If `stdin_content` is provided, it will be piped to the command's stdin. This is used to pass
+/// hook context as JSON to hook commands.
+///
 /// ## Color Bleeding Prevention
 ///
 /// This function explicitly resets ANSI codes on stderr before executing child commands.
@@ -700,6 +740,7 @@ pub(crate) fn execute_streaming(
 pub fn execute_command_in_worktree(
     worktree_path: &std::path::Path,
     command: &str,
+    stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use worktrunk::styling::{eprint, stderr};
@@ -715,7 +756,7 @@ pub fn execute_command_in_worktree(
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
     // Execute with stdout→stderr redirect for deterministic ordering
-    execute_streaming(command, worktree_path, true)?;
+    execute_streaming(command, worktree_path, true, stdin_content)?;
 
     // Flush to ensure all output appears before we continue
     super::flush()?;

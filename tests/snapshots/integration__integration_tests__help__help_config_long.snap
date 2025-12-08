@@ -152,7 +152,7 @@ Create [2m.config/wt.toml[0m in the repository root:
   [2mtest = "npm test"[0m
   [2mlint = "npm run lint"[0m
 
-See Hooks for complete documentation on hook types, execution order, and template variables.
+See Hooks for complete documentation on hook types, execution order, template variables, and JSON context.
 
 [32mShell integration[0m
 

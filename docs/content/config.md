@@ -138,7 +138,7 @@ test = "npm test"
 lint = "npm run lint"
 ```
 
-See [Hooks](@/hooks.md) for complete documentation on hook types, execution order, and template variables.
+See [Hooks](@/hooks.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hooks.md#json-context).
 
 ## Shell integration
 

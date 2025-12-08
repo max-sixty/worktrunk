@@ -51,6 +51,8 @@ wt step push
 - `pre-merge` — Before pushing to target
 - `post-merge` — After merge cleanup
 
+Hooks receive context as JSON on stdin and support template variables.
+
 ## See also
 
 - [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically

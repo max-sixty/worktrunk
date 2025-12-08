@@ -82,6 +82,8 @@ Manual merge workflow with review between steps:
 - [2mpre-merge[0m — Before pushing to target
 - [2mpost-merge[0m — After merge cleanup
 
+Hooks receive context as JSON on stdin and support template variables.
+
 [32mSee also[0m
 
 - wt merge — Runs commit → squash → rebase → hooks → push → cleanup automatically

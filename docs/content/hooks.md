@@ -89,6 +89,48 @@ post-create = "echo '{{ short_commit }}' > .version"
 pre-merge = "echo 'Merging {{ branch }} into {{ target }}'"
 ```
 
+## JSON context
+
+Hooks receive all context variables as JSON on stdin. This allows hooks written in any language to access worktree information.
+
+```toml
+# .config/wt.toml — paths are relative to the worktree root
+post-create = "./scripts/setup.py"
+```
+
+```python
+#!/usr/bin/env python3
+# scripts/setup.py
+import json, sys
+
+ctx = json.load(sys.stdin)
+print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
+print(f"Worktree: {ctx['worktree']}")
+print(f"Hook: {ctx['hook_type']} {ctx.get('hook_name', '(unnamed)')}")
+```
+
+The JSON contains all the same fields as template variables, plus hook metadata:
+
+```json
+{
+  "repo": "my-project",
+  "branch": "feature-foo",
+  "worktree": "/path/to/my-project.feature-foo",
+  "worktree_name": "my-project.feature-foo",
+  "repo_root": "/path/to/my-project",
+  "default_branch": "main",
+  "commit": "abc123...",
+  "short_commit": "abc123",
+  "remote": "origin",
+  "upstream": "origin/feature-foo",
+  "target": "main",
+  "hook_type": "post-create",
+  "hook_name": "setup"
+}
+```
+
+Optional fields (`default_branch`, `commit`, `short_commit`, `remote`, `upstream`, `target`, `hook_name`) are only present when available.
+
 ## Hook details
 
 ### post-create

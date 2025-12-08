@@ -63,9 +63,11 @@ impl<'a> HookPipeline<'a> {
             crate::output::progress(format!("{label}:"))?;
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
-            if let Err(err) =
-                execute_command_in_worktree(self.ctx.worktree_path, &prepared.expanded)
-            {
+            if let Err(err) = execute_command_in_worktree(
+                self.ctx.worktree_path,
+                &prepared.expanded,
+                Some(&prepared.context_json),
+            ) {
                 // Extract raw message and exit code from error
                 let (err_msg, exit_code) =
                     if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
@@ -153,6 +155,7 @@ impl<'a> HookPipeline<'a> {
                 &prepared.expanded,
                 self.ctx.branch,
                 &operation,
+                Some(&prepared.context_json),
             ) {
                 let err_msg = err.to_string();
                 let message = match &prepared.name {

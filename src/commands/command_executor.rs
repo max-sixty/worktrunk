@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
-use worktrunk::config::{Command, CommandConfig, CommandPhase, WorktrunkConfig, expand_template};
+use worktrunk::config::{
+    Command, CommandConfig, CommandPhase, WorktrunkConfig, expand_template, sanitize_branch_name,
+};
 use worktrunk::git::{Repository, WorktrunkError};
 
 use super::command_approval::approve_command_batch;
@@ -9,6 +11,7 @@ use super::command_approval::approve_command_batch;
 pub struct PreparedCommand {
     pub name: Option<String>,
     pub expanded: String,
+    pub context_json: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -41,72 +44,89 @@ impl<'a> CommandContext<'a> {
     }
 }
 
-/// Expand commands from a CommandConfig without approval
+/// Build hook context as a HashMap for JSON serialization and template expansion.
 ///
-/// This is the canonical command expansion implementation.
-/// Returns cloned commands with their expanded forms filled in.
-fn expand_commands(
-    commands: &[Command],
+/// The resulting HashMap is passed to hook commands as JSON on stdin,
+/// and used directly for template variable expansion.
+fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
-) -> anyhow::Result<Vec<Command>> {
-    if commands.is_empty() {
-        return Ok(Vec::new());
-    }
-
+) -> HashMap<String, String> {
     let repo_root = ctx.repo_root;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    let mut extras_owned = HashMap::new();
-    extras_owned.insert(
-        "worktree".to_string(),
-        ctx.worktree_path.to_string_lossy().to_string(),
-    );
-    extras_owned.insert(
-        "repo_root".to_string(),
-        repo_root.to_string_lossy().to_string(),
-    );
+    let worktree = ctx.worktree_path.to_string_lossy();
+    let worktree_name = ctx
+        .worktree_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    let mut map = HashMap::new();
+    map.insert("repo".into(), repo_name.into());
+    map.insert("branch".into(), sanitize_branch_name(ctx.branch));
+    map.insert("worktree".into(), worktree.into());
+    map.insert("worktree_name".into(), worktree_name.into());
+    map.insert("repo_root".into(), repo_root.to_string_lossy().into());
+
     if let Ok(default_branch) = ctx.repo.default_branch() {
-        extras_owned.insert("default_branch".to_string(), default_branch);
+        map.insert("default_branch".into(), default_branch);
     }
 
-    // Git ref variables
     if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {
         let commit = commit.trim();
-        extras_owned.insert("commit".to_string(), commit.to_string());
-        // Short commit is first 7 characters
+        map.insert("commit".into(), commit.into());
         if commit.len() >= 7 {
-            extras_owned.insert("short_commit".to_string(), commit[..7].to_string());
+            map.insert("short_commit".into(), commit[..7].into());
         }
     }
 
-    // Remote variables
     if let Ok(remote) = ctx.repo.primary_remote() {
-        extras_owned.insert("remote".to_string(), remote.clone());
-        // Upstream tracking branch (if configured)
+        map.insert("remote".into(), remote);
         if let Ok(Some(upstream)) = ctx.repo.upstream_branch(ctx.branch) {
-            extras_owned.insert("upstream".to_string(), upstream);
+            map.insert("upstream".into(), upstream);
         }
     }
 
-    // Worktree name (basename of worktree path)
-    if let Some(name) = ctx.worktree_path.file_name().and_then(|n| n.to_str()) {
-        extras_owned.insert("worktree_name".to_string(), name.to_string());
+    // Add extra vars (e.g., target branch for merge)
+    for (k, v) in extra_vars {
+        map.insert((*k).into(), (*v).into());
     }
 
-    for &(key, value) in extra_vars {
-        extras_owned.insert(key.to_string(), value.to_string());
+    map
+}
+
+/// Expand commands from a CommandConfig without approval
+///
+/// This is the canonical command expansion implementation.
+/// Returns cloned commands with their expanded forms filled in, each with per-command JSON context.
+fn expand_commands(
+    commands: &[Command],
+    ctx: &CommandContext<'_>,
+    extra_vars: &[(&str, &str)],
+) -> anyhow::Result<Vec<(Command, String)>> {
+    if commands.is_empty() {
+        return Ok(Vec::new());
     }
 
-    let extras_ref: HashMap<&str, &str> = extras_owned
+    let base_context = build_hook_context(ctx, extra_vars);
+
+    let repo_name = ctx
+        .repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    // Convert to &str references for expand_template
+    let extras_ref: HashMap<&str, &str> = base_context
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let mut expanded_commands = Vec::new();
+    let mut result = Vec::new();
 
     for cmd in commands {
         let expanded_str = expand_template(&cmd.template, repo_name, ctx.branch, &extras_ref)
@@ -117,15 +137,28 @@ fn expand_commands(
                     e
                 )
             })?;
-        expanded_commands.push(Command::with_expansion(
-            cmd.name.clone(),
-            cmd.template.clone(),
-            expanded_str,
-            cmd.phase,
+
+        // Build per-command JSON with hook_type and hook_name
+        let mut cmd_context = base_context.clone();
+        cmd_context.insert("hook_type".into(), cmd.phase.to_string());
+        if let Some(ref name) = cmd.name {
+            cmd_context.insert("hook_name".into(), name.clone());
+        }
+        let context_json = serde_json::to_string(&cmd_context)
+            .expect("HashMap<String, String> serialization should never fail");
+
+        result.push((
+            Command::with_expansion(
+                cmd.name.clone(),
+                cmd.template.clone(),
+                expanded_str,
+                cmd.phase,
+            ),
+            context_json,
         ));
     }
 
-    Ok(expanded_commands)
+    Ok(result)
 }
 
 /// Prepare project commands for execution with approval
@@ -133,7 +166,7 @@ fn expand_commands(
 /// This function:
 /// 1. Expands command templates with context variables
 /// 2. Requests user approval for unapproved commands (unless auto_trust or force)
-/// 3. Returns prepared commands ready for execution
+/// 3. Returns prepared commands ready for execution, each with JSON context for stdin
 ///
 /// Returns `Err(WorktrunkError::CommandNotApproved)` if the user declines approval.
 pub fn prepare_project_commands(
@@ -151,7 +184,13 @@ pub fn prepare_project_commands(
     let project_id = ctx.repo.project_identifier()?;
 
     // Expand commands before approval for transparency
-    let expanded_commands = expand_commands(&commands, ctx, extra_vars)?;
+    let expanded_with_json = expand_commands(&commands, ctx, extra_vars)?;
+
+    // Extract just the commands for approval
+    let expanded_commands: Vec<_> = expanded_with_json
+        .iter()
+        .map(|(cmd, _)| cmd.clone())
+        .collect();
 
     // Flush stdout before prompting on stderr to ensure correct output ordering
     // This prevents the approval prompt from appearing before previous success messages
@@ -170,11 +209,12 @@ pub fn prepare_project_commands(
         return Err(WorktrunkError::CommandNotApproved.into());
     }
 
-    Ok(expanded_commands
+    Ok(expanded_with_json
         .into_iter()
-        .map(|cmd| PreparedCommand {
+        .map(|(cmd, context_json)| PreparedCommand {
             name: cmd.name,
             expanded: cmd.expanded,
+            context_json,
         })
         .collect())
 }
