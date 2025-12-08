@@ -462,15 +462,15 @@ build = "echo 'running build' > build.txt"
 
     // Run only the "lint" command with --force to skip approval
     let output = Command::new(env!("CARGO_BIN_EXE_wt"))
-        .args(["step", "pre-merge", "lint", "--force"])
+        .args(["hook", "pre-merge", "lint", "--force"])
         .current_dir(repo.root_path())
         .env("NO_COLOR", "1")
         .output()
-        .expect("Failed to run wt step pre-merge lint");
+        .expect("Failed to run wt hook pre-merge lint");
 
     assert!(
         output.status.success(),
-        "wt step pre-merge lint failed: {}",
+        "wt hook pre-merge lint failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -509,7 +509,7 @@ lint = "echo 'lint'"
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(
             &repo,
-            "step",
+            "hook",
             &["pre-merge", "nonexistent", "--force"],
             None,
         );
@@ -530,7 +530,7 @@ fn test_step_hook_name_filter_on_unnamed_command() {
     // Run with a name filter on a hook that has no named commands
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "step", &["pre-merge", "test", "--force"], None);
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "test", "--force"], None);
         assert_cmd_snapshot!("step_hook_name_filter_on_unnamed", cmd);
     });
 }
@@ -553,15 +553,15 @@ third = "echo 'third' >> output.txt"
 
     // Run without name filter (all commands should run)
     let output = Command::new(env!("CARGO_BIN_EXE_wt"))
-        .args(["step", "pre-merge", "--force"])
+        .args(["hook", "pre-merge", "--force"])
         .current_dir(repo.root_path())
         .env("NO_COLOR", "1")
         .output()
-        .expect("Failed to run wt step pre-merge");
+        .expect("Failed to run wt hook pre-merge");
 
     assert!(
         output.status.success(),
-        "wt step pre-merge failed: {}",
+        "wt hook pre-merge failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 

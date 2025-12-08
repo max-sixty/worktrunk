@@ -288,8 +288,10 @@ fn adjust_completion_command(cmd: Command) -> Command {
             .mut_subcommand("rebase", |rebase| {
                 rebase.mut_arg("target", |arg| arg.last(true))
             })
-            // Hook subcommands - allow name after --force
-            .mut_subcommand("post-create", |c| c.mut_arg("name", |arg| arg.last(true)))
+    })
+    .mut_subcommand("hook", |hook| {
+        // Hook subcommands - allow name after --force
+        hook.mut_subcommand("post-create", |c| c.mut_arg("name", |arg| arg.last(true)))
             .mut_subcommand("post-start", |c| c.mut_arg("name", |arg| arg.last(true)))
             .mut_subcommand("pre-commit", |c| c.mut_arg("name", |arg| arg.last(true)))
             .mut_subcommand("pre-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
