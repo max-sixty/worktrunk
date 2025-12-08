@@ -133,11 +133,12 @@ $ cargo test --test integration --features shell-integration-tests
 ### Releases
 
 1. **Update the changelog**: Move items from `## Unreleased` to a new version section
-2. **Run release**: `cargo release patch --execute` (or `minor` / `major`)
-3. **Push the tag**: `git push --tags` (triggers CI build and GitHub release)
-4. **Update Homebrew**: `./dev/update-homebrew.sh`
+2. **Bump version and commit**: Update `Cargo.toml` version, commit with "Release x.y.z"
+3. **Tag and push**: `git tag vX.Y.Z && git push && git push --tags`
+4. **Merge to main**: Create PR or merge release branch to main
+5. **Update Homebrew**: After CI completes, update the [homebrew-worktrunk](https://github.com/max-sixty/homebrew-worktrunk) formula
 
 ```bash
-$ cargo release patch --execute   # 0.1.0 -> 0.1.1
+$ cargo release patch --execute   # Alternatively: bumps version, commits, tags
 $ cargo release minor --execute   # 0.1.0 -> 0.2.0
 ```
