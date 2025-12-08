@@ -21,7 +21,6 @@ enum Severity {
 enum Category {
     HiddenFlag,
     Consistency,
-    ZshDescribeSyntax,
 }
 
 impl Issue {
@@ -94,81 +93,6 @@ fn validate_zsh(content: &str) -> Vec<Issue> {
                 Category::HiddenFlag,
                 "Hidden flag --internal appears in completions",
             ));
-        }
-    }
-
-    // Validate _describe syntax in the sed command
-    // The zsh _describe function accepts these options (from its getopts string):
-    //   -o    → sets type to "options" (NOT -o nosort!)
-    //   -O    → sets type to "options" with noprefix
-    //   -t:   → sets type to OPTARG
-    //   -1|-2|-J|-V|-x → flags added to _jvx12 array
-    // Importantly: -V does NOT take an argument, and -o nosort is INVALID.
-    issues.extend(validate_zsh_describe_syntax(content));
-
-    issues
-}
-
-/// Validate _describe syntax in the sed command within zsh init script
-fn validate_zsh_describe_syntax(content: &str) -> Vec<Issue> {
-    let mut issues = Vec::new();
-
-    // Find sed commands that modify _describe
-    for line in content.lines() {
-        if !line.contains("sed") || !line.contains("_describe") {
-            continue;
-        }
-
-        // Extract the sed replacement pattern (the part after the second /)
-        // sed "s/SEARCH/REPLACEMENT/" - we want REPLACEMENT
-        // Example: sed "s/_describe 'values'/_describe -V 'values'/"
-        //          SEARCH = _describe 'values'
-        //          REPLACEMENT = _describe -V 'values'
-        if let Some(sed_start) = line.find("sed \"s/") {
-            let after_sed = &line[sed_start + 7..]; // Skip 'sed "s/'
-            // Find the second / (end of search pattern, start of replacement)
-            if let Some(second_slash) = after_sed.find('/') {
-                let replacement_start = second_slash + 1;
-                let replacement_part = &after_sed[replacement_start..];
-                // Find the closing / of replacement
-                if let Some(third_slash) = replacement_part.find('/') {
-                    let replacement = &replacement_part[..third_slash];
-
-                    // Check for "-V word" where word is not an option and not 'values'
-                    // The -V flag in _describe does NOT take an argument
-                    if let Some(v_pos) = replacement.find("-V ") {
-                        let after_v = &replacement[v_pos + 3..];
-                        let next_word: &str = after_v.split_whitespace().next().unwrap_or("");
-                        // If the next word is not an option (starting with -) and not 'values',
-                        // then -V is being incorrectly given an argument
-                        if !next_word.starts_with('-')
-                            && !next_word.starts_with('\'')
-                            && !next_word.is_empty()
-                        {
-                            issues.push(Issue::error(
-                                "zsh",
-                                Category::ZshDescribeSyntax,
-                                format!(
-                                    "_describe's -V flag does not take an argument, \
-                                     but found: -V {}",
-                                    next_word
-                                ),
-                            ));
-                        }
-                    }
-
-                    // Check for "-o nosort" which is invalid for _describe
-                    // In _describe, -o means "options mode", not ordering
-                    if replacement.contains("-o nosort") {
-                        issues.push(Issue::error(
-                            "zsh",
-                            Category::ZshDescribeSyntax,
-                            "_describe's -o flag means 'options mode', not ordering. \
-                             '-o nosort' is invalid syntax. Use just -V for unsorted groups.",
-                        ));
-                    }
-                }
-            }
         }
     }
 

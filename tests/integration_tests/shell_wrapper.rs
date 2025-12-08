@@ -2961,6 +2961,111 @@ fi
         );
     }
 
+    /// Black-box test: zsh completion produces correct subcommands.
+    ///
+    /// Sources actual `wt config shell init zsh`, triggers completion, snapshots result.
+    #[test]
+    fn test_zsh_completion_subcommands() {
+        let wt_bin = get_cargo_bin("wt");
+        let init = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "zsh"])
+            .output()
+            .unwrap();
+        let shell_integration = String::from_utf8_lossy(&init.stdout);
+
+        // Override _describe to print completions (it normally writes to zsh's internal state)
+        let script = format!(
+            r#"
+autoload -Uz compinit && compinit -i 2>/dev/null
+_describe() {{
+    while [[ "$1" == -* ]]; do shift; done; shift
+    for arr in "$@"; do for item in "${{(@P)arr}}"; do echo "${{item%%:*}}"; done; done
+}}
+{shell_integration}
+words=(wt "") CURRENT=2
+_wt_lazy_complete
+"#
+        );
+
+        let output = std::process::Command::new("zsh")
+            .arg("-c")
+            .arg(&script)
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    wt_bin.parent().unwrap().display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .output()
+            .unwrap();
+
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    }
+
+    /// Black-box test: bash completion produces correct subcommands.
+    ///
+    /// Sources actual `wt config shell init bash`, triggers completion, snapshots result.
+    #[test]
+    fn test_bash_completion_subcommands() {
+        let wt_bin = get_cargo_bin("wt");
+        let init = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "bash"])
+            .output()
+            .unwrap();
+        let shell_integration = String::from_utf8_lossy(&init.stdout);
+
+        let script = format!(
+            r#"
+{shell_integration}
+COMP_WORDS=(wt "") COMP_CWORD=1
+_wt_lazy_complete
+for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
+"#
+        );
+
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    wt_bin.parent().unwrap().display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .output()
+            .unwrap();
+
+        assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    }
+
+    /// Black-box test: fish completion produces correct subcommands.
+    ///
+    /// Fish completions call binary with COMPLETE=fish (separate from init script).
+    #[test]
+    fn test_fish_completion_subcommands() {
+        let wt_bin = get_cargo_bin("wt");
+
+        let output = std::process::Command::new(&wt_bin)
+            .args(["--", "wt", ""])
+            .env("COMPLETE", "fish")
+            .env("_CLAP_COMPLETE_INDEX", "1")
+            .output()
+            .unwrap();
+
+        // Fish format is "value\tdescription" - extract just values
+        let completions: String = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.split('\t').next().unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_snapshot!(completions);
+    }
+
     // ========================================================================
     // Stderr/Stdout Redirection Tests
     // ========================================================================

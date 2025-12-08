@@ -1,0 +1,12 @@
+---
+source: tests/integration_tests/shell_wrapper.rs
+expression: completions
+---
+config
+step
+hook
+select
+list
+switch
+remove
+merge
