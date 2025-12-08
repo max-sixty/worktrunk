@@ -660,29 +660,30 @@ fn test_complete_switch_base_flag_after_branch() {
 }
 
 #[test]
-fn test_complete_remove_shows_branches() {
+fn test_complete_remove_excludes_remote_only_branches() {
     let mut temp = TestRepo::new();
     temp.commit("initial");
 
     // Create worktree (creates "feature/new" branch)
     temp.add_worktree("feature/new");
 
-    // Create another branch without worktree
+    // Create another local branch without worktree
     Command::new("git")
         .args(["branch", "hotfix/bug"])
         .current_dir(temp.root_path())
         .output()
         .unwrap();
 
-    // Test completion for remove (should show ALL branches)
+    // Test completion for remove (should show local branches, exclude remote-only)
     let output = temp.completion_cmd(&["wt", "remove", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let branches: Vec<&str> = stdout.lines().collect();
 
-    // Should include both branches
+    // Should include branches with worktrees
     assert!(branches.iter().any(|b| b.contains("feature/new")));
+    // Should include local branches without worktrees (can still delete the branch)
     assert!(branches.iter().any(|b| b.contains("hotfix/bug")));
 }
 

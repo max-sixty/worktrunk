@@ -146,6 +146,44 @@ fn test_remove_nonexistent_worktree() {
 }
 
 #[test]
+fn test_remove_remote_only_branch() {
+    let repo = setup_remove_repo();
+
+    // Create a remote-only branch by pushing a branch then deleting it locally
+    Command::new("git")
+        .args(["branch", "remote-feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["push", "origin", "remote-feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["branch", "-D", "remote-feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Try to remove a branch that only exists on remote - should get helpful error
+    snapshot_remove(
+        "remove_remote_only_branch",
+        &repo,
+        &["remote-feature"],
+        None,
+    );
+}
+
+#[test]
 fn test_remove_by_name_dirty_target() {
     let mut repo = setup_remove_repo();
 
@@ -983,5 +1021,155 @@ approved-commands = ["echo 'hook ran' > {}"]
     assert!(
         !worktree_path.exists(),
         "Worktree should be removed even with --no-verify"
+    );
+}
+
+/// Test that pre-remove hook runs for detached HEAD worktrees.
+///
+/// Even when a worktree is in detached HEAD state (no branch), the pre-remove
+/// hook should still execute.
+#[test]
+fn test_pre_remove_hook_runs_for_detached_head() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create marker file path in the repo root
+    // Use short filename to avoid terminal line-wrapping differences between platforms
+    // (macOS temp paths are ~60 chars vs Linux ~20 chars, affecting wrap points)
+    let marker_file = repo.root_path().join("m.txt");
+    let marker_path = marker_file.to_string_lossy().replace('\\', "/");
+
+    // Create project config with pre-remove hook that creates a marker file
+    repo.write_project_config(&format!(r#"pre-remove = "touch {marker_path}""#,));
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(&format!(
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+
+[projects."repo"]
+approved-commands = ["touch {marker_path}"]
+"#,
+    ));
+
+    // Create a worktree and detach HEAD
+    let worktree_path = repo.add_worktree("feature-detached-hook");
+    repo.detach_head_in_worktree("feature-detached-hook");
+
+    // Remove with --no-background to ensure synchronous execution
+    snapshot_remove(
+        "pre_remove_hook_runs_for_detached_head",
+        &repo,
+        &["--no-background"],
+        Some(&worktree_path),
+    );
+
+    // Marker file should exist - hook ran
+    assert!(
+        marker_file.exists(),
+        "Pre-remove hook should run for detached HEAD worktrees"
+    );
+}
+
+/// Test that pre-remove hook runs for detached HEAD worktrees in background mode.
+///
+/// This complements `test_pre_remove_hook_runs_for_detached_head` by verifying
+/// the hook also runs when removal happens in background (the default).
+#[test]
+fn test_pre_remove_hook_runs_for_detached_head_background() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create marker file path in the repo root
+    let marker_file = repo.root_path().join("detached-bg-hook-marker.txt");
+
+    // Create project config with pre-remove hook that creates a marker file
+    let marker_path = marker_file.to_string_lossy().replace('\\', "/");
+    repo.write_project_config(&format!(r#"pre-remove = "touch {marker_path}""#,));
+    repo.commit("Add config");
+
+    // Pre-approve the commands
+    repo.write_test_config(&format!(
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+
+[projects."repo"]
+approved-commands = ["touch {marker_path}"]
+"#,
+    ));
+
+    // Create a worktree and detach HEAD
+    let worktree_path = repo.add_worktree("feature-detached-bg");
+    repo.detach_head_in_worktree("feature-detached-bg");
+
+    // Remove in background mode (default)
+    snapshot_remove(
+        "pre_remove_hook_runs_for_detached_head_background",
+        &repo,
+        &[],
+        Some(&worktree_path),
+    );
+
+    // Marker file should exist - hook ran before background spawn
+    assert!(
+        marker_file.exists(),
+        "Pre-remove hook should run for detached HEAD worktrees in background mode"
+    );
+}
+
+/// Test that {{ branch }} template variable expands to empty string for detached HEAD.
+///
+/// This is a non-snapshot test to avoid cross-platform line-wrapping differences
+/// (macOS temp paths are ~60 chars vs Linux ~20 chars). The snapshot version
+/// of this test (`test_pre_remove_hook_runs_for_detached_head`) verifies the hook runs;
+/// this test verifies the specific template expansion behavior.
+#[test]
+fn test_pre_remove_hook_branch_expansion_detached_head() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create a file where the hook will write the branch template expansion
+    let branch_file = repo.root_path().join("branch-expansion.txt");
+    let branch_path = branch_file.to_string_lossy().replace('\\', "/");
+
+    // Create project config with hook that writes {{ branch }} to file
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'branch={{{{ branch }}}}' > {branch_path}""#,
+    ));
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(&format!(
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+
+[projects."repo"]
+approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
+"#,
+    ));
+
+    // Create a worktree and detach HEAD
+    let worktree_path = repo.add_worktree("feature-branch-test");
+    repo.detach_head_in_worktree("feature-branch-test");
+
+    // Run wt remove (not a snapshot test - just verify behavior)
+    let output = wt_command()
+        .args(["remove", "--no-background"])
+        .current_dir(&worktree_path)
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .output()
+        .expect("Failed to execute wt remove");
+
+    assert!(
+        output.status.success(),
+        "wt remove should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify {{ branch }} expanded to empty string
+    let content =
+        std::fs::read_to_string(&branch_file).expect("Hook should have created the branch file");
+    assert_eq!(
+        content.trim(),
+        "branch=",
+        "{{ branch }} should expand to empty string for detached HEAD worktrees"
     );
 }

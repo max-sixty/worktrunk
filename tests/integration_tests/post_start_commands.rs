@@ -363,6 +363,256 @@ fn test_post_create_upstream_template() {
     );
 }
 
+/// Test that hooks receive JSON context on stdin
+#[test]
+fn test_post_create_json_stdin() {
+    use crate::common::wt_command;
+
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create project config with a command that reads JSON from stdin
+    // Use cat to capture stdin to a file
+    repo.write_project_config(r#"post-create = "cat > context.json""#);
+
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["cat > context.json"]
+"#,
+    );
+
+    // Create worktree - this should pipe JSON to the hook's stdin
+    let temp_home = TempDir::new().unwrap();
+    let output = wt_command()
+        .args(["switch", "--create", "feature-json"])
+        .current_dir(repo.root_path())
+        .env("HOME", temp_home.path())
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .output()
+        .expect("failed to run wt switch");
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Find the worktree and read the JSON
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature-json");
+    let json_file = worktree_path.join("context.json");
+
+    assert!(
+        json_file.exists(),
+        "context.json should have been created from stdin"
+    );
+
+    let contents = fs::read_to_string(&json_file).unwrap();
+
+    // Parse and verify the JSON contains expected fields
+    let json: serde_json::Value = serde_json::from_str(&contents)
+        .unwrap_or_else(|e| panic!("Should be valid JSON: {}\nContents: {}", e, contents));
+
+    assert!(
+        json.get("repo").is_some(),
+        "JSON should contain 'repo' field"
+    );
+    assert!(
+        json.get("branch").is_some(),
+        "JSON should contain 'branch' field"
+    );
+    assert_eq!(
+        json["branch"].as_str(),
+        Some("feature-json"),
+        "Branch should be sanitized (feature-json)"
+    );
+    assert!(
+        json.get("worktree").is_some(),
+        "JSON should contain 'worktree' field"
+    );
+    assert!(
+        json.get("repo_root").is_some(),
+        "JSON should contain 'repo_root' field"
+    );
+    assert_eq!(
+        json["hook_type"].as_str(),
+        Some("post-create"),
+        "JSON should contain hook_type"
+    );
+}
+
+/// Test that an actual script file can read JSON from stdin
+#[test]
+fn test_post_create_script_reads_json() {
+    use crate::common::wt_command;
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create a scripts directory and a Python script that reads JSON from stdin
+    let scripts_dir = repo.root_path().join("scripts");
+    fs::create_dir_all(&scripts_dir).unwrap();
+
+    let script_content = r#"#!/usr/bin/env python3
+import json
+import sys
+
+ctx = json.load(sys.stdin)
+with open('hook_output.txt', 'w') as f:
+    f.write(f"repo={ctx['repo']}\n")
+    f.write(f"branch={ctx['branch']}\n")
+    f.write(f"hook_type={ctx['hook_type']}\n")
+    f.write(f"hook_name={ctx.get('hook_name', 'unnamed')}\n")
+"#;
+    let script_path = scripts_dir.join("setup.py");
+    fs::write(&script_path, script_content).unwrap();
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Create project config that runs the script
+    repo.write_project_config(
+        r#"[post-create]
+setup = "./scripts/setup.py"
+"#,
+    );
+
+    repo.commit("Add setup script and config");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["./scripts/setup.py"]
+"#,
+    );
+
+    // Create worktree
+    let temp_home = TempDir::new().unwrap();
+    let output = wt_command()
+        .args(["switch", "--create", "feature-script"])
+        .current_dir(repo.root_path())
+        .env("HOME", temp_home.path())
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .output()
+        .expect("failed to run wt switch");
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Find the worktree and verify the script wrote the expected output
+    let worktree_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("repo.feature-script");
+    let output_file = worktree_path.join("hook_output.txt");
+
+    assert!(
+        output_file.exists(),
+        "Script should have created hook_output.txt"
+    );
+
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("repo=repo"),
+        "Output should contain repo name: {}",
+        contents
+    );
+    assert!(
+        contents.contains("branch=feature-script"),
+        "Output should contain branch: {}",
+        contents
+    );
+    assert!(
+        contents.contains("hook_type=post-create"),
+        "Output should contain hook_type: {}",
+        contents
+    );
+    assert!(
+        contents.contains("hook_name=setup"),
+        "Output should contain hook_name: {}",
+        contents
+    );
+}
+
+/// Test that background hooks also receive JSON context on stdin
+#[test]
+fn test_post_start_json_stdin() {
+    use crate::common::wt_command;
+
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create project config with a background command that reads JSON from stdin
+    repo.write_project_config(r#"post-start = "cat > context.json""#);
+
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["cat > context.json"]
+"#,
+    );
+
+    // Create worktree
+    let temp_home = TempDir::new().unwrap();
+    let output = wt_command()
+        .args(["switch", "--create", "bg-json"])
+        .current_dir(repo.root_path())
+        .env("HOME", temp_home.path())
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
+        .output()
+        .expect("failed to run wt switch");
+
+    assert!(
+        output.status.success(),
+        "wt switch should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Find the worktree and wait for the background command to write the file
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.bg-json");
+    let json_file = worktree_path.join("context.json");
+
+    // Wait for file to exist and have content (cat creates empty file immediately)
+    wait_for_file(&json_file, Duration::from_secs(5));
+
+    // Give time for printf to pipe through
+    thread::sleep(Duration::from_millis(500));
+
+    let contents = fs::read_to_string(&json_file).unwrap();
+
+    // Parse and verify the JSON
+    let json: serde_json::Value = serde_json::from_str(&contents)
+        .unwrap_or_else(|e| panic!("Should be valid JSON: {}\nContents: {}", e, contents));
+
+    assert_eq!(
+        json["branch"].as_str(),
+        Some("bg-json"),
+        "Background hook should receive JSON with branch"
+    );
+    assert!(
+        json.get("repo").is_some(),
+        "Background hook should receive JSON with repo"
+    );
+    assert_eq!(
+        json["hook_type"].as_str(),
+        Some("post-start"),
+        "Background hook should receive hook_type"
+    );
+}
+
 // ============================================================================
 // Post-Start Command Tests (parallel, background)
 // ============================================================================

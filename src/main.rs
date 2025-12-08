@@ -732,7 +732,7 @@ fn main() {
                     }
                 }
             }
-            ConfigCommand::Create => handle_config_create(),
+            ConfigCommand::Create { project } => handle_config_create(project),
             ConfigCommand::Show { doctor } => handle_config_show(doctor),
             ConfigCommand::Cache { action } => match action {
                 CacheCommand::Show => handle_cache_show(),

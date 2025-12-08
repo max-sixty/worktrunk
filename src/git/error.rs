@@ -59,6 +59,10 @@ pub enum GitError {
     NoWorktreeFound {
         branch: String,
     },
+    RemoteOnlyBranch {
+        branch: String,
+        remote: String,
+    },
     WorktreePathOccupied {
         branch: String,
         path: PathBuf,
@@ -180,6 +184,13 @@ impl std::fmt::Display for GitError {
                 cwrite!(
                     f,
                     "{ERROR_EMOJI} <red>No worktree found for branch <bold>{branch}</></>"
+                )
+            }
+
+            GitError::RemoteOnlyBranch { branch, remote } => {
+                cwrite!(
+                    f,
+                    "{ERROR_EMOJI} <red>Branch <bold>{branch}</> exists only on remote ({remote}/{branch})</>\n\n{HINT_EMOJI} <dim>Use <bright-black>wt switch {branch}</> to create a local worktree</>"
                 )
             }
 

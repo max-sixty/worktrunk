@@ -269,15 +269,24 @@ pub enum ConfigCommand {
         action: ConfigShellCommand,
     },
 
-    /// Create user configuration file
+    /// Create configuration file
     #[command(
         after_long_help = concat!(
+            "## User config\n\n",
             "Creates `~/.config/worktrunk/config.toml` with the following content:\n\n```\n",
             include_str!("../dev/config.example.toml"),
+            "```\n\n",
+            "## Project config\n\n",
+            "With `--project`, creates `.config/wt.toml` in the current repository:\n\n```\n",
+            include_str!("../dev/wt.example.toml"),
             "```"
         )
     )]
-    Create,
+    Create {
+        /// Create project config (.config/wt.toml) instead of user config
+        #[arg(long)]
+        project: bool,
+    },
 
     /// Show configuration files & locations
     #[command(
@@ -709,6 +718,12 @@ Create user config file with documented examples:
 wt config create
 ```
 
+Create project config file (.config/wt.toml) for hooks:
+
+```console
+wt config create --project
+```
+
 Show current configuration and file locations:
 
 ```console
@@ -816,7 +831,7 @@ test = "npm test"
 lint = "npm run lint"
 ```
 
-See [wt hook](@/hook.md) for complete documentation on hook types, execution order, and template variables.
+See [wt hook](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
 
 ## Shell integration
 
@@ -1626,7 +1641,7 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
     )]
     Remove {
         /// Worktree or branch (@ for current)
-        #[arg(add = crate::completion::worktree_branch_completer())]
+        #[arg(add = crate::completion::local_branches_completer())]
         worktrees: Vec<String>,
 
         /// Keep branch after removal

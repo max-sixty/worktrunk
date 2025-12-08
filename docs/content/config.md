@@ -31,6 +31,12 @@ Create user config file with documented examples:
 wt config create
 ```
 
+Create project config file (.config/wt.toml) for hooks:
+
+```bash
+wt config create --project
+```
+
 Show current configuration and file locations:
 
 ```bash
@@ -138,7 +144,7 @@ test = "npm test"
 lint = "npm run lint"
 ```
 
-See [wt hook](@/hook.md) for complete documentation on hook types, execution order, and template variables.
+See [wt hook](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
 
 ## Shell integration
 
@@ -219,7 +225,7 @@ Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:
   shell      Shell integration setup
-  create     Create user configuration file
+  create     Create configuration file
   show       Show configuration files & locations
   cache      Manage caches (CI status, default branch)
   var        Get or set runtime variables (stored in git config)

@@ -31,19 +31,30 @@ pub fn maybe_handle_env_completion() -> bool {
 pub fn branch_value_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
+        exclude_remote_only: false,
     })
 }
 
-/// Branch completion for positional arguments that represent worktrees (switch/remove).
+/// Branch completion for positional arguments that represent worktrees (switch).
 pub fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: true,
+        exclude_remote_only: false,
+    })
+}
+
+/// Branch completion for remove command - excludes remote-only branches.
+pub fn local_branches_completer() -> ArgValueCompleter {
+    ArgValueCompleter::new(BranchCompleter {
+        suppress_with_create: false,
+        exclude_remote_only: true,
     })
 }
 
 #[derive(Clone, Copy)]
 struct BranchCompleter {
     suppress_with_create: bool,
+    exclude_remote_only: bool,
 }
 
 impl ValueCompleter for BranchCompleter {
@@ -55,7 +66,7 @@ impl ValueCompleter for BranchCompleter {
 
         // Filter branches by prefix - clap doesn't filter ArgValueCompleter results
         let prefix = current.to_string_lossy();
-        complete_branches(self.suppress_with_create)
+        complete_branches(self.suppress_with_create, self.exclude_remote_only)
             .into_iter()
             .filter(|candidate| {
                 candidate
@@ -67,7 +78,10 @@ impl ValueCompleter for BranchCompleter {
     }
 }
 
-fn complete_branches(suppress_with_create: bool) -> Vec<CompletionCandidate> {
+fn complete_branches(
+    suppress_with_create: bool,
+    exclude_remote_only: bool,
+) -> Vec<CompletionCandidate> {
     if suppress_with_create && suppress_switch_branch_completion() {
         return Vec::new();
     }
@@ -83,6 +97,9 @@ fn complete_branches(suppress_with_create: bool) -> Vec<CompletionCandidate> {
 
     branches
         .into_iter()
+        .filter(|branch| {
+            !exclude_remote_only || !matches!(branch.category, BranchCategory::Remote(_))
+        })
         .map(|branch| {
             let time_str = format_relative_time_short(branch.timestamp);
             let help = match branch.category {

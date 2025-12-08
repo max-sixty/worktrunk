@@ -18,8 +18,11 @@ use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
 
-/// Example configuration file content (displayed in help with values uncommented)
-const CONFIG_EXAMPLE: &str = include_str!("../../dev/config.example.toml");
+/// Example user configuration file content (displayed in help with values uncommented)
+const USER_CONFIG_EXAMPLE: &str = include_str!("../../dev/config.example.toml");
+
+/// Example project configuration file content
+const PROJECT_CONFIG_EXAMPLE: &str = include_str!("../../dev/wt.example.toml");
 
 /// Comment out all non-comment, non-empty lines for writing to disk
 fn comment_out_config(content: &str) -> String {
@@ -45,14 +48,41 @@ fn comment_out_config(content: &str) -> String {
 }
 
 /// Handle the config create command
-pub fn handle_config_create() -> anyhow::Result<()> {
-    let config_path = require_user_config_path()?;
+pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
+    if project {
+        let repo = Repository::current();
+        let config_path = repo.worktree_root()?.join(".config/wt.toml");
+        create_config_file(
+            config_path,
+            PROJECT_CONFIG_EXAMPLE,
+            "Project config",
+            &[
+                "Edit this file to configure hooks for this repository",
+                "See https://worktrunk.dev/hooks/ for hook documentation",
+            ],
+        )
+    } else {
+        create_config_file(
+            require_user_config_path()?,
+            USER_CONFIG_EXAMPLE,
+            "User config",
+            &["Edit this file to customize worktree paths and LLM settings"],
+        )
+    }
+}
 
+/// Create a config file at the specified path with the given content
+fn create_config_file(
+    path: PathBuf,
+    content: &str,
+    config_type: &str,
+    success_hints: &[&str],
+) -> anyhow::Result<()> {
     // Check if file already exists
-    if config_path.exists() {
+    if path.exists() {
         output::info(cformat!(
-            "User config already exists: <bold>{}</>",
-            format_path_for_display(&config_path)
+            "{config_type} already exists: <bold>{}</>",
+            format_path_for_display(&path)
         ))?;
         output::blank()?;
         output::hint(cformat!(
@@ -65,21 +95,24 @@ pub fn handle_config_create() -> anyhow::Result<()> {
     }
 
     // Create parent directory if it doesn't exist
-    if let Some(parent) = config_path.parent() {
+    if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
 
     // Write the example config with all values commented out
-    let commented_config = comment_out_config(CONFIG_EXAMPLE);
-    std::fs::write(&config_path, commented_config).context("Failed to write config file")?;
+    let commented_config = comment_out_config(content);
+    std::fs::write(&path, commented_config).context("Failed to write config file")?;
 
     // Success message
     output::success(cformat!(
-        "Created config file: <bold>{}</>",
-        format_path_for_display(&config_path)
+        "Created {}: <bold>{}</>",
+        config_type.to_lowercase(),
+        format_path_for_display(&path)
     ))?;
     output::blank()?;
-    output::hint("Edit this file to customize worktree paths and LLM settings")?;
+    for hint in success_hints {
+        output::hint(*hint)?;
+    }
 
     Ok(())
 }

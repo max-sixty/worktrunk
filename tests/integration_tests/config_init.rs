@@ -59,7 +59,7 @@ fn test_config_init_creates_file() {
         ----- stdout -----
 
         ----- stderr -----
-        ✅ [32mCreated config file: [1m~/.config/worktrunk/config.toml[22m[39m
+        ✅ [32mCreated user config: [1m~/.config/worktrunk/config.toml[22m[39m
 
         💡 [2mEdit this file to customize worktree paths and LLM settings[22m
         ");
