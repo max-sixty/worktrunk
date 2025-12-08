@@ -24,11 +24,6 @@ jobs:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-
     - name: Install cargo-insta
       uses: baptiste0928/cargo-install@v3
       with:
@@ -216,9 +211,6 @@ jobs:
     steps:
     - name: 📂 Checkout code
       uses: actions/checkout@v6
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2

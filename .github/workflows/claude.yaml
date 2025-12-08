@@ -42,12 +42,6 @@ jobs:
           git config --global user.name "Claude Code"
           git config --global user.email "claude@anthropic.com"
 
-      # Rust is pre-installed on ubuntu-latest, but we ensure consistent toolchain
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
       - name: Install cargo-insta
         uses: baptiste0928/cargo-install@v3
         with:
