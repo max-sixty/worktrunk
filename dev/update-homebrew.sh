@@ -4,12 +4,12 @@
 ###############################################################################
 #
 # Updates the homebrew-worktrunk formula with the current version from
-# Cargo.toml. Downloads the release tarball and computes the SHA256 hash.
+# Cargo.toml. Downloads release binaries and computes SHA256 hashes.
 #
 # Note: macOS only (uses BSD sed syntax).
 #
 # Prerequisites:
-# - The version must already be released on GitHub (tag pushed)
+# - The release CI must have completed (binaries published to GitHub)
 # - The homebrew-worktrunk repo must be checked out as a sibling directory
 #
 # Usage:
@@ -75,41 +75,87 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 print_status "Current version: $VERSION"
 
-# Check if tag exists on GitHub
-TARBALL_URL="https://github.com/max-sixty/worktrunk/archive/refs/tags/v${VERSION}.tar.gz"
-echo "Checking release exists..."
-if ! curl --output /dev/null --silent --head --fail "$TARBALL_URL"; then
-    print_error "Release v${VERSION} not found on GitHub"
-    echo "Make sure you've pushed the tag:"
-    echo "  cargo release patch --execute  # or minor/major"
+# Platform-specific binaries
+PLATFORMS=(
+    "aarch64-apple-darwin"
+    "x86_64-apple-darwin"
+    "x86_64-unknown-linux-musl"
+)
+
+BASE_URL="https://github.com/max-sixty/worktrunk/releases/download/v${VERSION}"
+
+# Check if release binaries exist
+echo "Checking release binaries..."
+FIRST_BINARY="${BASE_URL}/worktrunk-${PLATFORMS[0]}.tar.xz"
+if ! curl --output /dev/null --silent --head --fail "$FIRST_BINARY"; then
+    print_error "Release binaries not found for v${VERSION}"
+    echo "Make sure the release CI has completed."
+    echo "Check: https://github.com/max-sixty/worktrunk/releases/tag/v${VERSION}"
     exit 1
 fi
-print_status "Release v${VERSION} found on GitHub"
+print_status "Release v${VERSION} binaries found"
 
-# Download and compute SHA256
-echo "Computing SHA256..."
-TMPFILE=$(mktemp)
-trap "rm -f $TMPFILE" EXIT
-curl -sL "$TARBALL_URL" -o "$TMPFILE"
-SHA256=$(shasum -a 256 "$TMPFILE" | cut -d' ' -f1)
-print_status "SHA256: $SHA256"
+# Download and compute SHA256 for each platform
+declare -A SHAS
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
+
+for platform in "${PLATFORMS[@]}"; do
+    echo "Computing SHA256 for $platform..."
+    URL="${BASE_URL}/worktrunk-${platform}.tar.xz"
+    TMPFILE="$TMPDIR/$platform.tar.xz"
+
+    if ! curl -sL "$URL" -o "$TMPFILE"; then
+        print_error "Failed to download $platform binary"
+        exit 1
+    fi
+
+    SHA=$(shasum -a 256 "$TMPFILE" | cut -d' ' -f1)
+    SHAS[$platform]=$SHA
+    print_status "$platform: $SHA"
+done
 
 # Update formula
 echo "Updating formula..."
 
-# Update URL line (version pattern: digits and dots)
-sed -i '' "s|url \"https://github.com/max-sixty/worktrunk/archive/refs/tags/v[0-9.]*\.tar\.gz\"|url \"$TARBALL_URL\"|" "$FORMULA_FILE"
+# Update version line
+sed -i '' "s|version \"[0-9.]*\"|version \"$VERSION\"|" "$FORMULA_FILE"
 
-# Update sha256 line (64 hex characters)
-sed -i '' "s|sha256 \"[a-f0-9]\{64\}\"|sha256 \"$SHA256\"|" "$FORMULA_FILE"
+# Update each platform's URL and sha256
+for platform in "${PLATFORMS[@]}"; do
+    OLD_URL_PATTERN="worktrunk/releases/download/v[0-9.]*/worktrunk-${platform}.tar.xz"
+    NEW_URL="worktrunk/releases/download/v${VERSION}/worktrunk-${platform}.tar.xz"
+
+    # Update URL (preserve the full URL structure)
+    sed -i '' "s|${OLD_URL_PATTERN}|${NEW_URL}|g" "$FORMULA_FILE"
+done
+
+# Update sha256 values - the formula has them in order: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-musl
+# We need to update them in sequence. Use a temp file approach.
+TMPFORMULA="$TMPDIR/formula.rb"
+cp "$FORMULA_FILE" "$TMPFORMULA"
+
+# Replace sha256 values in order they appear
+awk -v sha1="${SHAS[aarch64-apple-darwin]}" \
+    -v sha2="${SHAS[x86_64-apple-darwin]}" \
+    -v sha3="${SHAS[x86_64-unknown-linux-musl]}" '
+BEGIN { count = 0 }
+/sha256 "[a-f0-9]{64}"/ {
+    count++
+    if (count == 1) gsub(/sha256 "[a-f0-9]{64}"/, "sha256 \"" sha1 "\"")
+    else if (count == 2) gsub(/sha256 "[a-f0-9]{64}"/, "sha256 \"" sha2 "\"")
+    else if (count == 3) gsub(/sha256 "[a-f0-9]{64}"/, "sha256 \"" sha3 "\"")
+}
+{ print }
+' "$TMPFORMULA" > "$FORMULA_FILE"
 
 # Verify updates succeeded
-if ! grep -q "v${VERSION}" "$FORMULA_FILE"; then
-    print_error "Failed to update URL in formula"
+if ! grep -q "version \"${VERSION}\"" "$FORMULA_FILE"; then
+    print_error "Failed to update version in formula"
     exit 1
 fi
-if ! grep -q "$SHA256" "$FORMULA_FILE"; then
-    print_error "Failed to update SHA256 in formula"
+if ! grep -q "v${VERSION}" "$FORMULA_FILE"; then
+    print_error "Failed to update URLs in formula"
     exit 1
 fi
 
