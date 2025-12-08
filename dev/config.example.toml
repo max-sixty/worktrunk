@@ -70,7 +70,7 @@ approved-commands = ["npm install"]
 
 # NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
 # use a separate PROJECT config file at <repo>/.config/wt.toml
-# See: dev/wt.example.toml for project configuration examples
+# Run `wt config create --project` to create one, or see https://worktrunk.dev/hooks/
 
 # ============================================================================
 # Custom Prompt Templates (Advanced)

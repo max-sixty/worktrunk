@@ -18,10 +18,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config create - Create user configuration file
+wt config create - Create configuration file
 Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
+      [1m[36m--project[0m
+          Create project config (.config/wt.toml) instead of user config
+
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
@@ -34,6 +37,8 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
   [1m[36m-v[0m, [1m[36m--verbose[0m
           Show commands and debug info
+
+[32mUser config[0m
 
 Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 
@@ -109,7 +114,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m[0m
   [2m# NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),[0m
   [2m# use a separate PROJECT config file at <repo>/.config/wt.toml[0m
-  [2m# See: dev/wt.example.toml for project configuration examples[0m
+  [2m# Run `wt config create --project` to create one, or see https://worktrunk.dev/hooks/[0m
   [2m[0m
   [2m# ============================================================================[0m
   [2m# Custom Prompt Templates (Advanced)[0m
@@ -227,3 +232,125 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Generate one cohesive commit message that captures the overall change.[0m
   [2m# Use conventional commit format (feat/fix/docs/refactor).[0m
   [2m# """[0m
+
+[32mProject config[0m
+
+With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repository:
+
+  [2m# Worktrunk Project Configuration[0m
+  [2m# Copy to: <repo>/.config/wt.toml[0m
+  [2m#[0m
+  [2m# This file defines project-specific hooks that run automatically during[0m
+  [2m# worktree operations. It should be checked into git and shared across all[0m
+  [2m# developers working on the project.[0m
+  [2m[0m
+  [2m# Available template variables (all hooks):[0m
+  [2m#   {{ repo }}      - Repository name (e.g., "my-project")[0m
+  [2m#   {{ branch }}    - Branch name (slashes replaced with dashes)[0m
+  [2m#   {{ worktree }}  - Absolute path to the worktree[0m
+  [2m#   {{ repo_root }} - Absolute path to the repository root[0m
+  [2m#[0m
+  [2m# Merge-related hooks also support:[0m
+  [2m#   {{ target }}    - Target branch for the merge (e.g., "main")[0m
+  [2m[0m
+  [2m# Post-Create Hook[0m
+  [2m# Runs SEQUENTIALLY and BLOCKS until complete[0m
+  [2m# The worktree switch won't complete until these finish[0m
+  [2m# Commands run one after another in the worktree directory[0m
+  [2m#[0m
+  [2m# Format options:[0m
+  [2m# 1. Single string:[0m
+  [2m#    post-create = "npm install"[0m
+  [2m#[0m
+  [2m# 2. Named table (runs sequentially in declaration order):[0m
+  [2m# [post-create][0m
+  [2m# install = "npm install --frozen-lockfile"[0m
+  [2m# build = "npm run build"[0m
+  [2m[0m
+  [2m# Post-Start Hook[0m
+  [2m# Runs in BACKGROUND as detached processes (parallel)[0m
+  [2m# Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,[0m
+  [2m# downloading assets too large for git (images, ML models, binaries), long-running tasks[0m
+  [2m# The worktree switch completes immediately, these run in parallel[0m
+  [2m# Output is logged to .git/wt-logs/{branch}-post-start-{name}.log[0m
+  [2m#[0m
+  [2m# Format options:[0m
+  [2m# 1. Single string:[0m
+  [2m#    post-start = "npm run dev"[0m
+  [2m#[0m
+  [2m# 2. Named table (runs in parallel):[0m
+  [2m# [post-start][0m
+  [2m# server = "npm run dev"[0m
+  [2m# watch = "npm run watch"[0m
+  [2m[0m
+  [2m# Pre-Commit Hook[0m
+  [2m# Runs SEQUENTIALLY before committing changes during merge (blocking, fail-fast)[0m
+  [2m# All commands must exit with code 0 for commit to proceed[0m
+  [2m# Runs for both squash and no-squash merge modes[0m
+  [2m# Use for: formatters, linters, quick validation[0m
+  [2m#[0m
+  [2m# Single command:[0m
+  [2m# pre-commit = "cargo fmt -- --check"[0m
+  [2m#[0m
+  [2m# Multiple commands:[0m
+  [2m# [pre-commit][0m
+  [2m# format = "cargo fmt -- --check"[0m
+  [2m# lint = "cargo clippy -- -D warnings"[0m
+  [2m[0m
+  [2m# Pre-Merge Hook[0m
+  [2m# Runs SEQUENTIALLY before merging to target branch (blocking, fail-fast)[0m
+  [2m# All commands must exit with code 0 for merge to proceed[0m
+  [2m# Use for: tests, linters, build verification before merging[0m
+  [2m#[0m
+  [2m# Single command:[0m
+  [2m# pre-merge = "cargo test"[0m
+  [2m#[0m
+  [2m# Multiple commands:[0m
+  [2m# [pre-merge][0m
+  [2m# test = "cargo test"[0m
+  [2m# build = "cargo build --release"[0m
+  [2m[0m
+  [2m# Post-Merge Hook[0m
+  [2m# Runs SEQUENTIALLY in the main worktree after successful merge (blocking)[0m
+  [2m# Runs after push succeeds but before cleanup[0m
+  [2m# Use for: updating production builds, notifications, cleanup[0m
+  [2m#[0m
+  [2m# Single command:[0m
+  [2m# post-merge = "cargo install --path ."[0m
+  [2m#[0m
+  [2m# Multiple commands:[0m
+  [2m# [post-merge][0m
+  [2m# install = "cargo install --path ."[0m
+  [2m# notify = "echo 'Merged!'"[0m
+  [2m[0m
+  [2m# Example: Node.js Project[0m
+  [2m# [post-create][0m
+  [2m# install = "npm ci"[0m
+  [2m#[0m
+  [2m# [post-start][0m
+  [2m# server = "npm run dev"[0m
+  [2m#[0m
+  [2m# [pre-merge][0m
+  [2m# lint = "npm run lint"[0m
+  [2m# test = "npm test"[0m
+  [2m[0m
+  [2m# Example: Rust Project[0m
+  [2m# [post-create][0m
+  [2m# build = "cargo build"[0m
+  [2m#[0m
+  [2m# [pre-merge][0m
+  [2m# format = "cargo fmt -- --check"[0m
+  [2m# clippy = "cargo clippy -- -D warnings"[0m
+  [2m# test = "cargo test"[0m
+  [2m#[0m
+  [2m# post-merge = "cargo install --path ."[0m
+  [2m[0m
+  [2m# Example: Python Project[0m
+  [2m# [post-create][0m
+  [2m# venv = "python -m venv .venv"[0m
+  [2m# install = ".venv/bin/pip install -r requirements.txt"[0m
+  [2m#[0m
+  [2m# [pre-merge][0m
+  [2m# format = ".venv/bin/black --check ."[0m
+  [2m# lint = ".venv/bin/ruff check ."[0m
+  [2m# test = ".venv/bin/pytest"[0m
