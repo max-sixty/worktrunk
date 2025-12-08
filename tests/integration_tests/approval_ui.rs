@@ -359,3 +359,87 @@ fn test_force_bypasses_tty_check() {
         assert_cmd_snapshot!("force_bypasses_tty_check", cmd);
     });
 }
+
+/// Test that `{{ target }}` is the current branch when running standalone
+///
+/// When `wt step post-merge` runs standalone (not via `wt merge`), the `{{ target }}`
+/// variable should be the current branch, not always the default branch.
+/// This allows hooks to behave correctly when testing from feature worktrees.
+#[test]
+fn test_step_post_merge_target_is_current_branch() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Hook that writes {{ target }} to a file so we can verify its value
+    repo.write_project_config(r#"post-merge = "echo '{{ target }}' > target-branch.txt""#);
+    repo.commit("Add post-merge hook");
+
+    // Create and switch to a feature branch
+    repo.git_command(&["checkout", "-b", "my-feature-branch"])
+        .output()
+        .unwrap();
+
+    // Run the hook with --force to skip approval
+    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["step", "post-merge", "--force"])
+        .current_dir(repo.root_path())
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt step post-merge");
+
+    assert!(
+        output.status.success(),
+        "wt step post-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify {{ target }} was set to the current branch, not "main"
+    let target_file = repo.root_path().join("target-branch.txt");
+    let target_content = fs::read_to_string(&target_file).expect("target-branch.txt should exist");
+
+    assert_eq!(
+        target_content.trim(),
+        "my-feature-branch",
+        "{{ target }} should be current branch, not default branch"
+    );
+}
+
+/// Test that `{{ target }}` is the current branch for pre-merge standalone
+#[test]
+fn test_step_pre_merge_target_is_current_branch() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Hook that writes {{ target }} to a file so we can verify its value
+    repo.write_project_config(r#"pre-merge = "echo '{{ target }}' > target-branch.txt""#);
+    repo.commit("Add pre-merge hook");
+
+    // Create and switch to a feature branch
+    repo.git_command(&["checkout", "-b", "my-feature-branch"])
+        .output()
+        .unwrap();
+
+    // Run the hook with --force to skip approval
+    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["step", "pre-merge", "--force"])
+        .current_dir(repo.root_path())
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("Failed to run wt step pre-merge");
+
+    assert!(
+        output.status.success(),
+        "wt step pre-merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify {{ target }} was set to the current branch, not "main"
+    let target_file = repo.root_path().join("target-branch.txt");
+    let target_content = fs::read_to_string(&target_file).expect("target-branch.txt should exist");
+
+    assert_eq!(
+        target_content.trim(),
+        "my-feature-branch",
+        "{{ target }} should be current branch, not default branch"
+    );
+}
