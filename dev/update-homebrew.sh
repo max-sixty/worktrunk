@@ -75,18 +75,11 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 print_status "Current version: $VERSION"
 
-# Platform-specific binaries
-PLATFORMS=(
-    "aarch64-apple-darwin"
-    "x86_64-apple-darwin"
-    "x86_64-unknown-linux-musl"
-)
-
 BASE_URL="https://github.com/max-sixty/worktrunk/releases/download/v${VERSION}"
 
 # Check if release binaries exist
 echo "Checking release binaries..."
-FIRST_BINARY="${BASE_URL}/worktrunk-${PLATFORMS[0]}.tar.xz"
+FIRST_BINARY="${BASE_URL}/worktrunk-aarch64-apple-darwin.tar.xz"
 if ! curl --output /dev/null --silent --head --fail "$FIRST_BINARY"; then
     print_error "Release binaries not found for v${VERSION}"
     echo "Make sure the release CI has completed."
@@ -96,24 +89,28 @@ fi
 print_status "Release v${VERSION} binaries found"
 
 # Download and compute SHA256 for each platform
-declare -A SHAS
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-for platform in "${PLATFORMS[@]}"; do
-    echo "Computing SHA256 for $platform..."
-    URL="${BASE_URL}/worktrunk-${platform}.tar.xz"
-    TMPFILE="$TMPDIR/$platform.tar.xz"
+compute_sha() {
+    local platform=$1
+    local url="${BASE_URL}/worktrunk-${platform}.tar.xz"
+    local tmpfile="$TMPDIR/${platform}.tar.xz"
 
-    if ! curl -sL "$URL" -o "$TMPFILE"; then
+    echo "Computing SHA256 for $platform..."
+    if ! curl -sL "$url" -o "$tmpfile"; then
         print_error "Failed to download $platform binary"
         exit 1
     fi
 
-    SHA=$(shasum -a 256 "$TMPFILE" | cut -d' ' -f1)
-    SHAS[$platform]=$SHA
-    print_status "$platform: $SHA"
-done
+    local sha=$(shasum -a 256 "$tmpfile" | cut -d' ' -f1)
+    print_status "$platform: $sha"
+    echo "$sha"
+}
+
+SHA_AARCH64_DARWIN=$(compute_sha "aarch64-apple-darwin" | tail -1)
+SHA_X86_64_DARWIN=$(compute_sha "x86_64-apple-darwin" | tail -1)
+SHA_X86_64_LINUX=$(compute_sha "x86_64-unknown-linux-musl" | tail -1)
 
 # Update formula
 echo "Updating formula..."
@@ -121,24 +118,18 @@ echo "Updating formula..."
 # Update version line
 sed -i '' "s|version \"[0-9.]*\"|version \"$VERSION\"|" "$FORMULA_FILE"
 
-# Update each platform's URL and sha256
-for platform in "${PLATFORMS[@]}"; do
-    OLD_URL_PATTERN="worktrunk/releases/download/v[0-9.]*/worktrunk-${platform}.tar.xz"
-    NEW_URL="worktrunk/releases/download/v${VERSION}/worktrunk-${platform}.tar.xz"
+# Update each platform's URL
+sed -i '' "s|worktrunk/releases/download/v[0-9.]*/worktrunk-aarch64-apple-darwin.tar.xz|worktrunk/releases/download/v${VERSION}/worktrunk-aarch64-apple-darwin.tar.xz|g" "$FORMULA_FILE"
+sed -i '' "s|worktrunk/releases/download/v[0-9.]*/worktrunk-x86_64-apple-darwin.tar.xz|worktrunk/releases/download/v${VERSION}/worktrunk-x86_64-apple-darwin.tar.xz|g" "$FORMULA_FILE"
+sed -i '' "s|worktrunk/releases/download/v[0-9.]*/worktrunk-x86_64-unknown-linux-musl.tar.xz|worktrunk/releases/download/v${VERSION}/worktrunk-x86_64-unknown-linux-musl.tar.xz|g" "$FORMULA_FILE"
 
-    # Update URL (preserve the full URL structure)
-    sed -i '' "s|${OLD_URL_PATTERN}|${NEW_URL}|g" "$FORMULA_FILE"
-done
-
-# Update sha256 values - the formula has them in order: aarch64-apple-darwin, x86_64-apple-darwin, x86_64-unknown-linux-musl
-# We need to update them in sequence. Use a temp file approach.
+# Update sha256 values in order they appear (aarch64-darwin, x86_64-darwin, x86_64-linux)
 TMPFORMULA="$TMPDIR/formula.rb"
 cp "$FORMULA_FILE" "$TMPFORMULA"
 
-# Replace sha256 values in order they appear
-awk -v sha1="${SHAS[aarch64-apple-darwin]}" \
-    -v sha2="${SHAS[x86_64-apple-darwin]}" \
-    -v sha3="${SHAS[x86_64-unknown-linux-musl]}" '
+awk -v sha1="$SHA_AARCH64_DARWIN" \
+    -v sha2="$SHA_X86_64_DARWIN" \
+    -v sha3="$SHA_X86_64_LINUX" '
 BEGIN { count = 0 }
 /sha256 "[a-f0-9]{64}"/ {
     count++
