@@ -82,7 +82,7 @@ impl OutputHandler for InteractiveOutput {
     fn execute(&mut self, command: String) -> anyhow::Result<()> {
         // On non-Unix platforms, fall back to spawn-and-wait
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
-        execute_streaming(&command, exec_dir, false)?;
+        execute_streaming(&command, exec_dir, false, None)?;
         Ok(())
     }
 
