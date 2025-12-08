@@ -621,6 +621,7 @@ impl<'a> CommandContext<'a> {
             "post-create",
             HookType::PostCreate,
             HookFailureStrategy::Warn,
+            None,
         )
     }
 
@@ -642,29 +643,7 @@ impl<'a> CommandContext<'a> {
             false,
             &[],
             "post-start",
-        )
-    }
-
-    /// Execute post-start commands sequentially (blocking) - for testing
-    pub fn execute_post_start_commands_sequential(&self) -> anyhow::Result<()> {
-        let project_config = match self.repo.load_project_config()? {
-            Some(cfg) => cfg,
-            None => return Ok(()),
-        };
-
-        let Some(post_start_config) = &project_config.post_start else {
-            return Ok(());
-        };
-
-        let pipeline = HookPipeline::new(*self);
-        pipeline.run_sequential(
-            post_start_config,
-            CommandPhase::PostStart,
-            false,
-            &[],
-            "post-start",
-            HookType::PostStart,
-            HookFailureStrategy::Warn,
+            None,
         )
     }
 }

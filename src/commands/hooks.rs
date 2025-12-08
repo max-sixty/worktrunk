@@ -1,7 +1,7 @@
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, CommandPhase, ProjectConfig};
-use worktrunk::git::WorktrunkError;
+use worktrunk::git::{GitError, WorktrunkError};
 use worktrunk::styling::{format_bash_with_gutter, progress_message, warning_message};
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_project_commands};
@@ -33,8 +33,35 @@ impl<'a> HookPipeline<'a> {
         phase: CommandPhase,
         auto_trust: bool,
         extra_vars: &[(&str, &str)],
+        name_filter: Option<&str>,
     ) -> anyhow::Result<Vec<PreparedCommand>> {
-        prepare_project_commands(command_config, &self.ctx, auto_trust, extra_vars, phase)
+        let commands =
+            prepare_project_commands(command_config, &self.ctx, auto_trust, extra_vars, phase)?;
+
+        // Filter by name if specified
+        match name_filter {
+            Some(name) => {
+                // Collect available names before consuming the iterator
+                let available: Vec<String> =
+                    commands.iter().filter_map(|cmd| cmd.name.clone()).collect();
+
+                let filtered: Vec<_> = commands
+                    .into_iter()
+                    .filter(|cmd| cmd.name.as_deref() == Some(name))
+                    .collect();
+
+                if filtered.is_empty() {
+                    return Err(GitError::HookCommandNotFound {
+                        name: name.to_string(),
+                        available,
+                    }
+                    .into());
+                }
+
+                Ok(filtered)
+            }
+            None => Ok(commands),
+        }
     }
 
     /// Run hook commands sequentially, using the provided failure strategy.
@@ -48,8 +75,10 @@ impl<'a> HookPipeline<'a> {
         label_prefix: &str,
         hook_type: HookType,
         failure_strategy: HookFailureStrategy,
+        name_filter: Option<&str>,
     ) -> anyhow::Result<()> {
-        let commands = self.prepare_commands(command_config, phase, auto_trust, extra_vars)?;
+        let commands =
+            self.prepare_commands(command_config, phase, auto_trust, extra_vars, name_filter)?;
         if commands.is_empty() {
             return Ok(());
         }
@@ -128,6 +157,7 @@ impl<'a> HookPipeline<'a> {
     }
 
     /// Spawn hook commands in the background (used for post-start hooks).
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_detached(
         &self,
         command_config: &CommandConfig,
@@ -135,8 +165,10 @@ impl<'a> HookPipeline<'a> {
         auto_trust: bool,
         extra_vars: &[(&str, &str)],
         label_prefix: &str,
+        name_filter: Option<&str>,
     ) -> anyhow::Result<()> {
-        let commands = self.prepare_commands(command_config, phase, auto_trust, extra_vars)?;
+        let commands =
+            self.prepare_commands(command_config, phase, auto_trust, extra_vars, name_filter)?;
         if commands.is_empty() {
             return Ok(());
         }
@@ -175,6 +207,7 @@ impl<'a> HookPipeline<'a> {
         project_config: &ProjectConfig,
         target_branch: Option<&str>,
         auto_trust: bool,
+        name_filter: Option<&str>,
     ) -> anyhow::Result<()> {
         let Some(pre_commit_config) = &project_config.pre_commit else {
             return Ok(());
@@ -193,6 +226,7 @@ impl<'a> HookPipeline<'a> {
             "pre-commit",
             HookType::PreCommit,
             HookFailureStrategy::FailFast,
+            name_filter,
         )
     }
 }

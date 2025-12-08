@@ -620,6 +620,10 @@ pub enum HookCommand {
     ///
     /// Executes blocking commands after worktree creation.
     PostCreate {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -629,6 +633,10 @@ pub enum HookCommand {
     ///
     /// Executes background commands after worktree creation.
     PostStart {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -638,6 +646,10 @@ pub enum HookCommand {
     ///
     /// Executes validation commands before committing.
     PreCommit {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -647,6 +659,10 @@ pub enum HookCommand {
     ///
     /// Executes validation commands before merging.
     PreMerge {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -656,6 +672,10 @@ pub enum HookCommand {
     ///
     /// Executes commands after successful merge.
     PostMerge {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,
@@ -665,6 +685,10 @@ pub enum HookCommand {
     ///
     /// Executes cleanup commands before worktree removal.
     PreRemove {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
         /// Skip approval prompts
         #[arg(short, long)]
         force: bool,

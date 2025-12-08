@@ -823,23 +823,23 @@ fn main() {
             }
         },
         Commands::Hook { action } => match action {
-            HookCommand::PostCreate { force } => {
-                handle_standalone_run_hook(HookType::PostCreate, force)
+            HookCommand::PostCreate { name, force } => {
+                handle_standalone_run_hook(HookType::PostCreate, force, name.as_deref())
             }
-            HookCommand::PostStart { force } => {
-                handle_standalone_run_hook(HookType::PostStart, force)
+            HookCommand::PostStart { name, force } => {
+                handle_standalone_run_hook(HookType::PostStart, force, name.as_deref())
             }
-            HookCommand::PreCommit { force } => {
-                handle_standalone_run_hook(HookType::PreCommit, force)
+            HookCommand::PreCommit { name, force } => {
+                handle_standalone_run_hook(HookType::PreCommit, force, name.as_deref())
             }
-            HookCommand::PreMerge { force } => {
-                handle_standalone_run_hook(HookType::PreMerge, force)
+            HookCommand::PreMerge { name, force } => {
+                handle_standalone_run_hook(HookType::PreMerge, force, name.as_deref())
             }
-            HookCommand::PostMerge { force } => {
-                handle_standalone_run_hook(HookType::PostMerge, force)
+            HookCommand::PostMerge { name, force } => {
+                handle_standalone_run_hook(HookType::PostMerge, force, name.as_deref())
             }
-            HookCommand::PreRemove { force } => {
-                handle_standalone_run_hook(HookType::PreRemove, force)
+            HookCommand::PreRemove { name, force } => {
+                handle_standalone_run_hook(HookType::PreRemove, force, name.as_deref())
             }
         },
         #[cfg(unix)]
