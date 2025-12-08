@@ -42,7 +42,10 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
     _{{ cmd_prefix }}_lazy_complete() {
         # Generate completions function once (check if clap's function exists)
         if ! (( $+functions[_clap_dynamic_completer_{{ cmd_prefix }}] )); then
-            eval "$(COMPLETE=zsh "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" 2>/dev/null)" || return
+            # Use `command` to bypass the shell function and call the binary directly.
+            # Without this, `{{ cmd_prefix }}` would call the shell function which evals
+            # the completion script internally but doesn't re-emit it.
+            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" 2>/dev/null)" || return
         fi
         _clap_dynamic_completer_{{ cmd_prefix }} "$@"
     }
