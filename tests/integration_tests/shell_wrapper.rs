@@ -3271,4 +3271,196 @@ echo "SCRIPT_COMPLETED"
             }
         }
     }
+
+    /// Test that interactive `wt --help` uses a pager.
+    ///
+    /// This is the complement to `test_wrapper_help_redirect_captures_all_output`:
+    /// - Redirect case (`&>file`): pager should be SKIPPED (output goes to file)
+    /// - Interactive case (no redirect): pager should be USED
+    ///
+    /// We verify pager invocation by setting GIT_PAGER to a script that creates
+    /// a marker file before passing through the content.
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str) {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use std::io::Read;
+
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wt_bin_dir = wt_bin.parent().unwrap();
+
+        // Create temp dir for marker file and pager script
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let marker_file = tmp_dir.path().join("pager_invoked.marker");
+        let pager_script = tmp_dir.path().join("test_pager.sh");
+
+        // Create a pager script that:
+        // 1. Creates a marker file to prove it was invoked
+        // 2. Passes stdin through to stdout (like cat)
+        fs::write(
+            &pager_script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker_file.display()),
+        )
+        .unwrap();
+
+        // Make script executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&pager_script, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // Generate wrapper script
+        let output = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", shell])
+            .output()
+            .unwrap();
+        let wrapper_script = String::from_utf8_lossy(&output.stdout);
+
+        // Build shell script that sources wrapper and runs help interactively
+        let script = match shell {
+            "fish" => format!(
+                r#"
+set -x WORKTRUNK_BIN '{wt_bin}'
+set -x GIT_PAGER '{pager_script}'
+set -x CLICOLOR_FORCE 1
+
+# Source the shell integration
+{wrapper_script}
+
+# Run help interactively (no redirect) - pager should be invoked
+wt --help
+
+# Marker to show script completed
+echo "SCRIPT_COMPLETED"
+"#,
+                wt_bin = wt_bin.display(),
+                pager_script = pager_script.display(),
+                wrapper_script = wrapper_script,
+            ),
+            "zsh" => format!(
+                r#"
+autoload -Uz compinit && compinit -i 2>/dev/null
+export WORKTRUNK_BIN='{wt_bin}'
+export GIT_PAGER='{pager_script}'
+export CLICOLOR_FORCE=1
+
+# Source the shell integration
+{wrapper_script}
+
+# Run help interactively (no redirect) - pager should be invoked
+wt --help
+
+# Marker to show script completed
+echo "SCRIPT_COMPLETED"
+"#,
+                wt_bin = wt_bin.display(),
+                pager_script = pager_script.display(),
+                wrapper_script = wrapper_script,
+            ),
+            _ => format!(
+                r#"
+export WORKTRUNK_BIN='{wt_bin}'
+export GIT_PAGER='{pager_script}'
+export CLICOLOR_FORCE=1
+
+# Source the shell integration
+{wrapper_script}
+
+# Run help interactively (no redirect) - pager should be invoked
+wt --help
+
+# Marker to show script completed
+echo "SCRIPT_COMPLETED"
+"#,
+                wt_bin = wt_bin.display(),
+                pager_script = pager_script.display(),
+                wrapper_script = wrapper_script,
+            ),
+        };
+
+        // Execute in PTY (simulates interactive terminal)
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 48,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let mut cmd = CommandBuilder::new(shell);
+        cmd.env_clear();
+        cmd.env(
+            "HOME",
+            home::home_dir().unwrap().to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                wt_bin_dir.display(),
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+            ),
+        );
+
+        // Shell-specific flags for isolation
+        match shell {
+            "zsh" => {
+                cmd.env("ZDOTDIR", "/dev/null");
+                cmd.arg("--no-rcs");
+                cmd.arg("-o");
+                cmd.arg("NO_GLOBAL_RCS");
+                cmd.arg("-o");
+                cmd.arg("NO_RCS");
+            }
+            "bash" => {
+                cmd.arg("--norc");
+                cmd.arg("--noprofile");
+            }
+            "fish" => {
+                cmd.arg("--no-config");
+            }
+            _ => {}
+        }
+
+        cmd.arg("-c");
+        cmd.arg(&script);
+        cmd.cwd(repo.root_path());
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+
+        let _status = child.wait().unwrap();
+        let terminal_output = buf.replace("\r\n", "\n");
+
+        // Verify script completed
+        assert!(
+            terminal_output.contains("SCRIPT_COMPLETED"),
+            "{}: Script did not complete successfully.\nTerminal output:\n{}",
+            shell,
+            terminal_output
+        );
+
+        // Verify pager was invoked (marker file should exist)
+        assert!(
+            marker_file.exists(),
+            "{}: Pager was NOT invoked for interactive help.\n\
+             The marker file was not created, indicating show_help_in_pager() \n\
+             skipped the pager even though stderr is a TTY.\n\
+             Terminal output:\n{}",
+            shell,
+            terminal_output
+        );
+    }
 }

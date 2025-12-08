@@ -56,12 +56,6 @@ fn maybe_handle_help_with_pager() -> bool {
 
     let args: Vec<String> = std::env::args().collect();
 
-    // Skip pager in directive mode (--internal flag present)
-    // Fish's command substitution doesn't propagate stderr redirects, so
-    // `wt --help &>file` would output to terminal if pager is used.
-    // In directive mode, help should go to stderr without paging.
-    let is_internal = args.iter().any(|a| a == "--internal");
-
     // Check for --help-page flag (output full doc page with frontmatter)
     if args.iter().any(|a| a == "--help-page") {
         handle_help_page(&args);
@@ -120,11 +114,9 @@ fn maybe_handle_help_with_pager() -> bool {
                     // Render markdown sections to ANSI
                     help = md_help::render_markdown_in_help(&help);
 
-                    // In directive mode (--internal), skip pager - output to stderr directly.
-                    // This fixes fish's command substitution not propagating stderr redirects.
-                    if is_internal {
-                        eprintln!("{}", help);
-                    } else if let Err(e) = help_pager::show_help_in_pager(&help) {
+                    // show_help_in_pager checks if stdout or stderr is a TTY.
+                    // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.
+                    if let Err(e) = help_pager::show_help_in_pager(&help) {
                         log::debug!("Pager invocation failed: {}", e);
                         eprintln!("{}", help);
                     }
