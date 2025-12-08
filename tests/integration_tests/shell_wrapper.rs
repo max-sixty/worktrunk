@@ -2641,4 +2641,128 @@ test = "echo 'Running tests...'"
 
         assert_snapshot!(prompt_only);
     }
+
+    /// Test that zsh lazy completion correctly defines the clap completer function
+    ///
+    /// This tests for a bug where `_wt_lazy_complete` would call `wt` (the shell function)
+    /// instead of the binary directly. The shell function runs `wt_exec` which evals the
+    /// completion script internally, but doesn't re-emit it. This causes the outer `eval`
+    /// in `_wt_lazy_complete` to receive an empty string, leaving `_clap_dynamic_completer_wt`
+    /// undefined.
+    ///
+    /// The bug only manifests when WORKTRUNK_BIN is NOT set, so `wt` resolves to the shell
+    /// function instead of the binary. This test simulates that scenario by:
+    /// 1. Setting up PATH so `wt` binary is found
+    /// 2. NOT setting WORKTRUNK_BIN (so lazy complete falls back to `wt`)
+    /// 3. Verifying the clap completer gets defined
+    ///
+    /// The fix is to use `command` builtin to bypass the shell function when generating
+    /// completions: `eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" ...)"`.
+    #[test]
+    fn test_zsh_lazy_completion_defines_clap_function() {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use std::io::Read;
+
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Build a script that:
+        // 1. Sources the zsh init script (defines wt function and _wt_lazy_complete)
+        // 2. Calls _wt_lazy_complete to trigger completion loading
+        // 3. Checks if _clap_dynamic_completer_wt is defined
+        //
+        // IMPORTANT: We do NOT set WORKTRUNK_BIN to simulate real user scenario.
+        // Instead, we put the wt binary in PATH. The lazy completion should use
+        // `command wt` to bypass the shell function and call the binary directly.
+        let wt_bin = get_cargo_bin("wt");
+        let wt_bin_dir = wt_bin.parent().unwrap();
+
+        // Generate wrapper without WORKTRUNK_BIN (simulates installed wt)
+        let output = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "zsh"])
+            .output()
+            .unwrap();
+        let wrapper_script = String::from_utf8_lossy(&output.stdout);
+
+        let script = format!(
+            r#"
+autoload -Uz compinit && compinit -i 2>/dev/null
+
+# Do NOT set WORKTRUNK_BIN - this is the bug scenario!
+# The lazy completion will use `wt` which resolves to the shell function
+export CLICOLOR_FORCE=1
+
+# Source the shell integration (defines wt function and _wt_lazy_complete)
+{wrapper_script}
+
+# Simulate what happens on TAB: call _wt_lazy_complete
+# This should load the completion function
+_wt_lazy_complete 2>/dev/null
+
+# Check if the clap completer function is now defined
+if (( $+functions[_clap_dynamic_completer_wt] )); then
+    echo "SUCCESS: _clap_dynamic_completer_wt is defined"
+else
+    echo "FAILURE: _clap_dynamic_completer_wt is NOT defined"
+    echo "The lazy completion function failed to define the clap completer"
+fi
+"#,
+            wrapper_script = wrapper_script
+        );
+
+        // Execute in PTY
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 48,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let mut cmd = CommandBuilder::new("zsh");
+        cmd.env_clear();
+        cmd.env(
+            "HOME",
+            home::home_dir().unwrap().to_string_lossy().to_string(),
+        );
+        // Put our wt binary in PATH - this simulates installed wt
+        cmd.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                wt_bin_dir.display(),
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+            ),
+        );
+        cmd.env("ZDOTDIR", "/dev/null");
+        cmd.arg("--no-rcs");
+        cmd.arg("-o");
+        cmd.arg("NO_GLOBAL_RCS");
+        cmd.arg("-o");
+        cmd.arg("NO_RCS");
+        cmd.arg("-c");
+        cmd.arg(&script);
+        cmd.cwd(repo.root_path());
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+
+        let status = child.wait().unwrap();
+        let output = buf.replace("\r\n", "\n");
+
+        assert!(
+            output.contains("SUCCESS: _clap_dynamic_completer_wt is defined"),
+            "Lazy completion should define _clap_dynamic_completer_wt function.\n\
+             Output: {}\n\
+             Exit code: {}",
+            output,
+            status.exit_code()
+        );
+    }
 }
