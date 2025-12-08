@@ -42,13 +42,17 @@ pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> anyhow::R
         }
         HookType::PreMerge => {
             check_hook_configured(&project_config.pre_merge, hook_type)?;
-            let target_branch = repo.default_branch().unwrap_or_else(|_| "main".to_string());
-            run_pre_merge_commands(&project_config, &ctx, &target_branch, false)
+            // Use current branch as target - when running standalone, the "target"
+            // represents what branch we're on (vs. in `wt merge` where it's the
+            // branch being merged into)
+            run_pre_merge_commands(&project_config, &ctx, &env.branch, false)
         }
         HookType::PostMerge => {
             check_hook_configured(&project_config.post_merge, hook_type)?;
-            let target_branch = repo.default_branch().unwrap_or_else(|_| "main".to_string());
-            execute_post_merge_commands(&ctx, &target_branch, false)
+            // Use current branch as target - when running standalone, the "target"
+            // represents what branch we're on (vs. in `wt merge` where it's the
+            // branch being merged into)
+            execute_post_merge_commands(&ctx, &env.branch, false)
         }
     }
 }
