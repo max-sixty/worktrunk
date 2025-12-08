@@ -23,7 +23,7 @@ Usage: [1m[36mwt config create[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m
       [1m[36m--project[0m
-          Create project config (.config/wt.toml) instead of user config
+          Create project config ([1m.config/wt.toml[0m) instead of user config
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')

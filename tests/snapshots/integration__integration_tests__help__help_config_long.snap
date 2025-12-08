@@ -61,7 +61,7 @@ Create user config file with documented examples:
 
   [2mwt config create[0m
 
-Create project config file (.config/wt.toml) for hooks:
+Create project config file ([2m.config/wt.toml[0m) for hooks:
 
   [2mwt config create --project[0m
 

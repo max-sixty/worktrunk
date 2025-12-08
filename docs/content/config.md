@@ -31,7 +31,7 @@ Create user config file with documented examples:
 wt config create
 ```
 
-Create project config file (.config/wt.toml) for hooks:
+Create project config file (`.config/wt.toml`) for hooks:
 
 ```bash
 wt config create --project

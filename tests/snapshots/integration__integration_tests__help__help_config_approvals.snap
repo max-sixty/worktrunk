@@ -41,7 +41,7 @@ Usage: [1m[36mwt config approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [32mHow Approvals Work[0m
 
-Commands from project hooks (.config/wt.toml) and LLM configuration require
+Commands from project hooks ([2m.config/wt.toml[0m) and LLM configuration require
 approval on first run. This prevents untrusted projects from running arbitrary
 commands.
 

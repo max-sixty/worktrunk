@@ -283,7 +283,7 @@ pub enum ConfigCommand {
         )
     )]
     Create {
-        /// Create project config (.config/wt.toml) instead of user config
+        /// Create project config (`.config/wt.toml`) instead of user config
         #[arg(long)]
         project: bool,
     },
@@ -353,7 +353,7 @@ wt config var clear marker --all
     /// Manage command approvals
     #[command(after_long_help = r#"## How Approvals Work
 
-Commands from project hooks (.config/wt.toml) and LLM configuration require
+Commands from project hooks (`.config/wt.toml`) and LLM configuration require
 approval on first run. This prevents untrusted projects from running arbitrary
 commands.
 
@@ -742,7 +742,7 @@ Create user config file with documented examples:
 wt config create
 ```
 
-Create project config file (.config/wt.toml) for hooks:
+Create project config file (`.config/wt.toml`) for hooks:
 
 ```console
 wt config create --project
