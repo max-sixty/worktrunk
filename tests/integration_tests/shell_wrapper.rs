@@ -2765,4 +2765,103 @@ fi
             status.exit_code()
         );
     }
+
+    /// Test that bash lazy completion correctly defines the clap completer function
+    ///
+    /// Same bug as zsh: `_wt_lazy_complete` calls `wt` (the shell function) instead of
+    /// the binary, causing `_clap_complete_wt` to not be defined.
+    ///
+    /// The fix is to use `command` builtin to bypass the shell function.
+    #[test]
+    fn test_bash_lazy_completion_defines_clap_function() {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use std::io::Read;
+
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wt_bin_dir = wt_bin.parent().unwrap();
+
+        // Generate wrapper without WORKTRUNK_BIN (simulates installed wt)
+        let output = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", "bash"])
+            .output()
+            .unwrap();
+        let wrapper_script = String::from_utf8_lossy(&output.stdout);
+
+        let script = format!(
+            r#"
+# Do NOT set WORKTRUNK_BIN - this is the bug scenario!
+export CLICOLOR_FORCE=1
+
+# Source the shell integration (defines wt function and _wt_lazy_complete)
+{wrapper_script}
+
+# Simulate what happens on TAB: call _wt_lazy_complete
+# This should load the completion function
+_wt_lazy_complete 2>/dev/null
+
+# Check if the clap completer function is now defined (bash uses declare -F)
+if declare -F _clap_complete_wt >/dev/null; then
+    echo "SUCCESS: _clap_complete_wt is defined"
+else
+    echo "FAILURE: _clap_complete_wt is NOT defined"
+    echo "The lazy completion function failed to define the clap completer"
+fi
+"#,
+            wrapper_script = wrapper_script
+        );
+
+        // Execute in PTY
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 48,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let mut cmd = CommandBuilder::new("bash");
+        cmd.env_clear();
+        cmd.env(
+            "HOME",
+            home::home_dir().unwrap().to_string_lossy().to_string(),
+        );
+        // Put our wt binary in PATH - this simulates installed wt
+        cmd.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                wt_bin_dir.display(),
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+            ),
+        );
+        cmd.arg("--norc");
+        cmd.arg("--noprofile");
+        cmd.arg("-c");
+        cmd.arg(&script);
+        cmd.cwd(repo.root_path());
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+
+        let status = child.wait().unwrap();
+        let output = buf.replace("\r\n", "\n");
+
+        assert!(
+            output.contains("SUCCESS: _clap_complete_wt is defined"),
+            "Lazy completion should define _clap_complete_wt function.\n\
+             Output: {}\n\
+             Exit code: {}",
+            output,
+            status.exit_code()
+        );
+    }
 }
