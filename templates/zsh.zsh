@@ -54,7 +54,12 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
             # Use `command` to bypass the shell function and call the binary directly.
             # Without this, `{{ cmd_prefix }}` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" 2>/dev/null)" || return
+            #
+            # The sed adds -V (unsorted group) and -o nosort to _describe, preserving
+            # our recency-based ordering instead of zsh's default alphabetical sort.
+            # TODO(clap): Ideally clap_complete would preserve ordering natively.
+            # See: https://github.com/clap-rs/clap/issues/5752
+            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" 2>/dev/null | sed "s/_describe 'values'/_describe -V wt -o nosort 'values'/")" || return
         fi
         _clap_dynamic_completer_{{ cmd_prefix }} "$@"
     }
@@ -65,5 +70,8 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
     # shell install` detects missing compinit and shows a one-time advisory.
     if (( $+functions[compdef] )); then
         compdef _{{ cmd_prefix }}_lazy_complete {{ cmd_prefix }}
+        # Single-column display keeps descriptions visually associated with each branch.
+        # Users can override: zstyle ':completion:*:{{ cmd_prefix }}:*' list-max ''
+        zstyle ':completion:*:{{ cmd_prefix }}:*' list-max 1
     fi
 fi

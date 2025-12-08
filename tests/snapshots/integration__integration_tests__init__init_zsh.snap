@@ -93,7 +93,12 @@ wt_exec() {
             # Use `command` to bypass the shell function and call the binary directly.
             # Without this, `wt` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
+            #
+            # The sed adds -V (unsorted group) and -o nosort to _describe, preserving
+            # our recency-based ordering instead of zsh's default alphabetical sort.
+            # TODO(clap): Ideally clap_complete would preserve ordering natively.
+            # See: https://github.com/clap-rs/clap/issues/5752
+            eval "$(COMPLETE=zsh command "${WORKTRUNK_BIN:-wt}" 2>/dev/null | sed "s/_describe 'values'/_describe -V wt -o nosort 'values'/")" || return
         fi
         _clap_dynamic_completer_wt "$@"
     }
@@ -104,6 +109,9 @@ wt_exec() {
     # shell install` detects missing compinit and shows a one-time advisory.
     if (( $+functions[compdef] )); then
         compdef _wt_lazy_complete wt
+        # Single-column display keeps descriptions visually associated with each branch.
+        # Users can override: zstyle ':completion:*:wt:*' list-max ''
+        zstyle ':completion:*:wt:*' list-max 1
     fi
 fi
 
