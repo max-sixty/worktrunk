@@ -13,7 +13,7 @@ use super::merge::{
 use super::project_config::collect_commands_for_hooks;
 use super::repository_ext::RepositoryCliExt;
 
-/// Handle `wt step hook` command
+/// Handle `wt hook` command
 pub fn handle_standalone_run_hook(hook_type: HookType, force: bool) -> anyhow::Result<()> {
     // Derive context from current environment
     let env = CommandEnv::for_action(&format!("run {hook_type} hook"))?;

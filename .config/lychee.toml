@@ -53,6 +53,8 @@ exclude = [
     "127\\.0\\.0\\.1",
     "localhost",
 
+    # TODO: Remove after first deployment - new page from hooks.md → hook.md consolidation
+    "https://worktrunk\\.dev/hook/",
 ]
 
 # Root directory for resolving root-relative paths like /assets/wt-demo.gif

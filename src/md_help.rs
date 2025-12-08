@@ -361,8 +361,8 @@ mod tests {
     fn test_render_inline_formatting_strips_links() {
         assert_eq!(render_inline_formatting("[text](url)"), "text");
         assert_eq!(
-            render_inline_formatting("See [Hooks](@/hooks.md) for details"),
-            "See Hooks for details"
+            render_inline_formatting("See [wt hook](@/hook.md) for details"),
+            "See wt hook for details"
         );
     }
 

@@ -35,7 +35,7 @@ use commands::{
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{
-    ApprovalsCommand, CacheCommand, Cli, Commands, ConfigCommand, ConfigShellCommand,
+    ApprovalsCommand, CacheCommand, Cli, Commands, ConfigCommand, ConfigShellCommand, HookCommand,
     ListSubcommand, StepCommand, VarCommand,
 };
 use worktrunk::HookType;
@@ -803,22 +803,24 @@ fn main() {
                     }
                 })
             }
-            StepCommand::PostCreate { force } => {
+        },
+        Commands::Hook { action } => match action {
+            HookCommand::PostCreate { force } => {
                 handle_standalone_run_hook(HookType::PostCreate, force)
             }
-            StepCommand::PostStart { force } => {
+            HookCommand::PostStart { force } => {
                 handle_standalone_run_hook(HookType::PostStart, force)
             }
-            StepCommand::PreCommit { force } => {
+            HookCommand::PreCommit { force } => {
                 handle_standalone_run_hook(HookType::PreCommit, force)
             }
-            StepCommand::PreMerge { force } => {
+            HookCommand::PreMerge { force } => {
                 handle_standalone_run_hook(HookType::PreMerge, force)
             }
-            StepCommand::PostMerge { force } => {
+            HookCommand::PostMerge { force } => {
                 handle_standalone_run_hook(HookType::PostMerge, force)
             }
-            StepCommand::PreRemove { force } => {
+            HookCommand::PreRemove { force } => {
                 handle_standalone_run_hook(HookType::PreRemove, force)
             }
         },

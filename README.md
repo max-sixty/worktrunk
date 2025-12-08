@@ -46,7 +46,7 @@ Worktrunk makes worktrees easy to use — branch-based navigation, unified statu
 
 **Workflow automation:**
 
-- **[Lifecycle hooks](https://worktrunk.dev/hooks/)** — run commands on create, pre-merge, post-merge
+- **[Lifecycle hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 - ...and lots more.
@@ -125,7 +125,7 @@ $ wt config shell install
 ## Next steps
 
 - Learn the core commands: [wt switch](https://worktrunk.dev/switch/), [wt list](https://worktrunk.dev/list/), [wt merge](https://worktrunk.dev/merge/), [wt remove](https://worktrunk.dev/remove/)
-- Set up [project hooks](https://worktrunk.dev/hooks/) for automated setup
+- Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
 - Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [fzf-like picker](https://worktrunk.dev/select/), [Claude Code integration](https://worktrunk.dev/claude-code/)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 

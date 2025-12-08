@@ -29,13 +29,14 @@ repos:
   - repo: https://github.com/lycheeverse/lychee
     rev: lychee-v0.22.0
     hooks:
-      # Fast PR mode - only check worktrunk domains (internal links validated by zola check)
+      # PR mode - check links using .config/lychee.toml exclusions
+      # TODO: Consider re-adding `--include=^https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)`
+      # once /hook/ page is deployed (currently excluded in lychee.toml to allow landing page merge)
       - id: lychee
         name: lychee (PR mode)
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          - --include=^https://(github\.com/max-sixty/worktrunk|worktrunk\.dev)
       # Comprehensive mode - check all links with full config
       # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
       - id: lychee

@@ -55,7 +55,7 @@ cargo test --test integration
 cargo test --test integration --features shell-integration-tests
 
 # Run all tests via pre-merge hook (recommended before committing)
-cargo run -- step pre-merge --force
+cargo run -- hook pre-merge --force
 ```
 
 The pre-merge hook runs the full test suite and is the recommended way to verify changes before committing.

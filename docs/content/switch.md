@@ -11,7 +11,7 @@ group = "Commands"
 Two distinct operations:
 
 - **Switch to existing worktree** — Changes directory, nothing else
-- **Create new worktree** (`--create`) — Creates branch and worktree, runs [hooks](@/hooks.md)
+- **Create new worktree** (`--create`) — Creates branch and worktree, runs [hooks](@/hook.md)
 
 ## Examples
 
@@ -30,9 +30,9 @@ With `--create`, worktrunk:
 
 1. Creates branch from `--base` (defaults to default branch)
 2. Creates worktree at configured path
-3. Runs [post-create hooks](@/hooks.md#post-create) (blocking)
+3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
 4. Switches to new directory
-5. Spawns [post-start hooks](@/hooks.md#post-start) (background)
+5. Spawns [post-start hooks](@/hook.md#post-start) (background)
 
 ```bash
 wt switch --create api-refactor

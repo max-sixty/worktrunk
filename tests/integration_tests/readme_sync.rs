@@ -1017,7 +1017,6 @@ fn test_docs_quickstart_examples_are_in_sync() {
     // Process all docs files with AUTO-GENERATED-HTML markers
     let doc_files = [
         "docs/content/why-worktrunk.md",
-        "docs/content/hooks.md",
         "docs/content/claude-code.md",
     ];
 
@@ -1050,7 +1049,7 @@ fn test_docs_quickstart_examples_are_in_sync() {
 
 /// Command pages generated via `wt <cmd> --help-page`
 const COMMAND_PAGES: &[&str] = &[
-    "switch", "list", "merge", "remove", "select", "config", "step",
+    "switch", "list", "merge", "remove", "select", "config", "step", "hook",
 ];
 
 #[test]

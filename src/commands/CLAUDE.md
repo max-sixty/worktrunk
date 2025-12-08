@@ -104,7 +104,7 @@ Each command page should follow this order:
 1. **Intro paragraph** — One or two sentences: what the command does and when to use it. Integrate key behavioral distinctions (e.g., "Switching to an existing worktree is just a directory change. With `--create`, hooks run.")
 2. **Examples** — Common use cases with brief labels, immediately after intro
 3. **Feature sections** — Deeper explanation of major features (e.g., "Creating worktrees", "Shortcuts")
-4. **Hooks** — Brief summary with link to `/hooks/` for details
+4. **Hooks** — Brief summary with link to `/hook/` for details
 5. **Technical details** — Implementation details like argument resolution, pushed to the bottom
 6. **Command reference** — Auto-generated from `--help-page`, always last
 
@@ -114,7 +114,7 @@ Each command page should follow this order:
 - **Spaced em-dashes** — "instant — no stashing" not "instant—no stashing"
 - **No second person** — Describe behavior, don't address the reader
 - **Concrete examples** — Real commands, actual output, specific scenarios
-- **Link to dedicated pages** — Don't duplicate content from `/hooks/`, `/configuration/`, etc.
+- **Link to dedicated pages** — Don't duplicate content from `/hook/`, `/configuration/`, etc.
 
 ### What to Avoid
 

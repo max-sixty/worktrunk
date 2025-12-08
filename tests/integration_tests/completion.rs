@@ -691,16 +691,33 @@ fn test_complete_step_subcommands() {
     let temp = TestRepo::new();
     temp.commit("initial");
 
-    // Test 1: No input - shows all step subcommands
+    // Test: No input - shows all step subcommands (git operations only)
     let output = temp.completion_cmd(&["wt", "step", ""]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
-    // Operations
+    // Git operations
     assert!(subcommands.contains(&"commit"), "Missing commit");
     assert!(subcommands.contains(&"squash"), "Missing squash");
     assert!(subcommands.contains(&"push"), "Missing push");
     assert!(subcommands.contains(&"rebase"), "Missing rebase");
+    assert_eq!(
+        subcommands.len(),
+        4,
+        "Should have exactly 4 step subcommands (git operations)"
+    );
+}
+
+#[test]
+fn test_complete_hook_subcommands() {
+    let temp = TestRepo::new();
+    temp.commit("initial");
+
+    // Test 1: No input - shows all hook subcommands
+    let output = temp.completion_cmd(&["wt", "hook", ""]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let subcommands = value_suggestions(&stdout);
     // Hook types
     assert!(subcommands.contains(&"post-create"), "Missing post-create");
     assert!(subcommands.contains(&"post-start"), "Missing post-start");
@@ -710,12 +727,12 @@ fn test_complete_step_subcommands() {
     assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
     assert_eq!(
         subcommands.len(),
-        10,
-        "Should have exactly 10 step subcommands"
+        6,
+        "Should have exactly 6 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
-    let output = temp.completion_cmd(&["wt", "step", "po"]).output().unwrap();
+    let output = temp.completion_cmd(&["wt", "hook", "po"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
