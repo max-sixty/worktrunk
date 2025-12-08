@@ -6,7 +6,7 @@ weight = 21
 group = "Reference"
 +++
 
-Hooks automate setup and validation at worktree lifecycle events. They're defined in `.config/wt.toml` (project config) and run automatically during `wt switch --create` and `wt merge`.
+Hooks automate setup and validation at worktree lifecycle events. They're defined in `.config/wt.toml` (project config) and run automatically during `wt switch --create`, `wt merge`, and `wt remove`.
 
 ## Hook types
 
@@ -17,6 +17,7 @@ Hooks automate setup and validation at worktree lifecycle events. They're define
 | **pre-commit** | Before commit during merge | Yes | Yes | Sequential |
 | **pre-merge** | Before merging to target | Yes | Yes | Sequential |
 | **post-merge** | After successful merge | Yes | No | Sequential |
+| **pre-remove** | Before worktree removed | Yes | Yes | Sequential |
 
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
@@ -176,10 +177,30 @@ post-merge = "cargo install --path ."
 - Runs after cleanup completes
 - Failures show errors but don't affect the completed merge
 
+### pre-remove
+
+Runs before worktree removal during `wt remove`, **fail-fast**. All commands must exit with code 0 for the removal to proceed.
+
+**Use cases**: Cleanup tasks, saving state, notifying external systems — validation before removal.
+
+```toml
+[pre-remove]
+cleanup = "rm -rf /tmp/cache/{{ branch }}"
+notify = "echo 'Removing {{ branch }}' >> ~/worktree-log.txt"
+```
+
+**Behavior**:
+- Commands run sequentially in the **worktree being removed**
+- First failure aborts the removal (worktree preserved)
+- Runs for both foreground and background removal modes
+- Does **not** run for branch-only removal (no worktree)
+- Use `--no-verify` to skip
+
 ## When hooks run during merge
 
 - **pre-commit** — After staging, before squash commit
 - **pre-merge** — After rebase, before merge to target
+- **pre-remove** — Before removing worktree during cleanup (failures abort)
 - **post-merge** — After cleanup completes
 
 See [wt merge](@/merge.md#pipeline) for the complete pipeline.
@@ -226,6 +247,7 @@ Use `--no-verify` to skip all project hooks:
 ```bash
 wt switch --create temp --no-verify    # Skip post-create and post-start
 wt merge --no-verify                   # Skip pre-commit, pre-merge, post-merge
+wt remove feature --no-verify          # Skip pre-remove
 ```
 
 ## Logging
@@ -247,6 +269,7 @@ Use `wt step` to run individual hooks:
 wt step post-create    # Run post-create hooks
 wt step pre-merge      # Run pre-merge hooks
 wt step post-merge     # Run post-merge hooks
+wt step pre-remove     # Run pre-remove hooks
 ```
 
 ## Example configurations

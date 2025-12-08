@@ -3,8 +3,11 @@
 use color_print::cformat;
 use std::path::Path;
 
+use crate::commands::command_executor::CommandContext;
+use crate::commands::execute_pre_remove_commands;
 use crate::commands::process::spawn_detached;
 use crate::commands::worktree::{RemoveResult, SwitchResult};
+use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
@@ -364,6 +367,7 @@ pub fn handle_remove_output(
     result: &RemoveResult,
     branch: Option<&str>,
     background: bool,
+    verify: bool,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -384,6 +388,7 @@ pub fn handle_remove_output(
             target_branch.as_deref(),
             branch,
             background,
+            verify,
         ),
         RemoveResult::BranchOnly {
             branch_name,
@@ -447,6 +452,7 @@ fn handle_removed_worktree_output(
     target_branch: Option<&str>,
     branch: Option<&str>,
     background: bool,
+    verify: bool,
 ) -> anyhow::Result<()> {
     // 1. Emit cd directive if needed - shell will execute this immediately
     if changed_directory {
@@ -481,6 +487,21 @@ fn handle_removed_worktree_output(
         super::flush()?;
         return Ok(());
     };
+
+    // Execute pre-remove hooks in the worktree being removed
+    // Non-zero exit aborts removal (FailFast strategy)
+    if verify && let Ok(config) = WorktrunkConfig::load() {
+        let target_repo = Repository::at(worktree_path);
+        let ctx = CommandContext::new(
+            &target_repo,
+            &config,
+            branch_name,
+            worktree_path,
+            main_path,
+            false, // force=false, prompt for approval
+        );
+        execute_pre_remove_commands(&ctx, false)?;
+    }
 
     if background {
         // Background mode: spawn detached process
@@ -589,6 +610,7 @@ fn handle_removed_worktree_output(
             integration_reason,
             target_branch,
         ))?;
+
         super::flush()?;
         Ok(())
     }

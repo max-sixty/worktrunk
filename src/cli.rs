@@ -637,6 +637,13 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Run pre-remove hook
+    PreRemove {
+        /// Skip approval prompts
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// Subcommands for `wt list`
@@ -1302,6 +1309,10 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
         /// Run removal in foreground
         #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
         background: bool,
+
+        /// Skip pre-remove hooks
+        #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        verify: bool,
     },
 
     /// Merge worktree into target branch
@@ -1350,8 +1361,9 @@ wt merge --no-commit
 2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. **Pre-merge hooks** — Project commands run after rebase, before merge. Failures abort. See [Hooks](@/hooks.md).
 4. **Merge** — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
-5. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree.
-6. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
+5. **Pre-remove hooks** — Project commands run before removing worktree. Failures abort.
+6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree.
+7. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
 
 Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 

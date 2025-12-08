@@ -70,6 +70,14 @@ pub struct ProjectConfig {
     #[serde(default, rename = "post-merge")]
     pub post_merge: Option<CommandConfig>,
 
+    /// Commands to execute before a worktree is removed (blocking)
+    /// Supports string (single command) or table (named, sequential)
+    /// Runs in the worktree before removal; non-zero exit aborts removal
+    ///
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ worktree_name }}`, `{{ repo_root }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ upstream }}`
+    #[serde(default, rename = "pre-remove")]
+    pub pre_remove: Option<CommandConfig>,
+
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
     unknown: std::collections::HashMap<String, toml::Value>,

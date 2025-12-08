@@ -86,6 +86,9 @@ Options:
       --no-background
           Run removal in foreground
 
+      --no-verify
+          Skip pre-remove hooks
+
   -h, --help
           Print help (see a summary with '-h')
 

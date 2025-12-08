@@ -818,6 +818,9 @@ fn main() {
             StepCommand::PostMerge { force } => {
                 handle_standalone_run_hook(HookType::PostMerge, force)
             }
+            StepCommand::PreRemove { force } => {
+                handle_standalone_run_hook(HookType::PreRemove, force)
+            }
         },
         #[cfg(unix)]
         Commands::Select => handle_select(cli.internal),
@@ -929,6 +932,7 @@ fn main() {
             delete_branch,
             force_delete,
             background,
+            verify,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
@@ -944,7 +948,7 @@ fn main() {
                     // No worktrees specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
                     let result = handle_remove_current(!delete_branch, force_delete, background)?;
-                    handle_remove_output(&result, None, background)
+                    handle_remove_output(&result, None, background, verify)
                 } else {
                     use worktrunk::git::ResolvedWorktree;
 
@@ -983,12 +987,12 @@ fn main() {
                                 force_delete,
                                 background,
                             )?;
-                            handle_remove_output(&result, Some(branch_name), background)?;
+                            handle_remove_output(&result, Some(branch_name), background, verify)?;
                         } else {
                             // Non-current worktree is detached - remove by path (no branch to delete)
                             let result =
                                 handle_remove_by_path(path, None, force_delete, background)?;
-                            handle_remove_output(&result, None, background)?;
+                            handle_remove_output(&result, None, background, verify)?;
                         }
                     }
 
@@ -996,14 +1000,14 @@ fn main() {
                     for branch in &branch_only {
                         let result =
                             handle_remove(branch, !delete_branch, force_delete, background)?;
-                        handle_remove_output(&result, Some(branch), background)?;
+                        handle_remove_output(&result, Some(branch), background, verify)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some((_path, branch)) = current {
                         let result =
                             handle_remove_current(!delete_branch, force_delete, background)?;
-                        handle_remove_output(&result, branch.as_deref(), background)?;
+                        handle_remove_output(&result, branch.as_deref(), background, verify)?;
                     }
 
                     Ok(())

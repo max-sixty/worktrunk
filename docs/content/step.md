@@ -75,6 +75,7 @@ Commands:
   pre-commit   Run pre-commit hook
   pre-merge    Run pre-merge hook
   post-merge   Run post-merge hook
+  pre-remove   Run pre-remove hook
 
 Options:
   -h, --help

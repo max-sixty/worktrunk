@@ -27,6 +27,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[WORKTREES]...[0m
       [1m[36m--no-delete-branch[0m  Keep branch after removal
   [1m[36m-D[0m, [1m[36m--force-delete[0m      Delete unmerged branches
       [1m[36m--no-background[0m     Run removal in foreground
+      [1m[36m--no-verify[0m         Skip pre-remove hooks
   [1m[36m-h[0m, [1m[36m--help[0m              Print help (see more with '--help')
 
 [1m[32mGlobal Options:[0m

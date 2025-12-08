@@ -97,8 +97,9 @@ Skip git operations, only run hooks and push:
 2. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. [1mPre-merge hooks[0m — Project commands run after rebase, before merge. Failures abort. See Hooks.
 4. [1mMerge[0m — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
-5. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree.
-6. [1mPost-merge hooks[0m — Project commands run after cleanup. Failures are logged but don't abort.
+5. [1mPre-remove hooks[0m — Project commands run before removing worktree. Failures abort.
+6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree.
+7. [1mPost-merge hooks[0m — Project commands run after cleanup. Failures are logged but don't abort.
 
 Use [2m--no-commit[0m to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 

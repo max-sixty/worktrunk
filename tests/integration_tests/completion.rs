@@ -707,10 +707,11 @@ fn test_complete_step_subcommands() {
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
     assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
     assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
+    assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
     assert_eq!(
         subcommands.len(),
-        9,
-        "Should have exactly 9 step subcommands"
+        10,
+        "Should have exactly 10 step subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands

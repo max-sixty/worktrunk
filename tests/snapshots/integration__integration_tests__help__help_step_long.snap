@@ -30,6 +30,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
   [1m[36mpre-commit[0m   Run pre-commit hook
   [1m[36mpre-merge[0m    Run pre-merge hook
   [1m[36mpost-merge[0m   Run post-merge hook
+  [1m[36mpre-remove[0m   Run pre-remove hook
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m

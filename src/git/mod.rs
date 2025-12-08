@@ -78,6 +78,7 @@ pub enum HookType {
     PreCommit,
     PreMerge,
     PostMerge,
+    PreRemove,
 }
 
 /// Worktree information

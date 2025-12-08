@@ -5,6 +5,7 @@ use crate::common::{
 use insta_cmd::assert_cmd_snapshot;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 use tempfile::TempDir;
 
 /// Helper to create snapshot with normalized paths
@@ -713,5 +714,274 @@ fn test_remove_squash_merged_then_main_advanced() {
         &repo,
         &["feature-squash"],
         None,
+    );
+}
+
+// ============================================================================
+// Pre-Remove Hook Tests
+// ============================================================================
+
+/// Test pre-remove hook executes before worktree removal.
+#[test]
+fn test_pre_remove_hook_executes() {
+    // Use simple repo without remote for predictable project ID
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create project config with pre-remove hook
+    repo.write_project_config(r#"pre-remove = "echo 'About to remove worktree'""#);
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["echo 'About to remove worktree'"]
+"#,
+    );
+
+    // Create a worktree to remove
+    let _worktree_path = repo.add_worktree("feature-hook");
+
+    // Remove with --no-background to ensure synchronous execution
+    snapshot_remove(
+        "pre_remove_hook_executes",
+        &repo,
+        &["--no-background", "feature-hook"],
+        None,
+    );
+}
+
+/// Test pre-remove hook has access to template variables.
+#[test]
+fn test_pre_remove_hook_template_variables() {
+    // Use simple repo without remote for predictable project ID
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create project config with template variables
+    repo.write_project_config(
+        r#"[pre-remove]
+branch = "echo 'Branch: {{ branch }}'"
+worktree = "echo 'Worktree: {{ worktree }}'"
+worktree_name = "echo 'Name: {{ worktree_name }}'"
+"#,
+    );
+    repo.commit("Add config with templates");
+
+    // Pre-approve the commands (use expanded forms for approval)
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = [
+    "echo 'Branch: {{ branch }}'",
+    "echo 'Worktree: {{ worktree }}'",
+    "echo 'Name: {{ worktree_name }}'",
+]
+"#,
+    );
+
+    // Create a worktree to remove
+    let _worktree_path = repo.add_worktree("feature-templates");
+
+    // Remove with --no-background
+    snapshot_remove(
+        "pre_remove_hook_template_variables",
+        &repo,
+        &["--no-background", "feature-templates"],
+        None,
+    );
+}
+
+/// Test pre-remove hook runs even in background mode (before spawning background process).
+#[test]
+fn test_pre_remove_hook_runs_in_background_mode() {
+    use crate::common::wait_for_file;
+
+    // Use simple repo without remote for predictable project ID
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create a marker file that the hook will create
+    let marker_file = repo.root_path().join("hook-ran.txt");
+
+    // Create project config with hook that creates a file
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'hook ran' > {}""#,
+        marker_file.to_string_lossy().replace('\\', "/")
+    ));
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(&format!(
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+
+[projects."repo"]
+approved-commands = ["echo 'hook ran' > {}"]
+"#,
+        marker_file.to_string_lossy().replace('\\', "/")
+    ));
+
+    // Create a worktree to remove
+    let _worktree_path = repo.add_worktree("feature-bg");
+
+    // Remove in background mode (default)
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
+    repo.clean_cli_env(&mut cmd);
+    cmd.current_dir(repo.root_path())
+        .args(["remove", "feature-bg"])
+        .output()
+        .unwrap();
+
+    // Wait for the hook to create the marker file
+    wait_for_file(&marker_file, Duration::from_secs(5));
+
+    // Marker file SHOULD exist - pre-remove hooks run before background removal starts
+    assert!(
+        marker_file.exists(),
+        "Pre-remove hook should run even in background mode"
+    );
+}
+
+/// Test pre-remove hook failure aborts removal (FailFast strategy).
+#[test]
+fn test_pre_remove_hook_failure_aborts() {
+    // Use simple repo without remote for predictable project ID
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create project config with failing hook
+    repo.write_project_config(r#"pre-remove = "exit 1""#);
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["exit 1"]
+"#,
+    );
+
+    // Create a worktree to remove
+    let worktree_path = repo.add_worktree("feature-fail");
+
+    // Remove - should FAIL due to hook failure
+    snapshot_remove(
+        "pre_remove_hook_failure_aborts",
+        &repo,
+        &["--no-background", "feature-fail"],
+        None,
+    );
+
+    // Verify worktree was NOT removed (hook failure aborted removal)
+    assert!(
+        worktree_path.exists(),
+        "Worktree should NOT be removed when hook fails"
+    );
+}
+
+/// Test pre-remove hook does NOT run for branch-only removal (no worktree).
+#[test]
+fn test_pre_remove_hook_not_for_branch_only() {
+    // Use simple repo without remote for predictable project ID
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create a marker file that the hook would create
+    let marker_file = repo.root_path().join("branch-only-hook.txt");
+
+    // Create project config with hook
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'hook ran' > {}""#,
+        marker_file.to_string_lossy().replace('\\', "/")
+    ));
+    repo.commit("Add config");
+
+    // Pre-approve the command
+    repo.write_test_config(&format!(
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+
+[projects."repo"]
+approved-commands = ["echo 'hook ran' > {}"]
+"#,
+        marker_file.to_string_lossy().replace('\\', "/")
+    ));
+
+    // Create a branch without a worktree
+    repo.git_command(&["branch", "branch-only"])
+        .output()
+        .unwrap();
+
+    // Remove the branch (no worktree)
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
+    repo.clean_cli_env(&mut cmd);
+    cmd.current_dir(repo.root_path())
+        .args(["remove", "branch-only"])
+        .output()
+        .unwrap();
+
+    // Marker file should NOT exist - pre-remove hooks only run for worktree removal
+    assert!(
+        !marker_file.exists(),
+        "Pre-remove hook should NOT run for branch-only removal"
+    );
+}
+
+/// Test --no-verify flag skips pre-remove hooks.
+#[test]
+fn test_pre_remove_hook_skipped_with_no_verify() {
+    use std::thread;
+
+    // Use simple repo without remote for predictable project ID
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Create a marker file that the hook would create
+    let marker_file = repo.root_path().join("should-not-exist.txt");
+
+    // Create project config with hook that creates a file
+    repo.write_project_config(&format!(
+        r#"pre-remove = "echo 'hook ran' > {}""#,
+        marker_file.to_string_lossy().replace('\\', "/")
+    ));
+    repo.commit("Add config");
+
+    // Pre-approve the command (even though it shouldn't run)
+    repo.write_test_config(&format!(
+        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+
+[projects."repo"]
+approved-commands = ["echo 'hook ran' > {}"]
+"#,
+        marker_file.to_string_lossy().replace('\\', "/")
+    ));
+
+    // Create a worktree to remove
+    let worktree_path = repo.add_worktree("feature-skip");
+
+    // Remove with --no-verify to skip hooks
+    snapshot_remove(
+        "pre_remove_hook_skipped_with_no_verify",
+        &repo,
+        &["--no-background", "--no-verify", "feature-skip"],
+        None,
+    );
+
+    // Wait a bit for any potential hook execution
+    thread::sleep(Duration::from_millis(100));
+
+    // Marker file should NOT exist - --no-verify skips the hook
+    assert!(
+        !marker_file.exists(),
+        "Pre-remove hook should NOT run with --no-verify"
+    );
+
+    // Worktree should be removed (removal itself succeeds)
+    assert!(
+        !worktree_path.exists(),
+        "Worktree should be removed even with --no-verify"
     );
 }

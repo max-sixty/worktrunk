@@ -209,7 +209,8 @@ pub fn handle_merge(
             force_delete: false,
             target_branch: Some(target_branch.clone()),
         };
-        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true)?;
+        // Run hooks during merge removal (verify=true)
+        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true, true)?;
     } else {
         // Print comprehensive summary (worktree preserved)
         // Priority: main worktree > on target > --no-remove flag
@@ -313,5 +314,35 @@ pub fn execute_post_merge_commands(
         "post-merge",
         HookType::PostMerge,
         HookFailureStrategy::Warn,
+    )
+}
+
+/// Execute pre-remove commands sequentially in the worktree (blocking)
+///
+/// Runs before a worktree is removed. Non-zero exit aborts the removal.
+///
+/// # Arguments
+/// * `ctx` - Command context pointing to the worktree being removed
+/// * `auto_trust` - When true, skip approval prompts
+pub fn execute_pre_remove_commands(ctx: &CommandContext, auto_trust: bool) -> anyhow::Result<()> {
+    let project_config = match ctx.repo.load_project_config()? {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
+
+    let Some(pre_remove_config) = &project_config.pre_remove else {
+        return Ok(());
+    };
+
+    let pipeline = HookPipeline::new(*ctx);
+
+    pipeline.run_sequential(
+        pre_remove_config,
+        CommandPhase::PreRemove,
+        auto_trust,
+        &[],
+        "pre-remove",
+        HookType::PreRemove,
+        HookFailureStrategy::FailFast,
     )
 }

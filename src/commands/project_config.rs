@@ -14,6 +14,7 @@ pub fn collect_commands_for_hooks(
             HookType::PreCommit => &project_config.pre_commit,
             HookType::PreMerge => &project_config.pre_merge,
             HookType::PostMerge => &project_config.post_merge,
+            HookType::PreRemove => &project_config.pre_remove,
         };
         if let Some(config) = cfg {
             commands.extend(config.commands_with_phase(*hook));

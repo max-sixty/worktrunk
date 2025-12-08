@@ -24,7 +24,7 @@ pub use config::{
 pub use configure_shell::{ConfigAction, handle_configure_shell, handle_unconfigure_shell};
 pub use init::handle_init;
 pub use list::handle_list;
-pub use merge::handle_merge;
+pub use merge::{execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
 pub use select::handle_select;
 pub use standalone::{

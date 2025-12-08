@@ -1,0 +1,32 @@
+---
+source: tests/integration_tests/remove.rs
+info:
+  program: wt
+  args:
+    - remove
+    - "--no-background"
+    - feature-fail
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+---
+success: false
+exit_code: 1
+----- stdout -----
+
+----- stderr -----
+🔄 [36mRemoving worktree for [1mfeature-fail[22m...[39m
+🔄 [36mRunning pre-remove:[39m
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
+[0m❌ [31mpre-remove command failed: exit status: 1[39m
+
+💡 [2mUse [90m--no-verify[39m to skip pre-remove commands[22m

@@ -1,0 +1,37 @@
+---
+source: tests/integration_tests/remove.rs
+info:
+  program: wt
+  args:
+    - remove
+    - "--no-background"
+    - feature-templates
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+🔄 [36mRemoving worktree for [1mfeature-templates[22m...[39m
+🔄 [36mRunning pre-remove [1mbranch[22m:[39m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-templates'[0m[2m[0m
+[0mBranch: feature-templates
+🔄 [36mRunning pre-remove [1mworktree[22m:[39m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-templates'[0m[2m[0m
+[0mWorktree: [REPO].feature-templates
+🔄 [36mRunning pre-remove [1mworktree_name[22m:[39m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Name: repo.feature-templates'[0m[2m[0m
+[0mName: repo.feature-templates
+✅ [32mRemoved [1mfeature-templates[22m worktree & branch (already in main)[39m
