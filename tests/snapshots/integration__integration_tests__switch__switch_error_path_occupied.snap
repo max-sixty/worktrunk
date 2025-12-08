@@ -25,6 +25,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mDirectory already exists: [1m[REPO]/../repo.occupied-branch[39m[22m
+❌ [31mDirectory already exists: [1m[REPO]/../repo.occupied-branch[22m[39m
 
 💡 [2mRemove the directory or use a different branch name[22m

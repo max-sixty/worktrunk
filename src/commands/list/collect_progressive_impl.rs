@@ -26,6 +26,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::path::format_path_for_display;
+use worktrunk::styling::warning_message;
 
 use super::ci_status::PrStatus;
 use super::collect::{ExpectedResults, TaskKind, TaskResult, detect_git_operation};
@@ -362,11 +363,11 @@ impl Task for UpstreamTask {
                         }),
                         Err(e) => {
                             if ctx.verbose_errors {
-                                let _ = output::warning(format!(
+                                let _ = output::print(warning_message(format!(
                                     "ahead_behind failed for {}: {}",
                                     format_path_for_display(&ctx.repo_path),
                                     e
-                                ));
+                                )));
                             }
                             None
                         }
@@ -375,11 +376,11 @@ impl Task for UpstreamTask {
                 Ok(None) => None,
                 Err(e) => {
                     if ctx.verbose_errors {
-                        let _ = output::warning(format!(
+                        let _ = output::print(warning_message(format!(
                             "upstream_branch failed for {}: {}",
                             format_path_for_display(&ctx.repo_path),
                             e
-                        ));
+                        )));
                     }
                     None
                 }

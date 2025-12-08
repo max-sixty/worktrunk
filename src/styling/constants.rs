@@ -77,3 +77,48 @@ pub const INFO_EMOJI: &str = "⚪";
 /// Prompt emoji - use for questions requiring user input
 /// `eprint!("{PROMPT_EMOJI} Proceed? [y/N] ")`
 pub const PROMPT_EMOJI: &str = "❓";
+
+// ============================================================================
+// Message Formatting Functions
+// ============================================================================
+//
+// These functions provide the canonical formatting for each message type.
+// Used by both the output system (output::error, etc.) and Display impls
+// (GitError, WorktrunkError) to ensure consistent styling.
+
+use color_print::cformat;
+
+/// Format an error message with emoji and red styling
+///
+/// Content can include inner styling like `<bold>`:
+/// ```ignore
+/// error_message(cformat!("Branch <bold>{name}</> not found"))
+/// ```
+pub fn error_message(content: impl AsRef<str>) -> String {
+    cformat!("{ERROR_EMOJI} <red>{}</>", content.as_ref())
+}
+
+/// Format a hint message with emoji and dim styling
+pub fn hint_message(content: impl AsRef<str>) -> String {
+    cformat!("{HINT_EMOJI} <dim>{}</>", content.as_ref())
+}
+
+/// Format a warning message with emoji and yellow styling
+pub fn warning_message(content: impl AsRef<str>) -> String {
+    cformat!("{WARNING_EMOJI} <yellow>{}</>", content.as_ref())
+}
+
+/// Format a success message with emoji and green styling
+pub fn success_message(content: impl AsRef<str>) -> String {
+    cformat!("{SUCCESS_EMOJI} <green>{}</>", content.as_ref())
+}
+
+/// Format a progress message with emoji and cyan styling
+pub fn progress_message(content: impl AsRef<str>) -> String {
+    cformat!("{PROGRESS_EMOJI} <cyan>{}</>", content.as_ref())
+}
+
+/// Format an info message with emoji (no color - neutral status)
+pub fn info_message(content: impl AsRef<str>) -> String {
+    cformat!("{INFO_EMOJI} {}", content.as_ref())
+}

@@ -1,5 +1,7 @@
 //! Worktree operations with dual-mode output for shell integration.
 //!
+//! Note: This module uses message functions from worktrunk::styling.
+//!
 //! # The Directory Change Problem
 //!
 //! Worktree commands (`switch`, `remove`, `merge`) need to change the user's working directory,
@@ -114,7 +116,10 @@ use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::{CommandPhase, WorktrunkConfig};
 use worktrunk::git::{GitError, Repository, ResolvedWorktree, is_command_not_approved};
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{
+    format_with_gutter, hint_message, info_message, progress_message, success_message,
+    warning_message,
+};
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline};
@@ -324,18 +329,20 @@ pub fn handle_switch(
         let remotes = repo.remotes_with_branch(&resolved_branch)?;
         if !remotes.is_empty() {
             let remote_ref = format!("{}/{}", remotes[0], resolved_branch);
-            crate::output::warning(cformat!(
+            crate::output::print(warning_message(cformat!(
                 "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
-            ))?;
-            crate::output::hint(cformat!(
+            )))?;
+            crate::output::print(hint_message(cformat!(
                 "Use <bright-black>wt switch {resolved_branch}</> (without <bright-black>--create</>) to switch to the remote branch"
-            ))?;
+            )))?;
         }
     }
 
     // Check if base flag was provided without create flag
     if resolved_base.is_some() && !create {
-        crate::output::warning("--base flag is only used with --create, ignoring")?;
+        crate::output::print(warning_message(
+            "--base flag is only used with --create, ignoring",
+        ))?;
     }
 
     // Compute expected worktree path for this branch
@@ -492,7 +499,9 @@ pub fn handle_switch(
             // Only treat CommandNotApproved as non-fatal (user declined)
             // Other errors should still fail
             if is_command_not_approved(&e) {
-                crate::output::info("Commands declined, continuing worktree creation")?;
+                crate::output::print(info_message(
+                    "Commands declined, continuing worktree creation",
+                ))?;
             } else {
                 return Err(e);
             }
@@ -526,9 +535,9 @@ pub fn handle_remove(
 
     // Show progress (unless running in background - output handler will show command)
     if !background {
-        crate::output::progress(cformat!(
+        crate::output::print(progress_message(cformat!(
             "Removing worktree for <bold>{worktree_name}</>..."
-        ))?;
+        )))?;
     }
 
     repo.remove_worktree_by_name(worktree_name, no_delete_branch, force_delete)
@@ -547,7 +556,7 @@ pub fn handle_remove_current(
 
     // Show progress (unless running in background - output handler will show command)
     if !background {
-        crate::output::progress("Removing current worktree...")?;
+        crate::output::print(progress_message("Removing current worktree..."))?;
     }
 
     repo.remove_current_worktree(no_delete_branch, force_delete)
@@ -567,10 +576,10 @@ pub fn handle_remove_by_path(
     let repo = Repository::current();
 
     if !background {
-        crate::output::progress(cformat!(
+        crate::output::print(progress_message(cformat!(
             "Removing worktree at <bold>{}</>...",
             worktrunk::path::format_path_for_display(path)
-        ))?;
+        )))?;
     }
 
     // Check that the worktree is clean
@@ -772,9 +781,9 @@ pub fn handle_push(
             format!(" ({})", notes.join(", "))
         };
 
-        crate::output::progress(cformat!(
+        crate::output::print(progress_message(cformat!(
             "{verb_ing} {commit_count} {commit_text} to <bold>{target_branch}</> @ <dim>{head_sha}</>{operations_note}"
-        ))?;
+        )))?;
 
         // Show the commit graph with color
         let log_output = repo.run_command(&[
@@ -829,10 +838,10 @@ pub fn handle_push(
         // Re-apply bright-black after stats (which end with a reset) so ) is also gray
         let stats_str = summary_parts.join(", ");
         let paren_close = cformat!("<bright-black>)</>"); // Separate to avoid cformat optimization
-        crate::output::success(cformat!(
+        crate::output::print(success_message(cformat!(
             "{verb} <bold>{target_branch}</> <bright-black>({stats_str}</>{}",
             paren_close
-        ))?;
+        )))?;
     } else {
         // For merge workflow context, explain why nothing was pushed
         let context = if let Some(ops) = operations {
@@ -853,9 +862,9 @@ pub fn handle_push(
         };
 
         // No action: nothing was pushed, just acknowledging state
-        crate::output::info(cformat!(
+        crate::output::print(info_message(cformat!(
             "Already up to date with <bold>{target_branch}</>{context}"
-        ))?;
+        )))?;
     }
 
     Ok(())

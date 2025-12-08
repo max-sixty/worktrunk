@@ -12,7 +12,10 @@ use worktrunk::git::GitError;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
-use worktrunk::styling::{HINT_EMOJI, format_with_gutter};
+use worktrunk::styling::{
+    HINT_EMOJI, error_message, format_with_gutter, info_message, progress_message, success_message,
+    warning_message,
+};
 
 /// Format a switch success message with a consistent location phrase
 ///
@@ -143,9 +146,9 @@ fn handle_branch_deletion_result(
         Ok(Some(reason)) => Ok(Some(reason)), // Deleted (with or without integration reason)
         Ok(None) => {
             // Branch not integrated - we chose not to delete (not a failure)
-            super::info(cformat!(
+            super::print(info_message(cformat!(
                 "Branch <bold>{branch_name}</> retained; has unmerged changes"
-            ))?;
+            )))?;
             super::print(cformat!(
                 "{HINT_EMOJI} <dim>Use </>wt remove -D<dim> to delete unmerged branches</>"
             ))?;
@@ -153,7 +156,9 @@ fn handle_branch_deletion_result(
         }
         Err(e) => {
             // Git command failed - this is an error (we decided to delete but couldn't)
-            super::error(cformat!("Failed to delete branch <bold>{branch_name}</>"))?;
+            super::print(error_message(cformat!(
+                "Failed to delete branch <bold>{branch_name}</>"
+            )))?;
             super::gutter(format_with_gutter(&e.to_string(), "", None))?;
             Err(e)
         }
@@ -264,10 +269,10 @@ pub fn handle_switch_output(
     match result {
         SwitchResult::AlreadyAt(path) => {
             // Already at target - show info, no hint needed
-            super::info(cformat!(
+            super::print(info_message(cformat!(
                 "Already on worktree for <bold>{branch}</> at <bold>{}</>",
                 format_path_for_display(path)
-            ))?;
+            )))?;
         }
         SwitchResult::Existing(path) => {
             // Check if we can cd or if shell integration is at least configured
@@ -275,15 +280,15 @@ pub fn handle_switch_output(
 
             if is_directive_mode || has_execute_command || is_configured {
                 // Shell integration active, --execute provided, or configured - show success
-                super::success(format_switch_success_message(
+                super::print(success_message(format_switch_success_message(
                     branch, path, false, None, None,
-                ))?;
+                )))?;
             } else {
                 // Shell integration not configured - show warning and setup hint
                 let path_display = format_path_for_display(path);
-                super::warning(cformat!(
+                super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)"
-                ))?;
+                )))?;
                 super::shell_integration_hint(shell_integration_hint())?;
             }
         }
@@ -294,13 +299,13 @@ pub fn handle_switch_output(
             from_remote,
         } => {
             // Creation succeeded - show success
-            super::success(format_switch_success_message(
+            super::print(success_message(format_switch_success_message(
                 branch,
                 path,
                 *created_branch,
                 base_branch.as_deref(),
                 from_remote.as_deref(),
-            ))?;
+            )))?;
             // Show setup hint if shell integration not active
             if !is_directive_mode && !has_execute_command {
                 super::shell_integration_hint(shell_integration_hint())?;
@@ -319,7 +324,7 @@ pub fn execute_user_command(command: &str) -> anyhow::Result<()> {
     use worktrunk::styling::format_bash_with_gutter;
 
     // Show what command is being executed (section header + gutter content)
-    super::progress("Executing (--execute):")?;
+    super::print(progress_message("Executing (--execute):"))?;
     super::gutter(format_bash_with_gutter(command, ""))?;
 
     super::execute(command)?;
@@ -405,9 +410,9 @@ fn handle_branch_only_output(
     force_delete: bool,
 ) -> anyhow::Result<()> {
     // Warn that no worktree was found (user asked to remove it)
-    super::warning(cformat!(
+    super::print(warning_message(cformat!(
         "No worktree found for branch <bold>{branch_name}</>"
-    ))?;
+    )))?;
 
     // Attempt branch deletion (unless --no-delete-branch was specified)
     if no_delete_branch {
@@ -433,7 +438,9 @@ fn handle_branch_only_output(
             integration_reason,
             default_branch.as_deref(),
         );
-        super::success(cformat!("Removed branch <bold>{branch_name}</>{flag_note}"))?;
+        super::print(success_message(cformat!(
+            "Removed branch <bold>{branch_name}</>{flag_note}"
+        )))?;
     }
 
     super::flush()?;
@@ -483,9 +490,9 @@ fn handle_removed_worktree_output(
     let Some(branch_name) = branch_name else {
         // No branch associated - just remove the worktree
         if background {
-            super::progress(
+            super::print(progress_message(
                 "Removing worktree in background (detached HEAD, no branch to delete)",
-            )?;
+            ))?;
             let remove_command = build_remove_command(worktree_path, None);
             spawn_detached(
                 &repo,
@@ -506,7 +513,9 @@ fn handle_removed_worktree_output(
                 }
                 .into());
             }
-            super::success("Removed worktree (detached HEAD, no branch to delete)")?;
+            super::print(success_message(
+                "Removed worktree (detached HEAD, no branch to delete)",
+            ))?;
         }
         super::flush()?;
         return Ok(());
@@ -561,7 +570,7 @@ fn handle_removed_worktree_output(
                 "<cyan>Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
             )
         };
-        super::progress(action)?;
+        super::print(progress_message(action))?;
 
         // Show hint for unmerged branches (same as synchronous path)
         if !no_delete_branch && !should_delete_branch {
@@ -616,7 +625,7 @@ fn handle_removed_worktree_output(
         };
 
         // Show success message (includes emoji and color)
-        super::success(format_remove_worktree_message(
+        super::print(success_message(format_remove_worktree_message(
             main_path,
             changed_directory,
             branch_name,
@@ -625,7 +634,7 @@ fn handle_removed_worktree_output(
             force_delete,
             integration_reason,
             target_branch,
-        ))?;
+        )))?;
 
         super::flush()?;
         Ok(())

@@ -3,7 +3,9 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
-use worktrunk::styling::{INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter};
+use worktrunk::styling::{
+    INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter, warning_message,
+};
 
 pub struct ConfigureResult {
     pub shell: Shell,
@@ -173,9 +175,9 @@ pub fn handle_configure_shell(
         // Only show advisory if we positively detect it's missing (Some(false)).
         // If detection fails (None), stay silent - we can't be sure.
         if shell::detect_zsh_compinit() == Some(false) {
-            let _ = crate::output::warning(
+            let _ = crate::output::print(warning_message(
                 "Completions won't work; add to ~/.zshrc before the wt line:",
-            );
+            ));
             let _ = crate::output::gutter(format_bash_with_gutter(
                 "autoload -Uz compinit && compinit",
                 "",

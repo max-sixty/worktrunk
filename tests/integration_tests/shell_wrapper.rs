@@ -2960,4 +2960,210 @@ fi
             output
         );
     }
+
+    // ========================================================================
+    // Stderr/Stdout Redirection Tests
+    // ========================================================================
+    //
+    // These tests verify that output redirection works correctly through the
+    // shell wrapper. When a user runs `wt --help &> file`, ALL output should
+    // go to the file - nothing should leak to the terminal.
+    //
+    // This is particularly important for fish where command substitution `(...)`
+    // doesn't propagate stderr redirects from the calling function.
+
+    /// Test that `wt --help &> file` redirects all output to the file.
+    ///
+    /// This test verifies that stderr redirection works correctly through the
+    /// shell wrapper. The issue being tested: in some shells (particularly fish),
+    /// command substitution doesn't propagate stderr redirects, causing help
+    /// output to appear on the terminal even when redirected.
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
+    fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str) {
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use std::io::Read;
+
+        let repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        let wt_bin = get_cargo_bin("wt");
+        let wt_bin_dir = wt_bin.parent().unwrap();
+
+        // Create a temp file for the redirect target
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let redirect_file = tmp_dir.path().join("output.log");
+        let redirect_path = redirect_file.display().to_string();
+
+        // Generate wrapper script
+        let output = std::process::Command::new(&wt_bin)
+            .args(["config", "shell", "init", shell])
+            .output()
+            .unwrap();
+        let wrapper_script = String::from_utf8_lossy(&output.stdout);
+
+        // Build shell script that:
+        // 1. Sources the wrapper
+        // 2. Runs `wt --help &> file`
+        // 3. Echoes a marker so we know the script completed
+        let script = match shell {
+            "fish" => format!(
+                r#"
+set -x WORKTRUNK_BIN '{wt_bin}'
+set -x CLICOLOR_FORCE 1
+
+# Source the shell integration
+{wrapper_script}
+
+# Run help with redirect - ALL output should go to file
+wt --help &>'{redirect_path}'
+
+# Marker to show script completed
+echo "SCRIPT_COMPLETED"
+"#,
+                wt_bin = wt_bin.display(),
+                wrapper_script = wrapper_script,
+                redirect_path = redirect_path,
+            ),
+            "zsh" => format!(
+                r#"
+autoload -Uz compinit && compinit -i 2>/dev/null
+export WORKTRUNK_BIN='{wt_bin}'
+export CLICOLOR_FORCE=1
+
+# Source the shell integration
+{wrapper_script}
+
+# Run help with redirect - ALL output should go to file
+wt --help &>'{redirect_path}'
+
+# Marker to show script completed
+echo "SCRIPT_COMPLETED"
+"#,
+                wt_bin = wt_bin.display(),
+                wrapper_script = wrapper_script,
+                redirect_path = redirect_path,
+            ),
+            _ => format!(
+                r#"
+export WORKTRUNK_BIN='{wt_bin}'
+export CLICOLOR_FORCE=1
+
+# Source the shell integration
+{wrapper_script}
+
+# Run help with redirect - ALL output should go to file
+wt --help &>'{redirect_path}'
+
+# Marker to show script completed
+echo "SCRIPT_COMPLETED"
+"#,
+                wt_bin = wt_bin.display(),
+                wrapper_script = wrapper_script,
+                redirect_path = redirect_path,
+            ),
+        };
+
+        // Execute in PTY
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 48,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let mut cmd = CommandBuilder::new(shell);
+        cmd.env_clear();
+        cmd.env(
+            "HOME",
+            home::home_dir().unwrap().to_string_lossy().to_string(),
+        );
+        cmd.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                wt_bin_dir.display(),
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+            ),
+        );
+
+        // Shell-specific flags for isolation
+        match shell {
+            "zsh" => {
+                cmd.env("ZDOTDIR", "/dev/null");
+                cmd.arg("--no-rcs");
+                cmd.arg("-o");
+                cmd.arg("NO_GLOBAL_RCS");
+                cmd.arg("-o");
+                cmd.arg("NO_RCS");
+            }
+            "bash" => {
+                cmd.arg("--norc");
+                cmd.arg("--noprofile");
+            }
+            "fish" => {
+                cmd.arg("--no-config");
+            }
+            _ => {}
+        }
+
+        cmd.arg("-c");
+        cmd.arg(&script);
+        cmd.cwd(repo.root_path());
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+
+        let _status = child.wait().unwrap();
+        let terminal_output = buf.replace("\r\n", "\n");
+
+        // Read the redirect file
+        let file_content = fs::read_to_string(&redirect_file).unwrap_or_else(|e| {
+            panic!(
+                "{}: Failed to read redirect file: {}\nTerminal output:\n{}",
+                shell, e, terminal_output
+            )
+        });
+
+        // Verify script completed
+        assert!(
+            terminal_output.contains("SCRIPT_COMPLETED"),
+            "{}: Script did not complete successfully.\nTerminal output:\n{}",
+            shell,
+            terminal_output
+        );
+
+        // Verify help content went to the file
+        assert!(
+            file_content.contains("Usage:") || file_content.contains("wt"),
+            "{}: Help content should be in the redirect file.\nFile content:\n{}\nTerminal output:\n{}",
+            shell,
+            file_content,
+            terminal_output
+        );
+
+        // Verify help content did NOT leak to the terminal
+        // We check for specific help markers that shouldn't appear on terminal
+        let help_markers = ["Usage:", "Commands:", "Options:", "USAGE:"];
+        for marker in help_markers {
+            if terminal_output.contains(marker) {
+                panic!(
+                    "{}: Help output leaked to terminal (found '{}').\n\
+                     This indicates stderr redirection is not working correctly.\n\
+                     Terminal output:\n{}\n\
+                     File content:\n{}",
+                    shell, marker, terminal_output, file_content
+                );
+            }
+        }
+    }
 }

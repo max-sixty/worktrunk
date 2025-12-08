@@ -1,6 +1,7 @@
 use worktrunk::HookType;
 use worktrunk::config::{Command, CommandPhase, ProjectConfig};
 use worktrunk::git::Repository;
+use worktrunk::styling::info_message;
 
 use super::command_approval::approve_command_batch;
 use super::command_executor::CommandContext;
@@ -118,7 +119,7 @@ pub fn handle_merge(
 
     // If commands were declined, show message explaining that merge continues anyway
     if !approved {
-        crate::output::info("Commands declined, continuing merge")?;
+        crate::output::print(info_message("Commands declined, continuing merge"))?;
     }
 
     // Handle uncommitted changes (skip if --no-commit) - track whether commit occurred
@@ -251,7 +252,7 @@ fn handle_merge_summary_output(reason: PreserveReason) -> anyhow::Result<()> {
         PreserveReason::AlreadyOnTarget => "Worktree preserved (already on target branch)",
         PreserveReason::NoRemoveFlag => "Worktree preserved (--no-remove)",
     };
-    crate::output::info(message)?;
+    crate::output::print(info_message(message))?;
     crate::output::flush()?;
 
     Ok(())

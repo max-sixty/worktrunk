@@ -33,6 +33,8 @@
 //! ## Usage Pattern
 //!
 //! ```rust,ignore
+//! use worktrunk::styling::{success_message, error_message, hint_message};
+//!
 //! // 1. Initialize once in main()
 //! let mode = if internal {
 //!     OutputMode::Directive
@@ -42,7 +44,7 @@
 //! output::initialize(mode);
 //!
 //! // 2. Use anywhere in the codebase
-//! output::success("Operation complete");
+//! output::print(success_message("Operation complete"));
 //! output::change_directory(&path);
 //! output::execute("git pull");
 //! output::flush();
@@ -63,9 +65,8 @@ mod traits;
 
 // Re-export the public API
 pub use global::{
-    OutputMode, blank, change_directory, data, error, execute, flush, flush_for_stderr_prompt,
-    gutter, hint, info, initialize, print, progress, shell_integration_hint, success, table,
-    terminate_output, warning,
+    OutputMode, blank, change_directory, data, execute, flush, flush_for_stderr_prompt, gutter,
+    initialize, print, shell_integration_hint, table, terminate_output,
 };
 // Re-export output handlers
 pub use handlers::{

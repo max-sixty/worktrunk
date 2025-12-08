@@ -8,7 +8,8 @@ use color_print::cformat;
 use worktrunk::config::{Command, WorktrunkConfig};
 use worktrunk::git::GitError;
 use worktrunk::styling::{
-    INFO_EMOJI, PROMPT_EMOJI, WARNING_EMOJI, eprint, eprintln, format_bash_with_gutter, stderr,
+    INFO_EMOJI, PROMPT_EMOJI, WARNING_EMOJI, eprint, eprintln, format_bash_with_gutter,
+    hint_message, stderr, warning_message,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -65,8 +66,10 @@ pub fn approve_command_batch(
         }
 
         if updated && let Err(e) = fresh_config.save() {
-            let _ = output::warning(format!("Failed to save command approval: {e}"));
-            let _ = output::hint("Approval will be requested again next time.");
+            let _ = output::print(warning_message(format!(
+                "Failed to save command approval: {e}"
+            )));
+            let _ = output::print(hint_message("Approval will be requested again next time."));
         }
     }
 

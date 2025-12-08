@@ -8,7 +8,7 @@ use color_print::cformat;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{format_with_gutter, progress_message, warning_message};
 
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
@@ -245,10 +245,10 @@ impl RepositoryCliExt for Repository {
             nanos
         );
 
-        crate::output::progress(cformat!(
+        crate::output::print(progress_message(cformat!(
             "Stashing changes in <bold>{}</>...",
             format_path_for_display(wt_path)
-        ))?;
+        )))?;
 
         let stash_output =
             wt_repo.run_command(&["stash", "push", "--include-untracked", "-m", &stash_name])?;
@@ -342,7 +342,9 @@ impl AutoStageWarning {
 
         let count = self.files.len();
         let path_word = if count == 1 { "path" } else { "paths" };
-        crate::output::warning(format!("Auto-staging {count} untracked {path_word}:"))?;
+        crate::output::print(warning_message(format!(
+            "Auto-staging {count} untracked {path_word}:"
+        )))?;
 
         let joined_files = self.files.join("\n");
         crate::output::gutter(format_with_gutter(&joined_files, "", None))?;
@@ -367,20 +369,20 @@ impl TargetWorktreeStash {
     }
 
     pub(crate) fn restore(self) -> anyhow::Result<()> {
-        crate::output::progress(cformat!(
+        crate::output::print(progress_message(cformat!(
             "Restoring stashed changes in <bold>{}</>...",
             format_path_for_display(&self.path)
-        ))?;
+        )))?;
 
         if let Err(_e) = self
             .repo
             .run_command(&["stash", "pop", "--quiet", &self.stash_ref])
         {
-            crate::output::warning(cformat!(
+            crate::output::print(warning_message(cformat!(
                 "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
                 stash_ref = self.stash_ref,
                 path = format_path_for_display(&self.path),
-            ))?;
+            )))?;
         }
 
         Ok(())

@@ -45,7 +45,8 @@ impl OutputHandler for InteractiveOutput {
 
     fn shell_integration_hint(&mut self, message: String) -> io::Result<()> {
         // Shell integration hints work the same as regular hints in interactive mode
-        self.hint(message)
+        use worktrunk::styling::hint_message;
+        self.write_message_line(&hint_message(&message))
     }
 
     fn change_directory(&mut self, path: &Path) -> io::Result<()> {

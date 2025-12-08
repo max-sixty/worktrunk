@@ -61,61 +61,25 @@ pub fn initialize(mode: OutputMode) {
     });
 }
 
-/// Emit a success message
-pub fn success(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.success(message.into()))
-}
-
-/// Emit a progress message
-///
-/// Progress messages are intermediate status updates like "🔄 Cleaning up worktree..."
-/// They are shown to users in both modes (users need to see what's happening).
-pub fn progress(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.progress(message.into()))
-}
-
-/// Display a hint message
-///
-/// Hints are suggestions for users, like "Backup created @ \<sha\>" or "Using fallback commit message"
-pub fn hint(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.hint(message.into()))
-}
-
 /// Display a shell integration hint (suppressed in directive mode)
 ///
 /// Shell integration hints like "Run `wt config shell install` to enable automatic cd" are only
-/// shown in interactive mode since directive mode users already have shell integration
+/// shown in interactive mode since directive mode users already have shell integration.
+///
+/// This is kept as a separate method because it has mode-specific behavior.
 pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
     with_output(|h| h.shell_integration_hint(message.into()))
 }
 
-/// Emit an info message
-///
-/// Info messages are neutral status updates like "⚪ No changes detected"
-/// They use INFO_EMOJI (⚪) and dimmed styling.
-pub fn info(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.info(message.into()))
-}
-
-/// Emit a warning message
-///
-/// Warning messages are non-blocking issues like "🟡 Uncommitted changes detected"
-/// They use WARNING_EMOJI (🟡) and warning styling.
-pub fn warning(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.warning(message.into()))
-}
-
-/// Emit an error message
-///
-/// Error messages indicate failures like "❌ Failed to delete branch"
-/// They use ERROR_EMOJI (❌) and red styling.
-pub fn error(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.error(message.into()))
-}
-
 /// Print a message (written as-is)
 ///
-/// The caller is responsible for formatting.
+/// Use with message formatting functions for semantic output:
+/// ```ignore
+/// use worktrunk::styling::{error_message, success_message, hint_message};
+/// output::print(error_message("Failed to create branch"))?;
+/// output::print(success_message("Branch created"))?;
+/// output::print(hint_message("Use --force to override"))?;
+/// ```
 pub fn print(message: impl Into<String>) -> io::Result<()> {
     with_output(|h| h.print(message.into()))
 }

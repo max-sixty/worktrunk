@@ -1,6 +1,6 @@
 use insta::assert_snapshot;
 use std::path::PathBuf;
-use worktrunk::git::GitError;
+use worktrunk::git::{GitError, HookType, WorktrunkError};
 
 // ============================================================================
 // Worktree errors
@@ -244,10 +244,78 @@ fn display_parse_error() {
 }
 
 #[test]
+fn display_remote_only_branch() {
+    let err = GitError::RemoteOnlyBranch {
+        branch: "feature".into(),
+        remote: "origin".into(),
+    };
+
+    assert_snapshot!("remote_only_branch", err.to_string());
+}
+
+#[test]
 fn display_other() {
     let err = GitError::Other {
         message: "Unexpected git error".into(),
     };
 
     assert_snapshot!("other", err.to_string());
+}
+
+// ============================================================================
+// WorktrunkError display tests
+// ============================================================================
+
+#[test]
+fn display_hook_command_failed_with_name() {
+    let err = WorktrunkError::HookCommandFailed {
+        hook_type: HookType::PreMerge,
+        command_name: Some("test".into()),
+        error: "exit code 1".into(),
+        exit_code: Some(1),
+    };
+
+    assert_snapshot!("hook_command_failed_with_name", err.to_string());
+}
+
+#[test]
+fn display_hook_command_failed_without_name() {
+    let err = WorktrunkError::HookCommandFailed {
+        hook_type: HookType::PostCreate,
+        command_name: None,
+        error: "command not found".into(),
+        exit_code: Some(127),
+    };
+
+    assert_snapshot!("hook_command_failed_without_name", err.to_string());
+}
+
+// ============================================================================
+// Integration test: verify error message includes command when git unavailable
+// ============================================================================
+
+/// Test that when git execution fails, the error message includes the command.
+/// This is an integration test because it requires running the actual binary.
+#[test]
+#[cfg(unix)]
+fn git_unavailable_error_includes_command() {
+    use insta_cmd::get_cargo_bin;
+    use std::process::Command;
+
+    let mut cmd = Command::new(get_cargo_bin("wt"));
+    cmd.arg("list")
+        // Set PATH to empty so git isn't found
+        .env("PATH", "/nonexistent")
+        // Prevent any fallback mechanisms
+        .env_remove("GIT_EXEC_PATH");
+
+    let output = cmd.output().expect("Failed to run wt");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // The error should include the git command that failed
+    assert!(
+        stderr.contains("Failed to execute: git"),
+        "Error should include 'Failed to execute: git', got: {}",
+        stderr
+    );
 }

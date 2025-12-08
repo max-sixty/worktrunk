@@ -2,7 +2,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::format_with_gutter;
+use worktrunk::styling::{format_with_gutter, hint_message, progress_message, success_message};
 
 use super::command_executor::CommandContext;
 use super::hooks::HookPipeline;
@@ -67,9 +67,9 @@ impl<'a> CommitGenerator<'a> {
 
     pub fn emit_hint_if_needed(&self) -> anyhow::Result<()> {
         if !self.config.is_configured() {
-            crate::output::hint(cformat!(
+            crate::output::print(hint_message(cformat!(
                 "Using fallback commit message. Run <bright-black>wt config --help</> for LLM setup guide"
-            ))?;
+            )))?;
         }
         Ok(())
     }
@@ -111,7 +111,7 @@ impl<'a> CommitGenerator<'a> {
             cformat!("{action} <bright-black>({parts_str}</>{paren_close}")
         };
 
-        crate::output::progress(full_progress_msg)?;
+        crate::output::print(progress_message(full_progress_msg))?;
 
         self.emit_hint_if_needed()?;
         let commit_message = crate::llm::generate_commit_message(self.config)?;
@@ -127,7 +127,9 @@ impl<'a> CommitGenerator<'a> {
             .trim()
             .to_string();
 
-        crate::output::success(cformat!("Committed changes @ <dim>{commit_hash}</>"))?;
+        crate::output::print(success_message(cformat!(
+            "Committed changes @ <dim>{commit_hash}</>"
+        )))?;
 
         Ok(())
     }
@@ -143,9 +145,9 @@ impl CommitOptions<'_> {
             .unwrap_or(false);
 
         if self.no_verify && has_pre_commit {
-            crate::output::hint(cformat!(
+            crate::output::print(hint_message(cformat!(
                 "Skipping pre-commit hook (<bright-black>--no-verify</>)"
-            ))?;
+            )))?;
         } else if let Some(ref config) = project_config {
             let pipeline = HookPipeline::new(*self.ctx);
             pipeline.run_pre_commit(config, self.target_branch, self.auto_trust)?;

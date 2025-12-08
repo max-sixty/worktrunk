@@ -1405,7 +1405,9 @@ impl Repository {
         };
 
         let t0 = Instant::now();
-        let output = cmd.output().context("Failed to execute git command")?;
+        let output = cmd
+            .output()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
         let duration = t0.elapsed();
 
         // Performance tracing at debug level (enable with RUST_LOG=debug)
@@ -1475,7 +1477,9 @@ impl Repository {
             log::debug!("$ git {} [{}]", args.join(" "), worktree);
         }
 
-        let output = cmd.output().context("Failed to execute git command")?;
+        let output = cmd
+            .output()
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
         let success = output.status.success();
         if !success {

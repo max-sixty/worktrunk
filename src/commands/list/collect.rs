@@ -22,7 +22,7 @@
 use crossbeam_channel as chan;
 use rayon::prelude::*;
 use worktrunk::git::{LineDiff, Repository, Worktree};
-use worktrunk::styling::INFO_EMOJI;
+use worktrunk::styling::{INFO_EMOJI, warning_message};
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -811,7 +811,7 @@ pub fn collect(
             "\n\nThis likely indicates a git command hung. Run with RUST_LOG=debug for details.",
         );
 
-        crate::output::warning(diag)?;
+        crate::output::print(warning_message(diag))?;
     }
 
     // Finalize progressive table or render buffered output

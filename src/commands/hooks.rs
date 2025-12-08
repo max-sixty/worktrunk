@@ -2,7 +2,7 @@ use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, CommandPhase, ProjectConfig};
 use worktrunk::git::WorktrunkError;
-use worktrunk::styling::format_bash_with_gutter;
+use worktrunk::styling::{format_bash_with_gutter, progress_message, warning_message};
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_project_commands};
 use crate::commands::process::spawn_detached;
@@ -60,7 +60,7 @@ impl<'a> HookPipeline<'a> {
         for prepared in commands {
             let label =
                 crate::commands::format_command_label(label_prefix, prepared.name.as_deref());
-            crate::output::progress(format!("{label}:"))?;
+            crate::output::print(progress_message(format!("{label}:")))?;
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
             if let Err(err) = execute_command_in_worktree(
@@ -98,7 +98,7 @@ impl<'a> HookPipeline<'a> {
                             }
                             None => format!("Command failed: {err_msg}"),
                         };
-                        crate::output::warning(message)?;
+                        crate::output::print(warning_message(message))?;
 
                         // Track first failure to propagate exit code later (only for PostMerge)
                         if first_failure.is_none() && hook_type == HookType::PostMerge {
@@ -144,7 +144,7 @@ impl<'a> HookPipeline<'a> {
         for prepared in commands {
             let label =
                 crate::commands::format_command_label(label_prefix, prepared.name.as_deref());
-            crate::output::progress(format!("{label}:"))?;
+            crate::output::print(progress_message(format!("{label}:")))?;
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
             let name = prepared.name.as_deref().unwrap_or("cmd");
@@ -162,7 +162,7 @@ impl<'a> HookPipeline<'a> {
                     Some(name) => format!("Failed to spawn \"{name}\": {err_msg}"),
                     None => format!("Failed to spawn command: {err_msg}"),
                 };
-                crate::output::warning(message)?;
+                crate::output::print(warning_message(message))?;
             }
         }
 

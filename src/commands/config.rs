@@ -10,6 +10,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
     ERROR_EMOJI, HINT_EMOJI, INFO_EMOJI, WARNING_EMOJI, format_toml, format_with_gutter,
+    hint_message, info_message, progress_message, success_message, warning_message,
 };
 
 use super::configure_shell::{ConfigAction, scan_shell_configs};
@@ -80,17 +81,17 @@ fn create_config_file(
 ) -> anyhow::Result<()> {
     // Check if file already exists
     if path.exists() {
-        output::info(cformat!(
+        output::print(info_message(cformat!(
             "{config_type} already exists: <bold>{}</>",
             format_path_for_display(&path)
-        ))?;
+        )))?;
         output::blank()?;
-        output::hint(cformat!(
+        output::print(hint_message(cformat!(
             "Use <bright-black>wt config show</> to view existing configuration"
-        ))?;
-        output::hint(cformat!(
+        )))?;
+        output::print(hint_message(cformat!(
             "Use <bright-black>wt config create --help</> for config format reference"
-        ))?;
+        )))?;
         return Ok(());
     }
 
@@ -104,14 +105,14 @@ fn create_config_file(
     std::fs::write(&path, commented_config).context("Failed to write config file")?;
 
     // Success message
-    output::success(cformat!(
+    output::print(success_message(cformat!(
         "Created {}: <bold>{}</>",
         config_type.to_lowercase(),
         format_path_for_display(&path)
-    ))?;
+    )))?;
     output::blank()?;
     for hint in success_hints {
-        output::hint(*hint)?;
+        output::print(hint_message(*hint))?;
     }
 
     Ok(())
@@ -152,7 +153,7 @@ pub fn handle_config_show(doctor: bool) -> anyhow::Result<()> {
 
 /// Run diagnostic checks on configuration
 fn run_doctor_checks() -> anyhow::Result<()> {
-    output::info("Running diagnostic checks...")?;
+    output::print(info_message("Running diagnostic checks..."))?;
     output::blank()?;
 
     // Test commit generation
@@ -160,10 +161,10 @@ fn run_doctor_checks() -> anyhow::Result<()> {
     let commit_config = &config.commit_generation;
 
     if !commit_config.is_configured() {
-        output::warning("Commit generation is not configured")?;
-        output::hint(cformat!(
+        output::print(warning_message("Commit generation is not configured"))?;
+        output::print(hint_message(cformat!(
             "Add <bright-black>[commit-generation]</> section to enable LLM commit messages"
-        ))?;
+        )))?;
         return Ok(());
     }
 
@@ -177,22 +178,24 @@ fn run_doctor_checks() -> anyhow::Result<()> {
         }
     );
 
-    output::progress(cformat!(
+    output::print(progress_message(cformat!(
         "Testing commit generation with <bold>{command_display}</>"
-    ))?;
+    )))?;
 
     match test_commit_generation(commit_config) {
         Ok(message) => {
-            output::success("Commit generation working")?;
+            output::print(success_message("Commit generation working"))?;
             output::blank()?;
-            output::info("Sample generated message:")?;
+            output::print(info_message("Sample generated message:"))?;
             output::gutter(format_with_gutter(&message, "", None))?;
         }
         Err(e) => {
             output::print(cformat!("{ERROR_EMOJI} <red>Commit generation failed</>"))?;
             output::gutter(format_with_gutter(&e.to_string(), "", None))?;
             output::blank()?;
-            output::hint("Check that the command is installed and API keys are configured")?;
+            output::print(hint_message(
+                "Check that the command is installed and API keys are configured",
+            ))?;
         }
     }
 
@@ -504,7 +507,7 @@ pub fn handle_var_get(key: &str, refresh: bool, branch: Option<String>) -> anyho
     match key {
         "default-branch" => {
             let branch_name = if refresh {
-                crate::output::progress("Querying remote for default branch...")?;
+                crate::output::print(progress_message("Querying remote for default branch..."))?;
                 repo.refresh_default_branch()?
             } else {
                 repo.default_branch()?
@@ -540,7 +543,7 @@ pub fn handle_var_get(key: &str, refresh: bool, branch: Option<String>) -> anyho
             }
 
             if refresh {
-                crate::output::progress("Fetching CI status...")?;
+                crate::output::print(progress_message("Fetching CI status..."))?;
                 // Clear cache to force refresh
                 let config_key = format!(
                     "worktrunk.ci.{}",
@@ -594,9 +597,9 @@ pub fn handle_var_set(key: &str, value: String, branch: Option<String>) -> anyho
             let config_key = format!("worktrunk.marker.{}", branch_name);
             repo.run_command(&["config", &config_key, &value])?;
 
-            crate::output::success(cformat!(
+            crate::output::print(success_message(cformat!(
                 "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
-            ))?;
+            )))?;
         }
         _ => anyhow::bail!("Unknown variable: {key}. Valid variables: marker"),
     }
@@ -627,12 +630,12 @@ pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow:
                 }
 
                 if cleared_count == 0 {
-                    crate::output::info("No markers to clear")?;
+                    crate::output::print(info_message("No markers to clear"))?;
                 } else {
-                    crate::output::success(cformat!(
+                    crate::output::print(success_message(cformat!(
                         "Cleared <bold>{cleared_count}</> marker{}",
                         if cleared_count == 1 { "" } else { "s" }
-                    ))?;
+                    )))?;
                 }
             } else {
                 // Clear specific branch marker
@@ -645,7 +648,9 @@ pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow:
                 repo.run_command(&["config", "--unset", &config_key])
                     .context("Failed to clear marker (may not be set)")?;
 
-                crate::output::success(cformat!("Cleared marker for <bold>{branch_name}</>"))?;
+                crate::output::print(success_message(cformat!(
+                    "Cleared marker for <bold>{branch_name}</>"
+                )))?;
             }
         }
         _ => anyhow::bail!("Unknown variable: {key}. Valid variables: marker"),
@@ -659,7 +664,7 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
     let repo = Repository::current();
 
     // Show default branch cache
-    crate::output::info("Default branch cache:")?;
+    crate::output::print(info_message("Default branch cache:"))?;
     match repo.default_branch() {
         Ok(branch) => crate::output::gutter(format_with_gutter(&branch, "", None))?,
         Err(_) => crate::output::gutter(format_with_gutter("(not cached)", "", None))?,
@@ -667,7 +672,7 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
     crate::output::blank()?;
 
     // Show CI status cache
-    crate::output::info("CI status cache:")?;
+    crate::output::print(info_message("CI status cache:"))?;
 
     let entries = CachedCiStatus::list_all(&repo);
     if entries.is_empty() {
@@ -703,12 +708,12 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
         Some("ci") => {
             let cleared = CachedCiStatus::clear_all(&repo);
             if cleared == 0 {
-                crate::output::info("No CI cache entries to clear")?;
+                crate::output::print(info_message("No CI cache entries to clear"))?;
             } else {
-                crate::output::success(cformat!(
+                crate::output::print(success_message(cformat!(
                     "Cleared <bold>{cleared}</> CI cache entr{}",
                     if cleared == 1 { "y" } else { "ies" }
-                ))?;
+                )))?;
             }
         }
         Some("default-branch") => {
@@ -716,20 +721,20 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
                 .run_command(&["config", "--unset", "worktrunk.defaultBranch"])
                 .is_ok()
             {
-                crate::output::success("Cleared default branch cache")?;
+                crate::output::print(success_message("Cleared default branch cache"))?;
             } else {
-                crate::output::info("No default branch cache to clear")?;
+                crate::output::print(info_message("No default branch cache to clear"))?;
             }
         }
         Some("logs") => {
             let cleared = clear_logs(&repo)?;
             if cleared == 0 {
-                crate::output::info("No logs to clear")?;
+                crate::output::print(info_message("No logs to clear"))?;
             } else {
-                crate::output::success(cformat!(
+                crate::output::print(success_message(cformat!(
                     "Cleared <bold>{cleared}</> log file{}",
                     if cleared == 1 { "" } else { "s" }
-                ))?;
+                )))?;
             }
         }
         None => {
@@ -740,9 +745,9 @@ pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
             let cleared_logs = clear_logs(&repo)? > 0;
 
             if cleared_default || cleared_ci || cleared_logs {
-                crate::output::success("Cleared all caches")?;
+                crate::output::print(success_message("Cleared all caches"))?;
             } else {
-                crate::output::info("No caches to clear")?;
+                crate::output::print(info_message("No caches to clear"))?;
             }
         }
         Some(unknown) => {
@@ -784,11 +789,13 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
 pub fn handle_cache_refresh() -> anyhow::Result<()> {
     let repo = Repository::current();
 
-    crate::output::progress("Querying remote for default branch...")?;
+    crate::output::print(progress_message("Querying remote for default branch..."))?;
 
     let branch = repo.refresh_default_branch()?;
 
-    crate::output::success(cformat!("Cache refreshed: <bold>{branch}</>"))?;
+    crate::output::print(success_message(cformat!(
+        "Cache refreshed: <bold>{branch}</>"
+    )))?;
 
     Ok(())
 }

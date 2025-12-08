@@ -4,9 +4,17 @@
 if type -q {{ cmd_prefix }}; or test -n "$WORKTRUNK_BIN"
     # Capture stdout (shell script), eval in parent shell. stderr streams to terminal.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
+    #
+    # We use pipeline capture (`| read`) instead of command substitution (`(...)`)
+    # because fish's command substitution runs in its own pipeline where stderr
+    # doesn't inherit caller redirects. With pipeline capture, stderr flows through
+    # normally and respects redirects like `wt --help &>file`.
     function wt_exec
         test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd_prefix }})
-        set -l script (command $WORKTRUNK_BIN $argv | string collect)
+
+        # Pipeline capture: stderr streams through, stdout captured via read
+        # -z (null delimiter) ensures we capture all lines, not just the first
+        command $WORKTRUNK_BIN $argv | string collect --allow-empty | read --local -z script
         set -l exit_code $pipestatus[1]
 
         if test -n "$script"
@@ -35,7 +43,7 @@ if type -q {{ cmd_prefix }}; or test -n "$WORKTRUNK_BIN"
 
         # --source: use cargo run (builds from source)
         if test $use_source = true
-            set -l script (cargo run --quiet -- --internal $args | string collect)
+            cargo run --quiet -- --internal $args | string collect --allow-empty | read --local -z script
             set -l exit_code $pipestatus[1]
             if test -n "$script"
                 eval $script

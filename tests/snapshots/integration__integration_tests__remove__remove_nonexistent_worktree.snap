@@ -23,4 +23,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mNo worktree found for branch [1mnonexistent[39m[22m
+❌ [31mNo worktree found for branch [1mnonexistent[22m[39m

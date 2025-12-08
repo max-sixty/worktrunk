@@ -2,6 +2,6 @@
 source: tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mFailed to remove worktree for [1mfeature-x[22m at [1m/tmp/repo.feature-x[39m[22m
+❌ [31mFailed to remove worktree for [1mfeature-x[22m at [1m/tmp/repo.feature-x[22m[39m
 [107m [0m  fatal: worktree is dirty
 [107m [0m  error: could not remove worktree

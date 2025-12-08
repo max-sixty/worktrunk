@@ -4,65 +4,50 @@
 //! The fundamental operation is `write_message_line` - implementations control where
 //! messages go (stdout for interactive, stderr for directive).
 //!
-//! # Semantic Colors
+//! # Message Formatting
 //!
-//! Output functions automatically wrap content in semantic colors:
-//! - success → green
-//! - progress → cyan
-//! - hint → dimmed
-//! - warning → yellow
-//! - error → red
-//! - info → no color (neutral status)
+//! For semantic messages (errors, hints, warnings, etc.), use the message formatting
+//! functions from `worktrunk::styling` with `output::print()`:
 //!
-//! Callers provide content with optional inner styling (like `<bold>`) using `cformat!`.
-//! The trait adds the outer semantic color, so callers don't repeat `<green>...</>` etc.
+//! ```ignore
+//! use worktrunk::styling::{error_message, success_message, hint_message};
+//! output::print(error_message("Operation failed"))?;
+//! output::print(success_message("Operation complete"))?;
+//! output::print(hint_message("Try --force"))?;
+//! ```
+//!
+//! This decouples message formatting from the output system, allowing the same
+//! formatting functions to be used both for output and in Display impls.
 
-use color_print::cformat;
 use std::io::{self, Write};
 use std::path::Path;
-use worktrunk::styling::{
-    ERROR_EMOJI, HINT_EMOJI, INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, WARNING_EMOJI,
-};
 
 /// Core output handler trait
 ///
 /// Implementations provide their message stream via `write_message_line`
 /// and override only the methods that differ between modes.
+///
+/// # Message Formatting
+///
+/// For semantic messages (errors, hints, etc.), use the message formatting functions
+/// from `worktrunk::styling` combined with `print()`:
+///
+/// ```ignore
+/// use worktrunk::styling::{error_message, hint_message};
+/// output::print(error_message("Something went wrong"))?;
+/// output::print(hint_message("Try --force"))?;
+/// ```
 pub trait OutputHandler {
     /// Write a single logical message line to the primary user stream
     fn write_message_line(&mut self, line: &str) -> io::Result<()>;
 
-    /// Emit a success message (automatically wrapped in green)
-    fn success(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&cformat!("{SUCCESS_EMOJI} <green>{message}</>"))
-    }
-
-    /// Emit a progress message (automatically wrapped in cyan)
-    fn progress(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&cformat!("{PROGRESS_EMOJI} <cyan>{message}</>"))
-    }
-
-    /// Emit a hint message (automatically wrapped in dim styling)
-    fn hint(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&cformat!("{HINT_EMOJI} <dim>{message}</>"))
-    }
-
-    /// Emit an info message (no color - neutral status)
-    fn info(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&cformat!("{INFO_EMOJI} {message}"))
-    }
-
-    /// Emit a warning message (automatically wrapped in yellow)
-    fn warning(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&cformat!("{WARNING_EMOJI} <yellow>{message}</>"))
-    }
-
-    /// Emit an error message (automatically wrapped in red)
-    fn error(&mut self, message: String) -> io::Result<()> {
-        self.write_message_line(&cformat!("{ERROR_EMOJI} <red>{message}</>"))
-    }
-
     /// Print a message (written as-is)
+    ///
+    /// Use with message formatting functions for semantic output:
+    /// ```ignore
+    /// output::print(error_message("Failed"))?;
+    /// output::print(success_message("Done"))?;
+    /// ```
     fn print(&mut self, message: String) -> io::Result<()> {
         self.write_message_line(&message)
     }
