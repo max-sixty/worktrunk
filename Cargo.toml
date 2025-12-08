@@ -3,7 +3,7 @@ members = ["tests/helpers/setup-select-test", "tests/helpers/dev-detach"]
 
 [package]
 name = "worktrunk"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"

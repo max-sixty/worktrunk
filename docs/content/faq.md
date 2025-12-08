@@ -132,7 +132,10 @@ $ cargo test --test integration --features shell-integration-tests
 
 ### Releases
 
-Use [cargo-release](https://github.com/crate-ci/cargo-release):
+1. **Update the changelog**: Move items from `## Unreleased` to a new version section
+2. **Run release**: `cargo release patch --execute` (or `minor` / `major`)
+3. **Push the tag**: `git push --tags` (triggers CI build and GitHub release)
+4. **Update Homebrew**: `./dev/update-homebrew.sh`
 
 ```bash
 $ cargo release patch --execute   # 0.1.0 -> 0.1.1
