@@ -22,6 +22,15 @@ if command -v {{ cmd_prefix }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]];
             export CLICOLOR_FORCE=1
         fi
 
+        # Completion mode: call binary directly, bypassing --internal and wt_exec.
+        # This check MUST be here (not in the binary) because clap's completion
+        # handler runs before argument parsing - we can't detect --internal there.
+        # The binary outputs completion candidates, not shell script to eval.
+        if [[ -n "${COMPLETE:-}" ]]; then
+            command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" "${args[@]}"
+            return
+        fi
+
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
             local script exit_code=0
