@@ -1295,7 +1295,7 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
     )]
     Remove {
         /// Worktree or branch (@ for current)
-        #[arg(add = crate::completion::worktree_branch_completer())]
+        #[arg(add = crate::completion::local_branches_completer())]
         worktrees: Vec<String>,
 
         /// Keep branch after removal

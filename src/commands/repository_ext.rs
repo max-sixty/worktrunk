@@ -82,7 +82,7 @@ impl RepositoryCliExt for Repository {
         let worktree_path = match self.worktree_for_branch(branch_name)? {
             Some(path) => path,
             None => {
-                // No worktree found - check if the branch exists
+                // No worktree found - check if the branch exists locally
                 if self.local_branch_exists(branch_name)? {
                     // Branch exists but no worktree - return BranchOnly to attempt branch deletion
                     return Ok(RemoveResult::BranchOnly {
@@ -90,6 +90,15 @@ impl RepositoryCliExt for Repository {
                         no_delete_branch,
                         force_delete,
                     });
+                }
+                // Check if branch exists on a remote
+                let remotes = self.remotes_with_branch(branch_name)?;
+                if !remotes.is_empty() {
+                    return Err(GitError::RemoteOnlyBranch {
+                        branch: branch_name.into(),
+                        remote: remotes[0].clone(),
+                    }
+                    .into());
                 }
                 return Err(GitError::NoWorktreeFound {
                     branch: branch_name.into(),

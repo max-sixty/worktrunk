@@ -146,6 +146,44 @@ fn test_remove_nonexistent_worktree() {
 }
 
 #[test]
+fn test_remove_remote_only_branch() {
+    let repo = setup_remove_repo();
+
+    // Create a remote-only branch by pushing a branch then deleting it locally
+    Command::new("git")
+        .args(["branch", "remote-feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["push", "origin", "remote-feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["branch", "-D", "remote-feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["fetch", "origin"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Try to remove a branch that only exists on remote - should get helpful error
+    snapshot_remove(
+        "remove_remote_only_branch",
+        &repo,
+        &["remote-feature"],
+        None,
+    );
+}
+
+#[test]
 fn test_remove_by_name_dirty_target() {
     let mut repo = setup_remove_repo();
 
