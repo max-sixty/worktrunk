@@ -25,6 +25,5 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRemoving current worktree...[39m
 🔄 [36mRunning pre-remove:[39m
-[107m [0m  [2m[0m[2m[34mtouch[0m[2m [REPO]/detached-hook-marker.txt [0m[2m[36m&&[0m[2m [0m[2m[34mecho[0m[2m [0m[2m[32m'branch='[0m[2m[0m[2m[32m''[0m[2m [0m[2m[36m>[0m[2m[0m
-[107m [0m  [2m[REPO]/detached-hook-branch.txt[0m
+[107m [0m  [2m[0m[2m[34mtouch[0m[2m [REPO]/m.txt[0m
 [0m✅ [32mRemoved worktree (detached HEAD, no branch to delete)[39m
