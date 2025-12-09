@@ -978,80 +978,24 @@ wt step push
 
 Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Use `wt hook` to run them manually for testing or CI.
 
-## Examples
-
-Run pre-merge hooks (for testing):
-
 ```console
-wt hook pre-merge
-```
-
-Run in CI (skip approval prompts):
-
-```console
-wt hook pre-merge --force
+wt hook pre-merge           # Run pre-merge hooks (for testing)
+wt hook pre-merge --force   # Run in CI (skip approval prompts)
 ```
 
 ## Hook types
 
-| Hook | When | Blocking | Fail-fast | Execution |
-|------|------|----------|-----------|-----------|
-| `post-create` | After worktree created | Yes | No | Sequential |
-| `post-start` | After worktree created | No | No | Parallel (background) |
-| `pre-commit` | Before commit during merge | Yes | Yes | Sequential |
-| `pre-merge` | Before merging to target | Yes | Yes | Sequential |
-| `post-merge` | After successful merge | Yes | No | Sequential |
-| `pre-remove` | Before worktree removed | Yes | Yes | Sequential |
+| Hook | When | Blocking | Fail-fast |
+|------|------|----------|-----------|
+| `post-create` | After worktree created | Yes | No |
+| `post-start` | After worktree created | No (background) | No |
+| `pre-commit` | Before commit during merge | Yes | Yes |
+| `pre-merge` | Before merging to target | Yes | Yes |
+| `post-merge` | After successful merge | Yes | No |
+| `pre-remove` | Before worktree removed | Yes | Yes |
 
 **Blocking**: Command waits for hook to complete before continuing.
 **Fail-fast**: First failure aborts the operation.
-
-## Configuration formats
-
-Hooks can be a single command or multiple named commands in `.config/wt.toml`:
-
-**Single command (string):**
-
-```toml
-post-create = "npm install"
-```
-
-**Multiple commands (table):**
-
-```toml
-[post-create]
-install = "npm install"
-build = "npm run build"
-```
-
-Named commands run sequentially in declaration order and appear in output with their labels.
-
-## Template variables
-
-Hooks can use template variables that expand at runtime.
-
-**All hooks:**
-
-| Variable | Example | Description |
-|----------|---------|-------------|
-| `{{ repo }}` | my-project | Repository name |
-| `{{ branch }}` | feature-foo | Branch name |
-| `{{ worktree }}` | /path/to/worktree | Absolute worktree path |
-| `{{ worktree_name }}` | my-project.feature-foo | Worktree directory name |
-| `{{ repo_root }}` | /path/to/main | Repository root path |
-| `{{ default_branch }}` | main | Default branch name |
-| `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
-| `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |
-| `{{ remote }}` | origin | Primary remote name |
-| `{{ upstream }}` | origin/feature | Upstream tracking branch |
-
-**Merge hooks** (`pre-commit`, `pre-merge`, `post-merge`):
-
-| Variable | Example | Description |
-|----------|---------|-------------|
-| `{{ target }}` | main | Target branch for merge |
-
-## Hook details
 
 ### post-create
 
@@ -1125,7 +1069,7 @@ Runs before worktree removal during `wt remove`, **fail-fast**. All commands mus
 cleanup = "rm -rf /tmp/cache/{{ branch }}"
 ```
 
-## When hooks run during merge
+### Timing during merge
 
 - **pre-commit** — After staging, before squash commit
 - **pre-merge** — After rebase, before merge to target
@@ -1134,7 +1078,51 @@ cleanup = "rm -rf /tmp/cache/{{ branch }}"
 
 See [wt merge](@/merge.md#pipeline) for the complete pipeline.
 
-## Security & approval
+## Configuration
+
+Hooks are defined in `.config/wt.toml`. They can be a single command or multiple named commands:
+
+```toml
+# Single command (string)
+post-create = "npm install"
+
+# Multiple commands (table) — run sequentially in declaration order
+[pre-merge]
+test = "cargo test"
+build = "cargo build --release"
+```
+
+### Template variables
+
+Hooks can use template variables that expand at runtime:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `{{ repo }}` | my-project | Repository name |
+| `{{ branch }}` | feature-foo | Branch name |
+| `{{ worktree }}` | /path/to/worktree | Absolute worktree path |
+| `{{ worktree_name }}` | my-project.feature-foo | Worktree directory name |
+| `{{ repo_root }}` | /path/to/main | Repository root path |
+| `{{ default_branch }}` | main | Default branch name |
+| `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
+| `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |
+| `{{ remote }}` | origin | Primary remote name |
+| `{{ upstream }}` | origin/feature | Upstream tracking branch |
+| `{{ target }}` | main | Target branch (merge hooks only) |
+
+### JSON context
+
+Hooks also receive context as JSON on stdin, enabling hooks in any language:
+
+```python
+import json, sys
+ctx = json.load(sys.stdin)
+print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
+```
+
+The JSON includes all template variables plus `hook_type` and `hook_name`.
+
+## Security
 
 Project commands require approval on first run:
 
@@ -1150,29 +1138,11 @@ Project commands require approval on first run:
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
 - Use `--force` to bypass prompts (useful for CI/automation)
+- Use `--no-verify` to skip all project hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
-## Skipping hooks
-
-Use `--no-verify` to skip all project hooks:
-
-```console
-wt switch --create temp --no-verify    # Skip post-create and post-start
-wt merge --no-verify                   # Skip pre-commit, pre-merge, post-merge
-wt remove feature --no-verify          # Skip pre-remove
-```
-
-## Logging
-
-Background operations log to `.git/wt-logs/` in the main worktree:
-
-| Operation | Log file |
-|-----------|----------|
-| post-start | `{branch}-post-start-{name}.log` |
-| Background removal | `{branch}-remove.log` |
-
-## Example configurations
+## Examples
 
 ### Node.js / TypeScript
 
@@ -1240,20 +1210,16 @@ frontend-tests = "cd frontend && npm test"
 backend-tests = "cd backend && cargo test"
 ```
 
-## Common patterns
+### Common patterns
 
-### Fast dependencies + slow build
-
-Install dependencies blocking, build in background:
+**Fast dependencies + slow build** — Install blocking, build in background:
 
 ```toml
 post-create = "npm install"
 post-start = "npm run build"
 ```
 
-### Progressive validation
-
-Quick checks before commit, thorough validation before merge:
+**Progressive validation** — Quick checks before commit, thorough validation before merge:
 
 ```toml
 [pre-commit]
@@ -1265,9 +1231,7 @@ test = "npm test"
 build = "npm run build"
 ```
 
-### Target-specific behavior
-
-Different behavior based on merge target:
+**Target-specific behavior**:
 
 ```toml
 post-merge = """
@@ -1279,54 +1243,13 @@ fi
 """
 ```
 
-### Symlinks and caches
-
-Set up shared resources. The `{{ repo_root }}` variable points to the main worktree:
+**Symlinks and caches** — The `{{ repo_root }}` variable points to the main worktree:
 
 ```toml
 [post-create]
 cache = "ln -sf {{ repo_root }}/node_modules node_modules"
 env = "cp {{ repo_root }}/.env.local .env"
 ```
-
-## JSON context
-
-Hooks receive context as JSON on stdin, enabling hooks written in any language (Python, Node, Ruby, etc.) to access repository information without parsing template variables.
-
-**Example: Reading context in Python**
-
-```toml
-post-create = "python scripts/setup.py"
-```
-
-```python
-import json
-import sys
-
-ctx = json.load(sys.stdin)
-print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
-print(f"Hook: {ctx['hook_type']} {ctx.get('hook_name', '(unnamed)')}")
-```
-
-**Available fields:**
-
-| Field | Example | Description |
-|-------|---------|-------------|
-| `repo` | my-project | Repository name |
-| `branch` | feature-foo | Branch name (sanitized: / → -) |
-| `worktree` | /path/to/worktree | Absolute worktree path |
-| `worktree_name` | my-project.feature-foo | Worktree directory name |
-| `repo_root` | /path/to/main | Repository root path |
-| `default_branch` | main | Default branch name |
-| `commit` | a1b2c3d4e5f6... | Full HEAD commit SHA |
-| `short_commit` | a1b2c3d | Short HEAD commit SHA |
-| `remote` | origin | Primary remote name |
-| `upstream` | origin/feature | Upstream tracking branch |
-| `hook_type` | post-create | Hook phase (post-create, pre-merge, etc.) |
-| `hook_name` | install | Command name (named commands only) |
-| `target` | main | Target branch (merge hooks only) |
-
-Fields without values are omitted from the JSON.
 
 ## See also
 

@@ -255,7 +255,8 @@ fn handle_help_page(args: &[String]) {
         "select" => 14,
         "config" => 15,
         "step" => 16,
-        _ => 50,
+        "hook" => 17,
+        other => panic!("Unknown command '{other}' needs a weight assignment"),
     };
 
     // Output the page
