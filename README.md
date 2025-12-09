@@ -21,21 +21,21 @@ Here's a quick demo:
 
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/why-worktrunk.md#context-git-worktrees..what-worktrunk-adds — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/content/why-worktrunk.md#git-worktrees-are-a-great-primitive..worktrunk-makes-git-worktrees-easy — edit source to update -->
 
-## Context: git worktrees
+## Git worktrees are a great primitive
 
 AI agents like Claude Code and Codex can increasingly handle longer tasks
 without supervision, and it's very practical to run several in parallel. Git
 worktrees provide each agent with its own working directory, avoiding agents
 stepping on each other's changes.
 
-But the git worktree UX is clunky. Even something as simple as "start a new worktree" is complicated:
+But the git worktree UX is clunky. Even something as simple as "start a new worktree" is verbose:
 `git worktree add -b feature ../repo.feature`, then `cd ../repo.feature`.
 
-## What Worktrunk adds
+## Worktrunk makes git worktrees easy
 
-Worktrunk makes worktrees easy to use — branch-based navigation, unified status, and workflow automation.
+Worktrunk makes git worktrees easy to use — branch-based navigation, unified status, and workflow automation.
 
 **Core commands:**
 
@@ -51,7 +51,7 @@ Worktrunk makes worktrees easy to use — branch-based navigation, unified statu
 - **[Lifecycle hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
-- ...and lots more.
+- ...and [lots more](https://worktrunk.dev/#next-steps)
 
 <!-- END AUTO-GENERATED -->
 

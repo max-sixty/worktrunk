@@ -95,6 +95,8 @@ Output as JSON for scripting:
   Age      Time since last commit                      
   Message  Last commit message (truncated)             
 
+[1mCI status[0m
+
 The CI column shows GitHub/GitLab pipeline status:
 
   Indicator  Meaning                  
