@@ -313,6 +313,25 @@ commit messages."#
     },
 
     /// Manage caches (CI status, default branch)
+    #[command(after_long_help = r#"## Default branch detection
+
+Worktrunk determines the default branch using:
+
+1. **Local cache** — Check `refs/remotes/origin/HEAD`, a symbolic ref that git
+   uses to track the remote's default branch. This is created by `git clone`
+   or `git remote set-head`. Instant, no network required.
+
+2. **Remote query** — If the local cache doesn't exist, query the remote with
+   `git ls-remote --symref origin HEAD` to see what branch HEAD points to.
+   This requires network access (100ms–2s). The result is cached locally via
+   `git remote set-head origin <branch>`.
+
+3. **Local inference** — If no remote is configured: check git's
+   `init.defaultBranch` config, then look for branches named `main`, `master`,
+   `develop`, or `trunk`.
+
+Use `wt config cache refresh` when the remote's default branch has changed
+(e.g., renamed from `master` to `main`)."#)]
     Cache {
         #[command(subcommand)]
         action: CacheCommand,

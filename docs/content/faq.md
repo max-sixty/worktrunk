@@ -88,6 +88,14 @@ These tools can be used together—run git-machete or git-town inside individual
 
 Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, runs automation hooks, and aggregates status across branches. TUIs work inside each worktree directory.
 
+## How does Worktrunk determine the default branch?
+
+Worktrunk checks the local git cache first, queries the remote if needed, and falls back to local inference when no remote exists. The result is cached for fast subsequent lookups.
+
+If your remote's default branch has changed (e.g., renamed from master to main), refresh with `wt config cache refresh`.
+
+For full details on the detection mechanism, see `wt config cache --help`.
+
 ## How does wt switch resolve branch names?
 
 Arguments resolve by checking the filesystem before git branches:
