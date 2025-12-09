@@ -34,12 +34,12 @@ Toggle between views with number keys:
 
 | Key | Action |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Navigate worktree list |
+| `↑`/`↓` | Navigate worktree list |
 | `Enter` | Switch to selected worktree |
-| `Esc` or `q` | Cancel |
-| `/` | Filter worktrees |
+| `Esc` | Cancel |
+| (type) | Filter worktrees |
 | `1`/`2`/`3` | Switch preview tab |
-| `Alt+p` | Toggle preview panel |
+| `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
 ## See also
