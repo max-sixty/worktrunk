@@ -45,6 +45,8 @@ fn snapshot_switch_with_home(
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd_with_global_flags(repo, "switch", args, None, global_flags);
         cmd.env("HOME", home);
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        cmd.env("USERPROFILE", home);
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -616,6 +618,8 @@ fn snapshot_switch_from_dir(test_name: &str, repo: &TestRepo, args: &[&str], cwd
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd_with_global_flags(repo, "switch", args, Some(cwd), &[]);
         cmd.env("HOME", default_home.path());
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        cmd.env("USERPROFILE", default_home.path());
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
