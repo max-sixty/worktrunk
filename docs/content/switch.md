@@ -100,7 +100,7 @@ Options:
           Skip approval prompts
 
       --no-verify
-          Skip all project hooks
+          Skip all hooks
 
   -h, --help
           Print help (see a summary with '-h')

@@ -24,7 +24,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRunning pre-merge:[39m
+🔄 [36mRunning project pre-merge:[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 0[0m
 [0m🔄 [36mMerging 1 commit to [1mmain[22m @ [2m4b1199c[22m (no commit/squash/rebase needed)[39m
 [107m [0m  * [33m4b1199c[m Add feature file

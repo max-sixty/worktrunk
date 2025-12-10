@@ -16,6 +16,9 @@ use super::project_config::collect_commands_for_hooks;
 use super::repository_ext::RepositoryCliExt;
 
 /// Handle `wt hook` command
+///
+/// When explicitly invoking hooks, ALL hooks run (both user and project).
+/// There's no skip flag - if you explicitly run hooks, all configured hooks run.
 pub fn handle_standalone_run_hook(
     hook_type: HookType,
     force: bool,
@@ -26,36 +29,51 @@ pub fn handle_standalone_run_hook(
     let repo = &env.repo;
     let ctx = env.context(force);
 
-    // Load project config (show helpful error if missing)
-    let project_config = repo.require_project_config()?;
+    // Load project config (optional - user hooks can run without project config)
+    let project_config = repo.load_project_config()?;
 
     // TODO: Add support for custom variable overrides (e.g., --var key=value)
     // This would allow testing hooks with different contexts without being in that context
 
+    // Helper to get user hook config
+    macro_rules! user_hook {
+        ($field:ident) => {
+            ctx.config.$field.as_ref()
+        };
+    }
+
     // Execute the hook based on type
     match hook_type {
         HookType::PostCreate => {
-            check_hook_configured(&project_config.post_create, hook_type)?;
+            let user_config = user_hook!(post_create);
+            let project_config = project_config.as_ref().and_then(|c| c.post_create.as_ref());
+            check_any_hook_configured(user_config, project_config, hook_type)?;
             run_hook_with_filter(
                 &ctx,
-                &project_config.post_create,
+                user_config,
+                project_config,
                 hook_type,
                 &[],
                 name_filter,
             )
         }
         HookType::PostStart => {
-            check_hook_configured(&project_config.post_start, hook_type)?;
+            let user_config = user_hook!(post_start);
+            let project_config = project_config.as_ref().and_then(|c| c.post_start.as_ref());
+            check_any_hook_configured(user_config, project_config, hook_type)?;
             run_hook_with_filter(
                 &ctx,
-                &project_config.post_start,
+                user_config,
+                project_config,
                 hook_type,
                 &[],
                 name_filter,
             )
         }
         HookType::PreCommit => {
-            check_hook_configured(&project_config.pre_commit, hook_type)?;
+            let user_config = user_hook!(pre_commit);
+            let project_config_ref = project_config.as_ref().and_then(|c| c.pre_commit.as_ref());
+            check_any_hook_configured(user_config, project_config_ref, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             let target_branch = repo.default_branch().ok();
             let extra_vars: Vec<(&str, &str)> = target_branch
@@ -65,75 +83,75 @@ pub fn handle_standalone_run_hook(
                 .collect();
             run_hook_with_filter(
                 &ctx,
-                &project_config.pre_commit,
+                user_config,
+                project_config_ref,
                 hook_type,
                 &extra_vars,
                 name_filter,
             )
         }
         HookType::PreMerge => {
-            check_hook_configured(&project_config.pre_merge, hook_type)?;
-            // Use current branch as target - when running standalone, the "target"
-            // represents what branch we're on (vs. in `wt merge` where it's the
-            // branch being merged into)
-            run_pre_merge_commands(&project_config, &ctx, &env.branch, false, name_filter)
+            // pre-merge, post-merge, pre-remove use functions from merge.rs
+            // which already handle user hooks
+            let project_cfg = project_config.unwrap_or_default();
+            run_pre_merge_commands(&project_cfg, &ctx, &env.branch, false, name_filter)
         }
-        HookType::PostMerge => {
-            check_hook_configured(&project_config.post_merge, hook_type)?;
-            // Use current branch as target - when running standalone, the "target"
-            // represents what branch we're on (vs. in `wt merge` where it's the
-            // branch being merged into)
-            execute_post_merge_commands(&ctx, &env.branch, false, name_filter)
-        }
-        HookType::PreRemove => {
-            check_hook_configured(&project_config.pre_remove, hook_type)?;
-            execute_pre_remove_commands(&ctx, false, name_filter)
-        }
+        HookType::PostMerge => execute_post_merge_commands(&ctx, &env.branch, false, name_filter),
+        HookType::PreRemove => execute_pre_remove_commands(&ctx, false, name_filter),
     }
 }
 
-/// Run a hook with optional name filter (used by standalone hook commands)
+/// Run user and project hooks with optional name filter (used by standalone hook commands)
+///
+/// Runs user hooks first, then project hooks.
 fn run_hook_with_filter(
     ctx: &super::command_executor::CommandContext,
-    config: &Option<worktrunk::config::CommandConfig>,
+    user_config: Option<&worktrunk::config::CommandConfig>,
+    project_config: Option<&worktrunk::config::CommandConfig>,
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
-    use super::hooks::{HookFailureStrategy, HookPipeline};
-    use worktrunk::config::CommandPhase;
-
-    let Some(command_config) = config else {
-        return Ok(());
-    };
+    use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
 
     let pipeline = HookPipeline::new(*ctx);
-    let phase = match hook_type {
-        HookType::PostCreate => CommandPhase::PostCreate,
-        HookType::PostStart => CommandPhase::PostStart,
-        HookType::PreCommit => CommandPhase::PreCommit,
-        HookType::PreMerge => CommandPhase::PreMerge,
-        HookType::PostMerge => CommandPhase::PostMerge,
-        HookType::PreRemove => CommandPhase::PreRemove,
-    };
-    let label = hook_type.to_string().to_lowercase().replace(' ', "-");
 
-    pipeline.run_sequential(
-        command_config,
-        phase,
-        false, // auto_trust=false, require approval for standalone
-        extra_vars,
-        &label,
-        hook_type,
-        HookFailureStrategy::FailFast,
-        name_filter,
-    )
+    // Run user hooks first (no approval required)
+    if let Some(config) = user_config {
+        pipeline.run_sequential(
+            config,
+            hook_type,
+            HookSource::User,
+            extra_vars,
+            HookFailureStrategy::FailFast,
+            name_filter,
+        )?;
+    }
+
+    // Then run project hooks (require approval for standalone)
+    if let Some(config) = project_config {
+        pipeline.run_sequential(
+            config,
+            hook_type,
+            HookSource::Project { auto_trust: false },
+            extra_vars,
+            HookFailureStrategy::FailFast,
+            name_filter,
+        )?;
+    }
+
+    Ok(())
 }
 
-fn check_hook_configured<T>(hook: &Option<T>, hook_type: HookType) -> anyhow::Result<()> {
-    if hook.is_none() {
+/// Check if at least one hook (user or project) is configured
+fn check_any_hook_configured<T, U>(
+    user_hook: Option<&T>,
+    project_hook: Option<&U>,
+    hook_type: HookType,
+) -> anyhow::Result<()> {
+    if user_hook.is_none() && project_hook.is_none() {
         return Err(worktrunk::git::GitError::Other {
-            message: format!("No {hook_type} hook configured"),
+            message: format!("No {hook_type} hook configured (neither user nor project)"),
         }
         .into());
     }
@@ -175,6 +193,7 @@ pub enum SquashResult {
 /// Handle shared squash workflow (used by `wt step squash` and `wt merge`)
 ///
 /// # Arguments
+/// * `skip_pre_commit` - If true, skip all pre-commit hooks (both user and project)
 /// * `auto_trust` - If true, skip approval prompts for pre-commit commands (already approved in batch)
 /// * `stage_mode` - What to stage before committing (All or Tracked; None not supported for squash)
 pub fn handle_squash(
@@ -211,19 +230,40 @@ pub fn handle_squash(
         }
     }
 
-    // Run pre-commit hook unless explicitly skipped
+    // Run pre-commit hooks unless explicitly skipped
     let project_config = repo.load_project_config()?;
-    let has_pre_commit = project_config
+    let has_project_pre_commit = project_config
         .as_ref()
         .map(|c| c.pre_commit.is_some())
         .unwrap_or(false);
+    let has_user_pre_commit = ctx.config.pre_commit.is_some();
+    let has_any_pre_commit = has_project_pre_commit || has_user_pre_commit;
 
-    if skip_pre_commit && has_pre_commit {
+    if skip_pre_commit && has_any_pre_commit {
         crate::output::print(hint_message(cformat!(
-            "Skipping pre-commit hook (<bright-black>--no-verify</>)"
+            "Skipping pre-commit hooks (<bright-black>--no-verify</>)"
         )))?;
-    } else if let Some(ref config) = project_config {
-        HookPipeline::new(ctx).run_pre_commit(config, Some(&target_branch), auto_trust, None)?;
+    }
+
+    let pipeline = HookPipeline::new(ctx);
+    let extra_vars = [("target", target_branch.as_str())];
+
+    // Run user pre-commit hooks first (unless skipped)
+    if !skip_pre_commit && let Some(user_config) = &ctx.config.pre_commit {
+        use super::hooks::{HookFailureStrategy, HookSource};
+        pipeline.run_sequential(
+            user_config,
+            HookType::PreCommit,
+            HookSource::User,
+            &extra_vars,
+            HookFailureStrategy::FailFast,
+            None,
+        )?;
+    }
+
+    // Then run project pre-commit hooks (unless skipped)
+    if !skip_pre_commit && let Some(ref config) = project_config {
+        pipeline.run_pre_commit(config, Some(&target_branch), auto_trust, None)?;
     }
 
     // Get merge base with target branch

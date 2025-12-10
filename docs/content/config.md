@@ -129,6 +129,22 @@ approved-commands = [
 
 Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
 
+### User hooks
+
+Personal hooks that run for all repositories. Use the same syntax as project hooks:
+
+```toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks run **before** project hooks and don't require approval. Skip all hooks with `--no-verify`.
+
+See [wt hook](@/hook.md#user-hooks) for complete documentation.
+
 ## Project config
 
 The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version control and shared across the team.

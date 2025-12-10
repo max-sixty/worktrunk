@@ -1057,7 +1057,7 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    if let Err(e) = ctx.spawn_post_start_commands() {
+                    if let Err(e) = ctx.spawn_post_start_commands(true) {
                         // Only treat CommandNotApproved as non-fatal (user declined)
                         // Other errors should still fail
                         if !is_command_not_approved(&e) {

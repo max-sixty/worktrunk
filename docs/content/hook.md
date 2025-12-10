@@ -176,6 +176,55 @@ Project commands require approval on first run:
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
+## User hooks
+
+User hooks are personal hooks defined in `~/.config/worktrunk/config.toml` that run for all repositories. They execute **before** project hooks and don't require approval.
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks support the same hook types and template variables as project hooks.
+
+**Key differences from project hooks:**
+
+| Aspect | Project hooks | User hooks |
+|--------|--------------|------------|
+| Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
+| Scope | Single repository | All repositories |
+| Approval | Required | Not required |
+| Execution order | After user hooks | Before project hooks |
+
+Skip all hooks with `--no-verify`.
+
+**Use cases:**
+- Personal notifications or logging
+- Editor/IDE integration
+- Repository-agnostic setup tasks
+- Filtering by repository using JSON context
+
+**Filtering by repository:**
+
+User hooks receive JSON context on stdin, enabling repository-specific behavior:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+gitlab-setup = """
+python3 -c '
+import json, sys, subprocess
+ctx = json.load(sys.stdin)
+if "gitlab" in ctx.get("remote", ""):
+    subprocess.run(["glab", "mr", "create", "--fill"])
+'
+"""
+```
+
 ## Examples
 
 ### Node.js / TypeScript

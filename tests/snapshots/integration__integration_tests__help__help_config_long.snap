@@ -143,6 +143,20 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
 
 Manage approvals with [2mwt config approvals list[0m and [2mwt config approvals clear <repo>[0m.
 
+[1mUser hooks[0m
+
+Personal hooks that run for all repositories. Use the same syntax as project hooks:
+
+  [2m[post-create][0m
+  [2msetup = "echo 'Setting up worktree...'"[0m
+  [2m[0m
+  [2m[pre-merge][0m
+  [2mnotify = "notify-send 'Merging {{ branch }}'"[0m
+
+User hooks run [1mbefore[0m project hooks and don't require approval. Skip all hooks with [2m--no-verify[0m.
+
+See wt hook for complete documentation.
+
 [32mProject config[0m
 
 The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version control and shared across the team.

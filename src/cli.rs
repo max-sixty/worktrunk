@@ -571,7 +571,7 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
 
-        /// Skip pre-commit hooks
+        /// Skip all hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -597,7 +597,7 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
 
-        /// Skip pre-commit hooks
+        /// Skip all hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -632,7 +632,7 @@ pub enum StepCommand {
     },
 }
 
-/// Run project hooks
+/// Run project and user hooks
 #[derive(Subcommand)]
 pub enum HookCommand {
     /// Run post-create hooks
@@ -858,6 +858,22 @@ approved-commands = [
 ```
 
 Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
+
+### User hooks
+
+Personal hooks that run for all repositories. Use the same syntax as project hooks:
+
+```toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks run **before** project hooks and don't require approval. Skip all hooks with `--no-verify`.
+
+See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
 ## Project config
 
@@ -1164,6 +1180,55 @@ Project commands require approval on first run:
 - Use `--no-verify` to skip all project hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
+
+## User hooks
+
+User hooks are personal hooks defined in `~/.config/worktrunk/config.toml` that run for all repositories. They execute **before** project hooks and don't require approval.
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks support the same hook types and template variables as project hooks.
+
+**Key differences from project hooks:**
+
+| Aspect | Project hooks | User hooks |
+|--------|--------------|------------|
+| Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
+| Scope | Single repository | All repositories |
+| Approval | Required | Not required |
+| Execution order | After user hooks | Before project hooks |
+
+Skip all hooks with `--no-verify`.
+
+**Use cases:**
+- Personal notifications or logging
+- Editor/IDE integration
+- Repository-agnostic setup tasks
+- Filtering by repository using JSON context
+
+**Filtering by repository:**
+
+User hooks receive JSON context on stdin, enabling repository-specific behavior:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+gitlab-setup = """
+python3 -c '
+import json, sys, subprocess
+ctx = json.load(sys.stdin)
+if "gitlab" in ctx.get("remote", ""):
+    subprocess.run(["glab", "mr", "create", "--fill"])
+'
+"""
+```
 
 ## Examples
 
@@ -1600,7 +1665,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
         #[arg(short = 'f', long)]
         force: bool,
 
-        /// Skip all project hooks
+        /// Skip all hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
@@ -1680,7 +1745,7 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
         #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
         background: bool,
 
-        /// Skip pre-remove hooks
+        /// Skip all hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
@@ -1775,11 +1840,11 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
 
-        /// Force running project hooks
+        /// Force running hooks
         #[arg(long, overrides_with = "no_verify", hide = true)]
         verify: bool,
 
-        /// Skip all project hooks
+        /// Skip all hooks
         #[arg(long = "no-verify", overrides_with = "verify")]
         no_verify: bool,
 

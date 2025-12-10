@@ -114,7 +114,7 @@ use color_print::cformat;
 use normalize_path::NormalizePath;
 use std::path::PathBuf;
 use worktrunk::HookType;
-use worktrunk::config::{CommandPhase, WorktrunkConfig};
+use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree, is_command_not_approved};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -122,7 +122,7 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{HookFailureStrategy, HookPipeline};
+use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
 use super::repository_ext::RepositoryCliExt;
 
 /// Resolve a worktree argument using path-first lookup.
@@ -493,7 +493,7 @@ pub fn handle_switch(
             &repo_root,
             force,
         );
-        if let Err(e) = ctx.execute_post_create_commands() {
+        if let Err(e) = ctx.execute_post_create_commands(true) {
             // Only treat CommandNotApproved as non-fatal (user declined)
             // Other errors should still fail
             if is_command_not_approved(&e) {
@@ -600,7 +600,28 @@ pub fn handle_remove_by_path(
 
 impl<'a> CommandContext<'a> {
     /// Execute post-create commands sequentially (blocking)
-    pub fn execute_post_create_commands(&self) -> anyhow::Result<()> {
+    ///
+    /// Runs user hooks first, then project hooks. Skips all hooks if verify is false.
+    pub fn execute_post_create_commands(&self, verify: bool) -> anyhow::Result<()> {
+        if !verify {
+            return Ok(());
+        }
+
+        let pipeline = HookPipeline::new(*self);
+
+        // Run user hooks first (no approval required)
+        if let Some(user_config) = &self.config.post_create {
+            pipeline.run_sequential(
+                user_config,
+                HookType::PostCreate,
+                HookSource::User,
+                &[],
+                HookFailureStrategy::Warn,
+                None,
+            )?;
+        }
+
+        // Then run project hooks (require approval)
         let project_config = match self.repo.load_project_config()? {
             Some(cfg) => cfg,
             None => return Ok(()),
@@ -610,21 +631,38 @@ impl<'a> CommandContext<'a> {
             return Ok(());
         };
 
-        let pipeline = HookPipeline::new(*self);
         pipeline.run_sequential(
             post_create_config,
-            CommandPhase::PostCreate,
-            false,
-            &[],
-            "post-create",
             HookType::PostCreate,
+            HookSource::Project { auto_trust: false },
+            &[],
             HookFailureStrategy::Warn,
             None,
         )
     }
 
     /// Spawn post-start commands in parallel as background processes (non-blocking)
-    pub fn spawn_post_start_commands(&self) -> anyhow::Result<()> {
+    ///
+    /// Spawns user hooks first, then project hooks. Skips all hooks if verify is false.
+    pub fn spawn_post_start_commands(&self, verify: bool) -> anyhow::Result<()> {
+        if !verify {
+            return Ok(());
+        }
+
+        let pipeline = HookPipeline::new(*self);
+
+        // Spawn user hooks first (no approval required)
+        if let Some(user_config) = &self.config.post_start {
+            pipeline.spawn_background(
+                user_config,
+                HookType::PostStart,
+                HookSource::User,
+                &[],
+                None,
+            )?;
+        }
+
+        // Then spawn project hooks (require approval)
         let project_config = match self.repo.load_project_config()? {
             Some(cfg) => cfg,
             None => return Ok(()),
@@ -634,13 +672,11 @@ impl<'a> CommandContext<'a> {
             return Ok(());
         };
 
-        let pipeline = HookPipeline::new(*self);
-        pipeline.spawn_detached(
+        pipeline.spawn_background(
             post_start_config,
-            CommandPhase::PostStart,
-            false,
+            HookType::PostStart,
+            HookSource::Project { auto_trust: false },
             &[],
-            "post-start",
             None,
         )
     }
