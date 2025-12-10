@@ -69,6 +69,7 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
 
 ```
 wt remove - Remove worktree and branch
+
 Usage: wt remove [OPTIONS] [WORKTREES]...
 
 Arguments:

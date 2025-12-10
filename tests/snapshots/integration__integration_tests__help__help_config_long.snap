@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt config - Manage configuration and shell integration
+
 Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
@@ -159,7 +160,8 @@ See wt hook for complete documentation.
 
 [32mProject config[0m
 
-The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version control and shared across the team.
+The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version
+control and shared across the team.
 
 Create [2m.config/wt.toml[0m in the repository root:
 
@@ -197,7 +199,8 @@ All user config options can be overridden with environment variables using the 
 
 [1mNaming convention[0m
 
-Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens automatically.
+Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens
+automatically.
 
 For nested config sections, use double underscores to separate levels:
 

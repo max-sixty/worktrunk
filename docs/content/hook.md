@@ -56,7 +56,7 @@ build = "npm run build"
 server = "npm run dev"
 ```
 
-Output logged to `.git/wt-logs/{branch}-post-start-{name}.log`.
+Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log` (source is `user` or `project`).
 
 ### pre-commit
 
@@ -347,6 +347,7 @@ env = "cp {{ repo_root }}/.env.local .env"
 
 ```
 wt hook - Run hooks manually
+
 Usage: wt hook [OPTIONS] <COMMAND>
 
 Commands:

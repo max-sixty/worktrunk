@@ -17,6 +17,7 @@ exit_code: 0
 
 ----- stderr -----
 wt - Git worktree management
+
 Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
@@ -46,4 +47,13 @@ Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36m-v[0m, [1m[36m--verbose[0m
           Show commands and debug info
 
-See [2mwt config --help[0m for configuration file locations and setup.
+Getting started
+
+  wt switch --create feature    Create worktree and branch
+  wt switch feature             Switch to existing worktree
+  wt merge                      Squash, rebase, and merge to main
+
+Run [2mwt config shell[0m to set up directory switching.
+
+Docs: https://worktrunk.dev
+GitHub: https://github.com/max-sixty/worktrunk

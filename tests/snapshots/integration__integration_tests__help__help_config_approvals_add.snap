@@ -20,6 +20,7 @@ exit_code: 0
 
 ----- stderr -----
 wt config approvals add - Store approvals in config
+
 Usage: [1m[36mwt config approvals add[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m

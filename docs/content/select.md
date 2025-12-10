@@ -55,6 +55,7 @@ Toggle between views with number keys:
 wt select - Interactive worktree selector
 
 Toggle preview tabs with 1/2/3 keys. Toggle preview visibility with alt-p.
+
 Usage: wt select [OPTIONS]
 
 Options:

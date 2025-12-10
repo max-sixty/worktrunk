@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt list - List worktrees and optionally branches
+
 Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
        [1m[36mwt list[0m [36m<COMMAND>[0m
 
