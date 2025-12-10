@@ -141,7 +141,10 @@ fn claude_code_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // We replace everything up to "repo" with [PATH]
     settings.add_filter(r"(?m)^.*repo", "[PATH]");
     // Also filter the raw path in case it appears
-    settings.add_filter(&repo.root_path().display().to_string(), "[PATH]");
+    settings.add_filter(
+        &regex::escape(&repo.root_path().display().to_string()),
+        "[PATH]",
+    );
     settings
 }
 

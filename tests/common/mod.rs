@@ -847,7 +847,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
     let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    settings.add_filter(
+        &regex::escape(&temp_home.path().to_string_lossy()),
+        "[TEMP_HOME]",
+    );
     settings
 }
 
@@ -858,7 +861,10 @@ pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -
 pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    settings.add_filter(
+        &regex::escape(&temp_home.path().to_string_lossy()),
+        "[TEMP_HOME]",
+    );
     settings.add_filter(r"\\", "/");
     settings
 }

@@ -186,7 +186,7 @@ lint = "pre-commit run"
 
     let mut settings = insta::Settings::clone_current();
     // Replace temp home path with ~ for stable snapshots
-    settings.add_filter(temp_home.path().to_string_lossy().as_ref(), "~");
+    settings.add_filter(&regex::escape(&temp_home.path().to_string_lossy()), "~");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.arg("hook").arg("show").current_dir(temp_dir.path());
