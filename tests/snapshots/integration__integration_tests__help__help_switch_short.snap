@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt switch - Switch to a worktree
+
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
 
 [1m[32mArguments:[0m

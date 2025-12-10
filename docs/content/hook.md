@@ -297,6 +297,7 @@ env = "cp {{ repo_root }}/.env.local .env"
 
 ```
 wt hook - Run project hooks
+
 Usage: wt hook [OPTIONS] <COMMAND>
 
 Commands:

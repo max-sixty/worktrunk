@@ -19,6 +19,7 @@ exit_code: 0
 
 ----- stderr -----
 wt config show - Show configuration files & locations
+
 Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
 
 [1m[32mOptions:[0m

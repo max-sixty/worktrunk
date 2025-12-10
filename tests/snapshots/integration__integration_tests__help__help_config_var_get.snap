@@ -20,6 +20,7 @@ exit_code: 0
 
 ----- stderr -----
 wt config var get - Get a variable value
+
 Usage: [1m[36mwt config var get[0m [36m[OPTIONS][0m [36m<KEY>[0m
 
 [1m[32mArguments:[0m

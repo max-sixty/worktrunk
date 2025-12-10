@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt config - Manage configuration and shell integration
+
 Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m

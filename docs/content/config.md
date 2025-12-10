@@ -542,6 +542,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 
 ```
 wt config create - Create configuration file
+
 Usage: wt config create [OPTIONS]
 
 Options:
@@ -596,6 +597,7 @@ wt config var clear marker --all
 
 ```
 wt config var - Get or set runtime variables (stored in git config)
+
 Usage: wt config var [OPTIONS] <COMMAND>
 
 Commands:
@@ -624,6 +626,7 @@ Global Options:
 
 ```
 wt config - Manage configuration and shell integration
+
 Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:

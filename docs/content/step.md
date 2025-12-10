@@ -46,6 +46,7 @@ wt step push
 
 ```
 wt step - Run individual workflow operations
+
 Usage: wt step [OPTIONS] <COMMAND>
 
 Commands:

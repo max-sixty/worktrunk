@@ -45,7 +45,7 @@ const DEFAULT_COMMAND_NAME: &str = "wt";
 
 /// Help template for commands
 const HELP_TEMPLATE: &str = "\
-{before-help}{name} - {about-with-newline}\
+{before-help}{name} - {about-with-newline}
 Usage: {usage}
 
 {all-args}{after-help}";
@@ -96,9 +96,17 @@ pub enum OutputFormat {
 #[command(disable_help_subcommand = true)]
 #[command(styles = help_styles())]
 #[command(arg_required_else_help = true)]
-#[command(
-    after_long_help = r#"See `wt config --help` for configuration file locations and setup."#
-)]
+#[command(after_long_help = "\
+Getting started
+
+  wt switch --create feature    Create worktree and branch
+  wt switch feature             Switch to existing worktree
+  wt merge                      Squash, rebase, and merge to main
+
+Run `wt config shell` to set up directory switching.
+
+Docs: https://worktrunk.dev
+GitHub: https://github.com/max-sixty/worktrunk")]
 pub struct Cli {
     /// Working directory for this command
     #[arg(

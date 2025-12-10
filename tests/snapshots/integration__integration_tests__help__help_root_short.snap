@@ -17,6 +17,7 @@ exit_code: 0
 
 ----- stderr -----
 wt - Git worktree management
+
 Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
 
 [1m[32mCommands:[0m
