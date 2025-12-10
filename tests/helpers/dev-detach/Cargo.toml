@@ -1,4 +1,25 @@
 # Helper binary for TTY isolation in shell integration tests.
+#
+# WHY A SEPARATE PACKAGE?
+# This binary is a workspace member with `publish = false` for cargo-dist compatibility.
+#
+# cargo-dist automatically discovers all [[bin]] entries in a package and expects
+# to distribute them. There's no per-binary exclusion - only package-level via
+# `publish = false` or `dist = false`. Moving test-only binaries to separate
+# packages with `publish = false` prevents them from being included in releases.
+#
+# Alternative approaches that DON'T work:
+# - `required-features = ["test-feature"]` on [[bin]]: cargo-dist still tries to
+#   find and package the binary, failing with "bin not found" during release
+# - `[package.metadata.dist] dist = false` in main package: excludes the entire
+#   package from distribution, not individual binaries
+#
+# BUILD REQUIREMENT:
+# Since this is a separate workspace member (not a dependency of the main package),
+# `cargo test` doesn't automatically build it. CI and pre-merge hooks must explicitly
+# run `cargo build -p dev-detach` before running tests. The test code uses
+# `insta_cmd::get_cargo_bin("dev-detach")` to locate the built binary at runtime.
+#
 # This is a workspace member (not a separate workspace) to share target/ and Cargo.lock.
 # Never published to crates.io (publish = false) - only used during testing.
 [package]
