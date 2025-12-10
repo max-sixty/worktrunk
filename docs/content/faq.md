@@ -105,6 +105,24 @@ Arguments resolve by checking the filesystem before git branches:
 3. Otherwise, look up as branch name
 4. If the path and branch resolve to different worktrees (e.g., `repo.foo/` tracks branch `bar`), the path takes precedence
 
+## Does Worktrunk work on Windows?
+
+**Experimental.** Core functionality works, but some features are unavailable.
+
+| Feature | Git Bash | PowerShell |
+|---------|----------|------------|
+| Core commands (`list`, `switch`, `merge`, etc.) | ✅ | ✅ |
+| Shell integration | ✅ | ✅ |
+| Tab completion | ✅ | ✅ |
+| Hooks | ✅ | ❌ (bash syntax) |
+| `wt select` | ❌ | ❌ |
+
+**Git Bash** (recommended) comes with [Git for Windows](https://gitforwindows.org/). Worktrunk auto-detects it when installed.
+
+**PowerShell** works for basic operations, but hooks fail in pure PowerShell because they use bash syntax. With Git for Windows installed, Worktrunk auto-detects Git Bash for hook execution even when PowerShell is the interactive shell.
+
+**`wt select`** uses [skim](https://github.com/skim-rs/skim), which only supports Unix. Use `wt list` and `wt switch <branch>` instead.
+
 ## Installation fails with C compilation errors
 
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
