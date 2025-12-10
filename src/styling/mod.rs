@@ -26,6 +26,8 @@ pub use anstyle::Style as AnstyleStyle;
 
 // Re-export our public types
 pub use constants::*;
+#[cfg(all(test, feature = "syntax-highlighting"))]
+pub(crate) use format::format_bash_with_gutter_at_width;
 pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter};
 pub use highlighting::format_toml;
 pub use line::{StyledLine, StyledString, truncate_visible};
@@ -549,8 +551,8 @@ command = "npm install"
 
         let command = "cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build {{ worktree }}/target/debug/";
 
-        // Get the result (will use actual terminal width, but we can still check structure)
-        let result = format_bash_with_gutter(command, "");
+        // Use explicit width for deterministic output (avoids env var mutation in parallel tests)
+        let result = format_bash_with_gutter_at_width(command, "", 80);
 
         // Snapshot the raw output to verify ANSI codes are consistent
         insta::assert_snapshot!(result);
@@ -579,7 +581,8 @@ cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps
 cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build {{ worktree
 }}/target/debug/"#;
 
-        let result = format_bash_with_gutter(multiline_command, "");
+        // Use explicit width for deterministic output (avoids env var mutation in parallel tests)
+        let result = format_bash_with_gutter_at_width(multiline_command, "", 80);
 
         // Snapshot the output - each line should have consistent dim styling
         insta::assert_snapshot!(result);

@@ -468,7 +468,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,
 # downloading assets too large for git (images, ML models, binaries), long-running tasks
 # The worktree switch completes immediately, these run in parallel
-# Output is logged to .git/wt-logs/{branch}-post-start-{name}.log
+# Output is logged to .git/wt-logs/{branch}-{source}-post-start-{name}.log (source: user/project)
 #
 # Format options:
 # 1. Single string:
@@ -558,6 +558,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 
 ```
 wt config create - Create configuration file
+
 Usage: wt config create [OPTIONS]
 
 Options:
@@ -612,6 +613,7 @@ wt config var clear marker --all
 
 ```
 wt config var - Get or set runtime variables (stored in git config)
+
 Usage: wt config var [OPTIONS] <COMMAND>
 
 Commands:
@@ -640,6 +642,7 @@ Global Options:
 
 ```
 wt config - Manage configuration and shell integration
+
 Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:

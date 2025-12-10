@@ -70,6 +70,7 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
 
 ```
 wt merge - Merge worktree into target branch
+
 Usage: wt merge [OPTIONS] [TARGET]
 
 Arguments:
@@ -98,7 +99,8 @@ Options:
           What to stage before committing [default: all]
 
           Possible values:
-          - all:     Stage everything: untracked files + unstaged tracked changes
+          - all:     Stage everything: untracked files + unstaged tracked
+            changes
           - tracked: Stage tracked changes only (like git add -u)
           - none:    Stage nothing, commit only what's already in the index
 

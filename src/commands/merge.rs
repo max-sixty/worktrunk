@@ -27,6 +27,7 @@ struct MergeCommandCollector<'a> {
     repo: &'a Repository,
     no_commit: bool,
     no_verify: bool,
+    will_remove: bool,
 }
 
 /// Commands collected for batch approval with their project identifier
@@ -59,6 +60,9 @@ impl<'a> MergeCommandCollector<'a> {
         if !self.no_verify {
             hooks.push(HookType::PreMerge);
             hooks.push(HookType::PostMerge);
+            if self.will_remove {
+                hooks.push(HookType::PreRemove);
+            }
         }
 
         all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
@@ -110,6 +114,7 @@ pub fn handle_merge(
         repo,
         no_commit: !commit,
         no_verify: !verify,
+        will_remove: remove_effective,
     }
     .collect()?;
 

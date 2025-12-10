@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt remove - Remove worktree and branch
+
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[WORKTREES]...[0m
 
 [1m[32mArguments:[0m
@@ -73,14 +74,18 @@ Force-delete an unmerged branch:
 
 [32mBranch cleanup[0m
 
-Branches delete automatically when their content is already in the target branch (typically main). This works with squash-merge and rebase workflows where commit history differs but file changes match.
+Branches delete automatically when their content is already in the target branch (typically main). This works with squash-merge and rebase workflows
+where commit history differs but file changes match.
 
 A branch is safe to delete when its content is already reflected in the target. Worktrunk checks four conditions (in order of cost):
 
 1. [1mSame commit[0m — Branch HEAD is literally the same commit as target.
-2. [1mNo added changes[0m — Three-dot diff ([2mmain...branch[0m) shows no files. The branch has no file changes beyond the merge-base (includes "branch is ancestor" case).
-3. [1mTree contents match[0m — Branch tree SHA equals main tree SHA. Commit history differs but file contents are identical (e.g., after a revert or merge commit pulling in main).
-4. [1mMerge adds nothing[0m — Simulated merge ([2mgit merge-tree[0m) produces the same tree as main. Handles squash-merged branches where main has since advanced.
+2. [1mNo added changes[0m — Three-dot diff ([2mmain...branch[0m) shows no files. The branch has no file changes beyond the merge-base (includes "branch is
+ancestor" case).
+3. [1mTree contents match[0m — Branch tree SHA equals main tree SHA. Commit history differs but file contents are identical (e.g., after a revert or
+merge commit pulling in main).
+4. [1mMerge adds nothing[0m — Simulated merge ([2mgit merge-tree[0m) produces the same tree as main. Handles squash-merged branches where main has since
+advanced.
 
 In [2mwt list[0m, [2m_[0m indicates same commit, and [2m⊂[0m indicates content is integrated. Branches showing either are dimmed as safe to delete.
 
@@ -88,7 +93,8 @@ Use [2m-D[0m to force-delete branches with unmerged changes. Use [2m--no-dele
 
 [32mBackground removal[0m
 
-Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run
+in the foreground.
 
 Arguments resolve by path first, then branch name. Shortcuts: [2m@[0m (current), [2m-[0m (previous), [2m^[0m (main worktree).
 

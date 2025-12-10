@@ -222,7 +222,9 @@ impl<'a> HookPipeline<'a> {
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
             let name = prepared.name.as_deref().unwrap_or("cmd");
-            let operation = format!("{}-{}", operation_prefix, name);
+            // Include source in operation name to prevent log file collisions between
+            // user and project hooks with the same name
+            let operation = format!("{}-{}-{}", source.label_prefix(), operation_prefix, name);
             if let Err(err) = spawn_detached(
                 self.ctx.repo,
                 self.ctx.worktree_path,

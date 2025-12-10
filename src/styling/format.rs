@@ -162,18 +162,12 @@ pub(super) fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
     cleaned.lines().map(|s| s.to_owned()).collect()
 }
 
-/// Formats bash/shell commands with syntax highlighting and gutter
-///
-/// Processes each line separately for highlighting (required for multi-line commands
-/// with `&&` at line ends), then applies template syntax detection to avoid
-/// misinterpreting `}}` as a command when it appears at line start.
-///
-/// # Example
-/// ```ignore
-/// print!("{}", format_bash_with_gutter("npm install --frozen-lockfile", ""));
-/// ```
 #[cfg(feature = "syntax-highlighting")]
-pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
+fn format_bash_with_gutter_impl(
+    content: &str,
+    left_margin: &str,
+    width_override: Option<usize>,
+) -> String {
     use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
     let gutter = super::GUTTER;
@@ -182,7 +176,7 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     let mut output = String::new();
 
     // Calculate available width for content
-    let term_width = get_terminal_width();
+    let term_width = width_override.unwrap_or_else(get_terminal_width);
     let left_margin_width = left_margin.width();
     let available_width = term_width.saturating_sub(3 + left_margin_width);
 
@@ -298,6 +292,33 @@ pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     }
 
     output
+}
+
+/// Formats bash/shell commands with syntax highlighting and gutter
+///
+/// Processes each line separately for highlighting (required for multi-line commands
+/// with `&&` at line ends), then applies template syntax detection to avoid
+/// misinterpreting `}}` as a command when it appears at line start.
+///
+/// # Example
+/// ```ignore
+/// print!("{}", format_bash_with_gutter("npm install --frozen-lockfile", ""));
+/// ```
+#[cfg(feature = "syntax-highlighting")]
+pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
+    format_bash_with_gutter_impl(content, left_margin, None)
+}
+
+/// Test-only helper to force a specific terminal width for deterministic output.
+///
+/// This avoids env var mutation which is unsafe in parallel tests.
+#[cfg(all(test, feature = "syntax-highlighting"))]
+pub(crate) fn format_bash_with_gutter_at_width(
+    content: &str,
+    left_margin: &str,
+    width: usize,
+) -> String {
+    format_bash_with_gutter_impl(content, left_margin, Some(width))
 }
 
 /// Format bash commands with gutter (fallback without syntax highlighting)

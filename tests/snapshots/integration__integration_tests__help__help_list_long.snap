@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt list - List worktrees and optionally branches
+
 Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
        [1m[36mwt list[0m [36m<COMMAND>[0m
 
@@ -59,7 +60,9 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS][0m
 
 Show all worktrees with their status. The table includes uncommitted changes, divergence from main and remote, and optional CI status.
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as
+background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results
+arrive.
 
 [32mExamples[0m
 
@@ -108,7 +111,8 @@ The CI column shows GitHub/GitLab pipeline status:
   [90m●[0m gray     No checks configured     
   (blank)    No upstream or no PR/MR  
 
-CI is only checked for branches that track a remote — local-only branches show blank. Any CI dot appears dimmed when there are unpushed local changes (stale status). CI indicators are clickable links to the PR page. Results are cached for 30-60 seconds; use [2mwt config cache[0m to view or clear.
+CI is only checked for branches that track a remote — local-only branches show blank. Any CI dot appears dimmed when there are unpushed local changes
+(stale status). CI indicators are clickable links to the PR page. Results are cached for 30-60 seconds; use [2mwt config cache[0m to view or clear.
 
 [32mStatus symbols[0m
 

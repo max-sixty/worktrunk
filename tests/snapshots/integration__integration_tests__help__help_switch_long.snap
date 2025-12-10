@@ -18,6 +18,7 @@ exit_code: 0
 
 ----- stderr -----
 wt switch - Switch to a worktree
+
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
 
 [1m[32mArguments:[0m
@@ -38,7 +39,8 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
   [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
           Command to run after switch[0m
           [0m
-          Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other interactive tools.[0m
+          Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other
+          interactive tools.[0m
           [0m
           Especially useful in shell aliases to create a worktree and start working in one command:[0m
           [0m

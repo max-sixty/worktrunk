@@ -183,6 +183,7 @@ wt list --format=json | jq '.[] | select(.branch_state == "integrated" or .branc
 
 ```
 wt list - List worktrees and optionally branches
+
 Usage: wt list [OPTIONS]
        wt list <COMMAND>
 
@@ -207,7 +208,8 @@ Options:
       --progressive
           Show fast info immediately, update with slow info
 
-          Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+          Displays local data (branches, paths, status) first, then updates with
+          remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
   -h, --help
           Print help (see a summary with '-h')

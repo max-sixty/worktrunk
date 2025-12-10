@@ -8,7 +8,7 @@ use clap_complete::env::CompleteEnv;
 
 use crate::cli;
 use crate::display::format_relative_time_short;
-use worktrunk::config::ProjectConfig;
+use worktrunk::config::{ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{BranchCategory, Repository};
 
 /// Args that should never appear in completions, even when all options are shown.
@@ -227,39 +227,58 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
         return Vec::new();
     };
 
-    // Load project config
+    let mut candidates = Vec::new();
+
+    // Load user config and add user hook names
+    if let Ok(user_config) = WorktrunkConfig::load() {
+        let user_command_config = match hook_type {
+            "post-create" => &user_config.post_create,
+            "post-start" => &user_config.post_start,
+            "pre-commit" => &user_config.pre_commit,
+            "pre-merge" => &user_config.pre_merge,
+            "post-merge" => &user_config.post_merge,
+            "pre-remove" => &user_config.pre_remove,
+            _ => &None,
+        };
+
+        if let Some(config) = user_command_config {
+            candidates.extend(
+                config
+                    .commands()
+                    .iter()
+                    .filter_map(|cmd| cmd.name.as_ref())
+                    .map(|name| CompletionCandidate::new(name.clone())),
+            );
+        }
+    }
+
+    // Load project config and add project hook names
     let repo = Repository::current();
-    let repo_root = match repo.worktree_root() {
-        Ok(root) => root,
-        Err(_) => return Vec::new(),
-    };
+    if let Ok(repo_root) = repo.worktree_root()
+        && let Ok(Some(project_config)) = ProjectConfig::load(&repo_root)
+    {
+        let project_command_config = match hook_type {
+            "post-create" => &project_config.post_create,
+            "post-start" => &project_config.post_start,
+            "pre-commit" => &project_config.pre_commit,
+            "pre-merge" => &project_config.pre_merge,
+            "post-merge" => &project_config.post_merge,
+            "pre-remove" => &project_config.pre_remove,
+            _ => &None,
+        };
 
-    let project_config = match ProjectConfig::load(&repo_root) {
-        Ok(Some(config)) => config,
-        _ => return Vec::new(),
-    };
+        if let Some(config) = project_command_config {
+            candidates.extend(
+                config
+                    .commands()
+                    .iter()
+                    .filter_map(|cmd| cmd.name.as_ref())
+                    .map(|name| CompletionCandidate::new(name.clone())),
+            );
+        }
+    }
 
-    // Get command names for the hook type
-    let command_config = match hook_type {
-        "post-create" => &project_config.post_create,
-        "post-start" => &project_config.post_start,
-        "pre-commit" => &project_config.pre_commit,
-        "pre-merge" => &project_config.pre_merge,
-        "post-merge" => &project_config.post_merge,
-        "pre-remove" => &project_config.pre_remove,
-        _ => return Vec::new(),
-    };
-
-    let Some(config) = command_config else {
-        return Vec::new();
-    };
-
-    config
-        .commands()
-        .iter()
-        .filter_map(|cmd| cmd.name.as_ref())
-        .map(|name| CompletionCandidate::new(name.clone()))
-        .collect()
+    candidates
 }
 
 #[derive(Clone, Copy)]
