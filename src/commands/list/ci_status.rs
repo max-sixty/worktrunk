@@ -7,12 +7,18 @@ use worktrunk::git::Repository;
 /// Supports formats:
 /// - `https://<host>/<owner>/<repo>.git`
 /// - `git@<host>:<owner>/<repo>.git`
+/// - `ssh://git@<host>/<owner>/<repo>.git`
 fn parse_remote_owner(url: &str) -> Option<&str> {
     let url = url.trim();
 
     let owner = if let Some(rest) = url.strip_prefix("https://") {
         // https://github.com/owner/repo.git -> owner
         rest.split('/').nth(1)
+    } else if let Some(rest) = url.strip_prefix("ssh://") {
+        // ssh://git@github.com/owner/repo.git -> owner
+        // ssh://github.com/owner/repo.git -> owner (no user)
+        let without_user = rest.split('@').next_back()?;
+        without_user.split('/').nth(1)
     } else if let Some(rest) = url.strip_prefix("git@") {
         // git@github.com:owner/repo.git -> owner
         rest.split(':').nth(1)?.split('/').next()
@@ -39,9 +45,19 @@ mod tests {
             Some("owner")
         );
 
-        // GitHub SSH
+        // GitHub SSH (git@ form)
         assert_eq!(
             parse_remote_owner("git@github.com:owner/repo.git"),
+            Some("owner")
+        );
+
+        // GitHub SSH (ssh:// form)
+        assert_eq!(
+            parse_remote_owner("ssh://git@github.com/owner/repo.git"),
+            Some("owner")
+        );
+        assert_eq!(
+            parse_remote_owner("ssh://github.com/owner/repo.git"),
             Some("owner")
         );
 
@@ -117,6 +133,63 @@ mod tests {
             "Expected diverse TTLs across paths, got {} unique values",
             ttls.len()
         );
+    }
+
+    #[test]
+    fn test_escape_branch_round_trip() {
+        let cases = [
+            "main",
+            "feature/test",
+            "feature.test",
+            "feature-test",
+            "feature_test",
+            "a.b.c",
+            "a/b/c",
+            "feature-2Dtest", // Literal -2D in branch name
+            "-",
+            "--",
+            "feat/fix-bug",
+            // UTF-8 multi-byte sequences
+            "café",     // 2-byte UTF-8 (é = 0xC3 0xA9)
+            "日本語",   // 3-byte UTF-8 (CJK)
+            "emoji-🎉", // 4-byte UTF-8 (emoji)
+        ];
+
+        for branch in cases {
+            let escaped = CachedCiStatus::escape_branch(branch);
+            let unescaped = CachedCiStatus::unescape_branch(&escaped);
+            assert_eq!(
+                unescaped, branch,
+                "Round-trip failed for '{}': escaped='{}', unescaped='{}'",
+                branch, escaped, unescaped
+            );
+        }
+    }
+
+    #[test]
+    fn test_escape_branch_git_config_compatible() {
+        // Git config keys only allow alphanumeric, `-`, and `.`
+        let is_valid_config_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.';
+
+        let cases = [
+            "main",
+            "feature/test",
+            "feature_test",
+            "feature-test",
+            "a/b/c",
+            "user@host",
+            "100%",
+        ];
+
+        for branch in cases {
+            let escaped = CachedCiStatus::escape_branch(branch);
+            assert!(
+                escaped.chars().all(is_valid_config_char),
+                "Escaped '{}' contains invalid git config chars: '{}'",
+                branch,
+                escaped
+            );
+        }
     }
 }
 
@@ -265,15 +338,58 @@ impl CachedCiStatus {
 
     /// Escape branch name for use in git config key.
     ///
-    /// Git config uses dots as section separators, so branch names like
-    /// "feature.test" would create subsections. We escape dots to avoid this.
+    /// Git config keys only allow alphanumeric, `-`, and `.` characters.
+    /// Branch names commonly contain `/` and `_`, so we encode them as `-XX`
+    /// where XX is the uppercase hex value. We also encode `-` itself to
+    /// ensure round-trip safety.
+    ///
+    /// NOTE: This encoding is verbose but necessary — standard percent-encoding
+    /// uses `%` which git config doesn't allow, and base64 uses `_`. Open to
+    /// simpler approaches if someone finds one.
     pub(crate) fn escape_branch(branch: &str) -> String {
-        branch.replace('.', "%2E")
+        let mut escaped = String::with_capacity(branch.len());
+        for ch in branch.chars() {
+            match ch {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '.' => escaped.push(ch),
+                '-' => escaped.push_str("-2D"),
+                _ => {
+                    // Encode as -XX where XX is uppercase hex
+                    for byte in ch.to_string().bytes() {
+                        escaped.push_str(&format!("-{byte:02X}"));
+                    }
+                }
+            }
+        }
+        escaped
     }
 
     /// Unescape branch name from git config key.
     pub(crate) fn unescape_branch(escaped: &str) -> String {
-        escaped.replace("%2E", ".")
+        let mut bytes = Vec::with_capacity(escaped.len());
+        let mut chars = escaped.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '-' {
+                // Try to read two hex digits
+                let hex: String = chars.by_ref().take(2).collect();
+                if hex.len() == 2
+                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
+                {
+                    bytes.push(byte);
+                    continue;
+                }
+                // Invalid escape sequence, keep as-is
+                bytes.push(b'-');
+                bytes.extend(hex.bytes());
+            } else {
+                // Unescaped char - encode as UTF-8 bytes
+                bytes.extend(ch.to_string().bytes());
+            }
+        }
+
+        // Decode collected bytes as UTF-8
+        String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 
     /// Check if the cache is still valid

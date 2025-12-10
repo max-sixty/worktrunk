@@ -1821,6 +1821,23 @@ fn run_git(repo: &TestRepo, args: &[&str], cwd: &std::path::Path) {
 }
 
 /// Mock CI status by writing to git config cache
+/// Escape branch name for git config key (must match CachedCiStatus::escape_branch)
+fn escape_branch_for_config(branch: &str) -> String {
+    let mut escaped = String::with_capacity(branch.len());
+    for ch in branch.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' => escaped.push(ch),
+            '-' => escaped.push_str("-2D"),
+            _ => {
+                for byte in ch.to_string().bytes() {
+                    escaped.push_str(&format!("-{byte:02X}"));
+                }
+            }
+        }
+    }
+    escaped
+}
+
 fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
     // Get HEAD commit for the branch
     let mut cmd = Command::new("git");
@@ -1845,8 +1862,8 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
         head
     );
 
-    // Write to git config
-    let config_key = format!("worktrunk.ci.{}", branch);
+    // Write to git config (using escaped branch name)
+    let config_key = format!("worktrunk.ci.{}", escape_branch_for_config(branch));
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", &config_key, &cache_json])
