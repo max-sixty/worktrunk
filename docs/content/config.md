@@ -141,7 +141,7 @@ setup = "echo 'Setting up worktree...'"
 notify = "notify-send 'Merging {{ branch }}'"
 ```
 
-User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
+User hooks run before project hooks and don't require approval. Skip with `--no-verify`.
 
 See [wt hook](@/hook.md#user-hooks) for complete documentation.
 

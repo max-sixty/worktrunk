@@ -8,13 +8,15 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt hook --help-page` — edit cli.rs to update -->
 
-Run lifecycle hooks manually for testing or CI.
+Run hooks independently of normal worktree operations.
 
-Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
+Hooks normally run automatically during `wt switch --create`, `wt merge`, and `wt remove`. This command runs them on demand — useful for testing hooks during development, running in CI pipelines, or re-running after a failure.
+
+Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```bash
-wt hook pre-merge           # Run pre-merge hooks (for testing)
-wt hook pre-merge --force   # Run in CI (skip approval prompts)
+wt hook pre-merge           # Run pre-merge hooks
+wt hook pre-merge --force   # Skip approval prompts (for CI)
 ```
 
 ## Hook types
@@ -179,7 +181,7 @@ Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 ## User hooks
 
-User hooks are personal hooks defined in `~/.config/worktrunk/config.toml` that run for all repositories. They execute **before** project hooks and don't require approval.
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval.
 
 ```toml
 # ~/.config/worktrunk/config.toml
@@ -346,7 +348,7 @@ env = "cp {{ repo_root }}/.env.local .env"
 ## Command reference
 
 ```
-wt hook - Run hooks manually
+wt hook - Run hooks independently
 
 Usage: wt hook [OPTIONS] <COMMAND>
 

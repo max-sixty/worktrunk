@@ -651,7 +651,7 @@ pub enum StepCommand {
     },
 }
 
-/// Run project and user hooks
+/// Run hooks independently
 #[derive(Subcommand)]
 pub enum HookCommand {
     /// Run post-create hooks
@@ -890,7 +890,7 @@ setup = "echo 'Setting up worktree...'"
 notify = "notify-send 'Merging {{ branch }}'"
 ```
 
-User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
+User hooks run before project hooks and don't require approval. Skip with `--no-verify`.
 
 See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
@@ -1021,7 +1021,7 @@ wt step push
 ## See also
 
 - [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- [wt hook](@/hook.md) — Run lifecycle hooks manually
+- [wt hook](@/hook.md) — Run hooks independently
 "#
     )]
     Step {
@@ -1029,16 +1029,18 @@ wt step push
         action: StepCommand,
     },
 
-    /// Run hooks manually
+    /// Run hooks independently
     #[command(
         name = "hook",
-        after_long_help = r#"Run lifecycle hooks manually for testing or CI.
+        after_long_help = r#"Run hooks independently of normal worktree operations.
 
-Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
+Hooks normally run automatically during `wt switch --create`, `wt merge`, and `wt remove`. This command runs them on demand — useful for testing hooks during development, running in CI pipelines, or re-running after a failure.
+
+Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```console
-wt hook pre-merge           # Run pre-merge hooks (for testing)
-wt hook pre-merge --force   # Run in CI (skip approval prompts)
+wt hook pre-merge           # Run pre-merge hooks
+wt hook pre-merge --force   # Skip approval prompts (for CI)
 ```
 
 ## Hook types
@@ -1203,7 +1205,7 @@ Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
 ## User hooks
 
-User hooks are personal hooks defined in `~/.config/worktrunk/config.toml` that run for all repositories. They execute **before** project hooks and don't require approval.
+Define hooks in `~/.config/worktrunk/config.toml` to run for all repositories. User hooks run before project hooks and don't require approval.
 
 ```toml
 # ~/.config/worktrunk/config.toml
