@@ -179,12 +179,32 @@ pub fn approve_hooks(
     hook_types: &[HookType],
     extra_vars: &[(&str, &str)],
 ) -> anyhow::Result<bool> {
+    approve_hooks_filtered(ctx, hook_types, extra_vars, None)
+}
+
+/// Like `approve_hooks` but with optional name filter for targeted hook approval.
+///
+/// When `name_filter` is provided, only commands matching that name are shown
+/// in the approval prompt. This is used by `wt hook <type> --name <name>` to
+/// approve only the targeted hook rather than all hooks of that type.
+pub fn approve_hooks_filtered(
+    ctx: &super::command_executor::CommandContext<'_>,
+    hook_types: &[HookType],
+    extra_vars: &[(&str, &str)],
+    name_filter: Option<&str>,
+) -> anyhow::Result<bool> {
     let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(true), // No project config = no commands to approve
     };
 
-    let commands = collect_commands_for_hooks(&project_config, hook_types);
+    let mut commands = collect_commands_for_hooks(&project_config, hook_types);
+
+    // Apply name filter before approval to only prompt for targeted commands
+    if let Some(name) = name_filter {
+        commands.retain(|cmd| cmd.name.as_deref() == Some(name));
+    }
+
     if commands.is_empty() {
         return Ok(true);
     }

@@ -25,7 +25,7 @@ use super::repository_ext::RepositoryCliExt;
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
 pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> anyhow::Result<()> {
-    use super::command_approval::approve_hooks;
+    use super::command_approval::approve_hooks_filtered;
 
     // Derive context from current environment
     let env = CommandEnv::for_action(&format!("run {hook_type} hook"))?;
@@ -37,16 +37,26 @@ pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> 
 
     // "Approve at the Gate": approve project hooks upfront
     // Get extra vars for template expansion based on hook type
-    let target_branch = repo.default_branch().ok();
+    // For wt hook pre-merge/post-merge, use current branch as target (not default branch)
+    // because we're testing hooks in the context of the current worktree
+    let default_branch = repo.default_branch().ok();
     let extra_vars: Vec<(&str, &str)> = match hook_type {
-        HookType::PreCommit | HookType::PreMerge | HookType::PostMerge => target_branch
-            .as_deref()
-            .into_iter()
-            .map(|t| ("target", t))
-            .collect(),
+        HookType::PreCommit => {
+            // Pre-commit uses default branch as target (for comparison context)
+            default_branch
+                .as_deref()
+                .into_iter()
+                .map(|t| ("target", t))
+                .collect()
+        }
+        HookType::PreMerge | HookType::PostMerge => {
+            // Pre-merge and post-merge use current branch as target for testing
+            vec![("target", env.branch.as_str())]
+        }
         _ => Vec::new(),
     };
-    let approved = approve_hooks(&ctx, &[hook_type], &extra_vars)?;
+    // Pass name_filter to only approve the targeted hook, not all hooks of this type
+    let approved = approve_hooks_filtered(&ctx, &[hook_type], &extra_vars, name_filter)?;
     // If declined, return early - the whole point of `wt hook` is to run hooks
     if !approved {
         crate::output::print(worktrunk::styling::info_message("Commands declined"))?;
@@ -111,10 +121,14 @@ pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> 
         HookType::PreMerge => {
             // pre-merge, post-merge, pre-remove use functions from merge.rs
             // which already handle user hooks (approval already happened at gate)
+            // Use current branch as target (matches approval prompt for wt hook)
             let project_cfg = project_config.unwrap_or_default();
             run_pre_merge_commands(&project_cfg, &ctx, &env.branch, name_filter)
         }
-        HookType::PostMerge => execute_post_merge_commands(&ctx, &env.branch, name_filter),
+        HookType::PostMerge => {
+            // Use current branch as target (matches approval prompt for wt hook)
+            execute_post_merge_commands(&ctx, &env.branch, name_filter)
+        }
         HookType::PreRemove => execute_pre_remove_commands(&ctx, name_filter),
     }
 }
