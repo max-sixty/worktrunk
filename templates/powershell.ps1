@@ -29,6 +29,12 @@ if (Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) {
             Invoke-Expression $script
         }
 
+        # Propagate exit code so $? and $LASTEXITCODE are consistent for scripts/CI
+        $global:LASTEXITCODE = $exitCode
+        if ($exitCode -ne 0) {
+            # Write error to set $? = $false without throwing
+            Write-Error "wt exited with code $exitCode" -ErrorAction SilentlyContinue
+        }
         return $exitCode
     }
 

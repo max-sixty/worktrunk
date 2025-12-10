@@ -9,14 +9,30 @@ use worktrunk::path::format_path_for_display;
 
 /// Sanitize a string for use as a filename on all platforms.
 /// Replaces characters that are illegal in Windows filenames or are path separators.
-/// Characters replaced: / \ < > : " | ? *
+/// Also handles Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).
 fn sanitize_for_filename(s: &str) -> String {
-    s.chars()
+    // Replace illegal characters
+    let sanitized: String = s
+        .chars()
         .map(|c| match c {
             '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
             _ => c,
         })
-        .collect()
+        .collect();
+
+    // Check for Windows reserved device names (case-insensitive)
+    // These cannot be used as filenames on Windows, even with extensions
+    let upper = sanitized.to_uppercase();
+    let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.chars().nth(3).is_some_and(|c| c.is_ascii_digit()));
+
+    if is_reserved {
+        format!("_{}", sanitized)
+    } else {
+        sanitized
+    }
 }
 
 /// Get the separator needed before closing brace in POSIX shell command grouping.
