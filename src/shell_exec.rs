@@ -196,14 +196,17 @@ mod tests {
     #[test]
     fn test_shell_command_execution() {
         let config = ShellConfig::get();
-        // Use platform-appropriate echo command
         let output = config
             .command("echo hello")
             .output()
             .expect("Failed to execute shell command");
-        assert!(output.status.success());
-        // Output format may differ between shells, just check it ran
-        assert!(!output.stdout.is_empty() || !output.stderr.is_empty());
+        assert!(output.status.success(), "echo should succeed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("hello"),
+            "stdout should contain 'hello', got: '{}'",
+            stdout.trim()
+        );
     }
 
     #[test]
@@ -257,13 +260,10 @@ mod tests {
 
         assert!(output.status.success(), "echo should succeed");
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Output should contain our test string somewhere
         assert!(
-            stdout.contains("test_output") || stderr.contains("test_output"),
-            "Output should contain 'test_output', got stdout='{}' stderr='{}'",
-            stdout,
-            stderr
+            stdout.contains("test_output"),
+            "stdout should contain 'test_output', got: '{}'",
+            stdout.trim()
         );
     }
 
@@ -272,17 +272,21 @@ mod tests {
     fn test_windows_posix_redirection_with_git_bash() {
         let config = ShellConfig::get();
         if config.is_posix() {
-            // Test POSIX-style redirection only works with Git Bash
+            // Test POSIX-style redirection: stdout redirected to stderr
             let output = config
-                .command("{ echo redirected; } 1>&2")
+                .command("echo redirected 1>&2")
                 .output()
                 .expect("Failed to execute redirection test");
 
-            // The output should go to stderr due to 1>&2
+            assert!(
+                output.status.success(),
+                "redirection command should succeed"
+            );
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
-                stderr.contains("redirected") || output.status.success(),
-                "POSIX redirection should work with Git Bash"
+                stderr.contains("redirected"),
+                "stderr should contain 'redirected' (stdout redirected to stderr), got: '{}'",
+                stderr.trim()
             );
         }
     }
