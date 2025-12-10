@@ -1,4 +1,4 @@
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TEST_EPOCH, TestRepo, wt_command};
 use insta::assert_snapshot;
 use std::process::Command;
 
@@ -50,6 +50,41 @@ fn test_config_cache_show_with_default_branch() {
     ⚪ CI status cache:
     [107m [0m  (empty)
     ");
+}
+
+#[test]
+fn test_config_cache_show_with_ci_entries() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
+    repo.git_command(&[
+        "config",
+        "worktrunk.ci.feature",
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    repo.git_command(&[
+        "config",
+        "worktrunk.ci.bugfix",
+        &format!(r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555"}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    repo.git_command(&[
+        "config",
+        "worktrunk.ci.main",
+        &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678"}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    let output = wt_config_cache_cmd(&repo, &["show"]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr));
 }
 
 // ============================================================================

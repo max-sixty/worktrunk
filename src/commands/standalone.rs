@@ -716,7 +716,7 @@ fn render_user_hooks(
         out,
         "{}",
         cformat!(
-            "{INFO_EMOJI} User Hooks: <bold>{}</>",
+            "<cyan>USER HOOKS</>  {}",
             config_path
                 .as_ref()
                 .map(|p| format_path_for_display(p))
@@ -777,7 +777,7 @@ fn render_project_hooks(
         out,
         "{}",
         cformat!(
-            "{INFO_EMOJI} Project Hooks: <bold>{}</>",
+            "<cyan>PROJECT HOOKS</>  {}",
             format_path_for_display(&config_path)
         )
     )?;

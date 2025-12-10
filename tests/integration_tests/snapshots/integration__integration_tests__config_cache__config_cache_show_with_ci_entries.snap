@@ -1,0 +1,13 @@
+---
+source: tests/integration_tests/config_cache.rs
+expression: "String::from_utf8_lossy(&output.stderr)"
+---
+⚪ Default branch cache:
+[107m [0m  main
+
+⚪ CI status cache:
+Branch   Status  Age  Head    
+───────  ──────  ───  ────────
+feature  passed  0s   abc12345
+bugfix   failed  0s   11122233
+main     none    0s   deadbeef

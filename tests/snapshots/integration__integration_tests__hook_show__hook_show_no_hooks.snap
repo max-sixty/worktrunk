@@ -25,8 +25,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[TEST_CONFIG][22m
+[TEST_CONFIG]
 💡 [2m(none configured)[22m
 
-⚪ Project Hooks: [1m[REPO]/.config/wt.toml[22m
+[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
 💡 [2m(not found)[22m

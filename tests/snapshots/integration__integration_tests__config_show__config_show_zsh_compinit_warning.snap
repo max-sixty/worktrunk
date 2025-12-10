@@ -18,6 +18,7 @@ info:
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_COMPINIT_MISSING: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -25,10 +26,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ User Config: [1m~/.config/worktrunk/config.toml[22m
+[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 💡 [2mEmpty file (using defaults)[22m
 
-⚪ Project Config: [1m[REPO]/.config/wt.toml[22m
+[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
 💡 [2mNot found[22m
 
 ⚪ Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc

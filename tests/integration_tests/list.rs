@@ -779,7 +779,6 @@ fn test_list_with_upstream_tracking() {
 fn test_list_primary_on_different_branch() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     repo.switch_primary_to("develop");
     assert_eq!(repo.current_branch(), "develop");

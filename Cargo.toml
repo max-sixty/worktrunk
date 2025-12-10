@@ -111,10 +111,7 @@ name = "list"
 harness = false
 
 [lints.rust]
-# Unsafe code is denied by default but can be explicitly allowed where necessary.
-# Currently used for:
-# - TTY detachment in pager invocation (pre_exec + setsid) to prevent hangs in TUI contexts
-unsafe_code = "deny"
+unsafe_code = "forbid"
 
 # The profile that 'dist' will build with
 [profile.dist]

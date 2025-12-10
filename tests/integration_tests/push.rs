@@ -18,7 +18,6 @@ fn snapshot_push(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&s
 fn test_push_fast_forward() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create a worktree for main (checking out existing branch)
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
@@ -55,7 +54,6 @@ fn test_push_fast_forward() {
 fn test_push_not_fast_forward() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create commits in both worktrees
     // The repo root is already the main worktree
@@ -100,7 +98,6 @@ fn test_push_not_fast_forward() {
 fn test_push_to_default_branch() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -135,7 +132,6 @@ fn test_push_to_default_branch() {
 fn test_push_with_dirty_target() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Make main worktree (repo root) dirty with a conflicting file
     std::fs::write(repo.root_path().join("conflict.txt"), "old content").unwrap();
@@ -187,7 +183,6 @@ fn test_push_with_dirty_target() {
 fn test_push_dirty_target_autostash() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Make main worktree (repo root) dirty with a non-conflicting file
     std::fs::write(repo.root_path().join("notes.txt"), "temporary notes").unwrap();
@@ -240,7 +235,6 @@ fn test_push_dirty_target_autostash() {
 fn test_push_error_not_fast_forward() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature branch from initial commit
     let feature_wt = repo.add_worktree("feature");
@@ -299,7 +293,6 @@ fn test_push_error_not_fast_forward() {
 fn test_push_error_with_merge_commits() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature branch
     let feature_wt = repo.add_worktree("feature");
@@ -371,7 +364,6 @@ fn test_push_error_with_merge_commits() {
 fn test_push_with_merge_commits_allowed() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature branch
     let feature_wt = repo.add_worktree("feature");

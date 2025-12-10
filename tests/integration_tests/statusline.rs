@@ -77,7 +77,6 @@ fn setup_repo_with_changes() -> TestRepo {
 fn setup_repo_with_commits_ahead() -> TestRepo {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature branch with commits ahead
     let feature_path = repo.add_worktree("feature");

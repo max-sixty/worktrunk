@@ -26,10 +26,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ User Config: [1m~/.config/worktrunk/config.toml[22m
+[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 💡 [2mEmpty file (using defaults)[22m
 
-⚪ Project Config: [1m[REPO]/.config/wt.toml[22m
+[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
 💡 [2mNot found[22m
 
 💡 [2mNot configured shell extension & completions for bash @ ~/.bashrc[22m

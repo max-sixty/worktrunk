@@ -41,5 +41,5 @@ pre-commit = "pre-commit run --all-files"
 # Note: This must come AFTER post-merge because [pre-merge] starts
 # a TOML table section, and everything after it would be inside that section
 [pre-merge]
-insta = "NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never cargo insta test --dnd --check --features shell-integration-tests"
+insta = "RUSTFLAGS='-D warnings' NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never cargo insta test --dnd --check --features shell-integration-tests"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"

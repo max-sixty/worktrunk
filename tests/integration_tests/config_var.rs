@@ -202,9 +202,8 @@ fn test_var_get_marker_specific_branch() {
 
 #[test]
 fn test_var_get_default_branch() {
-    let mut repo = TestRepo::new();
+    let repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     let output = wt_var_get_cmd(&repo, &["default-branch"]).output().unwrap();
     assert!(output.status.success());

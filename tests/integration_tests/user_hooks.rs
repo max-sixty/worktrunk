@@ -274,7 +274,6 @@ fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&
 fn test_user_pre_merge_hook_executes() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -319,7 +318,6 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
 fn test_user_pre_merge_hook_failure_blocks_merge() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -361,7 +359,6 @@ check = "exit 1"
 fn test_user_pre_merge_skipped_with_no_verify() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -413,7 +410,6 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
 fn test_user_post_merge_hook_executes() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -582,7 +578,6 @@ block = "exit 1"
 fn test_user_pre_commit_hook_executes() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
@@ -615,7 +610,6 @@ lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
 fn test_user_pre_commit_failure_blocks_commit() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");

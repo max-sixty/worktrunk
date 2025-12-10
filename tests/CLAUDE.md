@@ -107,3 +107,20 @@ When converting a README example test from `insta_cmd` to PTY-based:
 ### Implementation Note
 
 The PTY approach is specifically for **user-facing output documentation**. It's not a replacement for standard integration tests - both approaches serve different purposes and should coexist in the test suite.
+
+## Deterministic Time in Tests
+
+Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `SOURCE_DATE_EPOCH` in the test environment.
+
+**For test data with timestamps** (cache entries, etc.), use the constant:
+
+```rust
+use crate::common::TEST_EPOCH;
+
+repo.git_command(&[
+    "config", "worktrunk.ci.feature",
+    &format!(r#"{{"checked_at":{TEST_EPOCH},"head":"abc123"}}"#),
+]);
+```
+
+**For production code** that calculates age/duration, check `SOURCE_DATE_EPOCH` (see `src/display.rs::get_now()` for pattern). Using `SystemTime::now()` directly causes flaky tests.

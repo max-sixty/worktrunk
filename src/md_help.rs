@@ -77,8 +77,22 @@ pub fn render_markdown_in_help(help: &str) -> String {
     colorize_status_symbols(&result)
 }
 
-/// Render a markdown table with proper column alignment
+/// Render a markdown table with proper column alignment (for help text, adds 2-space indent)
 fn render_table(lines: &[&str]) -> String {
+    render_markdown_table_impl(lines, "  ")
+}
+
+/// Render a markdown table from markdown source string (no indent)
+pub fn render_markdown_table(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown
+        .lines()
+        .filter(|l| l.trim().starts_with('|') && l.trim().ends_with('|'))
+        .collect();
+    render_markdown_table_impl(&lines, "")
+}
+
+/// Core table rendering with configurable indent
+fn render_markdown_table_impl(lines: &[&str], indent: &str) -> String {
     // Parse table cells
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut separator_idx: Option<usize> = None;
@@ -132,7 +146,7 @@ fn render_table(lines: &[&str]) -> String {
     let has_header = separator_idx.is_some();
 
     for (row_idx, row) in rows.iter().enumerate() {
-        result.push_str("  "); // Indent
+        result.push_str(indent);
 
         for (col_idx, cell) in row.iter().enumerate() {
             if col_idx > 0 {
@@ -155,7 +169,7 @@ fn render_table(lines: &[&str]) -> String {
 
         // Add visual separator after header row
         if has_header && row_idx == 0 {
-            result.push_str("  ");
+            result.push_str(indent);
             for (col_idx, width) in col_widths.iter().enumerate() {
                 if col_idx > 0 {
                     result.push_str("  ");

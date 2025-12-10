@@ -26,9 +26,8 @@ macro_rules! skip_if_shell_unavailable {
 #[case("zsh")]
 fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
     skip_if_shell_unavailable!(shell);
-    let mut repo = TestRepo::new();
+    let repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     let init_code = generate_init_code(&repo, shell);
     let bin_path = wt_bin_dir();

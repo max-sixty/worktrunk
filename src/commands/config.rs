@@ -206,7 +206,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         out,
         "{}",
         cformat!(
-            "{INFO_EMOJI} User Config: <bold>{}</>",
+            "<cyan>USER CONFIG</>  {}",
             format_path_for_display(&config_path)
         )
     )?;
@@ -269,7 +269,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             writeln!(
                 out,
                 "{}",
-                cformat!("{INFO_EMOJI} <dim>Project Config: Not in a git repository</>")
+                cformat!("<cyan><dim>PROJECT CONFIG</>  Not in a git repository</>")
             )?;
             return Ok(());
         }
@@ -280,7 +280,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         out,
         "{}",
         cformat!(
-            "{INFO_EMOJI} Project Config: <bold>{}</>",
+            "<cyan>PROJECT CONFIG</>  {}",
             format_path_for_display(&config_path)
         )
     )?;
@@ -656,7 +656,7 @@ pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow:
 pub fn handle_cache_show() -> anyhow::Result<()> {
     let repo = Repository::current();
 
-    // Show default branch cache
+    // Show default branch cache (value from git config, so use gutter)
     crate::output::print(info_message("Default branch cache:"))?;
     match repo.default_branch() {
         Ok(branch) => crate::output::gutter(format_with_gutter(&branch, "", None))?,
@@ -673,12 +673,20 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    // Respect SOURCE_DATE_EPOCH for reproducible test output
+    let now_secs = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|val| val.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        });
 
-    let mut ci_lines = Vec::new();
+    // Build markdown table
+    let mut table = String::from("| Branch | Status | Age | Head |\n");
+    table.push_str("|--------|--------|-----|------|\n");
     for (branch, cached) in entries {
         let status = match &cached.status {
             Some(pr_status) => serde_json::to_string(&pr_status.ci_status)
@@ -689,9 +697,11 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
         let age = now_secs.saturating_sub(cached.checked_at);
         let head: String = cached.head.chars().take(8).collect();
 
-        ci_lines.push(format!("{branch}: {status} (age: {age}s, head: {head})"));
+        table.push_str(&format!("| {branch} | {status} | {age}s | {head} |\n"));
     }
-    crate::output::gutter(format_with_gutter(&ci_lines.join("\n"), "", None))?;
+
+    let rendered = crate::md_help::render_markdown_table(&table);
+    crate::output::table(rendered.trim_end())?;
 
     Ok(())
 }

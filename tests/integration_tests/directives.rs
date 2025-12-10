@@ -241,7 +241,6 @@ fn test_remove_without_internal() {
 fn test_merge_internal_no_remove() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
@@ -293,7 +292,6 @@ fn test_merge_internal_no_remove() {
 fn test_merge_internal_remove() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");

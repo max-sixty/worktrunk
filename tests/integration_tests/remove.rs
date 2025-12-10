@@ -30,9 +30,8 @@ fn snapshot_remove_with_global_flags(
 
 /// Common setup for remove tests - creates repo with initial commit and remote
 fn setup_remove_repo() -> TestRepo {
-    let mut repo = TestRepo::new();
+    let repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
     repo
 }
 
@@ -147,7 +146,8 @@ fn test_remove_nonexistent_worktree() {
 
 #[test]
 fn test_remove_remote_only_branch() {
-    let repo = setup_remove_repo();
+    let mut repo = setup_remove_repo();
+    repo.setup_remote("main"); // This test specifically needs a remote
 
     // Create a remote-only branch by pushing a branch then deleting it locally
     Command::new("git")

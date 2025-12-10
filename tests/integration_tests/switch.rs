@@ -428,7 +428,6 @@ fn test_switch_create_no_remote() {
 #[test]
 fn test_switch_primary_on_different_branch() {
     let mut repo = setup_switch_repo();
-    repo.setup_remote("main");
 
     repo.switch_primary_to("develop");
     assert_eq!(repo.current_branch(), "develop");

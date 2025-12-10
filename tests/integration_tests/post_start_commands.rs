@@ -203,9 +203,8 @@ approved-commands = [
 
 #[test]
 fn test_post_create_default_branch_template() {
-    let mut repo = TestRepo::new();
+    let repo = TestRepo::new();
     repo.commit("Initial commit");
-    repo.setup_remote("main");
 
     // Create project config with default_branch template variable
     repo.write_project_config(
