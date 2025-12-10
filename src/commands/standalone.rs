@@ -24,12 +24,8 @@ use super::repository_ext::RepositoryCliExt;
 ///
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
-pub fn handle_standalone_run_hook(
-    hook_type: HookType,
-    force: bool,
-    name_filter: Option<&str>,
-) -> anyhow::Result<()> {
-    use super::command_approval::collect_and_approve_hooks_with_context;
+pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> anyhow::Result<()> {
+    use super::command_approval::approve_hooks;
 
     // Derive context from current environment
     let env = CommandEnv::for_action(&format!("run {hook_type} hook"))?;
@@ -50,7 +46,7 @@ pub fn handle_standalone_run_hook(
             .collect(),
         _ => Vec::new(),
     };
-    collect_and_approve_hooks_with_context(&ctx, &[hook_type], &extra_vars)?;
+    approve_hooks(&ctx, &[hook_type], &extra_vars)?;
 
     // TODO: Add support for custom variable overrides (e.g., --var key=value)
     // This would allow testing hooks with different contexts without being in that context
@@ -199,12 +195,12 @@ fn run_hook_with_filter(
 }
 
 /// Handle `wt step commit` command
-pub fn handle_standalone_commit(
+pub fn step_commit(
     force: bool,
     no_verify: bool,
     stage_mode: super::commit::StageMode,
 ) -> anyhow::Result<()> {
-    use super::command_approval::collect_and_approve_hooks_with_context;
+    use super::command_approval::approve_hooks;
 
     let env = CommandEnv::for_action("commit")?;
     let ctx = env.context(force);
@@ -217,7 +213,7 @@ pub fn handle_standalone_commit(
             .into_iter()
             .map(|t| ("target", t))
             .collect();
-        collect_and_approve_hooks_with_context(&ctx, &[HookType::PreCommit], &extra_vars)?;
+        approve_hooks(&ctx, &[HookType::PreCommit], &extra_vars)?;
     }
 
     let mut options = CommitOptions::new(&ctx);
@@ -534,7 +530,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 }
 
 /// Handle `wt config approvals add` command - approve all commands in the project
-pub fn handle_standalone_add_approvals(force: bool, show_all: bool) -> anyhow::Result<()> {
+pub fn add_approvals(force: bool, show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
     use worktrunk::config::WorktrunkConfig;
 
@@ -600,7 +596,7 @@ pub fn handle_standalone_add_approvals(force: bool, show_all: bool) -> anyhow::R
 }
 
 /// Handle `wt config approvals clear` command - clear approved commands
-pub fn handle_standalone_clear_approvals(global: bool) -> anyhow::Result<()> {
+pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
     use worktrunk::config::WorktrunkConfig;
 
     let mut config = WorktrunkConfig::load().context("Failed to load config")?;

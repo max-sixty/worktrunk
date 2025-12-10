@@ -26,14 +26,13 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, RebaseResult, SquashResult, collect_and_approve_hooks_with_context,
+    ConfigAction, RebaseResult, SquashResult, add_approvals, approve_hooks, clear_approvals,
     compute_worktree_path, handle_cache_clear, handle_cache_refresh, handle_cache_show,
     handle_config_create, handle_config_show, handle_configure_shell, handle_hook_show,
     handle_init, handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_by_path,
-    handle_remove_current, handle_show_theme, handle_squash, handle_standalone_add_approvals,
-    handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
-    handle_switch, handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
-    resolve_worktree_path_first,
+    handle_remove_current, handle_show_theme, handle_squash, handle_switch,
+    handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
+    resolve_worktree_path_first, run_hook, step_commit,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -893,8 +892,8 @@ fn main() {
                 VarCommand::Clear { key, branch, all } => handle_var_clear(&key, branch, all),
             },
             ConfigCommand::Approvals { action } => match action {
-                ApprovalsCommand::Add { force, all } => handle_standalone_add_approvals(force, all),
-                ApprovalsCommand::Clear { global } => handle_standalone_clear_approvals(global),
+                ApprovalsCommand::Add { force, all } => add_approvals(force, all),
+                ApprovalsCommand::Clear { global } => clear_approvals(global),
             },
         },
         Commands::Step { action } => match action {
@@ -908,7 +907,7 @@ fn main() {
                     let stage_final = stage
                         .or_else(|| config.commit.and_then(|c| c.stage))
                         .unwrap_or_default();
-                    handle_standalone_commit(force, !verify, stage_final)
+                    step_commit(force, !verify, stage_final)
                 }),
             StepCommand::Squash {
                 target,
@@ -924,7 +923,7 @@ fn main() {
 
                     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
                     if verify {
-                        use commands::command_approval::collect_and_approve_hooks_with_context;
+                        use commands::command_approval::approve_hooks;
                         use commands::context::CommandEnv;
                         let env = CommandEnv::for_action("squash")?;
                         let ctx = env.context(force);
@@ -934,11 +933,7 @@ fn main() {
                             .into_iter()
                             .map(|t| ("target", t))
                             .collect();
-                        collect_and_approve_hooks_with_context(
-                            &ctx,
-                            &[HookType::PreCommit],
-                            &extra_vars,
-                        )?;
+                        approve_hooks(&ctx, &[HookType::PreCommit], &extra_vars)?;
                     }
 
                     match handle_squash(target.as_deref(), force, !verify, stage_final)? {
@@ -978,22 +973,22 @@ fn main() {
                 expanded,
             } => handle_hook_show(hook_type.as_deref(), expanded),
             HookCommand::PostCreate { name, force } => {
-                handle_standalone_run_hook(HookType::PostCreate, force, name.as_deref())
+                run_hook(HookType::PostCreate, force, name.as_deref())
             }
             HookCommand::PostStart { name, force } => {
-                handle_standalone_run_hook(HookType::PostStart, force, name.as_deref())
+                run_hook(HookType::PostStart, force, name.as_deref())
             }
             HookCommand::PreCommit { name, force } => {
-                handle_standalone_run_hook(HookType::PreCommit, force, name.as_deref())
+                run_hook(HookType::PreCommit, force, name.as_deref())
             }
             HookCommand::PreMerge { name, force } => {
-                handle_standalone_run_hook(HookType::PreMerge, force, name.as_deref())
+                run_hook(HookType::PreMerge, force, name.as_deref())
             }
             HookCommand::PostMerge { name, force } => {
-                handle_standalone_run_hook(HookType::PostMerge, force, name.as_deref())
+                run_hook(HookType::PostMerge, force, name.as_deref())
             }
             HookCommand::PreRemove { name, force } => {
-                handle_standalone_run_hook(HookType::PreRemove, force, name.as_deref())
+                run_hook(HookType::PreRemove, force, name.as_deref())
             }
         },
         #[cfg(unix)]
@@ -1079,11 +1074,7 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    collect_and_approve_hooks_with_context(
-                        &ctx,
-                        &[HookType::PostCreate, HookType::PostStart],
-                        &[],
-                    )?
+                    approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart], &[])?
                 } else {
                     true // No hooks to approve = considered approved
                 };
@@ -1165,8 +1156,7 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    let _approved =
-                        collect_and_approve_hooks_with_context(&ctx, &[HookType::PreRemove], &[])?;
+                    let _approved = approve_hooks(&ctx, &[HookType::PreRemove], &[])?;
                     // Note: if declined, hooks won't run but removal continues
                     // (pre-remove is fail-fast only on execution failure, not on approval decline)
                 }

@@ -17,7 +17,7 @@ pub mod standalone;
 pub mod statusline;
 pub mod worktree;
 
-pub use command_approval::collect_and_approve_hooks_with_context;
+pub use command_approval::approve_hooks;
 pub use config::{
     handle_cache_clear, handle_cache_refresh, handle_cache_show, handle_config_create,
     handle_config_show, handle_var_clear, handle_var_get, handle_var_set,
@@ -31,9 +31,8 @@ pub use merge::{execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
 pub use select::handle_select;
 pub use standalone::{
-    RebaseResult, SquashResult, handle_hook_show, handle_rebase, handle_squash,
-    handle_standalone_add_approvals, handle_standalone_clear_approvals, handle_standalone_commit,
-    handle_standalone_run_hook,
+    RebaseResult, SquashResult, add_approvals, clear_approvals, handle_hook_show, handle_rebase,
+    handle_squash, run_hook, step_commit,
 };
 pub use worktree::{
     compute_worktree_path, handle_remove, handle_remove_by_path, handle_remove_current,

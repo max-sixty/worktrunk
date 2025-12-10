@@ -9,7 +9,7 @@
 //! ```text
 //! User runs command
 //!     ↓
-//! collect_and_approve_hooks_with_context() ← Single approval prompt
+//! approve_hooks() ← Single approval prompt
 //!     ↓
 //! Execute hooks (approval already done)
 //! ```
@@ -168,13 +168,13 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> anyhow:
 ///
 /// ```ignore
 /// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, force);
-/// let approved = collect_and_approve_hooks_with_context(
+/// let approved = approve_hooks(
 ///     &ctx,
 ///     &[HookType::PostCreate, HookType::PostStart],
 ///     &[],
 /// )?;
 /// ```
-pub fn collect_and_approve_hooks_with_context(
+pub fn approve_hooks(
     ctx: &super::command_executor::CommandContext<'_>,
     hook_types: &[HookType],
     extra_vars: &[(&str, &str)],
