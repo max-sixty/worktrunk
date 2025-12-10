@@ -137,7 +137,8 @@ fn find_git_bash() -> Option<PathBuf> {
         return Some(PathBuf::from("bash"));
     }
 
-    // Check standard Git for Windows and MSYS2 installation paths
+    // Check standard installation paths for bash.exe
+    // (Git for Windows and MSYS2 both provide POSIX-compatible bash)
     let bash_paths = [
         // Git for Windows
         r"C:\Program Files\Git\bin\bash.exe",

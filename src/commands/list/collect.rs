@@ -21,14 +21,9 @@
 //! This ensures fast operations don't wait for slow ones (e.g., CI doesn't block ahead/behind counts)
 use crossbeam_channel as chan;
 use rayon::prelude::*;
-use std::path::{Path, PathBuf};
 use worktrunk::git::{LineDiff, Repository, Worktree};
+use worktrunk::path::canonicalize;
 use worktrunk::styling::{INFO_EMOJI, warning_message};
-
-/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
-fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
-    dunce::canonicalize(path)
-}
 
 use super::ci_status::PrStatus;
 use super::model::{

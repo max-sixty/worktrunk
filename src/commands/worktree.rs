@@ -112,14 +112,10 @@
 
 use color_print::cformat;
 use normalize_path::NormalizePath;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use worktrunk::HookType;
-
-/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
-fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
-    dunce::canonicalize(path)
-}
 use worktrunk::config::WorktrunkConfig;
+use worktrunk::path::canonicalize;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,

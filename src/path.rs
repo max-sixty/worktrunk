@@ -1,5 +1,14 @@
 use std::path::{Path, PathBuf};
 
+/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
+///
+/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
+/// which external tools like git cannot handle. The `dunce` crate strips this
+/// prefix when safe. On Unix, this is equivalent to `std::fs::canonicalize()`.
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
+
 /// Get the user's home directory.
 ///
 /// Uses the `home` crate which handles platform-specific detection:

@@ -5,14 +5,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, bail};
 use normalize_path::NormalizePath;
 
-/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
-///
-/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
-/// which external tools like git cannot handle. The `dunce` crate strips this
-/// prefix when safe. On Unix, this is equivalent to `std::fs::canonicalize()`.
-fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
-    dunce::canonicalize(path)
-}
+use crate::path::canonicalize;
 
 // Import types and functions from parent module (mod.rs)
 use super::{
