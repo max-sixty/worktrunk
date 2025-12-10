@@ -244,6 +244,7 @@ impl TestRepo {
     ///
     /// This is useful for PTY tests and other cases where you need environment variables
     /// as a vector rather than setting them on a Command.
+    #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
         vec![
             ("CLICOLOR_FORCE".to_string(), "1".to_string()),
@@ -1078,6 +1079,7 @@ pub struct ExponentialBackoff {
     /// Maximum sleep duration in milliseconds
     pub max_ms: u64,
     /// Total timeout
+    #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub timeout: std::time::Duration,
 }
 
