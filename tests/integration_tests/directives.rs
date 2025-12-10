@@ -3,6 +3,117 @@ use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use std::process::Command;
 
+// ============================================================================
+// PowerShell Directive Tests
+// ============================================================================
+// These tests verify that --internal=powershell produces correct PowerShell syntax.
+// The PowerShell directive mode outputs:
+// - `Set-Location 'path'` instead of `cd 'path'`
+// - Proper single-quote escaping ('' instead of '\'' for embedded quotes)
+
+/// Test that switch with --internal=powershell outputs PowerShell Set-Location syntax
+#[test]
+fn test_switch_internal_powershell_directive() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+    let _feature_wt = repo.add_worktree("feature");
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // Normalize the PowerShell Set-Location path
+    settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("--internal=powershell")
+            .arg("switch")
+            .arg("feature")
+            .current_dir(repo.root_path());
+
+        // Use file-based snapshot since inline snapshots don't handle
+        // path normalization and ANSI codes well
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test merge with --internal=powershell (switch back to main after merge)
+#[test]
+fn test_merge_internal_powershell_directive() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // Normalize the PowerShell Set-Location path
+    settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("--internal=powershell")
+            .arg("merge")
+            .arg("main")
+            .current_dir(&feature_wt);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test that remove with --internal=powershell outputs PowerShell Set-Location syntax
+#[test]
+fn test_remove_internal_powershell_directive() {
+    let mut repo = TestRepo::new();
+    repo.commit("Initial commit");
+    repo.setup_remote("main");
+    let feature_wt = repo.add_worktree("feature");
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // Normalize the PowerShell Set-Location path
+    settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("--internal=powershell")
+            .arg("remove")
+            .current_dir(&feature_wt);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+// ============================================================================
+// POSIX Directive Tests (existing tests)
+// ============================================================================
+
 /// Test the directive protocol for switch command
 #[test]
 fn test_switch_internal_directive() {

@@ -1,7 +1,3 @@
-// Test utilities are Unix-only as they're used by integration tests
-// which rely on Unix-specific behavior (PTY, shell integration, etc.)
-#![cfg(unix)]
-
 //! # Test Utilities for worktrunk
 //!
 //! This module provides test harnesses for testing the worktrunk CLI tool.

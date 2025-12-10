@@ -1,6 +1,6 @@
-// Integration tests are Unix-only as they test bash/fish/zsh shell integration
-// and rely on Unix-specific TTY/stdin/stdout behavior
-#![cfg(unix)]
+// Note: Some tests require Unix-specific features (PTY, shell integration).
+// Those are gated at the individual file level with #[cfg(unix)] or
+// #[cfg(all(unix, feature = "shell-integration-tests"))].
 
 // column_alignment merged into spacing_edge_cases
 pub mod approval_pty;
