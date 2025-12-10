@@ -149,6 +149,9 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     cmd.env("XDG_CONFIG_HOME", home.join(".config"));
     // Windows: the `home` crate uses USERPROFILE for home_dir()
     cmd.env("USERPROFILE", home);
+    // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
+    // Map it to .config to match Unix XDG_CONFIG_HOME behavior
+    cmd.env("APPDATA", home.join(".config"));
 }
 
 pub struct TestRepo {
@@ -785,12 +788,34 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // (output may have either format depending on when filters are applied)
     settings.add_filter(&regex::escape(root_str), "[REPO]");
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
+
+    // On Windows, format_path_for_display() converts paths under HOME to tilde-prefixed.
+    // Since temp directories (like C:\Users\runner\AppData\Local\Temp\.tmpXXX) are under HOME,
+    // the repo path becomes ~/AppData/Local/Temp/.tmpXXX/repo in output.
+    // Add filter for tilde-prefixed repo path.
+    // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
+    // (C:\Users\RUNNER~1) while dunce::canonicalize returns the long path (C:\Users\runneradmin).
+    if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
+        && let Ok(relative) = root_canonical.strip_prefix(&home)
+    {
+        let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+        settings.add_filter(&regex::escape(&tilde_path), "[REPO]");
+    }
+
     for (name, path) in &repo.worktrees {
         let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
         let path_str = canonical.to_str().unwrap();
         let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
         settings.add_filter(&regex::escape(path_str), &replacement);
         settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
+
+        // Also add tilde-prefixed worktree path filter for Windows
+        if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
+            && let Ok(relative) = canonical.strip_prefix(&home)
+        {
+            let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+            settings.add_filter(&regex::escape(&tilde_path), &replacement);
+        }
     }
 
     // Normalize backslashes for Windows compatibility
