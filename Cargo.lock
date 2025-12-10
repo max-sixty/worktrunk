@@ -2981,6 +2981,7 @@ dependencies = [
  "unicode-width",
  "vergen-gitcl",
  "vt100",
+ "which",
  "wrap-ansi",
 ]
 

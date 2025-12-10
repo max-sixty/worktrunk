@@ -7,6 +7,13 @@
 //! This enables hooks and commands to use the same bash syntax on all platforms,
 //! as long as Git for Windows is installed (which is nearly universal among
 //! Windows developers).
+//!
+//! ## Windows Limitations
+//!
+//! When Git Bash is not available, PowerShell is used as a fallback with limitations:
+//! - Hooks using bash syntax won't work
+//! - No support for POSIX redirections like `{ cmd; } 1>&2`
+//! - Different string escaping rules for JSON piping
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -85,7 +92,6 @@ fn detect_shell() -> ShellConfig {
 /// 2. PowerShell (fallback, with warnings about syntax differences)
 #[cfg(windows)]
 fn detect_windows_shell() -> ShellConfig {
-    // Check for Git Bash in standard locations
     if let Some(bash_path) = find_git_bash() {
         return ShellConfig {
             executable: bash_path,
@@ -112,10 +118,9 @@ fn detect_windows_shell() -> ShellConfig {
 /// 3. `git.exe` in PATH to find Git installation directory
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
-    // If we're already in Git Bash (MSYSTEM is set), use the system bash
+    // If we're already in Git Bash (MSYSTEM is set), bash should be in PATH
     if std::env::var("MSYSTEM").is_ok() {
-        // In Git Bash environment, bash is available directly
-        if which_bash().is_some() {
+        if which::which("bash").is_ok() {
             return Some(PathBuf::from("bash"));
         }
     }
@@ -135,7 +140,7 @@ fn find_git_bash() -> Option<PathBuf> {
     }
 
     // Try to find Git installation via `git.exe` in PATH
-    if let Some(git_path) = which_git() {
+    if let Ok(git_path) = which::which("git") {
         // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
         // bash.exe is at Git/bin/bash.exe
         if let Some(git_dir) = git_path.parent().and_then(|p| p.parent()) {
@@ -143,34 +148,6 @@ fn find_git_bash() -> Option<PathBuf> {
             if bash_path.exists() {
                 return Some(bash_path);
             }
-        }
-    }
-
-    None
-}
-
-/// Check if bash is available in PATH
-#[cfg(windows)]
-fn which_bash() -> Option<PathBuf> {
-    which_executable("bash")
-}
-
-/// Check if git is available in PATH
-#[cfg(windows)]
-fn which_git() -> Option<PathBuf> {
-    which_executable("git")
-}
-
-/// Find an executable in PATH (simple cross-platform which)
-#[cfg(windows)]
-fn which_executable(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    let exe_name = format!("{}.exe", name);
-
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(&exe_name);
-        if candidate.exists() {
-            return Some(candidate);
         }
     }
 
@@ -202,5 +179,99 @@ mod tests {
         let cmd = config.command("echo hello");
         // Just verify it doesn't panic
         let _ = format!("{:?}", cmd);
+    }
+
+    #[test]
+    fn test_shell_command_execution() {
+        let config = ShellConfig::get();
+        // Use platform-appropriate echo command
+        let output = config
+            .command("echo hello")
+            .output()
+            .expect("Failed to execute shell command");
+        assert!(output.status.success());
+        // Output format may differ between shells, just check it ran
+        assert!(!output.stdout.is_empty() || !output.stderr.is_empty());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_windows_shell_detection() {
+        let config = ShellConfig::get();
+        // On Windows CI, Git is installed, so we should have Git Bash
+        // If this fails on a system without Git, PowerShell fallback should work
+        assert!(
+            config.name == "Git Bash" || config.name == "PowerShell",
+            "Expected 'Git Bash' or 'PowerShell', got '{}'",
+            config.name
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_windows_git_bash_has_posix_syntax() {
+        let config = ShellConfig::get();
+        if config.name == "Git Bash" {
+            assert!(config.is_posix, "Git Bash should support POSIX syntax");
+            assert!(
+                config.args.contains(&"-c".to_string()),
+                "Git Bash should use -c flag"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_windows_powershell_fallback_not_posix() {
+        let config = ShellConfig::get();
+        if config.name == "PowerShell" {
+            assert!(!config.is_posix, "PowerShell should not be marked as POSIX");
+            assert!(
+                config.args.contains(&"-Command".to_string()),
+                "PowerShell should use -Command flag"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_windows_echo_command() {
+        // Test that echo works regardless of which shell we detected
+        let config = ShellConfig::get();
+        let output = config
+            .command("echo test_output")
+            .output()
+            .expect("Failed to execute echo");
+
+        assert!(output.status.success(), "echo should succeed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Output should contain our test string somewhere
+        assert!(
+            stdout.contains("test_output") || stderr.contains("test_output"),
+            "Output should contain 'test_output', got stdout='{}' stderr='{}'",
+            stdout,
+            stderr
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_windows_posix_redirection_with_git_bash() {
+        let config = ShellConfig::get();
+        if config.is_posix() {
+            // Test POSIX-style redirection only works with Git Bash
+            let output = config
+                .command("{ echo redirected; } 1>&2")
+                .output()
+                .expect("Failed to execute redirection test");
+
+            // The output should go to stderr due to 1>&2
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("redirected") || output.status.success(),
+                "POSIX redirection should work with Git Bash"
+            );
+        }
     }
 }

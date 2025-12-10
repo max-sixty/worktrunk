@@ -82,6 +82,7 @@ wrap-ansi = "0.1"
 osc8 = "0.1.0"
 home = "0.5.12"
 normalize-path = "0.2.1"
+which = "7.0"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
