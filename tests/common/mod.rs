@@ -22,9 +22,6 @@
 //! Paths are canonicalized to handle platform differences (especially macOS symlinks
 //! like /var -> /private/var). This ensures snapshot filters work correctly.
 
-// Test utilities are Unix-only since integration tests are Unix-only
-#![cfg(unix)]
-
 pub mod list_snapshots;
 pub mod progressive_output;
 #[cfg(feature = "shell-integration-tests")]

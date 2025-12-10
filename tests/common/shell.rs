@@ -1,6 +1,59 @@
 use super::{TestRepo, wt_command};
 use insta_cmd::get_cargo_bin;
-use std::process::Command;
+use std::{collections::HashSet, process::Command, sync::LazyLock};
+
+/// Set of shells available on this system (cached at first access)
+static AVAILABLE_SHELLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let mut shells = HashSet::new();
+
+    // Check bash availability
+    if Command::new("bash")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        shells.insert("bash");
+    }
+
+    // Check zsh availability (typically not on Windows)
+    if Command::new("zsh")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        shells.insert("zsh");
+    }
+
+    // Check fish availability (typically not on Windows)
+    if Command::new("fish")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        shells.insert("fish");
+    }
+
+    // Check PowerShell Core availability (pwsh, cross-platform)
+    if Command::new("pwsh")
+        .arg("-Version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        shells.insert("pwsh");
+        shells.insert("powershell"); // Alias
+    }
+
+    shells
+});
+
+/// Check if a shell is available on the current system.
+pub fn shell_available(shell: &str) -> bool {
+    AVAILABLE_SHELLS.contains(shell)
+}
 
 /// Path to dev-detach binary (built automatically as part of the crate).
 /// The binary is gated behind the `shell-integration-tests` feature.

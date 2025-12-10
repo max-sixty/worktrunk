@@ -57,7 +57,7 @@ jobs:
       run: |
         # Git Bash is pre-installed on GitHub Actions Windows runners
         # Fish and zsh are not commonly available on native Windows (require WSL/MSYS2)
-        # CI will test with bash only on Windows
+        # CI will test with bash only on Windows (tests skip unavailable shells)
         echo "Using Git Bash for Windows tests"
       shell: pwsh
 
@@ -65,14 +65,14 @@ jobs:
       uses: clechasseur/rs-cargo@v4
       with:
         command: test
-        args: --no-run --locked ${{ runner.os != 'Windows' && '--features shell-integration-tests' || '' }}
+        args: --no-run --locked --features shell-integration-tests
 
     - name: 📋 Test
       uses: clechasseur/rs-cargo@v4
       timeout-minutes: 10
       with:
         command: insta
-        args: test --test-runner=nextest ${{ runner.os != 'Windows' && '--features shell-integration-tests' || '' }}
+        args: test --test-runner=nextest --features shell-integration-tests
 
     - name: 📖 Doctest
       uses: clechasseur/rs-cargo@v4
