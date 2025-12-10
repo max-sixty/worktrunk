@@ -531,9 +531,11 @@ pub fn collect(
         .iter()
         .map(|wt| {
             let is_main = wt.path == main_worktree.path;
+            // Canonicalize wt.path for comparison since current_worktree_path is canonicalized
+            // (On Windows, paths from git worktree list may differ from git rev-parse --show-toplevel)
             let is_current = current_worktree_path
                 .as_ref()
-                .is_some_and(|cp| &wt.path == cp);
+                .is_some_and(|cp| wt.path.canonicalize().as_ref().ok() == Some(cp));
             let is_previous = previous_branch
                 .as_deref()
                 .is_some_and(|prev| wt.branch.as_deref() == Some(prev));
