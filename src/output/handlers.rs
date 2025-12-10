@@ -689,9 +689,17 @@ pub(crate) fn execute_streaming(
         // multi-line commands with control structures (if/fi, for/done, etc.)
         format!("{{ {}\n}} 1>&2", command)
     } else {
-        // For non-POSIX shells or when not redirecting, use command as-is
-        // PowerShell doesn't support the same redirection syntax, and hooks
-        // using bash syntax require Git Bash anyway
+        // For non-POSIX shells (PowerShell) or when not redirecting, use command as-is.
+        //
+        // LIMITATION: PowerShell doesn't support redirecting stdout to stderr (*>&2 fails).
+        // When redirect_stdout_to_stderr=true but shell is PowerShell, hook output will
+        // go to stdout instead of stderr. This could cause issues in directive mode where
+        // stdout is reserved for shell scripts. However:
+        // - Users were warned at `wt config shell install` about PowerShell limitations
+        // - Hooks using bash syntax won't work on PowerShell anyway (need Git Bash)
+        // - Most hook output is informational, not structured data
+        //
+        // See: https://github.com/PowerShell/PowerShell/issues/7620
         command.to_string()
     };
 
