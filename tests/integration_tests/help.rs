@@ -20,6 +20,10 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     // Windows terminal strips these trailing resets that Unix includes
     settings.add_filter(r"\x1b\[0m$", "");
     settings.add_filter(r"\x1b\[0m\n", "\n");
+    // On Windows, the `select` command is not available (Unix only, uses TUI).
+    // Filter out the select command line from help output for cross-platform consistency.
+    #[cfg(windows)]
+    settings.add_filter(r"(?m)^\s*\x1b\[1m\x1b\[36mselect\x1b\[0m.*\n", "");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);
