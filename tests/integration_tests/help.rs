@@ -13,6 +13,9 @@ use insta_cmd::assert_cmd_snapshot;
 fn snapshot_help(test_name: &str, args: &[&str]) {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
+    // Normalize Windows executable extension in help output
+    // On Windows, clap shows "wt.exe" instead of "wt"
+    settings.add_filter(r"wt\.exe", "wt");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);

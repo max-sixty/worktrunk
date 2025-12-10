@@ -846,6 +846,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // and would cause snapshot mismatches with Unix snapshots
     settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
 
+    // Normalize Windows executable extension in help output
+    // On Windows, clap shows "wt.exe" instead of "wt"
+    settings.add_filter(r"wt\.exe", "wt");
+
     settings
 }
 
@@ -877,6 +881,8 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     // Filter out PowerShell lines on Windows - these appear only on Windows
     // and would cause snapshot mismatches with Unix snapshots
     settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+    // Normalize Windows executable extension in help output
+    settings.add_filter(r"wt\.exe", "wt");
     settings
 }
 
@@ -891,6 +897,8 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     // Filter temp paths in output
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
     settings.add_filter(r"\\", "/");
+    // Normalize Windows executable extension in help output
+    settings.add_filter(r"wt\.exe", "wt");
 
     // Redact volatile metadata captured by insta-cmd
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
