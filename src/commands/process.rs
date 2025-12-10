@@ -1,7 +1,9 @@
 use anyhow::Context;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::process::Command;
+use std::process::Stdio;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 

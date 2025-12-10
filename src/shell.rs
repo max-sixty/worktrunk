@@ -223,6 +223,38 @@ impl Shell {
             }
         }
 
+        // Check PowerShell profile for integration
+        let powershell_profiles = {
+            #[cfg(windows)]
+            {
+                vec![
+                    home.join("Documents")
+                        .join("PowerShell")
+                        .join("Microsoft.PowerShell_profile.ps1"),
+                ]
+            }
+            #[cfg(not(windows))]
+            {
+                vec![
+                    home.join(".config")
+                        .join("powershell")
+                        .join("Microsoft.PowerShell_profile.ps1"),
+                ]
+            }
+        };
+
+        for path in powershell_profiles {
+            if path.exists()
+                && let Ok(content) = fs::read_to_string(&path)
+            {
+                // Look for PowerShell integration pattern:
+                // Invoke-Expression (& wt config shell init powershell)
+                if content.contains("Invoke-Expression") && content.contains("shell init") {
+                    return Ok(Some(path));
+                }
+            }
+        }
+
         Ok(None)
     }
 

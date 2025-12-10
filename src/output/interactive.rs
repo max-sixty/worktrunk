@@ -2,7 +2,9 @@
 
 use std::io::{self, Write};
 use std::path::Path;
+#[cfg(unix)]
 use std::process::Stdio;
+#[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{eprintln, stderr};
 
