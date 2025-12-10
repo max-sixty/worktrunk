@@ -13,6 +13,8 @@
 #   find and package the binary, failing with "bin not found" during release
 # - `[package.metadata.dist] dist = false` in main package: excludes the entire
 #   package from distribution, not individual binaries
+# - `workspace.default-members`: makes `cargo build` include this package, but
+#   `cargo test` only builds test targets, not binaries (even for selected packages)
 #
 # BUILD REQUIREMENT:
 # Since this is a separate workspace member (not a dependency of the main package),
