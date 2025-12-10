@@ -283,10 +283,13 @@ mod tests {
 
     #[test]
     fn test_format_directory_fish_style() {
-        // Test paths that don't depend on HOME
-        assert_eq!(format_directory_fish_style("/tmp/test"), "/t/test");
-        assert_eq!(format_directory_fish_style("/"), "/");
-        assert_eq!(format_directory_fish_style("/var/log/app"), "/v/l/app");
+        // Test absolute paths (Unix-style paths only meaningful on Unix)
+        #[cfg(unix)]
+        {
+            assert_eq!(format_directory_fish_style("/tmp/test"), "/t/test");
+            assert_eq!(format_directory_fish_style("/"), "/");
+            assert_eq!(format_directory_fish_style("/var/log/app"), "/v/l/app");
+        }
 
         // Test with actual HOME (if set)
         if let Ok(home) = env::var("HOME") {
