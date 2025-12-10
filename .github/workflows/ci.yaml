@@ -61,11 +61,34 @@ jobs:
         echo "Using Git Bash for Windows tests"
       shell: pwsh
 
+    - name: Setup Python for pre-commit
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
     - name: 🔍 Pre-commit hooks
-      uses: pre-commit/action@v3.0.1
+      run: |
+        pip install pre-commit
+        pre-commit run --all-files
+      env:
+        # Skip lychee - the dedicated check-links job handles link checking
+        SKIP: lychee
 
     - name: 🧪 Pre-merge hooks
+      # Run via wt on Unix, but directly on Windows to avoid exe locking issues
       run: cargo run --locked -- hook pre-merge --force
+      if: runner.os != 'Windows'
+
+    - name: 🧪 Pre-merge hooks (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        $env:RUSTFLAGS='-D warnings'
+        $env:NEXTEST_STATUS_LEVEL='fail'
+        $env:NEXTEST_SUCCESS_OUTPUT='never'
+        cargo insta test --delete-unreferenced-snapshots --check --features shell-integration-tests
+        cargo test --doc
+        $env:RUSTDOCFLAGS='-Dwarnings'
+        cargo doc --no-deps
 
   check-links:
     runs-on: ubuntu-latest

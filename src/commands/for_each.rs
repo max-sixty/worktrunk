@@ -67,7 +67,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
         let wt_repo = Repository::at(&wt.path);
 
         // Build full hook context for this worktree
-        let ctx = CommandContext::new(&wt_repo, &config, branch, &wt.path, &repo_root, false);
+        let ctx = CommandContext::new(&wt_repo, &config, Some(branch), &wt.path, &repo_root, false);
         let context_map = build_hook_context(&ctx, &[]);
 
         // Convert to &str references for expand_template
