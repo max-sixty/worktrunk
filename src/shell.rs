@@ -4,6 +4,33 @@ use std::path::PathBuf;
 
 use crate::path::home_dir;
 
+/// Get PowerShell profile paths in order of preference.
+/// On Windows, returns both PowerShell Core (7+) and Windows PowerShell (5.1) paths.
+/// On Unix, uses the conventional ~/.config/powershell location.
+fn powershell_profile_paths(home: &std::path::Path) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        // Use platform-specific Documents path (handles non-English Windows)
+        let docs = dirs::document_dir().unwrap_or_else(|| home.join("Documents"));
+        vec![
+            // PowerShell Core 6+ (pwsh.exe) - preferred
+            docs.join("PowerShell")
+                .join("Microsoft.PowerShell_profile.ps1"),
+            // Windows PowerShell 5.1 (powershell.exe) - legacy but still common
+            docs.join("WindowsPowerShell")
+                .join("Microsoft.PowerShell_profile.ps1"),
+        ]
+    }
+    #[cfg(not(windows))]
+    {
+        vec![
+            home.join(".config")
+                .join("powershell")
+                .join("Microsoft.PowerShell_profile.ps1"),
+        ]
+    }
+}
+
 /// Get the user's home directory or return an error
 fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     home_dir().ok_or_else(|| {
@@ -58,27 +85,7 @@ impl Shell {
                         .join("wt.fish"),
                 ]
             }
-            Self::PowerShell => {
-                // PowerShell profile paths vary by OS and PowerShell version
-                // On Windows: $HOME\Documents\PowerShell\Microsoft.PowerShell_profile.ps1
-                // On Unix: ~/.config/powershell/Microsoft.PowerShell_profile.ps1
-                #[cfg(windows)]
-                {
-                    vec![
-                        home.join("Documents")
-                            .join("PowerShell")
-                            .join("Microsoft.PowerShell_profile.ps1"),
-                    ]
-                }
-                #[cfg(not(windows))]
-                {
-                    vec![
-                        home.join(".config")
-                            .join("powershell")
-                            .join("Microsoft.PowerShell_profile.ps1"),
-                    ]
-                }
-            }
+            Self::PowerShell => powershell_profile_paths(&home),
         })
     }
 
@@ -223,34 +230,15 @@ impl Shell {
             }
         }
 
-        // Check PowerShell profile for integration
-        let powershell_profiles = {
-            #[cfg(windows)]
-            {
-                vec![
-                    home.join("Documents")
-                        .join("PowerShell")
-                        .join("Microsoft.PowerShell_profile.ps1"),
-                ]
-            }
-            #[cfg(not(windows))]
-            {
-                vec![
-                    home.join(".config")
-                        .join("powershell")
-                        .join("Microsoft.PowerShell_profile.ps1"),
-                ]
-            }
-        };
-
-        for path in powershell_profiles {
-            if path.exists()
-                && let Ok(content) = fs::read_to_string(&path)
+        // Check PowerShell profiles for integration (both Core and 5.1)
+        for profile_path in powershell_profile_paths(&home) {
+            if profile_path.exists()
+                && let Ok(content) = fs::read_to_string(&profile_path)
             {
                 // Look for PowerShell integration pattern:
                 // Invoke-Expression (& wt config shell init powershell)
                 if content.contains("Invoke-Expression") && content.contains("shell init") {
-                    return Ok(Some(path));
+                    return Ok(Some(profile_path));
                 }
             }
         }

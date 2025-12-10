@@ -2949,6 +2949,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "crossterm",
+ "dirs",
  "env_logger",
  "etcetera",
  "home",

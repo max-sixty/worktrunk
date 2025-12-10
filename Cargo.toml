@@ -81,6 +81,7 @@ unicode-width = "0.2"
 wrap-ansi = "0.1"
 osc8 = "0.1.0"
 home = "0.5.12"
+dirs = "6.0"
 normalize-path = "0.2.1"
 which = "7.0"
 

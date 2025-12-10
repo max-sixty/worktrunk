@@ -7,6 +7,18 @@ use std::process::Stdio;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 
+/// Sanitize a string for use as a filename on all platforms.
+/// Replaces characters that are illegal in Windows filenames or are path separators.
+/// Characters replaced: / \ < > : " | ? *
+fn sanitize_for_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
+            _ => c,
+        })
+        .collect()
+}
+
 /// Get the separator needed before closing brace in POSIX shell command grouping.
 /// Returns empty string if command already ends with newline or semicolon.
 fn posix_command_separator(command: &str) -> &'static str {
@@ -57,9 +69,8 @@ pub fn spawn_detached(
 
     // Generate log filename (no timestamp - overwrites on each run)
     // Format: {branch}-{name}.log (e.g., "feature-post-start-npm.log", "bugfix-remove.log")
-    // Sanitize branch and name: replace '/' with '-' to avoid creating subdirectories
-    let safe_branch = branch.replace('/', "-");
-    let safe_name = name.replace('/', "-");
+    let safe_branch = sanitize_for_filename(branch);
+    let safe_name = sanitize_for_filename(name);
     let log_path = log_dir.join(format!("{}-{}.log", safe_branch, safe_name));
 
     // Create log file
@@ -177,10 +188,11 @@ fn spawn_detached_windows(
         let full_command = match context_json {
             Some(json) => {
                 // PowerShell single-quote escaping:
-                // - Single quotes prevent variable expansion ($)
-                // - Backticks need escaping even in single quotes
-                // - Single quotes need doubling (`'` → `''`)
-                let escaped_json = json.replace('`', "``").replace('\'', "''");
+                // - Single quotes prevent variable expansion ($) and are literal
+                // - Backticks are literal in single quotes (NOT escape characters)
+                // - Only single quotes need doubling (`'` → `''`)
+                // See: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_quoting_rules
+                let escaped_json = json.replace('\'', "''");
                 // Pipe JSON to the command via PowerShell script block
                 format!("'{}' | & {{ {} }}", escaped_json, command)
             }
@@ -202,4 +214,37 @@ fn spawn_detached_windows(
         .context("Failed to spawn detached process")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_for_filename() {
+        // Path separators
+        assert_eq!(sanitize_for_filename("feature/branch"), "feature-branch");
+        assert_eq!(sanitize_for_filename("feature\\branch"), "feature-branch");
+
+        // Windows-illegal characters
+        assert_eq!(sanitize_for_filename("bug:123"), "bug-123");
+        assert_eq!(sanitize_for_filename("fix<angle>"), "fix-angle-");
+        assert_eq!(sanitize_for_filename("fix|pipe"), "fix-pipe");
+        assert_eq!(sanitize_for_filename("fix?question"), "fix-question");
+        assert_eq!(sanitize_for_filename("fix*wildcard"), "fix-wildcard");
+        assert_eq!(sanitize_for_filename("fix\"quotes\""), "fix-quotes-");
+
+        // Multiple special characters
+        assert_eq!(
+            sanitize_for_filename("a/b\\c<d>e:f\"g|h?i*j"),
+            "a-b-c-d-e-f-g-h-i-j"
+        );
+
+        // Already safe
+        assert_eq!(sanitize_for_filename("normal-branch"), "normal-branch");
+        assert_eq!(
+            sanitize_for_filename("branch_with_underscore"),
+            "branch_with_underscore"
+        );
+    }
 }

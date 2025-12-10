@@ -1,9 +1,9 @@
 # worktrunk shell integration for PowerShell
 #
 # Limitations compared to bash/zsh/fish:
-# - Hooks that use bash syntax won't work without Git Bash
+# - Hooks using bash syntax won't work without Git Bash
 #
-# For full hook support on Windows, use Git Bash with `wt config shell install bash`.
+# For full hook compatibility on Windows, install Git for Windows and use bash integration.
 
 # Only initialize if wt is available
 if (Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) {
@@ -17,16 +17,19 @@ if (Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) {
 
         $wtBin = (Get-Command {{ cmd_prefix }} -CommandType Application).Source
 
-        # Run wt with --internal=powershell, capture stdout for Invoke-Expression
-        # stderr passes through to console in real-time
-        $script = & $wtBin --internal=powershell @Arguments 2>&1 | Out-String
+        # Run wt with --internal=powershell
+        # stdout is captured for Invoke-Expression (contains Set-Location directives)
+        # stderr passes through to console in real-time (user messages, progress, errors)
+        # Note: We do NOT use 2>&1 as that would merge stderr into the script variable
+        $script = & $wtBin --internal=powershell @Arguments | Out-String
+        $exitCode = $LASTEXITCODE
 
         # Execute the directive script (e.g., Set-Location) if command succeeded
-        if ($LASTEXITCODE -eq 0 -and $script.Trim()) {
+        if ($exitCode -eq 0 -and $script.Trim()) {
             Invoke-Expression $script
         }
 
-        return $LASTEXITCODE
+        return $exitCode
     }
 
     # Tab completion - generate clap's completer script and eval it

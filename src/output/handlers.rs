@@ -684,23 +684,29 @@ pub(crate) fn execute_streaming(
 
     let shell = ShellConfig::get();
 
-    let command_to_run = if redirect_stdout_to_stderr && shell.is_posix() {
-        // Use newline instead of semicolon before closing brace to support
-        // multi-line commands with control structures (if/fi, for/done, etc.)
-        format!("{{ {}\n}} 1>&2", command)
+    // Determine stdout handling based on shell and redirect flag
+    let (command_to_run, stdout_mode) = if redirect_stdout_to_stderr {
+        if shell.is_posix() {
+            // POSIX: wrap command to redirect stdout to stderr at shell level
+            // Use newline instead of semicolon before closing brace to support
+            // multi-line commands with control structures (if/fi, for/done, etc.)
+            (
+                format!("{{ {}\n}} 1>&2", command),
+                std::process::Stdio::inherit(),
+            )
+        } else {
+            // Non-POSIX (PowerShell): redirect stdout to stderr at OS level
+            // PowerShell doesn't support shell-level stdout-to-stderr redirection (*>&2 fails).
+            // Use Stdio::from(io::stderr()) to redirect child stdout to our stderr.
+            // This keeps stdout clean for directive scripts while hook output goes to stderr.
+            // See: https://github.com/PowerShell/PowerShell/issues/7620
+            (
+                command.to_string(),
+                std::process::Stdio::from(std::io::stderr()),
+            )
+        }
     } else {
-        // For non-POSIX shells (PowerShell) or when not redirecting, use command as-is.
-        //
-        // LIMITATION: PowerShell doesn't support redirecting stdout to stderr (*>&2 fails).
-        // When redirect_stdout_to_stderr=true but shell is PowerShell, hook output will
-        // go to stdout instead of stderr. This could cause issues in directive mode where
-        // stdout is reserved for shell scripts. However:
-        // - Users were warned at `wt config shell install` about PowerShell limitations
-        // - Hooks using bash syntax won't work on PowerShell anyway (need Git Bash)
-        // - Most hook output is informational, not structured data
-        //
-        // See: https://github.com/PowerShell/PowerShell/issues/7620
-        command.to_string()
+        (command.to_string(), std::process::Stdio::inherit())
     };
 
     let stdin_mode = if stdin_content.is_some() {
@@ -713,7 +719,7 @@ pub(crate) fn execute_streaming(
     let mut child = cmd
         .current_dir(working_dir)
         .stdin(stdin_mode)
-        .stdout(std::process::Stdio::inherit()) // Preserve TTY for output
+        .stdout(stdout_mode)
         .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
         // Prevent vergen "overridden" warning in nested cargo builds when run via `cargo run`.
         // Add more VERGEN_* variables here if we expand build.rs and hit similar issues.

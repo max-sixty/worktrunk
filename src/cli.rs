@@ -149,7 +149,8 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Shell wrapper mode (optionally specify shell type for directive output)
-    #[arg(long, global = true, hide = true, default_missing_value = "posix", num_args = 0..=1)]
+    /// Usage: --internal (defaults to posix) or --internal=powershell
+    #[arg(long, global = true, hide = true, default_missing_value = "posix", num_args = 0..=1, require_equals = true)]
     pub internal: Option<DirectiveShell>,
 
     #[command(subcommand)]
