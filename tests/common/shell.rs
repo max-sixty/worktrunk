@@ -1,9 +1,10 @@
 use super::{TestRepo, wt_command};
 use insta_cmd::get_cargo_bin;
-use std::{path::PathBuf, process::Command, sync::LazyLock};
+use std::process::Command;
 
-/// Path to dev-detach binary (workspace member in tests/helpers/dev-detach).
-static DEV_DETACH_BIN: LazyLock<PathBuf> = LazyLock::new(|| get_cargo_bin("dev-detach"));
+/// Path to dev-detach binary (built automatically as part of the crate).
+/// The binary is gated behind the `shell-integration-tests` feature.
+const DEV_DETACH_BIN: &str = env!("CARGO_BIN_EXE_dev-detach");
 
 /// Convert signal number to human-readable name
 #[cfg(unix)]
@@ -33,7 +34,7 @@ pub fn get_shell_binary(shell: &str) -> &str {
 
 /// Build a command to execute a shell script via dev-detach.
 fn build_shell_command(repo: &TestRepo, shell: &str, script: &str) -> Command {
-    let mut cmd = Command::new(DEV_DETACH_BIN.as_os_str());
+    let mut cmd = Command::new(DEV_DETACH_BIN);
     repo.clean_cli_env(&mut cmd);
 
     // Prevent user shell config from leaking into tests
