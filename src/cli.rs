@@ -646,6 +646,20 @@ pub enum StepCommand {
 /// Run project and user hooks
 #[derive(Subcommand)]
 pub enum HookCommand {
+    /// Show configured hooks
+    ///
+    /// Lists all hooks from user config and project config with their commands.
+    /// Project hooks show approval status (❓ = needs approval).
+    Show {
+        /// Hook type to show (default: all)
+        #[arg(value_parser = ["post-create", "post-start", "pre-commit", "pre-merge", "post-merge", "pre-remove"])]
+        hook_type: Option<String>,
+
+        /// Show expanded commands with current variables
+        #[arg(long)]
+        expanded: bool,
+    },
+
     /// Run post-create hooks
     ///
     /// Executes blocking commands after worktree creation.

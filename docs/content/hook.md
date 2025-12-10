@@ -350,6 +350,7 @@ wt hook - Run hooks manually
 Usage: wt hook [OPTIONS] <COMMAND>
 
 Commands:
+  show         Show configured hooks
   post-create  Run post-create hooks
   post-start   Run post-start hooks
   pre-commit   Run pre-commit hooks

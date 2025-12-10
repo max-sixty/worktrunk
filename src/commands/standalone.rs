@@ -1,11 +1,16 @@
 use anyhow::Context;
 use color_print::cformat;
+use std::fmt::Write as _;
 use worktrunk::HookType;
+use worktrunk::config::{CommandConfig, ProjectConfig, WorktrunkConfig};
 use worktrunk::git::Repository;
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    format_with_gutter, hint_message, info_message, progress_message, success_message,
+    HINT_EMOJI, INFO_EMOJI, PROMPT_EMOJI, format_bash_with_gutter, format_with_gutter,
+    hint_message, info_message, progress_message, success_message,
 };
 
+use super::command_executor::CommandContext;
 use super::commit::{CommitGenerator, CommitOptions};
 use super::context::CommandEnv;
 use super::hooks::HookPipeline;
@@ -47,6 +52,7 @@ pub fn handle_standalone_run_hook(
         HookType::PostCreate => {
             let user_config = user_hook!(post_create);
             let project_config = project_config.as_ref().and_then(|c| c.post_create.as_ref());
+            check_any_hook_configured(user_config, project_config, hook_type)?;
             run_hook_with_filter(
                 &ctx,
                 user_config,
@@ -59,6 +65,7 @@ pub fn handle_standalone_run_hook(
         HookType::PostStart => {
             let user_config = user_hook!(post_start);
             let project_config = project_config.as_ref().and_then(|c| c.post_start.as_ref());
+            check_any_hook_configured(user_config, project_config, hook_type)?;
             run_hook_with_filter(
                 &ctx,
                 user_config,
@@ -70,7 +77,8 @@ pub fn handle_standalone_run_hook(
         }
         HookType::PreCommit => {
             let user_config = user_hook!(pre_commit);
-            let project_config = project_config.as_ref().and_then(|c| c.pre_commit.as_ref());
+            let project_config_ref = project_config.as_ref().and_then(|c| c.pre_commit.as_ref());
+            check_any_hook_configured(user_config, project_config_ref, hook_type)?;
             // Pre-commit hook can optionally use target branch context
             let target_branch = repo.default_branch().ok();
             let extra_vars: Vec<(&str, &str)> = target_branch
@@ -81,7 +89,7 @@ pub fn handle_standalone_run_hook(
             run_hook_with_filter(
                 &ctx,
                 user_config,
-                project_config,
+                project_config_ref,
                 hook_type,
                 &extra_vars,
                 name_filter,
@@ -101,7 +109,6 @@ pub fn handle_standalone_run_hook(
 /// Run user and project hooks with optional name filter (used by standalone hook commands)
 ///
 /// Runs user hooks first, then project hooks.
-/// Returns an error if no hooks are configured for this hook type.
 fn run_hook_with_filter(
     ctx: &super::command_executor::CommandContext,
     user_config: Option<&worktrunk::config::CommandConfig>,
@@ -111,14 +118,6 @@ fn run_hook_with_filter(
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
-
-    // Check at least one hook is configured
-    if user_config.is_none() && project_config.is_none() {
-        return Err(worktrunk::git::GitError::Other {
-            message: format!("No {hook_type} hook configured (neither user nor project)"),
-        }
-        .into());
-    }
 
     let pipeline = HookPipeline::new(*ctx);
 
@@ -146,6 +145,21 @@ fn run_hook_with_filter(
         )?;
     }
 
+    Ok(())
+}
+
+/// Check if at least one hook (user or project) is configured
+fn check_any_hook_configured<T, U>(
+    user_hook: Option<&T>,
+    project_hook: Option<&U>,
+    hook_type: HookType,
+) -> anyhow::Result<()> {
+    if user_hook.is_none() && project_hook.is_none() {
+        return Err(worktrunk::git::GitError::Other {
+            message: format!("No {hook_type} hook configured (neither user nor project)"),
+        }
+        .into());
+    }
     Ok(())
 }
 
@@ -592,4 +606,252 @@ pub fn handle_standalone_clear_approvals(global: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Handle `wt hook show` command - display configured hooks
+pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
+    use crate::help_pager::show_help_in_pager;
+
+    let repo = Repository::current();
+    let config = WorktrunkConfig::load().context("Failed to load user config")?;
+    let project_config = repo.load_project_config()?;
+    let project_id = repo.project_identifier().ok();
+
+    // Parse hook type filter if provided
+    let filter: Option<HookType> = hook_type_filter.map(|s| match s {
+        "post-create" => HookType::PostCreate,
+        "post-start" => HookType::PostStart,
+        "pre-commit" => HookType::PreCommit,
+        "pre-merge" => HookType::PreMerge,
+        "post-merge" => HookType::PostMerge,
+        "pre-remove" => HookType::PreRemove,
+        _ => unreachable!("clap validates hook type"),
+    });
+
+    // Build context for template expansion (only used if --expanded)
+    // Need to keep CommandEnv alive for the lifetime of ctx
+    let env = if expanded {
+        Some(CommandEnv::for_action("show hooks")?)
+    } else {
+        None
+    };
+    let ctx = env.as_ref().map(|e| e.context(false));
+
+    let mut output = String::new();
+
+    // Render user hooks
+    render_user_hooks(&mut output, &config, filter, ctx.as_ref())?;
+    output.push('\n');
+
+    // Render project hooks
+    render_project_hooks(
+        &mut output,
+        &repo,
+        project_config.as_ref(),
+        &config,
+        project_id.as_deref(),
+        filter,
+        ctx.as_ref(),
+    )?;
+
+    // Display through pager (fall back to stderr if pager unavailable)
+    if show_help_in_pager(&output).is_err() {
+        worktrunk::styling::eprintln!("{}", output);
+    }
+
+    Ok(())
+}
+
+/// Render user hooks section
+fn render_user_hooks(
+    out: &mut String,
+    config: &WorktrunkConfig,
+    filter: Option<HookType>,
+    ctx: Option<&CommandContext>,
+) -> anyhow::Result<()> {
+    let config_path = worktrunk::config::get_config_path();
+
+    writeln!(
+        out,
+        "{}",
+        cformat!(
+            "{INFO_EMOJI} User Hooks: <bold>{}</>",
+            config_path
+                .as_ref()
+                .map(|p| format_path_for_display(p))
+                .unwrap_or_else(|| "(not found)".to_string())
+        )
+    )?;
+
+    // Collect all user hooks
+    let hooks = [
+        (HookType::PostCreate, &config.post_create),
+        (HookType::PostStart, &config.post_start),
+        (HookType::PreCommit, &config.pre_commit),
+        (HookType::PreMerge, &config.pre_merge),
+        (HookType::PostMerge, &config.post_merge),
+        (HookType::PreRemove, &config.pre_remove),
+    ];
+
+    let mut has_any = false;
+    for (hook_type, hook_config) in hooks {
+        // Apply filter if specified
+        if let Some(f) = filter
+            && f != hook_type
+        {
+            continue;
+        }
+
+        if let Some(cfg) = hook_config {
+            has_any = true;
+            render_hook_commands(out, hook_type, cfg, None, ctx)?;
+        }
+    }
+
+    if !has_any {
+        writeln!(
+            out,
+            "{}",
+            cformat!("{HINT_EMOJI} <dim>(none configured)</>")
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render project hooks section
+fn render_project_hooks(
+    out: &mut String,
+    repo: &Repository,
+    project_config: Option<&ProjectConfig>,
+    user_config: &WorktrunkConfig,
+    project_id: Option<&str>,
+    filter: Option<HookType>,
+    ctx: Option<&CommandContext>,
+) -> anyhow::Result<()> {
+    let repo_root = repo.worktree_root()?;
+    let config_path = repo_root.join(".config").join("wt.toml");
+
+    writeln!(
+        out,
+        "{}",
+        cformat!(
+            "{INFO_EMOJI} Project Hooks: <bold>{}</>",
+            format_path_for_display(&config_path)
+        )
+    )?;
+
+    let Some(config) = project_config else {
+        writeln!(out, "{}", cformat!("{HINT_EMOJI} <dim>(not found)</>"))?;
+        return Ok(());
+    };
+
+    // Collect all project hooks
+    let hooks = [
+        (HookType::PostCreate, &config.post_create),
+        (HookType::PostStart, &config.post_start),
+        (HookType::PreCommit, &config.pre_commit),
+        (HookType::PreMerge, &config.pre_merge),
+        (HookType::PostMerge, &config.post_merge),
+        (HookType::PreRemove, &config.pre_remove),
+    ];
+
+    let mut has_any = false;
+    for (hook_type, hook_config) in hooks {
+        // Apply filter if specified
+        if let Some(f) = filter
+            && f != hook_type
+        {
+            continue;
+        }
+
+        if let Some(cfg) = hook_config {
+            has_any = true;
+            render_hook_commands(out, hook_type, cfg, Some((user_config, project_id)), ctx)?;
+        }
+    }
+
+    if !has_any {
+        writeln!(
+            out,
+            "{}",
+            cformat!("{HINT_EMOJI} <dim>(none configured)</>")
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Render commands for a single hook type
+fn render_hook_commands(
+    out: &mut String,
+    hook_type: HookType,
+    config: &CommandConfig,
+    // For project hooks: (user_config, project_id) to check approval status
+    approval_context: Option<(&WorktrunkConfig, Option<&str>)>,
+    ctx: Option<&CommandContext>,
+) -> anyhow::Result<()> {
+    let commands = config.commands();
+    if commands.is_empty() {
+        return Ok(());
+    }
+
+    for cmd in commands {
+        // Build label: "hook-type name:" or "hook-type:"
+        let label = match &cmd.name {
+            Some(name) => cformat!("{hook_type} <bold>{name}</>:"),
+            None => format!("{hook_type}:"),
+        };
+
+        // Check approval status for project hooks
+        let needs_approval = if let Some((user_config, Some(project_id))) = approval_context {
+            !user_config.is_command_approved(project_id, &cmd.template)
+        } else {
+            false
+        };
+
+        // Use ❓ for needs approval, ⚪ for approved/user hooks
+        let (emoji, suffix) = if needs_approval {
+            (PROMPT_EMOJI, cformat!(" <dim>(requires approval)</>"))
+        } else {
+            (INFO_EMOJI, String::new())
+        };
+
+        writeln!(out, "{emoji} {label}{suffix}")?;
+
+        // Show template or expanded command
+        let command_text = if let Some(command_ctx) = ctx {
+            // Expand template with current context
+            expand_command_template(&cmd.template, command_ctx, hook_type)
+        } else {
+            cmd.template.clone()
+        };
+
+        write!(out, "{}", format_bash_with_gutter(&command_text, ""))?;
+    }
+
+    Ok(())
+}
+
+/// Expand a command template with context variables
+fn expand_command_template(template: &str, ctx: &CommandContext, _hook_type: HookType) -> String {
+    use super::command_executor::build_hook_context;
+
+    let extra_vars: &[(&str, &str)] = &[];
+    let template_ctx = build_hook_context(ctx, extra_vars);
+
+    // Use the standard template expansion
+    worktrunk::config::expand_template(
+        template,
+        ctx.repo_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown"),
+        ctx.branch,
+        &template_ctx
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect(),
+    )
+    .unwrap_or_else(|_| template.to_string())
 }
