@@ -29,7 +29,7 @@ use commands::{
     ConfigAction, RebaseResult, SquashResult, handle_cache_clear, handle_cache_refresh,
     handle_cache_show, handle_config_create, handle_config_show, handle_configure_shell,
     handle_init, handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_by_path,
-    handle_remove_current, handle_squash, handle_standalone_add_approvals,
+    handle_remove_current, handle_show_theme, handle_squash, handle_standalone_add_approvals,
     handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
     handle_switch, handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
     resolve_worktree_path_first,
@@ -869,6 +869,9 @@ fn main() {
                                 }
                                 Ok(())
                             })
+                    }
+                    ConfigShellCommand::ShowTheme => {
+                        handle_show_theme().map_err(|e| anyhow::anyhow!("{}", e))
                     }
                 }
             }

@@ -226,6 +226,17 @@ Detects various forms of the integration pattern regardless of:
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Show output theme samples
+    #[command(after_long_help = r#"## Output Theme
+
+Displays samples of all output message types:
+- Progress, success, error, warning, hint, info
+- Gutter formatting for quoted content
+- Prompts for user input
+
+Use this to preview how worktrunk output will appear in the terminal."#)]
+    ShowTheme,
 }
 
 #[derive(Subcommand)]

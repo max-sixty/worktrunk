@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::styling::{
-    INFO_EMOJI, PROGRESS_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter, warning_message,
+    INFO_EMOJI, PROGRESS_EMOJI, PROMPT_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter,
+    format_with_gutter, warning_message,
 };
 
 pub struct ConfigureResult {
@@ -881,4 +882,75 @@ fn prompt_for_uninstall_confirmation(
     }
 
     prompt_yes_no()
+}
+
+/// Show samples of all output message types
+pub fn handle_show_theme() -> Result<(), String> {
+    use color_print::cformat;
+    use worktrunk::styling::{
+        error_message, hint_message, info_message, progress_message, success_message,
+    };
+
+    // Progress
+    crate::output::print(progress_message(cformat!(
+        "Rebasing <bold>feature</> onto <bold>main</>..."
+    )))
+    .map_err(|e| e.to_string())?;
+
+    // Success
+    crate::output::print(success_message(cformat!(
+        "Created worktree for <bold>feature</> @ <bold>/path/to/worktree</>"
+    )))
+    .map_err(|e| e.to_string())?;
+
+    // Error
+    crate::output::print(error_message(cformat!("Branch <bold>feature</> not found")))
+        .map_err(|e| e.to_string())?;
+
+    // Warning
+    crate::output::print(warning_message(cformat!(
+        "Branch <bold>feature</> has uncommitted changes"
+    )))
+    .map_err(|e| e.to_string())?;
+
+    // Hint
+    crate::output::print(hint_message(cformat!(
+        "Run <bright-black>wt merge</> to rebase onto main"
+    )))
+    .map_err(|e| e.to_string())?;
+
+    // Info
+    crate::output::print(info_message(cformat!("Showing <bold>5</> worktrees")))
+        .map_err(|e| e.to_string())?;
+
+    crate::output::blank().map_err(|e| e.to_string())?;
+
+    // Gutter - quoted content
+    crate::output::print(info_message("Gutter formatting (quoted content):"))
+        .map_err(|e| e.to_string())?;
+    crate::output::gutter(format_with_gutter(
+        "[commit-generation]\ncommand = \"llm --model claude\"",
+        "",
+        None,
+    ))
+    .map_err(|e| e.to_string())?;
+
+    crate::output::blank().map_err(|e| e.to_string())?;
+
+    // Gutter - bash code
+    crate::output::print(info_message("Gutter formatting (shell code):"))
+        .map_err(|e| e.to_string())?;
+    crate::output::gutter(format_bash_with_gutter(
+        "eval \"$(wt config shell init bash)\"",
+        "",
+    ))
+    .map_err(|e| e.to_string())?;
+
+    crate::output::blank().map_err(|e| e.to_string())?;
+
+    // Prompt
+    crate::output::print(info_message("Prompt formatting:")).map_err(|e| e.to_string())?;
+    crate::output::print(format!("{PROMPT_EMOJI} Proceed? [y/N] ")).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
