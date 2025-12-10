@@ -22,6 +22,7 @@
 use super::directive::DirectiveOutput;
 use super::interactive::InteractiveOutput;
 use super::traits::OutputHandler;
+use crate::cli::DirectiveShell;
 use std::cell::RefCell;
 use std::io;
 use std::path::Path;
@@ -30,7 +31,8 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy)]
 pub enum OutputMode {
     Interactive,
-    Directive,
+    /// Directive mode with shell type for output formatting
+    Directive(DirectiveShell),
 }
 
 thread_local! {
@@ -53,7 +55,7 @@ fn with_output<R>(f: impl FnOnce(&mut dyn OutputHandler) -> R) -> R {
 pub fn initialize(mode: OutputMode) {
     let handler: Box<dyn OutputHandler> = match mode {
         OutputMode::Interactive => Box::new(InteractiveOutput::new()),
-        OutputMode::Directive => Box::new(DirectiveOutput::new()),
+        OutputMode::Directive(shell) => Box::new(DirectiveOutput::new(shell)),
     };
 
     OUTPUT_CONTEXT.with(|ctx| {
@@ -170,12 +172,18 @@ mod tests {
 
     #[test]
     fn test_mode_switching() {
+        use crate::cli::DirectiveShell;
+
         // Default is interactive
         initialize(OutputMode::Interactive);
         // Just verify initialize doesn't panic
 
-        // Switch to directive
-        initialize(OutputMode::Directive);
+        // Switch to directive (POSIX)
+        initialize(OutputMode::Directive(DirectiveShell::Posix));
+        // Just verify initialize doesn't panic
+
+        // Switch to directive (PowerShell)
+        initialize(OutputMode::Directive(DirectiveShell::Powershell));
         // Just verify initialize doesn't panic
     }
 }

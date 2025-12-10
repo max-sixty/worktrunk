@@ -522,10 +522,9 @@ fn main() {
     }
 
     // Initialize output context based on --internal flag
-    let output_mode = if cli.internal {
-        output::OutputMode::Directive
-    } else {
-        output::OutputMode::Interactive
+    let output_mode = match cli.internal {
+        Some(shell) => output::OutputMode::Directive(shell),
+        None => output::OutputMode::Interactive,
     };
     output::initialize(output_mode);
 
@@ -995,7 +994,7 @@ fn main() {
             },
         },
         #[cfg(unix)]
-        Commands::Select => handle_select(cli.internal),
+        Commands::Select => handle_select(cli.internal.is_some()),
         Commands::List {
             subcommand,
             format,
@@ -1098,7 +1097,12 @@ fn main() {
 
                 // Show success message (temporal locality: immediately after worktree creation)
                 // Pass cli.internal to indicate whether shell integration is active
-                handle_switch_output(&result, &resolved_branch, execute.is_some(), cli.internal)?;
+                handle_switch_output(
+                    &result,
+                    &resolved_branch,
+                    execute.is_some(),
+                    cli.internal.is_some(),
+                )?;
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing

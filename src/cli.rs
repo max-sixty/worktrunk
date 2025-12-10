@@ -1,8 +1,18 @@
 use clap::builder::styling::{AnsiColor, Color, Styles};
-use clap::{Command, CommandFactory, Parser, Subcommand};
+use clap::{Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use std::sync::OnceLock;
 
 use crate::commands::Shell;
+
+/// Shell type for directive output in --internal mode
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum DirectiveShell {
+    /// POSIX shells (bash, zsh, fish) - outputs `cd '/path'`
+    #[default]
+    Posix,
+    /// PowerShell - outputs `Set-Location '/path'`
+    Powershell,
+}
 
 /// Custom styles for help output - matches worktrunk's color scheme
 fn help_styles() -> Styles {
@@ -138,9 +148,9 @@ pub struct Cli {
     )]
     pub verbose: bool,
 
-    /// Shell wrapper mode
-    #[arg(long, global = true, hide = true)]
-    pub internal: bool,
+    /// Shell wrapper mode (optionally specify shell type for directive output)
+    #[arg(long, global = true, hide = true, default_missing_value = "posix", num_args = 0..=1)]
+    pub internal: Option<DirectiveShell>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,

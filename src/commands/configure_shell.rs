@@ -196,10 +196,10 @@ pub fn handle_configure_shell(
     if powershell_was_configured && ShellConfig::get().is_windows_without_git_bash() {
         let _ = crate::output::blank();
         let _ = crate::output::print(warning_message(
-            "PowerShell mode: directory changes & bash-syntax hooks won't work",
+            "PowerShell mode: hooks using bash syntax won't work",
         ));
         let _ = crate::output::print(hint_message(
-            "Install Git for Windows for full functionality",
+            "Install Git for Windows for full hook support",
         ));
     }
 

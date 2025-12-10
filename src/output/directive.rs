@@ -59,14 +59,17 @@ pub struct DirectiveOutput {
     target_dir: Option<PathBuf>,
     /// Command to execute (set by execute, emitted in terminate_output)
     exec_command: Option<String>,
+    /// Shell type for directive output formatting
+    shell: crate::cli::DirectiveShell,
 }
 
 impl DirectiveOutput {
-    pub fn new() -> Self {
+    pub fn new(shell: crate::cli::DirectiveShell) -> Self {
         Self {
             stderr: io::stderr(),
             target_dir: None,
             exec_command: None,
+            shell,
         }
     }
 }
@@ -105,24 +108,33 @@ impl OutputHandler for DirectiveOutput {
     }
 
     fn terminate_output(&mut self) -> io::Result<()> {
+        use crate::cli::DirectiveShell;
+
         // Reset ANSI state before returning to shell.
         // wt's colored messages set terminal state on stderr.
         write!(self.stderr, "{}", anstyle::Reset)?;
         self.stderr.flush()?;
 
         // Emit shell script to stdout with buffered directives
-        // The shell wrapper captures this via $(...) and evals it
+        // The shell wrapper captures this via $(...) and evals it (POSIX)
+        // or | Out-String | Invoke-Expression (PowerShell)
         let mut stdout = io::stdout();
 
         // cd command (if target directory was set)
         if let Some(ref path) = self.target_dir {
-            // Use single quotes for safety, escape any embedded single quotes
-            // Single quotes preserve all characters literally (including newlines,
-            // tabs, $, `, etc.) except for single quotes themselves, which we
-            // escape as '\'' (end quote, literal quote, start quote)
             let path_str = path.to_string_lossy();
-            let escaped = path_str.replace('\'', "'\\''");
-            writeln!(stdout, "cd '{}'", escaped)?;
+            match self.shell {
+                DirectiveShell::Posix => {
+                    // POSIX: Use single quotes, escape embedded single quotes as '\''
+                    let escaped = path_str.replace('\'', "'\\''");
+                    writeln!(stdout, "cd '{}'", escaped)?;
+                }
+                DirectiveShell::Powershell => {
+                    // PowerShell: Use single quotes, escape embedded single quotes by doubling
+                    let escaped = path_str.replace('\'', "''");
+                    writeln!(stdout, "Set-Location '{}'", escaped)?;
+                }
+            }
         }
 
         // exec command (if one was set via --execute)
@@ -136,7 +148,7 @@ impl OutputHandler for DirectiveOutput {
 
 impl Default for DirectiveOutput {
     fn default() -> Self {
-        Self::new()
+        Self::new(crate::cli::DirectiveShell::Posix)
     }
 }
 
@@ -187,6 +199,26 @@ mod tests {
 
         // $ and ` are literal inside single quotes, no escaping needed
         assert_eq!(cd_cmd, "cd '/test/$HOME/`whoami`/path'");
+    }
+
+    #[test]
+    fn test_powershell_path_format() {
+        // PowerShell uses Set-Location and doubles single quotes for escaping
+        let path = PathBuf::from("C:\\Users\\test\\path");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "''");
+        let ps_cmd = format!("Set-Location '{}'", escaped);
+        assert_eq!(ps_cmd, "Set-Location 'C:\\Users\\test\\path'");
+    }
+
+    #[test]
+    fn test_powershell_path_with_single_quotes() {
+        // PowerShell escapes single quotes by doubling them
+        let path = PathBuf::from("C:\\Users\\it's a test\\path");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "''");
+        let ps_cmd = format!("Set-Location '{}'", escaped);
+        assert_eq!(ps_cmd, "Set-Location 'C:\\Users\\it''s a test\\path'");
     }
 
     /// Test that anstyle formatting is preserved in directive output
