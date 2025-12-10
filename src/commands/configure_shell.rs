@@ -3,9 +3,10 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
+use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
     INFO_EMOJI, PROGRESS_EMOJI, PROMPT_EMOJI, SUCCESS_EMOJI, format_bash_with_gutter,
-    format_with_gutter, warning_message,
+    format_with_gutter, hint_message, warning_message,
 };
 
 pub struct ConfigureResult {
@@ -186,6 +187,22 @@ pub fn handle_configure_shell(
         }
     }
 
+    // On Windows without Git Bash, show advisory about PowerShell limitations
+    let powershell_was_configured = result
+        .configured
+        .iter()
+        .any(|r| r.shell == Shell::PowerShell && !matches!(r.action, ConfigAction::AlreadyExists));
+
+    if powershell_was_configured && ShellConfig::get().is_windows_without_git_bash() {
+        let _ = crate::output::blank();
+        let _ = crate::output::print(warning_message(
+            "PowerShell mode: directory changes & bash-syntax hooks won't work",
+        ));
+        let _ = crate::output::print(hint_message(
+            "Install Git for Windows for full functionality",
+        ));
+    }
+
     Ok(ScanResult {
         configured: result.configured,
         completion_results,
@@ -201,7 +218,15 @@ pub fn scan_shell_configs(
         vec![shell]
     } else {
         // Try all supported shells in consistent order
-        vec![Shell::Bash, Shell::Zsh, Shell::Fish]
+        // On Windows, also include PowerShell for native Windows users
+        #[cfg(windows)]
+        {
+            vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell]
+        }
+        #[cfg(not(windows))]
+        {
+            vec![Shell::Bash, Shell::Zsh, Shell::Fish]
+        }
     };
 
     let mut results = Vec::new();

@@ -65,6 +65,20 @@ impl ShellConfig {
     pub fn is_posix(&self) -> bool {
         self.is_posix
     }
+
+    /// Check if running on Windows without Git Bash (using PowerShell fallback)
+    ///
+    /// Returns true when hooks using bash syntax won't work properly.
+    /// Used to show warnings to users about limited functionality.
+    #[cfg(windows)]
+    pub fn is_windows_without_git_bash(&self) -> bool {
+        !self.is_posix
+    }
+
+    #[cfg(not(windows))]
+    pub fn is_windows_without_git_bash(&self) -> bool {
+        false
+    }
 }
 
 /// Detect the best available shell for the current platform
