@@ -61,12 +61,6 @@ jobs:
         echo "Using Git Bash for Windows tests"
       shell: pwsh
 
-    - name: 🔧 Build test helpers
-      uses: clechasseur/rs-cargo@v4
-      with:
-        command: build
-        args: -p dev-detach
-
     - name: 🏭 Compile
       uses: clechasseur/rs-cargo@v4
       with:
