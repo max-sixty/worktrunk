@@ -2,6 +2,8 @@
 
 use std::io::{self, Write};
 use std::path::Path;
+use std::process::Stdio;
+use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{eprintln, stderr};
 
 #[cfg(not(unix))]
@@ -59,16 +61,15 @@ impl OutputHandler for InteractiveOutput {
     #[cfg(unix)]
     fn execute(&mut self, command: String) -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
-        use std::process::{Command, Stdio};
 
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
+        let shell = ShellConfig::get();
 
         // Use exec() to replace wt process with the command.
         // This gives the command full TTY access (stdin, stdout, stderr all inherited),
         // enabling interactive programs like `claude` to work properly.
-        let err = Command::new("sh")
-            .arg("-c")
-            .arg(&command)
+        let mut cmd = shell.command(&command);
+        let err = cmd
             .current_dir(exec_dir)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -76,12 +77,18 @@ impl OutputHandler for InteractiveOutput {
             .exec();
 
         // exec() only returns on error
-        Err(anyhow::anyhow!("Failed to exec '{}': {}", command, err))
+        Err(anyhow::anyhow!(
+            "Failed to exec '{}' with {}: {}",
+            command,
+            shell.name,
+            err
+        ))
     }
 
     #[cfg(not(unix))]
     fn execute(&mut self, command: String) -> anyhow::Result<()> {
         // On non-Unix platforms, fall back to spawn-and-wait
+        // This uses the shell abstraction (Git Bash if available)
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
         execute_streaming(&command, exec_dir, false, None)?;
         Ok(())

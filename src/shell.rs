@@ -16,13 +16,19 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 
 /// Supported shells
 ///
-/// Currently supported: bash, fish, zsh
+/// Currently supported: bash, fish, zsh, powershell
+///
+/// On Windows, Git Bash users should use `bash` for shell integration.
+/// PowerShell integration is available for native Windows users without Git Bash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 pub enum Shell {
     Bash,
     Fish,
     Zsh,
+    #[strum(serialize = "powershell")]
+    #[clap(name = "powershell")]
+    PowerShell,
 }
 
 impl Shell {
@@ -51,6 +57,27 @@ impl Shell {
                         .join("conf.d")
                         .join("wt.fish"),
                 ]
+            }
+            Self::PowerShell => {
+                // PowerShell profile paths vary by OS and PowerShell version
+                // On Windows: $HOME\Documents\PowerShell\Microsoft.PowerShell_profile.ps1
+                // On Unix: ~/.config/powershell/Microsoft.PowerShell_profile.ps1
+                #[cfg(windows)]
+                {
+                    vec![
+                        home.join("Documents")
+                            .join("PowerShell")
+                            .join("Microsoft.PowerShell_profile.ps1"),
+                    ]
+                }
+                #[cfg(not(windows))]
+                {
+                    vec![
+                        home.join(".config")
+                            .join("powershell")
+                            .join("Microsoft.PowerShell_profile.ps1"),
+                    ]
+                }
             }
         })
     }
@@ -88,6 +115,12 @@ impl Shell {
                     .unwrap_or_else(|| home.join(".config"));
                 config_home.join("fish").join("completions").join("wt.fish")
             }
+            Self::PowerShell => {
+                // PowerShell doesn't use a separate completion file - completions are
+                // registered inline in the profile using Register-ArgumentCompleter
+                // Return a dummy path that won't be used
+                home.join(".wt-powershell-completions")
+            }
         })
     }
 
@@ -107,6 +140,10 @@ impl Shell {
                     "if type -q wt; command wt config shell init {} | source; end",
                     self
                 )
+            }
+            Self::PowerShell => {
+                // PowerShell: Check if wt is available, then invoke and execute the output
+                "if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell) }".to_string()
             }
         }
     }
@@ -231,6 +268,10 @@ impl ShellInit {
                 let template = FishTemplate { cmd_prefix: "wt" };
                 template.render()
             }
+            Shell::PowerShell => {
+                let template = PowerShellTemplate { cmd_prefix: "wt" };
+                template.render()
+            }
         }
     }
 }
@@ -263,6 +304,13 @@ struct ZshTemplate<'a> {
 #[derive(Template)]
 #[template(path = "fish.fish", escape = "none")]
 struct FishTemplate<'a> {
+    cmd_prefix: &'a str,
+}
+
+/// PowerShell template
+#[derive(Template)]
+#[template(path = "powershell.ps1", escape = "none")]
+struct PowerShellTemplate<'a> {
     cmd_prefix: &'a str,
 }
 
@@ -356,6 +404,14 @@ mod tests {
         assert!(matches!("BASH".parse::<Shell>(), Ok(Shell::Bash)));
         assert!(matches!("fish".parse::<Shell>(), Ok(Shell::Fish)));
         assert!(matches!("zsh".parse::<Shell>(), Ok(Shell::Zsh)));
+        assert!(matches!(
+            "powershell".parse::<Shell>(),
+            Ok(Shell::PowerShell)
+        ));
+        assert!(matches!(
+            "POWERSHELL".parse::<Shell>(),
+            Ok(Shell::PowerShell)
+        ));
         assert!("invalid".parse::<Shell>().is_err());
     }
 }

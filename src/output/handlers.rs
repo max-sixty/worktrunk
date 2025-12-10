@@ -659,6 +659,12 @@ fn handle_removed_worktree_output(
 ///
 /// Returns error if command exits with non-zero status.
 ///
+/// ## Cross-Platform Shell Execution
+///
+/// Uses the platform's preferred shell via `shell_exec::ShellConfig`:
+/// - Unix: `/bin/sh -c`
+/// - Windows: Git Bash if available, PowerShell fallback
+///
 /// ## Signal Handling (Unix)
 ///
 /// SIGINT (Ctrl-C) is handled by checking the child's exit status:
@@ -673,14 +679,19 @@ pub(crate) fn execute_streaming(
     stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::io::Write;
-    use std::process::Command;
     use worktrunk::git::WorktrunkError;
+    use worktrunk::shell_exec::ShellConfig;
 
-    let command_to_run = if redirect_stdout_to_stderr {
+    let shell = ShellConfig::get();
+
+    let command_to_run = if redirect_stdout_to_stderr && shell.is_posix() {
         // Use newline instead of semicolon before closing brace to support
         // multi-line commands with control structures (if/fi, for/done, etc.)
         format!("{{ {}\n}} 1>&2", command)
     } else {
+        // For non-POSIX shells or when not redirecting, use command as-is
+        // PowerShell doesn't support the same redirection syntax, and hooks
+        // using bash syntax require Git Bash anyway
         command.to_string()
     };
 
@@ -690,9 +701,8 @@ pub(crate) fn execute_streaming(
         std::process::Stdio::null()
     };
 
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&command_to_run)
+    let mut cmd = shell.command(&command_to_run);
+    let mut child = cmd
         .current_dir(working_dir)
         .stdin(stdin_mode)
         .stdout(std::process::Stdio::inherit()) // Preserve TTY for output
@@ -703,7 +713,7 @@ pub(crate) fn execute_streaming(
         .spawn()
         .map_err(|e| {
             anyhow::Error::from(worktrunk::git::GitError::Other {
-                message: format!("Failed to execute command: {}", e),
+                message: format!("Failed to execute command with {}: {}", shell.name, e),
             })
         })?;
 

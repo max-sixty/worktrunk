@@ -5,6 +5,16 @@ use std::process::{Command, Stdio};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 
+/// Get the separator needed before closing brace in POSIX shell command grouping.
+/// Returns empty string if command already ends with newline or semicolon.
+fn posix_command_separator(command: &str) -> &'static str {
+    if command.ends_with('\n') || command.ends_with(';') {
+        ""
+    } else {
+        ";"
+    }
+}
+
 /// Spawn a detached background process with output redirected to a log file
 ///
 /// The process will be fully detached from the parent:
@@ -92,18 +102,11 @@ fn spawn_detached_unix(
             // Use printf to pipe JSON to the command's stdin
             // printf is more portable than echo for arbitrary content
             // Wrap command in braces to ensure proper grouping with &&, ||, etc.
-            // Only add semicolon if command doesn't already end with newline or semicolon
-            // (shell syntax: `{ cmd\n }` is valid, but `{ cmd\n; }` is not)
-            let separator = if command.ends_with('\n') || command.ends_with(';') {
-                ""
-            } else {
-                ";"
-            };
             format!(
                 "printf '%s' {} | {{ {}{} }}",
                 shell_escape::escape(json.into()),
                 command,
-                separator
+                posix_command_separator(command)
             )
         }
         None => command.to_string(),
@@ -142,28 +145,47 @@ fn spawn_detached_windows(
     context_json: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
+    use worktrunk::shell_exec::ShellConfig;
 
     // CREATE_NEW_PROCESS_GROUP: Creates new process group (0x00000200)
     // DETACHED_PROCESS: Creates process without console (0x00000008)
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const DETACHED_PROCESS: u32 = 0x00000008;
 
-    // Build the command, optionally piping JSON context to stdin
-    let full_command = match context_json {
-        Some(json) => {
-            // PowerShell single-quote escaping:
-            // - Single quotes prevent variable expansion ($)
-            // - Backticks need escaping even in single quotes (`` ` `` → ``` `` ```)
-            // - Single quotes need doubling (`'` → `''`)
-            let escaped_json = json.replace('`', "``").replace('\'', "''");
-            // Pipe JSON to the command via PowerShell script block
-            format!("'{}' | & {{ {} }}", escaped_json, command)
-        }
-        None => command.to_string(),
-    };
+    let shell = ShellConfig::get();
 
-    let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-Command", &full_command]);
+    // Build the command based on shell type
+    let mut cmd = if shell.is_posix() {
+        // Git Bash available - use same syntax as Unix
+        let full_command = match context_json {
+            Some(json) => {
+                // Use printf to pipe JSON to the command's stdin (same as Unix)
+                format!(
+                    "printf '%s' {} | {{ {}{} }}",
+                    shell_escape::escape(json.into()),
+                    command,
+                    posix_command_separator(command)
+                )
+            }
+            None => command.to_string(),
+        };
+        shell.command(&full_command)
+    } else {
+        // PowerShell fallback
+        let full_command = match context_json {
+            Some(json) => {
+                // PowerShell single-quote escaping:
+                // - Single quotes prevent variable expansion ($)
+                // - Backticks need escaping even in single quotes
+                // - Single quotes need doubling (`'` → `''`)
+                let escaped_json = json.replace('`', "``").replace('\'', "''");
+                // Pipe JSON to the command via PowerShell script block
+                format!("'{}' | & {{ {} }}", escaped_json, command)
+            }
+            None => command.to_string(),
+        };
+        shell.command(&full_command)
+    };
 
     cmd.current_dir(worktree_path)
         .stdin(Stdio::null())

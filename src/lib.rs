@@ -2,6 +2,7 @@ pub mod config;
 pub mod git;
 pub mod path;
 pub mod shell;
+pub mod shell_exec;
 pub mod styling;
 
 // Re-export HookType for convenience

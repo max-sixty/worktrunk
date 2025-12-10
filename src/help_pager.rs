@@ -14,9 +14,15 @@
 //!   prevent hangs from TTY access
 //!
 //! Both follow git's pager detection but spawn differently based on their usage context.
+//!
+//! # Cross-Platform Support
+//!
+//! On Windows, the pager uses Git Bash (if available) to support standard pager
+//! commands like `less`. If Git Bash is not available, falls back to direct output.
 
 use std::io::{IsTerminal, Write};
 use std::process::{Command, Stdio};
+use worktrunk::shell_exec::ShellConfig;
 
 fn validate_pager(s: &str) -> Option<String> {
     let trimmed = s.trim();
@@ -26,9 +32,14 @@ fn validate_pager(s: &str) -> Option<String> {
 /// Detect pager for help output, following git's pager precedence.
 ///
 /// Checks in order: GIT_PAGER → git config core.pager → PAGER → "less"
+///
+/// On Windows without Git Bash, returns None if only `less` would be selected
+/// (since `less` isn't available without Git for Windows).
 fn detect_help_pager() -> Option<String> {
+    let shell = ShellConfig::get();
+
     // Check environment variables in git's precedence order
-    std::env::var("GIT_PAGER")
+    let pager = std::env::var("GIT_PAGER")
         .ok()
         .and_then(|s| validate_pager(&s))
         .or_else(|| {
@@ -48,8 +59,21 @@ fn detect_help_pager() -> Option<String> {
                         .and_then(|s| validate_pager(&s))
                 })
         })
-        .or_else(|| std::env::var("PAGER").ok().and_then(|s| validate_pager(&s)))
-        .or_else(|| Some("less".to_string())) // Default fallback (may fail if less not installed)
+        .or_else(|| std::env::var("PAGER").ok().and_then(|s| validate_pager(&s)));
+
+    // If user explicitly configured a pager, use it
+    if pager.is_some() {
+        return pager;
+    }
+
+    // Default to "less" only if we have a POSIX shell (Unix or Git Bash on Windows)
+    // Without Git Bash, less isn't typically available on Windows
+    if shell.is_posix() {
+        Some("less".to_string())
+    } else {
+        log::debug!("No POSIX shell available, skipping pager (less not available)");
+        None
+    }
 }
 
 /// Show help text through a pager with TTY access for interactive scrolling.
@@ -93,33 +117,17 @@ pub fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
 
     // Spawn pager with TTY access (interactive, unlike detached diff renderer)
     // Falls back to direct output if pager unavailable (e.g., less not installed)
-    #[cfg(unix)]
-    let mut child = match Command::new("sh")
-        .arg("-c")
-        .arg(&final_cmd)
-        .stdin(Stdio::piped())
-        .env("LESS", &less_flags)
-        .spawn()
-    {
+    let shell = ShellConfig::get();
+    let mut cmd = shell.command(&final_cmd);
+    let mut child = match cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn() {
         Ok(child) => child,
         Err(e) => {
-            log::debug!("Failed to spawn pager '{}': {}", pager_cmd, e);
-            eprint!("{}", help_text);
-            return Ok(());
-        }
-    };
-
-    #[cfg(windows)]
-    let mut child = match Command::new("cmd")
-        .arg("/C")
-        .arg(&final_cmd)
-        .stdin(Stdio::piped())
-        .env("LESS", &less_flags)
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => {
-            log::debug!("Failed to spawn pager '{}': {}", pager_cmd, e);
+            log::debug!(
+                "Failed to spawn pager '{}' with {}: {}",
+                pager_cmd,
+                shell.name,
+                e
+            );
             eprint!("{}", help_text);
             return Ok(());
         }
