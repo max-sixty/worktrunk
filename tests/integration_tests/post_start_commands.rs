@@ -447,6 +447,7 @@ approved-commands = ["cat > context.json"]
 
 /// Test that an actual script file can read JSON from stdin
 #[test]
+#[cfg(unix)]
 fn test_post_create_script_reads_json() {
     use crate::common::wt_command;
     use std::os::unix::fs::PermissionsExt;
