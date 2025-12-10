@@ -922,7 +922,8 @@ fn main() {
                         .unwrap_or_default();
 
                     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-                    if verify {
+                    // Shadow verify: if user declines approval, skip hooks but continue squash
+                    let verify = if verify {
                         use commands::command_approval::approve_hooks;
                         use commands::context::CommandEnv;
                         let env = CommandEnv::for_action("squash")?;
@@ -933,8 +934,16 @@ fn main() {
                             .into_iter()
                             .map(|t| ("target", t))
                             .collect();
-                        approve_hooks(&ctx, &[HookType::PreCommit], &extra_vars)?;
-                    }
+                        let approved = approve_hooks(&ctx, &[HookType::PreCommit], &extra_vars)?;
+                        if !approved {
+                            crate::output::print(info_message(
+                                "Commands declined, squashing without hooks",
+                            ))?;
+                        }
+                        approved
+                    } else {
+                        false
+                    };
 
                     match handle_squash(target.as_deref(), force, !verify, stage_final)? {
                         SquashResult::Squashed | SquashResult::NoNetChanges => {}
@@ -1142,7 +1151,7 @@ fn main() {
                 // "Approve at the Gate": collect and approve pre-remove hooks upfront
                 // This ensures approval happens once at the command entry point
                 let repo = Repository::current();
-                if verify {
+                let verify = if verify {
                     // Create context for template expansion in approval prompt
                     let worktree_path =
                         std::env::current_dir().context("Failed to get current directory")?;
@@ -1156,10 +1165,17 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    let _approved = approve_hooks(&ctx, &[HookType::PreRemove], &[])?;
-                    // Note: if declined, hooks won't run but removal continues
-                    // (pre-remove is fail-fast only on execution failure, not on approval decline)
-                }
+                    let approved = approve_hooks(&ctx, &[HookType::PreRemove], &[])?;
+                    // If declined, skip hooks but continue with removal
+                    if !approved {
+                        crate::output::print(info_message(
+                            "Commands declined, continuing removal",
+                        ))?;
+                    }
+                    approved
+                } else {
+                    false
+                };
 
                 if worktrees.is_empty() {
                     // No worktrees specified, remove current worktree

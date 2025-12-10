@@ -46,7 +46,12 @@ pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> 
             .collect(),
         _ => Vec::new(),
     };
-    approve_hooks(&ctx, &[hook_type], &extra_vars)?;
+    let approved = approve_hooks(&ctx, &[hook_type], &extra_vars)?;
+    // If declined, return early - the whole point of `wt hook` is to run hooks
+    if !approved {
+        crate::output::print(worktrunk::styling::info_message("Commands declined"))?;
+        return Ok(());
+    }
 
     // TODO: Add support for custom variable overrides (e.g., --var key=value)
     // This would allow testing hooks with different contexts without being in that context
@@ -206,15 +211,26 @@ pub fn step_commit(
     let ctx = env.context(force);
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
-    if !no_verify {
+    // Shadow no_verify: if user declines approval, skip hooks but continue commit
+    let no_verify = if !no_verify {
         let target_branch = env.repo.default_branch().ok();
         let extra_vars: Vec<(&str, &str)> = target_branch
             .as_deref()
             .into_iter()
             .map(|t| ("target", t))
             .collect();
-        approve_hooks(&ctx, &[HookType::PreCommit], &extra_vars)?;
-    }
+        let approved = approve_hooks(&ctx, &[HookType::PreCommit], &extra_vars)?;
+        if !approved {
+            crate::output::print(worktrunk::styling::info_message(
+                "Commands declined, committing without hooks",
+            ))?;
+            true // Skip hooks
+        } else {
+            false // Run hooks
+        }
+    } else {
+        true // --no-verify was passed
+    };
 
     let mut options = CommitOptions::new(&ctx);
     options.no_verify = no_verify;
