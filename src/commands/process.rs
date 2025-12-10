@@ -26,7 +26,7 @@ fn sanitize_for_filename(s: &str) -> String {
     let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (upper.len() == 4
             && (upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.chars().nth(3).is_some_and(|c| c.is_ascii_digit()));
+            && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
 
     if is_reserved {
         format!("_{}", sanitized)
@@ -229,6 +229,9 @@ fn spawn_detached_windows(
         .spawn()
         .context("Failed to spawn detached process")?;
 
+    // Windows: Process is fully detached via DETACHED_PROCESS flag,
+    // no need to wait (unlike Unix which waits for the outer shell)
+
     Ok(())
 }
 
@@ -262,5 +265,24 @@ mod tests {
             sanitize_for_filename("branch_with_underscore"),
             "branch_with_underscore"
         );
+
+        // Windows reserved device names (must be prefixed to avoid conflicts)
+        assert_eq!(sanitize_for_filename("CON"), "_CON");
+        assert_eq!(sanitize_for_filename("con"), "_con");
+        assert_eq!(sanitize_for_filename("PRN"), "_PRN");
+        assert_eq!(sanitize_for_filename("AUX"), "_AUX");
+        assert_eq!(sanitize_for_filename("NUL"), "_NUL");
+        assert_eq!(sanitize_for_filename("COM1"), "_COM1");
+        assert_eq!(sanitize_for_filename("com9"), "_com9");
+        assert_eq!(sanitize_for_filename("LPT1"), "_LPT1");
+        assert_eq!(sanitize_for_filename("lpt9"), "_lpt9");
+
+        // COM0/LPT0 are NOT reserved (only 1-9 are)
+        assert_eq!(sanitize_for_filename("COM0"), "COM0");
+        assert_eq!(sanitize_for_filename("LPT0"), "LPT0");
+
+        // Longer names are fine
+        assert_eq!(sanitize_for_filename("CONSOLE"), "CONSOLE");
+        assert_eq!(sanitize_for_filename("COM10"), "COM10");
     }
 }
