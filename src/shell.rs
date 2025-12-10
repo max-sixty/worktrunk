@@ -9,7 +9,7 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     home_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "Cannot determine home directory. Set $HOME environment variable",
+            "Cannot determine home directory. Set $HOME (Unix) or $USERPROFILE (Windows)",
         )
     })
 }

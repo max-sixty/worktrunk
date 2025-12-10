@@ -119,10 +119,8 @@ fn detect_windows_shell() -> ShellConfig {
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
     // If we're already in Git Bash (MSYSTEM is set), bash should be in PATH
-    if std::env::var("MSYSTEM").is_ok() {
-        if which::which("bash").is_ok() {
-            return Some(PathBuf::from("bash"));
-        }
+    if std::env::var("MSYSTEM").is_ok() && which::which("bash").is_ok() {
+        return Some(PathBuf::from("bash"));
     }
 
     // Check standard Git for Windows installation paths
