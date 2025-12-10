@@ -313,7 +313,7 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m[0m
   [2m# Post-Merge Hook[0m
   [2m# Runs SEQUENTIALLY in the main worktree after successful merge (blocking)[0m
-  [2m# Runs after push succeeds but before cleanup[0m
+  [2m# Runs after push and cleanup complete[0m
   [2m# Use for: updating production builds, notifications, cleanup[0m
   [2m#[0m
   [2m# Single command:[0m

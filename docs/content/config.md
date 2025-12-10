@@ -127,7 +127,7 @@ approved-commands = [
 ]
 ```
 
-Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
+Manage approvals with `wt config approvals add` and `wt config approvals clear <repo>`.
 
 ## Project config
 
@@ -492,7 +492,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 
 # Post-Merge Hook
 # Runs SEQUENTIALLY in the main worktree after successful merge (blocking)
-# Runs after push succeeds but before cleanup
+# Runs after push and cleanup complete
 # Use for: updating production builds, notifications, cleanup
 #
 # Single command:

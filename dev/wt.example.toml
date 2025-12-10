@@ -73,7 +73,7 @@
 
 # Post-Merge Hook
 # Runs SEQUENTIALLY in the main worktree after successful merge (blocking)
-# Runs after push succeeds but before cleanup
+# Runs after push and cleanup complete
 # Use for: updating production builds, notifications, cleanup
 #
 # Single command:
