@@ -115,7 +115,7 @@ use normalize_path::NormalizePath;
 use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::git::{GitError, Repository, ResolvedWorktree, is_command_not_approved};
+use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
@@ -206,7 +206,7 @@ pub fn resolve_worktree_path_first(
 }
 
 /// Compute the expected worktree path for a branch name.
-fn compute_worktree_path(
+pub fn compute_worktree_path(
     repo: &Repository,
     branch: &str,
     config: &WorktrunkConfig,
@@ -493,17 +493,8 @@ pub fn handle_switch(
             &repo_root,
             force,
         );
-        if let Err(e) = ctx.execute_post_create_commands(true) {
-            // Only treat CommandNotApproved as non-fatal (user declined)
-            // Other errors should still fail
-            if is_command_not_approved(&e) {
-                crate::output::print(info_message(
-                    "Commands declined, continuing worktree creation",
-                ))?;
-            } else {
-                return Err(e);
-            }
-        }
+        // Approval was handled at the gate
+        ctx.execute_post_create_commands(true)?;
     }
 
     // Note: post-start commands are spawned AFTER success message is shown
@@ -621,7 +612,7 @@ impl<'a> CommandContext<'a> {
             )?;
         }
 
-        // Then run project hooks (require approval)
+        // Then run project hooks (approval checked at gate, not here)
         let project_config = match self.repo.load_project_config()? {
             Some(cfg) => cfg,
             None => return Ok(()),
@@ -634,7 +625,7 @@ impl<'a> CommandContext<'a> {
         pipeline.run_sequential(
             post_create_config,
             HookType::PostCreate,
-            HookSource::Project { auto_trust: false },
+            HookSource::Project,
             &[],
             HookFailureStrategy::Warn,
             None,
@@ -663,7 +654,7 @@ impl<'a> CommandContext<'a> {
             )?;
         }
 
-        // Then spawn project hooks (require approval)
+        // Then spawn project hooks (approval checked at gate, not here)
         let project_config = match self.repo.load_project_config()? {
             Some(cfg) => cfg,
             None => return Ok(()),
@@ -676,7 +667,7 @@ impl<'a> CommandContext<'a> {
         pipeline.spawn_background(
             post_start_config,
             HookType::PostStart,
-            HookSource::Project { auto_trust: false },
+            HookSource::Project,
             &[],
             None,
         )

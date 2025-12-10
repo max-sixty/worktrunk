@@ -34,11 +34,14 @@ pub enum HookFailureStrategy {
 }
 
 /// Distinguishes between user hooks and project hooks for command preparation.
+///
+/// Approval for project hooks is handled at the gate (command entry point),
+/// not during hook execution.
 pub enum HookSource {
     /// User hooks from ~/.config/worktrunk/config.toml (no approval required)
     User,
-    /// Project hooks from .worktrunk.toml (may require approval)
-    Project { auto_trust: bool },
+    /// Project hooks from .worktrunk.toml (approval handled at gate)
+    Project,
 }
 
 impl HookSource {
@@ -46,7 +49,7 @@ impl HookSource {
     fn label_prefix(&self) -> &'static str {
         match self {
             HookSource::User => "user",
-            HookSource::Project { .. } => "project",
+            HookSource::Project => "project",
         }
     }
 
@@ -78,13 +81,9 @@ impl<'a> HookPipeline<'a> {
             HookSource::User => {
                 prepare_user_commands(command_config, &self.ctx, extra_vars, hook_type)?
             }
-            HookSource::Project { auto_trust } => prepare_project_commands(
-                command_config,
-                &self.ctx,
-                *auto_trust,
-                extra_vars,
-                hook_type,
-            )?,
+            HookSource::Project => {
+                prepare_project_commands(command_config, &self.ctx, extra_vars, hook_type)?
+            }
         };
         Ok(Self::filter_by_name(commands, name_filter))
     }
@@ -250,7 +249,6 @@ impl<'a> HookPipeline<'a> {
         &self,
         project_config: &ProjectConfig,
         target_branch: Option<&str>,
-        auto_trust: bool,
         name_filter: Option<&str>,
     ) -> anyhow::Result<()> {
         let Some(pre_commit_config) = &project_config.pre_commit else {
@@ -265,7 +263,7 @@ impl<'a> HookPipeline<'a> {
         self.run_sequential(
             pre_commit_config,
             HookType::PreCommit,
-            HookSource::Project { auto_trust },
+            HookSource::Project,
             &extra_vars,
             HookFailureStrategy::FailFast,
             name_filter,

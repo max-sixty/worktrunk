@@ -4,9 +4,7 @@ use worktrunk::HookType;
 use worktrunk::config::{
     Command, CommandConfig, WorktrunkConfig, expand_template, sanitize_branch_name,
 };
-use worktrunk::git::{Repository, WorktrunkError};
-
-use super::command_approval::approve_command_batch;
+use worktrunk::git::Repository;
 
 #[derive(Debug)]
 pub struct PreparedCommand {
@@ -166,18 +164,29 @@ fn expand_commands(
     Ok(result)
 }
 
-/// Prepare project commands for execution with approval
+/// Expand commands for approval display (public version for gate approval)
+///
+/// Returns commands with their `expanded` field filled in, showing actual values
+/// instead of template placeholders.
+pub fn expand_commands_for_approval(
+    commands: &[Command],
+    ctx: &CommandContext<'_>,
+    extra_vars: &[(&str, &str)],
+) -> anyhow::Result<Vec<Command>> {
+    let expanded = expand_commands(commands, ctx, extra_vars)?;
+    Ok(expanded.into_iter().map(|(cmd, _json)| cmd).collect())
+}
+
+/// Prepare project commands for execution
 ///
 /// This function:
 /// 1. Expands command templates with context variables
-/// 2. Requests user approval for unapproved commands (unless auto_trust or force)
-/// 3. Returns prepared commands ready for execution, each with JSON context for stdin
+/// 2. Returns prepared commands ready for execution, each with JSON context for stdin
 ///
-/// Returns `Err(WorktrunkError::CommandNotApproved)` if the user declines approval.
+/// Note: Approval is handled at the gate (command entry point), not here.
 pub fn prepare_project_commands(
     command_config: &CommandConfig,
     ctx: &CommandContext<'_>,
-    auto_trust: bool,
     extra_vars: &[(&str, &str)],
     hook_type: HookType,
 ) -> anyhow::Result<Vec<PreparedCommand>> {
@@ -186,33 +195,7 @@ pub fn prepare_project_commands(
         return Ok(Vec::new());
     }
 
-    let project_id = ctx.repo.project_identifier()?;
-
-    // Expand commands before approval for transparency
     let expanded_with_json = expand_commands(&commands, ctx, extra_vars)?;
-
-    // Extract just the commands for approval
-    let expanded_commands: Vec<_> = expanded_with_json
-        .iter()
-        .map(|(cmd, _)| cmd.clone())
-        .collect();
-
-    // Flush stdout before prompting on stderr to ensure correct output ordering
-    // This prevents the approval prompt from appearing before previous success messages
-    crate::output::flush()?;
-
-    // Approve using expanded commands (which have both template and expanded forms)
-    if !auto_trust
-        && !approve_command_batch(
-            &expanded_commands,
-            &project_id,
-            ctx.config,
-            ctx.force,
-            false,
-        )?
-    {
-        return Err(WorktrunkError::CommandNotApproved.into());
-    }
 
     Ok(expanded_with_json
         .into_iter()

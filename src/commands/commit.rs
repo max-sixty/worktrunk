@@ -18,7 +18,6 @@ pub struct CommitOptions<'a> {
     pub target_branch: Option<&'a str>,
     pub no_verify: bool,
     pub stage_mode: StageMode,
-    pub auto_trust: bool,
     pub warn_about_untracked: bool,
     pub show_no_squash_note: bool,
 }
@@ -31,7 +30,6 @@ impl<'a> CommitOptions<'a> {
             target_branch: None,
             no_verify: false,
             stage_mode: StageMode::All,
-            auto_trust: false,
             warn_about_untracked: true,
             show_no_squash_note: false,
         }
@@ -176,7 +174,7 @@ impl CommitOptions<'_> {
 
             // Then run project pre-commit hooks (require approval)
             if let Some(ref config) = project_config {
-                pipeline.run_pre_commit(config, self.target_branch, self.auto_trust, None)?;
+                pipeline.run_pre_commit(config, self.target_branch, None)?;
             }
         }
 

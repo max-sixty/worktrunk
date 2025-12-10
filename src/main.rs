@@ -4,7 +4,7 @@ use color_print::cformat;
 use std::path::PathBuf;
 use std::process;
 use worktrunk::config::{WorktrunkConfig, set_config_path};
-use worktrunk::git::{Repository, exit_code, is_command_not_approved, set_base_path};
+use worktrunk::git::{Repository, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, println, success_message, warning_message,
@@ -26,13 +26,14 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, RebaseResult, SquashResult, collect_and_approve_hooks, handle_cache_clear,
-    handle_cache_refresh, handle_cache_show, handle_config_create, handle_config_show,
-    handle_configure_shell, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
-    handle_remove_by_path, handle_remove_current, handle_show_theme, handle_squash,
-    handle_standalone_add_approvals, handle_standalone_clear_approvals, handle_standalone_commit,
-    handle_standalone_run_hook, handle_switch, handle_unconfigure_shell, handle_var_clear,
-    handle_var_get, handle_var_set, resolve_worktree_path_first,
+    ConfigAction, RebaseResult, SquashResult, collect_and_approve_hooks_with_context,
+    compute_worktree_path, handle_cache_clear, handle_cache_refresh, handle_cache_show,
+    handle_config_create, handle_config_show, handle_configure_shell, handle_init, handle_list,
+    handle_merge, handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current,
+    handle_show_theme, handle_squash, handle_standalone_add_approvals,
+    handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
+    handle_switch, handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
+    resolve_worktree_path_first,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -920,7 +921,27 @@ fn main() {
                     let stage_final = stage
                         .or_else(|| config.commit.and_then(|c| c.stage))
                         .unwrap_or_default();
-                    match handle_squash(target.as_deref(), force, !verify, false, stage_final)? {
+
+                    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+                    if verify {
+                        use commands::command_approval::collect_and_approve_hooks_with_context;
+                        use commands::context::CommandEnv;
+                        let env = CommandEnv::for_action("squash")?;
+                        let ctx = env.context(force);
+                        let target_branch = env.repo.default_branch().ok();
+                        let extra_vars: Vec<(&str, &str)> = target_branch
+                            .as_deref()
+                            .into_iter()
+                            .map(|t| ("target", t))
+                            .collect();
+                        collect_and_approve_hooks_with_context(
+                            &ctx,
+                            &[HookType::PreCommit],
+                            &extra_vars,
+                        )?;
+                    }
+
+                    match handle_squash(target.as_deref(), force, !verify, stage_final)? {
                         SquashResult::Squashed | SquashResult::NoNetChanges => {}
                         SquashResult::NoCommitsAhead(branch) => {
                             crate::output::print(info_message(format!(
@@ -1038,9 +1059,44 @@ fn main() {
         } => WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
-                // Execute switch operation (creates worktree, runs post-create hooks)
+                // "Approve at the Gate": collect and approve hooks upfront when creating
+                // This ensures approval happens once at the command entry point
+                // If user declines, skip hooks but continue with worktree creation
+                let approved = if create && verify {
+                    let repo = Repository::current();
+                    let repo_root = repo.worktree_base()?;
+                    // Compute worktree path for template expansion in approval prompt
+                    let worktree_path = compute_worktree_path(&repo, &branch, &config)?;
+                    let ctx = CommandContext::new(
+                        &repo,
+                        &config,
+                        &branch,
+                        &worktree_path,
+                        &repo_root,
+                        force,
+                    );
+                    collect_and_approve_hooks_with_context(
+                        &ctx,
+                        &[HookType::PostCreate, HookType::PostStart],
+                        &[],
+                    )?
+                } else {
+                    true // No hooks to approve = considered approved
+                };
+
+                // Skip hooks if --no-hooks or user declined approval
+                let skip_hooks = !verify || !approved;
+
+                // Show message if user declined approval
+                if !approved {
+                    crate::output::print(info_message(
+                        "Commands declined, continuing worktree creation",
+                    ))?;
+                }
+
+                // Execute switch operation (creates worktree, runs post-create hooks if approved)
                 let (result, resolved_branch) =
-                    handle_switch(&branch, create, base.as_deref(), force, !verify, &config)?;
+                    handle_switch(&branch, create, base.as_deref(), force, skip_hooks, &config)?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
                 // Pass cli.internal to indicate whether shell integration is active
@@ -1048,8 +1104,8 @@ fn main() {
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing
-                // Note: If user declines post-start commands, continue anyway - they're optional
-                if verify && let SwitchResult::Created { path, .. } = &result {
+                // Hooks only run if --no-hooks wasn't passed and approval was granted (or --force used)
+                if !skip_hooks && let SwitchResult::Created { path, .. } = &result {
                     let repo = Repository::current();
                     let repo_root = repo.worktree_base()?;
                     let ctx = CommandContext::new(
@@ -1060,13 +1116,7 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    if let Err(e) = ctx.spawn_post_start_commands(true) {
-                        // Only treat CommandNotApproved as non-fatal (user declined)
-                        // Other errors should still fail
-                        if !is_command_not_approved(&e) {
-                            return Err(e);
-                        }
-                    }
+                    ctx.spawn_post_start_commands(true)?;
                 }
 
                 // Execute user command after post-start hooks have been spawned
@@ -1098,12 +1148,21 @@ fn main() {
                 // This ensures approval happens once at the command entry point
                 let repo = Repository::current();
                 if verify {
-                    let _approved = collect_and_approve_hooks(
+                    // Create context for template expansion in approval prompt
+                    let worktree_path =
+                        std::env::current_dir().context("Failed to get current directory")?;
+                    let repo_root = repo.worktree_base()?;
+                    let current_branch = repo.current_branch()?.unwrap_or_default();
+                    let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        &[worktrunk::git::HookType::PreRemove],
+                        &current_branch,
+                        &worktree_path,
+                        &repo_root,
                         force,
-                    )?;
+                    );
+                    let _approved =
+                        collect_and_approve_hooks_with_context(&ctx, &[HookType::PreRemove], &[])?;
                     // Note: if declined, hooks won't run but removal continues
                     // (pre-remove is fail-fast only on execution failure, not on approval decline)
                 }
@@ -1112,8 +1171,8 @@ fn main() {
                     // No worktrees specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
                     let result = handle_remove_current(!delete_branch, force_delete, background)?;
-                    // auto_trust=true: approval already happened at the gate
-                    handle_remove_output(&result, None, background, verify, true)
+                    // Approval was handled at the gate
+                    handle_remove_output(&result, None, background, verify)
                 } else {
                     use worktrunk::git::ResolvedWorktree;
                     // When removing multiple worktrees, we need to handle the current worktree last
@@ -1141,8 +1200,7 @@ fn main() {
                         }
                     }
 
-                    // Remove other worktrees first
-                    // auto_trust=true for all: approval already happened at the gate
+                    // Remove other worktrees first (approval was handled at the gate)
                     for (path, branch) in &others {
                         if let Some(branch_name) = branch {
                             let result = handle_remove(
@@ -1151,18 +1209,12 @@ fn main() {
                                 force_delete,
                                 background,
                             )?;
-                            handle_remove_output(
-                                &result,
-                                Some(branch_name),
-                                background,
-                                verify,
-                                true,
-                            )?;
+                            handle_remove_output(&result, Some(branch_name), background, verify)?;
                         } else {
                             // Non-current worktree is detached - remove by path (no branch to delete)
                             let result =
                                 handle_remove_by_path(path, None, force_delete, background)?;
-                            handle_remove_output(&result, None, background, verify, true)?;
+                            handle_remove_output(&result, None, background, verify)?;
                         }
                     }
 
@@ -1170,14 +1222,14 @@ fn main() {
                     for branch in &branch_only {
                         let result =
                             handle_remove(branch, !delete_branch, force_delete, background)?;
-                        handle_remove_output(&result, Some(branch), background, verify, true)?;
+                        handle_remove_output(&result, Some(branch), background, verify)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some((_path, branch)) = current {
                         let result =
                             handle_remove_current(!delete_branch, force_delete, background)?;
-                        handle_remove_output(&result, branch.as_deref(), background, verify, true)?;
+                        handle_remove_output(&result, branch.as_deref(), background, verify)?;
                     }
 
                     Ok(())

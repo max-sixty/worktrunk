@@ -4,7 +4,7 @@ use worktrunk::git::Repository;
 use worktrunk::styling::info_message;
 
 use super::command_approval::approve_command_batch;
-use super::command_executor::CommandContext;
+use super::command_executor::{CommandContext, expand_commands_for_approval};
 use super::commit::CommitOptions;
 use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
@@ -118,9 +118,13 @@ pub fn handle_merge(
     }
     .collect()?;
 
-    // Approve all commands in a single batch
-    // Commands collected here are not yet expanded - expansion happens later in prepare_project_commands
-    let approved = approve_command_batch(&all_commands, &project_id, config, force, false)?;
+    // Expand commands for approval display (shows actual values instead of templates)
+    let ctx = env.context(force);
+    let expanded =
+        expand_commands_for_approval(&all_commands, &ctx, &[("target", &target_branch)])?;
+
+    // Approve all expanded commands in a single batch
+    let approved = approve_command_batch(&expanded, &project_id, config, force, false)?;
 
     // If commands were declined, show message explaining that merge continues anyway
     if !approved {
@@ -137,7 +141,6 @@ pub fn handle_merge(
             options.target_branch = Some(&target_branch);
             options.no_verify = !verify;
             options.stage_mode = stage_mode;
-            options.auto_trust = true;
             options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
             options.show_no_squash_note = true;
 
@@ -155,7 +158,6 @@ pub fn handle_merge(
                 Some(&target_branch),
                 force,
                 !verify, // skip_pre_commit when !verify
-                true,
                 stage_mode
             )?,
             super::standalone::SquashResult::Squashed
@@ -179,7 +181,7 @@ pub fn handle_merge(
     if verify {
         let ctx = env.context(force);
         let project_config = repo.load_project_config()?.unwrap_or_default();
-        run_pre_merge_commands(&project_config, &ctx, &target_branch, true, None)?;
+        run_pre_merge_commands(&project_config, &ctx, &target_branch, None)?;
     }
 
     // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
@@ -217,14 +219,8 @@ pub fn handle_merge(
             target_branch: Some(target_branch.clone()),
         };
         // Run hooks during merge removal (pass through verify flag)
-        // auto_trust=true: batch approval happened in MergeCommandCollector
-        crate::output::handle_remove_output(
-            &remove_result,
-            Some(&current_branch),
-            true,
-            verify,
-            true,
-        )?;
+        // Approval was handled at the gate (MergeCommandCollector)
+        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true, verify)?;
     } else {
         // Print comprehensive summary (worktree preserved)
         // Priority: main worktree > on target > --no-remove flag
@@ -252,7 +248,7 @@ pub fn handle_merge(
             &destination_repo_root,
             force,
         );
-        execute_post_merge_commands(&ctx, &target_branch, true, None)?;
+        execute_post_merge_commands(&ctx, &target_branch, None)?;
     }
 
     Ok(())
@@ -273,15 +269,11 @@ fn handle_merge_summary_output(reason: PreserveReason) -> anyhow::Result<()> {
 /// Run pre-merge commands sequentially (blocking, fail-fast)
 ///
 /// Runs user hooks first, then project hooks.
-///
-/// # Security Note
-/// `auto_trust`: When true, skip approval prompts (commands already approved in `wt merge`'s batch).
-///              When false, require approval (standalone `wt step hook` execution).
+/// Approval is handled at the gate (command entry point).
 pub fn run_pre_merge_commands(
     project_config: &ProjectConfig,
     ctx: &CommandContext,
     target_branch: &str,
-    auto_trust: bool,
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     let pipeline = HookPipeline::new(*ctx);
@@ -305,7 +297,7 @@ pub fn run_pre_merge_commands(
         total_commands_run += pipeline.run_sequential(
             pre_merge_config,
             HookType::PreMerge,
-            HookSource::Project { auto_trust },
+            HookSource::Project,
             &extra_vars,
             HookFailureStrategy::FailFast,
             name_filter,
@@ -346,14 +338,10 @@ pub fn run_pre_merge_commands(
 /// Execute post-merge commands sequentially in the main worktree (blocking)
 ///
 /// Runs user hooks first, then project hooks.
-///
-/// # Security Note
-/// `auto_trust`: When true, skip approval prompts (commands already approved in `wt merge`'s batch).
-///              When false, require approval (standalone `wt step hook` execution).
+/// Approval is handled at the gate (command entry point).
 pub fn execute_post_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
-    auto_trust: bool,
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     let pipeline = HookPipeline::new(*ctx);
@@ -380,7 +368,7 @@ pub fn execute_post_merge_commands(
         total_commands_run += pipeline.run_sequential(
             post_merge_config,
             HookType::PostMerge,
-            HookSource::Project { auto_trust },
+            HookSource::Project,
             &extra_vars,
             HookFailureStrategy::Warn,
             name_filter,
@@ -422,13 +410,9 @@ pub fn execute_post_merge_commands(
 ///
 /// Runs user hooks first, then project hooks.
 /// Runs before a worktree is removed. Non-zero exit aborts the removal.
-///
-/// # Arguments
-/// * `ctx` - Command context pointing to the worktree being removed
-/// * `auto_trust` - When true, skip approval prompts
+/// Approval is handled at the gate (command entry point).
 pub fn execute_pre_remove_commands(
     ctx: &CommandContext,
-    auto_trust: bool,
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     let pipeline = HookPipeline::new(*ctx);
@@ -453,7 +437,7 @@ pub fn execute_pre_remove_commands(
         total_commands_run += pipeline.run_sequential(
             pre_remove_config,
             HookType::PreRemove,
-            HookSource::Project { auto_trust },
+            HookSource::Project,
             &[],
             HookFailureStrategy::FailFast,
             name_filter,

@@ -372,15 +372,12 @@ fn build_remove_command(worktree_path: &std::path::Path, branch_to_delete: Optio
 
 /// Handle output for a remove operation
 ///
-/// `auto_trust`: If true, project hooks execute without approval prompts.
-/// - `wt merge`: Pass true (batch approval happened in MergeCommandCollector)
-/// - `wt remove`: Pass false (no prior approval)
+/// Approval is handled at the gate (command entry point), not here.
 pub fn handle_remove_output(
     result: &RemoveResult,
     branch: Option<&str>,
     background: bool,
     verify: bool,
-    auto_trust: bool,
 ) -> anyhow::Result<()> {
     match result {
         RemoveResult::RemovedWorktree {
@@ -402,7 +399,6 @@ pub fn handle_remove_output(
             branch,
             background,
             verify,
-            auto_trust,
         ),
         RemoveResult::BranchOnly {
             branch_name,
@@ -469,7 +465,6 @@ fn handle_removed_worktree_output(
     branch: Option<&str>,
     background: bool,
     verify: bool,
-    auto_trust: bool,
 ) -> anyhow::Result<()> {
     // 1. Emit cd directive if needed - shell will execute this immediately
     if changed_directory {
@@ -493,7 +488,7 @@ fn handle_removed_worktree_output(
             main_path,
             false, // force=false for CommandContext (not approval-related)
         );
-        execute_pre_remove_commands(&ctx, auto_trust, None)?;
+        execute_pre_remove_commands(&ctx, None)?;
     }
 
     // Handle detached HEAD case (no branch known)

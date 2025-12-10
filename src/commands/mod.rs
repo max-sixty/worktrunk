@@ -17,7 +17,7 @@ pub mod standalone;
 pub mod statusline;
 pub mod worktree;
 
-pub use command_approval::collect_and_approve_hooks;
+pub use command_approval::collect_and_approve_hooks_with_context;
 pub use config::{
     handle_cache_clear, handle_cache_refresh, handle_cache_show, handle_config_create,
     handle_config_show, handle_var_clear, handle_var_get, handle_var_set,
@@ -35,8 +35,8 @@ pub use standalone::{
     handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
 };
 pub use worktree::{
-    handle_remove, handle_remove_by_path, handle_remove_current, handle_switch,
-    resolve_worktree_path_first,
+    compute_worktree_path, handle_remove, handle_remove_by_path, handle_remove_current,
+    handle_switch, resolve_worktree_path_first,
 };
 
 // Re-export Shell from the canonical location

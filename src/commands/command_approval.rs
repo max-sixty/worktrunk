@@ -9,7 +9,7 @@
 //! ```text
 //! User runs command
 //!     ↓
-//! collect_and_approve_hooks() ← Single approval prompt
+//! collect_and_approve_hooks_with_context() ← Single approval prompt
 //!     ↓
 //! Execute hooks (approval already done)
 //! ```
@@ -23,7 +23,7 @@ use crate::output;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{Command, WorktrunkConfig};
-use worktrunk::git::{GitError, HookType, Repository};
+use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
     INFO_EMOJI, PROMPT_EMOJI, WARNING_EMOJI, eprint, eprintln, format_bash_with_gutter,
     hint_message, stderr, warning_message,
@@ -151,33 +151,35 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> anyhow:
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }
 
-/// Collect project commands for the given hook types and request batch approval.
+/// Collect project commands for hooks and request batch approval with template expansion.
 ///
 /// This is the "gate" function that should be called at command entry points
 /// (like `wt remove`, `wt switch --create`, `wt merge`) before any hooks execute.
+/// It expands template variables before showing the approval prompt, so users see
+/// the actual commands that will run (e.g., with actual branch names) instead of
+/// template placeholders.
 ///
-/// Returns `Ok(true)` if approved (or no commands need approval), `Ok(false)` if declined.
+/// # Parameters
+/// - `ctx`: Command context providing template variables (branch, worktree, etc.)
+/// - `hook_types`: Which hook types to collect commands for
+/// - `extra_vars`: Additional template variables
 ///
 /// # Example
 ///
 /// ```ignore
-/// // At command entry point (e.g., wt remove)
-/// let approved = collect_and_approve_hooks(
-///     &repo,
-///     &config,
-///     &[HookType::PreRemove],
-///     force,
+/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, force);
+/// let approved = collect_and_approve_hooks_with_context(
+///     &ctx,
+///     &[HookType::PostCreate, HookType::PostStart],
+///     &[],
 /// )?;
-///
-/// // Later: execute hooks with auto_trust=true (approval already happened)
 /// ```
-pub fn collect_and_approve_hooks(
-    repo: &Repository,
-    config: &WorktrunkConfig,
+pub fn collect_and_approve_hooks_with_context(
+    ctx: &super::command_executor::CommandContext<'_>,
     hook_types: &[HookType],
-    force: bool,
+    extra_vars: &[(&str, &str)],
 ) -> anyhow::Result<bool> {
-    let project_config = match repo.load_project_config()? {
+    let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(true), // No project config = no commands to approve
     };
@@ -187,6 +189,10 @@ pub fn collect_and_approve_hooks(
         return Ok(true);
     }
 
-    let project_id = repo.project_identifier()?;
-    approve_command_batch(&commands, &project_id, config, force, false)
+    // Expand templates with the provided context
+    let expanded =
+        super::command_executor::expand_commands_for_approval(&commands, ctx, extra_vars)?;
+
+    let project_id = ctx.repo.project_identifier()?;
+    approve_command_batch(&expanded, &project_id, ctx.config, ctx.force, false)
 }

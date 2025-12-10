@@ -24,6 +24,8 @@ pub fn handle_standalone_run_hook(
     force: bool,
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
+    use super::command_approval::collect_and_approve_hooks_with_context;
+
     // Derive context from current environment
     let env = CommandEnv::for_action(&format!("run {hook_type} hook"))?;
     let repo = &env.repo;
@@ -31,6 +33,19 @@ pub fn handle_standalone_run_hook(
 
     // Load project config (optional - user hooks can run without project config)
     let project_config = repo.load_project_config()?;
+
+    // "Approve at the Gate": approve project hooks upfront
+    // Get extra vars for template expansion based on hook type
+    let target_branch = repo.default_branch().ok();
+    let extra_vars: Vec<(&str, &str)> = match hook_type {
+        HookType::PreCommit | HookType::PreMerge | HookType::PostMerge => target_branch
+            .as_deref()
+            .into_iter()
+            .map(|t| ("target", t))
+            .collect(),
+        _ => Vec::new(),
+    };
+    collect_and_approve_hooks_with_context(&ctx, &[hook_type], &extra_vars)?;
 
     // TODO: Add support for custom variable overrides (e.g., --var key=value)
     // This would allow testing hooks with different contexts without being in that context
@@ -89,12 +104,12 @@ pub fn handle_standalone_run_hook(
         }
         HookType::PreMerge => {
             // pre-merge, post-merge, pre-remove use functions from merge.rs
-            // which already handle user hooks
+            // which already handle user hooks (approval already happened at gate)
             let project_cfg = project_config.unwrap_or_default();
-            run_pre_merge_commands(&project_cfg, &ctx, &env.branch, false, name_filter)
+            run_pre_merge_commands(&project_cfg, &ctx, &env.branch, name_filter)
         }
-        HookType::PostMerge => execute_post_merge_commands(&ctx, &env.branch, false, name_filter),
-        HookType::PreRemove => execute_pre_remove_commands(&ctx, false, name_filter),
+        HookType::PostMerge => execute_post_merge_commands(&ctx, &env.branch, name_filter),
+        HookType::PreRemove => execute_pre_remove_commands(&ctx, name_filter),
     }
 }
 
@@ -135,12 +150,12 @@ fn run_hook_with_filter(
         )?;
     }
 
-    // Then run project hooks (require approval for standalone)
+    // Then run project hooks (approval already happened at gate)
     if let Some(config) = project_config {
         total_commands_run += pipeline.run_sequential(
             config,
             hook_type,
-            HookSource::Project { auto_trust: false },
+            HookSource::Project,
             extra_vars,
             HookFailureStrategy::FailFast,
             name_filter,
@@ -184,12 +199,25 @@ pub fn handle_standalone_commit(
     no_verify: bool,
     stage_mode: super::commit::StageMode,
 ) -> anyhow::Result<()> {
+    use super::command_approval::collect_and_approve_hooks_with_context;
+
     let env = CommandEnv::for_action("commit")?;
     let ctx = env.context(force);
+
+    // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
+    if !no_verify {
+        let target_branch = env.repo.default_branch().ok();
+        let extra_vars: Vec<(&str, &str)> = target_branch
+            .as_deref()
+            .into_iter()
+            .map(|t| ("target", t))
+            .collect();
+        collect_and_approve_hooks_with_context(&ctx, &[HookType::PreCommit], &extra_vars)?;
+    }
+
     let mut options = CommitOptions::new(&ctx);
     options.no_verify = no_verify;
     options.stage_mode = stage_mode;
-    options.auto_trust = false;
     options.show_no_squash_note = false;
     // Only warn about untracked if we're staging all
     options.warn_about_untracked = stage_mode == super::commit::StageMode::All;
@@ -214,13 +242,11 @@ pub enum SquashResult {
 ///
 /// # Arguments
 /// * `skip_pre_commit` - If true, skip all pre-commit hooks (both user and project)
-/// * `auto_trust` - If true, skip approval prompts for pre-commit commands (already approved in batch)
 /// * `stage_mode` - What to stage before committing (All or Tracked; None not supported for squash)
 pub fn handle_squash(
     target: Option<&str>,
     force: bool,
     skip_pre_commit: bool,
-    auto_trust: bool,
     stage_mode: super::commit::StageMode,
 ) -> anyhow::Result<SquashResult> {
     use super::commit::StageMode;
@@ -283,7 +309,7 @@ pub fn handle_squash(
 
     // Then run project pre-commit hooks (unless skipped)
     if !skip_pre_commit && let Some(ref config) = project_config {
-        pipeline.run_pre_commit(config, Some(&target_branch), auto_trust, None)?;
+        pipeline.run_pre_commit(config, Some(&target_branch), None)?;
     }
 
     // Get merge base with target branch
