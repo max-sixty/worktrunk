@@ -21,6 +21,10 @@
 //!
 //! Paths are canonicalized to handle platform differences (especially macOS symlinks
 //! like /var -> /private/var). This ensures snapshot filters work correctly.
+//!
+//! On Windows, `std::fs::canonicalize()` returns verbatim paths (`\\?\C:\...`) which
+//! git cannot handle. We use `normalize_path()` to strip these prefixes while
+//! preserving the symlink resolution behavior needed on macOS.
 
 pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
@@ -36,6 +40,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
+
+/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
+///
+/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
+/// which git cannot handle. The `dunce` crate strips this prefix when safe.
+/// On Unix, this is equivalent to `std::fs::canonicalize()`.
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
 
 /// Time constants for `commit_with_age()` - use as `5 * MINUTE`, `2 * HOUR`, etc.
 pub const MINUTE: i64 = 60;
@@ -159,7 +172,7 @@ impl TestRepo {
         let root = temp_dir.path().join("repo");
         std::fs::create_dir(&root).unwrap();
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
-        let root = root.canonicalize().unwrap();
+        let root = canonicalize(&root).unwrap();
 
         // Create isolated config path for this test
         let test_config_path = temp_dir.path().join("test-config.toml");
@@ -482,7 +495,7 @@ impl TestRepo {
         }
 
         // Canonicalize worktree path to match what git returns
-        let canonical_path = worktree_path.canonicalize().unwrap();
+        let canonical_path = canonicalize(&worktree_path).unwrap();
         // Use branch as key (consistent with path generation)
         self.worktrees
             .insert(branch.to_string(), canonical_path.clone());
@@ -579,7 +592,7 @@ impl TestRepo {
             .unwrap();
 
         // Canonicalize remote path
-        let remote_path = remote_path.canonicalize().unwrap();
+        let remote_path = canonicalize(&remote_path).unwrap();
 
         // Add as remote
         let mut cmd = Command::new("git");
@@ -759,15 +772,13 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // This must come before repo path filter to avoid partial matches
     let project_root = std::env::var("CARGO_MANIFEST_DIR")
         .ok()
-        .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
+        .and_then(|p| canonicalize(std::path::Path::new(&p)).ok());
     if let Some(root) = project_root {
         settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
     }
 
     // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
-    let root_canonical = repo
-        .root_path()
-        .canonicalize()
+    let root_canonical = canonicalize(repo.root_path())
         .unwrap_or_else(|_| repo.root_path().to_path_buf());
     let root_str = root_canonical.to_str().unwrap();
     // Add both backslash and forward-slash versions for Windows compatibility
@@ -775,7 +786,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(&regex::escape(root_str), "[REPO]");
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
     for (name, path) in &repo.worktrees {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
         let path_str = canonical.to_str().unwrap();
         let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
         settings.add_filter(&regex::escape(path_str), &replacement);

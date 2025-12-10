@@ -96,6 +96,9 @@ portable-pty = "0.9"
 regex = "1.12"
 vt100 = "0.16"
 ansi-to-html = "0.2.2"
+# Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
+# which git cannot handle. On Unix, it's a no-op wrapper around std::fs::canonicalize.
+dunce = "1.0"
 
 [[bench]]
 name = "completion"
