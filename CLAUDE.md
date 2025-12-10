@@ -552,11 +552,12 @@ let lines: Vec<_> = reader.lines().collect();
 
 All background operation logs are centralized in `.git/wt-logs/` (main worktree's git directory):
 
-- **Post-start commands**: `{branch}-post-start-{command}.log`
+- **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source is `user` or `project`)
 - **Background removal**: `{branch}-remove.log`
 
 Examples (where command names are from config):
-- `feature-post-start-npm.log`
+- `feature-user-post-start-npm.log`
+- `feature-project-post-start-build.log`
 - `bugfix-remove.log`
 
 ### Log Behavior

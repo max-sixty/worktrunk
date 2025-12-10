@@ -723,4 +723,64 @@ squash-template-file = "~/file.txt"
         assert!(unknown_project.is_empty());
         assert!(unknown_user.is_empty());
     }
+
+    #[test]
+    fn test_user_hooks_config_parsing() {
+        let toml_str = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[post-create]
+log = "echo '{{ repo }}' >> ~/.log"
+
+[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+"#;
+        let config: WorktrunkConfig = toml::from_str(toml_str).unwrap();
+
+        // Check post-create
+        let post_create = config.post_create.expect("post-create should be present");
+        let commands = post_create.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name.as_deref(), Some("log"));
+
+        // Check pre-merge (multiple commands preserve order)
+        let pre_merge = config.pre_merge.expect("pre-merge should be present");
+        let commands = pre_merge.commands();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].name.as_deref(), Some("test"));
+        assert_eq!(commands[1].name.as_deref(), Some("lint"));
+    }
+
+    #[test]
+    fn test_user_hooks_config_single_command() {
+        let toml_str = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+post-create = "npm install"
+"#;
+        let config: WorktrunkConfig = toml::from_str(toml_str).unwrap();
+
+        let post_create = config.post_create.expect("post-create should be present");
+        let commands = post_create.commands();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].name.is_none()); // single command has no name
+        assert_eq!(commands[0].template, "npm install");
+    }
+
+    #[test]
+    fn test_user_hooks_not_reported_as_unknown() {
+        let toml_str = r#"
+worktree-path = "../test"
+post-create = "npm install"
+
+[pre-merge]
+test = "cargo test"
+"#;
+        let unknown = find_unknown_user_keys(toml_str);
+        assert!(
+            unknown.is_empty(),
+            "hook fields should not be reported as unknown: {:?}",
+            unknown
+        );
+    }
 }

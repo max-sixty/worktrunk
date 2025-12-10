@@ -67,4 +67,4 @@ Manual merge workflow with review between steps:
 [32mSee also[0m
 
 - wt merge — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- wt hook — Run project-defined lifecycle hooks
+- wt hook — Run lifecycle hooks manually

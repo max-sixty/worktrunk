@@ -39,3 +39,4 @@ pub mod shell_wrapper;
 pub mod spacing_edge_cases;
 pub mod statusline;
 pub mod switch;
+pub mod user_hooks;

@@ -310,7 +310,7 @@ fn test_switch_no_config_commands_execute_still_runs() {
             "no-hooks-test",
             "--execute",
             "echo 'execute command runs'",
-            "--no-hooks",
+            "--no-verify",
         ],
     );
 }
@@ -353,11 +353,11 @@ approved-commands = ["{}"]
     )
     .unwrap();
 
-    // With --no-hooks, the post-start command should be skipped
+    // With --no-verify, the post-start command should be skipped
     snapshot_switch_with_home(
         "switch_no_hooks_skips_post_start",
         &repo,
-        &["--create", "no-post-start", "--no-hooks"],
+        &["--create", "no-post-start", "--no-verify"],
         Some(temp_home.path()),
         &[],
     );
@@ -370,7 +370,7 @@ fn test_switch_no_config_commands_with_existing_worktree() {
     // Create a worktree first
     repo.add_worktree("existing-no-hooks");
 
-    // With --no-hooks, the --execute command should still run
+    // With --no-verify, the --execute command should still run
     snapshot_switch(
         "switch_no_hooks_existing",
         &repo,
@@ -378,7 +378,7 @@ fn test_switch_no_config_commands_with_existing_worktree() {
             "existing-no-hooks",
             "--execute",
             "echo 'execute still runs'",
-            "--no-hooks",
+            "--no-verify",
         ],
     );
 }
@@ -402,11 +402,11 @@ fn test_switch_no_config_commands_with_force() {
 
     repo.commit("Add config");
 
-    // With --no-hooks, even --force shouldn't execute config commands
+    // With --no-verify, even --force shouldn't execute config commands
     snapshot_switch_with_home(
         "switch_no_hooks_with_force",
         &repo,
-        &["--create", "force-no-hooks", "--force", "--no-hooks"],
+        &["--create", "force-no-hooks", "--force", "--no-verify"],
         Some(temp_home.path()),
         &[],
     );

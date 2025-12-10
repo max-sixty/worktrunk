@@ -90,7 +90,7 @@ Options:
           Keep worktree after merge
 
       --no-verify
-          Skip all project hooks
+          Skip hooks
 
   -f, --force
           Skip approval prompts

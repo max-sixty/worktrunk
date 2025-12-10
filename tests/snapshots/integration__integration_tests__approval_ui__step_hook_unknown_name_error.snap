@@ -3,7 +3,7 @@ source: tests/integration_tests/approval_ui.rs
 info:
   program: wt
   args:
-    - step
+    - hook
     - pre-merge
     - nonexistent
     - "--force"
@@ -25,4 +25,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mNo command named [1mnonexistent[22m (available: [1mtest[22m, [1mlint[22m)[39m
+❌ [31mNo command named [1mnonexistent[22m (available: [1mproject:test[22m, [1mproject:lint[22m)[39m

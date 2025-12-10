@@ -25,7 +25,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRunning post-create:[39m
+🔄 [36mRunning project post-create:[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
 [0m🟡 [33mCommand failed: exit status: 1[39m
 ✅ [32m[32mCreated new worktree for [1mfeature[22m from [1mmain[22m at [1m[REPO].feature[39m[22m[39m

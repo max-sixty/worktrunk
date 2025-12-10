@@ -7,7 +7,7 @@ info:
     - existing-no-hooks
     - "--execute"
     - "echo 'execute still runs'"
-    - "--no-hooks"
+    - "--no-verify"
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
@@ -22,15 +22,12 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
-success: false
-exit_code: 2
+success: true
+exit_code: 0
 ----- stdout -----
+execute still runs
 
 ----- stderr -----
-[1m[31merror:[0m unexpected argument '[1m[33m--no-hooks[0m' found
-
-  [1m[32mtip:[0m to pass '[1m[33m--no-hooks[0m' as a value, use '[1m[32m-- --no-hooks[0m'
-
-[1m[32mUsage:[0m [1m[36mwt switch[0m [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m [36m<BRANCH>[0m
-
-For more information, try '[1m[36m--help[0m'.
+✅ [32m[32mSwitched to worktree for [1mexisting-no-hooks[22m at [1m[REPO].existing-no-hooks[39m[22m[39m
+🔄 [36mExecuting (--execute):[39m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m[0m
