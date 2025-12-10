@@ -906,11 +906,27 @@ fn render_hook_commands(
 }
 
 /// Expand a command template with context variables
-fn expand_command_template(template: &str, ctx: &CommandContext, _hook_type: HookType) -> String {
+fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: HookType) -> String {
     use super::command_executor::build_hook_context;
 
-    let extra_vars: &[(&str, &str)] = &[];
-    let template_ctx = build_hook_context(ctx, extra_vars);
+    // Build extra vars based on hook type (same logic as run_hook approval)
+    let default_branch = ctx.repo.default_branch().ok();
+    let extra_vars: Vec<(&str, &str)> = match hook_type {
+        HookType::PreCommit => {
+            // Pre-commit uses default branch as target (for comparison context)
+            default_branch
+                .as_deref()
+                .into_iter()
+                .map(|t| ("target", t))
+                .collect()
+        }
+        HookType::PreMerge | HookType::PostMerge => {
+            // Pre-merge and post-merge use current branch as target
+            vec![("target", ctx.branch)]
+        }
+        _ => Vec::new(),
+    };
+    let template_ctx = build_hook_context(ctx, &extra_vars);
 
     // Use the standard template expansion
     worktrunk::config::expand_template(

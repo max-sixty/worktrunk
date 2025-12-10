@@ -1150,6 +1150,10 @@ fn main() {
 
                 // "Approve at the Gate": collect and approve pre-remove hooks upfront
                 // This ensures approval happens once at the command entry point
+                //
+                // TODO(pre-remove-context): The approval context uses current worktree (cwd + current_branch),
+                // but hooks execute in each target worktree. When removing another worktree, the approval
+                // preview shows the wrong branch/path. Consider building approval context per target worktree.
                 let repo = Repository::current();
                 let verify = if verify {
                     // Create context for template expansion in approval prompt
