@@ -345,8 +345,7 @@ fn colorize_status_symbols(text: &str) -> String {
         .replace("● no-ci", &format!("{disabled}●{disabled:#} no-ci"));
 
     // Symbols that should remain dimmed are already dimmed from backtick rendering:
-    // - Branch state: _ (same commit), ⊂ (content integrated)
-    // - Main divergence: ^, ↑, ↓, ↕
+    // - Main state: _ (same commit), ⊂ (content integrated), ^, ↑, ↓, ↕
     // - Upstream divergence: |, ⇡, ⇣, ⇅
     // - Worktree state: / (branch without worktree)
 

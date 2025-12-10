@@ -148,21 +148,6 @@ pub struct AheadBehind {
     pub behind: usize,
 }
 
-impl AheadBehind {
-    /// Compute divergence states from ahead/behind counts and upstream status.
-    ///
-    /// Returns (main_divergence, upstream_divergence) as a tuple of `Divergence` values.
-    pub fn compute_divergences(&self, upstream: &UpstreamStatus) -> (Divergence, Divergence) {
-        let main_divergence = Divergence::from_counts(self.ahead, self.behind);
-        let upstream_divergence = match upstream.active() {
-            None => Divergence::None,
-            Some((_, ahead, behind)) => Divergence::from_counts_with_remote(ahead, behind),
-        };
-
-        (main_divergence, upstream_divergence)
-    }
-}
-
 #[derive(serde::Serialize, Default, Copy, Clone, Debug)]
 pub struct BranchDiffTotals {
     #[serde(rename = "branch_diff")]
@@ -505,14 +490,16 @@ impl ListItem {
         let default_upstream = UpstreamStatus::default();
         let counts = self.counts.as_ref().unwrap_or(&default_counts);
         let upstream = self.upstream.as_ref().unwrap_or(&default_upstream);
-        let (main_divergence, upstream_divergence) = counts.compute_divergences(upstream);
+        let upstream_divergence = match upstream.active() {
+            None => Divergence::None,
+            Some((_, ahead, behind)) => Divergence::from_counts_with_remote(ahead, behind),
+        };
 
         match &self.kind {
             ItemKind::Worktree(data) => {
                 // Full status computation for worktrees
-                // Use default_branch directly (None for main worktree)
 
-                // Worktree state - priority: path_mismatch > prunable > locked
+                // Worktree location state - priority: path_mismatch > prunable > locked
                 let worktree_state = if data.path_mismatch {
                     WorktreeState::PathMismatch
                 } else if data.prunable.is_some() {
@@ -523,8 +510,19 @@ impl ListItem {
                     WorktreeState::None
                 };
 
-                // Determine base branch state (only for non-main worktrees with base branch)
-                let base_state = determine_worktree_base_state(
+                // Operation state - priority: conflicts > rebase > merge
+                let operation_state = if has_conflicts {
+                    OperationState::Conflicts
+                } else if data.git_operation == GitOperationState::Rebase {
+                    OperationState::Rebase
+                } else if data.git_operation == GitOperationState::Merge {
+                    OperationState::Merge
+                } else {
+                    OperationState::None
+                };
+
+                // Determine integration state (for non-main worktrees)
+                let (same_commit, integration_reason) = determine_integration_state(
                     data.is_main,
                     default_branch,
                     self.is_ancestor,
@@ -536,30 +534,20 @@ impl ListItem {
                     &data.working_tree_diff_with_main,
                 );
 
-                // Apply priority: Conflicts > Rebase > Merge > WouldConflict > base_state
-                let branch_state = if has_conflicts {
-                    BranchState::Conflicts
-                } else if data.git_operation == GitOperationState::Rebase {
-                    BranchState::Rebase
-                } else if data.git_operation == GitOperationState::Merge {
-                    BranchState::Merge
-                } else if has_merge_tree_conflicts {
-                    BranchState::WouldConflict
-                } else {
-                    base_state
-                };
-
-                // Override main_divergence for the main worktree
-                let main_divergence = if data.is_main {
-                    Divergence::IsMain
-                } else {
-                    main_divergence
-                };
+                // Compute main state: combines is_main, would_conflict, integration, and divergence
+                let main_state = MainState::from_integration_and_counts(
+                    data.is_main,
+                    has_merge_tree_conflicts,
+                    same_commit,
+                    integration_reason,
+                    counts.ahead,
+                    counts.behind,
+                );
 
                 self.status_symbols = Some(StatusSymbols {
-                    branch_state,
+                    main_state,
+                    operation_state,
                     worktree_state,
-                    main_divergence,
                     upstream_divergence,
                     working_tree: working_tree_status.unwrap_or_default(),
                     user_marker,
@@ -569,42 +557,43 @@ impl ListItem {
                 // Simplified status computation for branches
                 // Only compute symbols that apply to branches (no working tree, git operation, or worktree attrs)
 
-                // Branch state - branches can show WouldConflict or integration states
-                let branch_state = if has_merge_tree_conflicts {
-                    BranchState::WouldConflict
-                } else if self.is_ancestor == Some(true) {
-                    // Branch HEAD is ancestor of main
+                // Determine integration state for branches
+                let (same_commit, integration_reason) = if self.is_ancestor == Some(true) {
                     if self.counts.as_ref().is_some_and(|c| c.behind == 0) {
-                        // Same commit as main
-                        BranchState::SameCommit
+                        (true, None) // Same commit as main
                     } else {
-                        // Main has moved past this branch
-                        BranchState::Integrated(IntegrationReason::Ancestor)
+                        (false, Some(IntegrationReason::Ancestor)) // Main has moved past
                     }
                 } else if self.has_file_changes == Some(false) {
-                    // No file changes beyond merge-base - content is integrated
-                    BranchState::Integrated(IntegrationReason::NoAddedChanges)
+                    (false, Some(IntegrationReason::NoAddedChanges))
                 } else if self.committed_trees_match == Some(true) {
-                    // Tree SHA matches main - content is identical
-                    BranchState::Integrated(IntegrationReason::TreesMatch)
+                    (false, Some(IntegrationReason::TreesMatch))
                 } else if self.would_merge_add == Some(false) {
-                    // Merge simulation shows no changes would be added (--full only)
-                    BranchState::Integrated(IntegrationReason::MergeAddsNothing)
+                    (false, Some(IntegrationReason::MergeAddsNothing))
                 } else if let Some(ref c) = self.counts {
                     if c.ahead == 0 && c.behind == 0 {
-                        // Same commit as main (fallback when is_ancestor not computed)
-                        BranchState::SameCommit
+                        (true, None) // Same commit as main (fallback)
                     } else {
-                        BranchState::None
+                        (false, None)
                     }
                 } else {
-                    BranchState::None
+                    (false, None)
                 };
 
+                // Compute main state
+                let main_state = MainState::from_integration_and_counts(
+                    false, // not main
+                    has_merge_tree_conflicts,
+                    same_commit,
+                    integration_reason,
+                    counts.ahead,
+                    counts.behind,
+                );
+
                 self.status_symbols = Some(StatusSymbols {
-                    branch_state,
+                    main_state,
+                    operation_state: OperationState::None,
                     worktree_state: WorktreeState::Branch,
-                    main_divergence,
                     upstream_divergence,
                     working_tree: WorkingTreeStatus::default(),
                     user_marker,
@@ -614,25 +603,16 @@ impl ListItem {
     }
 }
 
-/// Determine branch state for a worktree.
+/// Determine integration state for a worktree.
 ///
-/// Returns a [`BranchState`] indicating whether the branch content is integrated into main
-/// and how (via [`IntegrationReason`]).
+/// Returns `(same_commit, integration_reason)` indicating whether the branch content
+/// is integrated into main and how.
 ///
-/// # States (priority order)
+/// # Return values
 ///
-/// 1. **`SameCommit`**: Branch HEAD is exactly the same commit as main.
-///
-/// 2. **`Integrated(Ancestor)`**: Branch HEAD is ancestor of main (main has moved past).
-///
-/// 3. **`Integrated(NoAddedChanges)`**: Commits exist but no file changes beyond merge-base.
-///    The three-dot diff (`main...branch`) is empty.
-///
-/// 4. **`Integrated(TreesMatch)`**: Tree SHA matches main, or working tree matches main.
-///    Examples: merge commits that pull in main, rebases, squash merges.
-///
-/// 5. **`Integrated(MergeAddsNothing)`**: Merge simulation adds nothing to main.
-///    Catches squash-merged branches where main has advanced.
+/// - `(true, None)`: Branch HEAD is exactly the same commit as main (SameCommit)
+/// - `(false, Some(reason))`: Content is integrated via the given reason
+/// - `(false, None)`: Not integrated (normal branch)
 ///
 /// # Parameters
 ///
@@ -644,7 +624,7 @@ impl ListItem {
 /// - `working_tree_diff_with_main`: Diff between working tree and main. May be `None` (not
 ///   computed) or `Some(None)` (skipped). When unavailable, assumes no match.
 #[allow(clippy::too_many_arguments)]
-fn determine_worktree_base_state(
+fn determine_integration_state(
     is_main: bool,
     default_branch: Option<&str>,
     is_ancestor: Option<bool>,
@@ -654,31 +634,31 @@ fn determine_worktree_base_state(
     would_merge_add: Option<bool>,
     working_tree_diff: Option<&LineDiff>,
     working_tree_diff_with_main: &Option<Option<LineDiff>>,
-) -> BranchState {
+) -> (bool, Option<IntegrationReason>) {
     if is_main || default_branch.is_none() {
-        return BranchState::None;
+        return (false, None);
     }
 
     let is_clean = working_tree_diff.map(|d| d.is_empty()).unwrap_or(true);
 
     // Priority 1: Branch is exactly the same commit as main (ancestor with 0 behind)
     if is_ancestor == Some(true) && behind_main == Some(0) && is_clean {
-        return BranchState::SameCommit;
+        return (true, None); // SameCommit
     }
 
     // Priority 2: Branch is ancestor of main but main has moved past (already merged)
     if is_ancestor == Some(true) && is_clean {
-        return BranchState::Integrated(IntegrationReason::Ancestor);
+        return (false, Some(IntegrationReason::Ancestor));
     }
 
     // Priority 3: No file changes beyond merge-base (squash-merged)
     if has_file_changes == Some(false) && is_clean {
-        return BranchState::Integrated(IntegrationReason::NoAddedChanges);
+        return (false, Some(IntegrationReason::NoAddedChanges));
     }
 
     // Priority 4: Tree SHA matches main (squash merge/rebase with identical content)
     if committed_trees_match && is_clean {
-        return BranchState::Integrated(IntegrationReason::TreesMatch);
+        return (false, Some(IntegrationReason::TreesMatch));
     }
 
     // Priority 5: Working tree matches main
@@ -688,70 +668,52 @@ fn determine_worktree_base_state(
         .is_some_and(|diff| diff.is_empty());
 
     if working_tree_matches_main {
-        return BranchState::Integrated(IntegrationReason::TreesMatch);
+        return (false, Some(IntegrationReason::TreesMatch));
     }
 
     // Priority 6: Merge simulation shows no changes (--full only)
     if would_merge_add == Some(false) && is_clean {
-        return BranchState::Integrated(IntegrationReason::MergeAddsNothing);
+        return (false, Some(IntegrationReason::MergeAddsNothing));
     }
 
-    BranchState::None
+    (false, None)
 }
 
-/// Divergence state relative to a reference (main branch or upstream remote).
+/// Upstream divergence state relative to remote tracking branch.
 ///
-/// Unified representation for both main-branch divergence and upstream-remote divergence.
-/// The display symbols differ based on context:
+/// Used only for upstream/remote divergence. Main branch divergence is now
+/// handled by [`MainState`] which combines divergence with integration states.
 ///
-/// | Variant   | Main symbols | Upstream symbols |
-/// |-----------|--------------|------------------|
-/// | None      | (empty)      | (empty)          |
-/// | IsMain    | `^`          | (not used)       |
-/// | InSync    | (not used)   | `\|`             |
-/// | Ahead     | `↑`          | `⇡`              |
-/// | Behind    | `↓`          | `⇣`              |
-/// | Diverged  | `↕`          | `⇅`              |
+/// | Variant   | Symbol |
+/// |-----------|--------|
+/// | None      | (empty) - no remote configured |
+/// | InSync    | `\|`   - up-to-date with remote |
+/// | Ahead     | `⇡`    - has unpushed commits   |
+/// | Behind    | `⇣`    - missing remote commits |
+/// | Diverged  | `⇅`    - both ahead and behind  |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Divergence {
-    /// No relationship to reference (up-to-date for main, no remote configured for upstream)
+    /// No remote tracking branch configured
     #[default]
     None,
-    /// This IS the main branch (only used in Main context)
-    IsMain,
-    /// In sync with upstream remote (only used in Upstream context)
+    /// In sync with upstream remote
     InSync,
-    /// Has commits the reference doesn't have
+    /// Has commits the remote doesn't have
     Ahead,
-    /// Missing commits from the reference
+    /// Missing commits from the remote
     Behind,
-    /// Both ahead and behind the reference
+    /// Both ahead and behind the remote
     Diverged,
 }
 
-/// Context for divergence display (determines which symbols to use)
+/// Context for divergence display (only Upstream is used now)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DivergenceContext {
-    /// Divergence relative to main branch (uses ↑↓↕^)
-    Main,
     /// Divergence relative to upstream remote (uses ⇡⇣⇅|)
     Upstream,
 }
 
 impl Divergence {
-    /// Compute divergence state from ahead/behind counts.
-    ///
-    /// For main context: returns `None` for 0/0 (caller sets `IsMain` for main branch itself)
-    /// For upstream context with known remote: use `from_counts_with_remote` instead
-    pub fn from_counts(ahead: usize, behind: usize) -> Self {
-        match (ahead, behind) {
-            (0, 0) => Self::None,
-            (_, 0) => Self::Ahead,
-            (0, _) => Self::Behind,
-            _ => Self::Diverged,
-        }
-    }
-
     /// Compute divergence state when a remote tracking branch exists.
     ///
     /// Returns `InSync` for 0/0 since we know a remote exists.
@@ -765,22 +727,18 @@ impl Divergence {
         }
     }
 
-    /// Get the display symbol for this divergence state in the given context.
-    pub fn symbol(self, ctx: DivergenceContext) -> &'static str {
-        match (self, ctx) {
-            (Self::None, _) => "",
-            (Self::IsMain, _) => "^",
-            (Self::InSync, _) => "|",
-            (Self::Ahead, DivergenceContext::Main) => "↑",
-            (Self::Ahead, DivergenceContext::Upstream) => "⇡",
-            (Self::Behind, DivergenceContext::Main) => "↓",
-            (Self::Behind, DivergenceContext::Upstream) => "⇣",
-            (Self::Diverged, DivergenceContext::Main) => "↕",
-            (Self::Diverged, DivergenceContext::Upstream) => "⇅",
+    /// Get the display symbol for this divergence state.
+    pub fn symbol(self, _ctx: DivergenceContext) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::InSync => "|",
+            Self::Ahead => "⇡",
+            Self::Behind => "⇣",
+            Self::Diverged => "⇅",
         }
     }
 
-    /// Returns styled symbol (dimmed) for the given context, or None for None variant.
+    /// Returns styled symbol (dimmed), or None for None variant.
     pub fn styled(self, ctx: DivergenceContext) -> Option<String> {
         use color_print::cformat;
         if self == Self::None {
@@ -835,67 +793,71 @@ impl serde::Serialize for WorktreeState {
     }
 }
 
-/// Branch state: operation states, conflict states, or integration states
+/// Main branch relationship state
 ///
-/// Represents the primary state of a branch/worktree in a single position.
-/// Priority order determines which symbol is shown when multiple conditions apply:
-/// 1. Conflicts (✘) - blocking, must resolve
-/// 2. Rebase (⤴) - active operation
-/// 3. Merge (⤵) - active operation
-/// 4. WouldConflict (✗) - potential problem (merge-tree simulation)
-/// 5. SameCommit (_) - removable, branch is exactly the same commit as main
-/// 6. Integrated (⊂) - removable, content is in main via different history
+/// Represents the combined relationship to the main branch in a single position.
+/// Uses horizontal arrows (vs vertical arrows for Remote column).
+///
+/// Priority order determines which symbol is shown:
+/// 1. IsMain (^) - this IS the main branch
+/// 2. WouldConflict (✗) - merge-tree simulation shows conflicts
+/// 3. SameCommit (_) - branch HEAD is exactly the same commit as main
+/// 4. Integrated (⊂) - content is in main via different history
+/// 5. Diverged (↕) - both ahead and behind main
+/// 6. Ahead (↑) - has commits main doesn't have
+/// 7. Behind (↓) - missing commits from main
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
 /// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BranchState {
-    /// Normal working branch
+pub enum MainState {
+    /// Normal working branch (up-to-date with main, no special state)
     #[default]
     None,
-    /// Actual merge conflicts with main (unmerged paths in working tree)
-    Conflicts,
-    /// Rebase in progress
-    Rebase,
-    /// Merge in progress
-    Merge,
+    /// This IS the main branch
+    IsMain,
     /// Merge-tree conflicts with main (simulated via git merge-tree)
     WouldConflict,
     /// Branch HEAD is exactly the same commit as main
     SameCommit,
     /// Content is integrated into main via different history
     Integrated(IntegrationReason),
+    /// Both ahead and behind main
+    Diverged,
+    /// Has commits main doesn't have
+    Ahead,
+    /// Missing commits from main
+    Behind,
 }
 
-impl std::fmt::Display for BranchState {
+impl std::fmt::Display for MainState {
+    /// Single-stroke vertical arrows for Main column (vs double-stroke arrows for Remote column).
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::None => Ok(()),
-            Self::Conflicts => write!(f, "✘"),
-            Self::Rebase => write!(f, "⤴"),
-            Self::Merge => write!(f, "⤵"),
+            Self::IsMain => write!(f, "^"),
             Self::WouldConflict => write!(f, "✗"),
             Self::SameCommit => write!(f, "_"),
-            // All integration reasons use ⊂ (content is subset of main)
             Self::Integrated(_) => write!(f, "⊂"),
+            Self::Diverged => write!(f, "↕"),
+            Self::Ahead => write!(f, "↑"),
+            Self::Behind => write!(f, "↓"),
         }
     }
 }
 
-impl BranchState {
+impl MainState {
     /// Returns styled symbol with appropriate color, or None for None variant.
     ///
     /// Color semantics:
-    /// - ERROR (red): Conflicts - blocking problems
-    /// - WARNING (yellow): Rebase, Merge, WouldConflict - active/stuck states
-    /// - HINT (dimmed): SameCommit, Integrated - low urgency removability indicators
+    /// - WARNING (yellow): WouldConflict - potential problem needing attention
+    /// - HINT (dimmed): All others - informational states
     pub fn styled(&self) -> Option<String> {
         use color_print::cformat;
         match self {
             Self::None => None,
-            Self::Conflicts => Some(cformat!("<red>{self}</>")),
-            Self::Rebase | Self::Merge | Self::WouldConflict => Some(cformat!("<yellow>{self}</>")),
-            Self::SameCommit | Self::Integrated(_) => Some(cformat!("<dim>{self}</>")),
+            Self::WouldConflict => Some(cformat!("<yellow>{self}</>")),
+            _ => Some(cformat!("<dim>{self}</>")),
         }
     }
 
@@ -907,21 +869,116 @@ impl BranchState {
         }
     }
 
-    /// Returns the JSON string representation for branch_state field.
+    /// Returns the JSON string representation for main_state field.
+    pub fn as_json_str(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::IsMain => Some("is_main"),
+            Self::WouldConflict => Some("would_conflict"),
+            Self::SameCommit => Some("same_commit"),
+            Self::Integrated(_) => Some("integrated"),
+            Self::Diverged => Some("diverged"),
+            Self::Ahead => Some("ahead"),
+            Self::Behind => Some("behind"),
+        }
+    }
+
+    /// Compute from divergence counts and integration state.
+    ///
+    /// Priority: WouldConflict > SameCommit > Integrated > Diverged > Ahead > Behind
+    pub fn from_integration_and_counts(
+        is_main: bool,
+        would_conflict: bool,
+        same_commit: bool,
+        integration_reason: Option<IntegrationReason>,
+        ahead: usize,
+        behind: usize,
+    ) -> Self {
+        if is_main {
+            Self::IsMain
+        } else if would_conflict {
+            Self::WouldConflict
+        } else if same_commit {
+            Self::SameCommit
+        } else if let Some(reason) = integration_reason {
+            Self::Integrated(reason)
+        } else {
+            match (ahead, behind) {
+                (0, 0) => Self::None,
+                (_, 0) => Self::Ahead,
+                (0, _) => Self::Behind,
+                _ => Self::Diverged,
+            }
+        }
+    }
+}
+
+impl serde::Serialize for MainState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// Worktree operation state
+///
+/// Represents blocking git operations in progress that require resolution.
+/// These take priority over all other states in the Worktree column.
+///
+/// Priority: Conflicts (✘) > Rebase (⤴) > Merge (⤵)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OperationState {
+    /// No operation in progress
+    #[default]
+    None,
+    /// Actual merge conflicts (unmerged paths in working tree)
+    Conflicts,
+    /// Rebase in progress
+    Rebase,
+    /// Merge in progress
+    Merge,
+}
+
+impl std::fmt::Display for OperationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::None => Ok(()),
+            Self::Conflicts => write!(f, "✘"),
+            Self::Rebase => write!(f, "⤴"),
+            Self::Merge => write!(f, "⤵"),
+        }
+    }
+}
+
+impl OperationState {
+    /// Returns styled symbol with appropriate color, or None for None variant.
+    ///
+    /// Color semantics:
+    /// - ERROR (red): Conflicts - blocking problems
+    /// - WARNING (yellow): Rebase, Merge - active/stuck states
+    pub fn styled(&self) -> Option<String> {
+        use color_print::cformat;
+        match self {
+            Self::None => None,
+            Self::Conflicts => Some(cformat!("<red>{self}</>")),
+            Self::Rebase | Self::Merge => Some(cformat!("<yellow>{self}</>")),
+        }
+    }
+
+    /// Returns the JSON string representation.
     pub fn as_json_str(self) -> Option<&'static str> {
         match self {
             Self::None => None,
             Self::Conflicts => Some("conflicts"),
             Self::Rebase => Some("rebase"),
             Self::Merge => Some("merge"),
-            Self::WouldConflict => Some("would_conflict"),
-            Self::SameCommit => Some("same_commit"),
-            Self::Integrated(_) => Some("integrated"),
         }
     }
 }
 
-impl serde::Serialize for BranchState {
+impl serde::Serialize for OperationState {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -954,26 +1011,25 @@ pub enum GitOperationState {
 /// 1. Only allocate space for positions that have data
 /// 2. Pad each position to a consistent width for vertical alignment
 ///
-/// Stores maximum character width for each of 8 positions (including user marker).
+/// Stores maximum character width for each of 7 positions (including user marker).
 /// A width of 0 means the position is unused.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PositionMask {
-    /// Maximum width for each position: [0, 1, 2, 3, 4, 5, 6, 7]
+    /// Maximum width for each position: [0, 1, 2, 3, 4, 5, 6]
     /// 0 = position unused, >0 = max characters needed
-    widths: [usize; 8],
+    widths: [usize; 7],
 }
 
 impl PositionMask {
-    // Render order indices (0-7) - symbols appear in this order left-to-right
+    // Render order indices (0-6) - symbols appear in this order left-to-right
     // Working tree split into 3 fixed positions for vertical alignment
     const STAGED: usize = 0; // + (staged changes)
     const MODIFIED: usize = 1; // ! (modified files)
     const UNTRACKED: usize = 2; // ? (untracked files)
-    const BRANCH_STATE: usize = 3; // Branch state (conflicts, rebase, merge, integrated, etc.)
-    const MAIN_DIVERGENCE: usize = 4;
-    const UPSTREAM_DIVERGENCE: usize = 5;
-    const WORKTREE_STATE: usize = 6;
-    const USER_MARKER: usize = 7;
+    const WORKTREE_STATE: usize = 3; // Worktree: ✘⤴⤵/⚑⊟⊞
+    const MAIN_STATE: usize = 4; // Main relationship: ^✗_⊂↕↑↓
+    const UPSTREAM_DIVERGENCE: usize = 5; // Remote: |⇅⇡⇣
+    const USER_MARKER: usize = 6;
 
     /// Full mask with all positions enabled (for JSON output and progressive rendering)
     /// Allocates realistic widths based on common symbol sizes to ensure proper grid alignment
@@ -982,10 +1038,9 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // BRANCH_STATE: ✘⤴⤵✗_⊂ (1 char, priority: conflicts > rebase > merge > would_conflict > same_commit > integrated)
-            1, // MAIN_DIVERGENCE: ^, ↑, ↓, ↕ (1 char)
-            1, // UPSTREAM_DIVERGENCE: ⇡, ⇣, ⇅ (1 char)
-            1, // WORKTREE_STATE: / for branches, ⚑⊟⊞ for worktrees (priority: path_mismatch > prunable > locked)
+            1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > path_mismatch > prunable > locked > branch)
+            1, // MAIN_STATE: ^✗_⊂↕↑↓ (1 char, priority: is_main > would_conflict > same_commit > integrated > diverged > ahead > behind)
+            1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],
     };
@@ -998,46 +1053,56 @@ impl PositionMask {
 
 /// Structured status symbols for aligned rendering
 ///
-/// Symbols are categorized to enable vertical alignment in table output:
-/// - Working tree: +, !, ? (staged, modified, untracked - priority order)
-/// - Branch/op state: ✘, ⤴, ⤵, ✗, _, ⊂ (combined position with priority)
-/// - Main divergence: ^, ↕, ↑, ↓
-/// - Upstream divergence: ⇅, ⇡, ⇣
-/// - Worktree state: / for branches, ⚑⊟⊞ for worktrees (priority-only)
+/// Symbols are categorized to enable vertical alignment in table output.
+/// Display order (left to right):
+/// - Working tree: +, !, ? (staged, modified, untracked - NOT mutually exclusive)
+/// - Worktree state: ✘, ⤴, ⤵, /, ⚑, ⊟, ⊞ (operations + location)
+/// - Main state: ^, ✗, _, ⊂, ↕, ↑, ↓ (relationship to main branch - single-stroke vertical arrows)
+/// - Upstream divergence: |, ⇅, ⇡, ⇣ (relationship to remote - vertical arrows)
 /// - User marker: custom labels, emoji
 ///
 /// ## Mutual Exclusivity
 ///
-/// **Combined with priority (branch state + git operation):**
-/// Priority: ✘ > ⤴ > ⤵ > ✗ > _ > ⊂
+/// **Worktree state (operations take priority over location):**
+/// Priority: ✘ > ⤴ > ⤵ > ⚑ > ⊟ > ⊞ > /
 /// - ✘: Actual conflicts (must resolve)
 /// - ⤴: Rebase in progress
 /// - ⤵: Merge in progress
-/// - ✗: Merge-tree conflicts (potential problem)
+/// - ⚑: Path doesn't match template
+/// - ⊟: Prunable (directory missing)
+/// - ⊞: Locked worktree
+/// - /: Branch without worktree
+///
+/// **Main state (single position with priority):**
+/// Priority: ^ > ✗ > _ > ⊂ > ↕ > ↑ > ↓
+/// - ^: This IS the main branch
+/// - ✗: Would conflict if merged to main
 /// - _: Same commit as main (removable)
 /// - ⊂: Content integrated (removable)
+/// - ↕: Diverged from main
+/// - ↑: Ahead of main
+/// - ↓: Behind main
 ///
-/// **Mutually exclusive (enforced by type system):**
-/// - ^ vs ↕ vs ↑ vs ↓: Main divergence (Divergence with Main context)
-/// - ⇅ vs ⇡ vs ⇣: Upstream divergence (Divergence with Upstream context)
-///
-/// **Priority-only (can co-occur but only highest priority shown):**
-/// - ⚑ vs ⊟ vs ⊞: Worktree attrs (priority: path_mismatch ⚑ > prunable ⊟ > locked ⊞)
-/// - /: Branch indicator (mutually exclusive with ⚑⊟⊞ as branches can't have worktree attrs)
+/// **Upstream divergence (enforced by type system):**
+/// - |: In sync with remote
+/// - ⇅: Diverged from remote
+/// - ⇡: Ahead of remote
+/// - ⇣: Behind remote
 ///
 /// **NOT mutually exclusive (can co-occur):**
 /// - Working tree symbols (+!?): Can have multiple types of changes
 #[derive(Debug, Clone, Default)]
 pub struct StatusSymbols {
-    /// Branch state (mutually exclusive with priority)
-    /// Priority: Conflicts (✘) > Rebase (⤴) > Merge (⤵) > WouldConflict (✗) > SameCommit (_) > Integrated (⊂)
-    pub(crate) branch_state: BranchState,
+    /// Main branch relationship state (single position, horizontal arrows)
+    /// Priority: IsMain (^) > WouldConflict (✗) > SameCommit (_) > Integrated (⊂) > Diverged (↕) > Ahead (↑) > Behind (↓)
+    pub(crate) main_state: MainState,
 
-    /// Worktree state: / for branches, ⚑⊟⊞ for worktrees (priority: path_mismatch > prunable > locked)
+    /// Worktree operation and location state (single position)
+    /// Operations (✘⤴⤵) take priority over location states (/⚑⊟⊞)
+    pub(crate) operation_state: OperationState,
+
+    /// Worktree location state: / for branches, ⚑⊟⊞ for worktrees
     pub(crate) worktree_state: WorktreeState,
-
-    /// Main branch divergence state (mutually exclusive)
-    pub(crate) main_divergence: Divergence,
 
     /// Remote/upstream divergence state (mutually exclusive)
     pub(crate) upstream_divergence: Divergence,
@@ -1092,9 +1157,9 @@ impl StatusSymbols {
 
     /// Check if symbols are empty
     pub fn is_empty(&self) -> bool {
-        self.branch_state == BranchState::None
+        self.main_state == MainState::None
+            && self.operation_state == OperationState::None
             && self.worktree_state == WorktreeState::None
-            && self.main_divergence == Divergence::None
             && self.upstream_divergence == Divergence::None
             && !self.working_tree.is_dirty()
             && self.user_marker.is_none()
@@ -1112,15 +1177,16 @@ impl StatusSymbols {
 
     /// Build styled symbols array with position indices.
     ///
-    /// Returns: `[(position_mask, styled_string, has_data); 8]`
+    /// Returns: `[(position_mask, styled_string, has_data); 7]`
     ///
-    /// Order: working_tree (+!?) → branch_op_state → main_divergence → upstream_divergence → worktree_state → user_marker
+    /// Order: working_tree (+!?) → main_state → upstream_divergence → worktree_state → user_marker
     ///
     /// Styling follows semantic meaning:
     /// - Cyan: Working tree changes (activity indicator)
-    /// - Yellow: Git operations, locked/prunable (stuck states needing attention)
-    /// - Dimmed: Branch state symbols + divergence arrows (low urgency)
-    fn styled_symbols(&self) -> [(usize, String, bool); 8] {
+    /// - Red: Conflicts (blocking problems)
+    /// - Yellow: Git operations, would_conflict, locked/prunable (states needing attention)
+    /// - Dimmed: Main state symbols, divergence arrows, branch indicator (informational)
+    fn styled_symbols(&self) -> [(usize, String, bool); 7] {
         use color_print::cformat;
 
         // Working tree symbols split into 3 fixed columns for vertical alignment
@@ -1135,56 +1201,49 @@ impl StatusSymbols {
         let (modified_str, has_modified) = style_working(self.working_tree.modified, '!');
         let (untracked_str, has_untracked) = style_working(self.working_tree.untracked, '?');
 
-        let (branch_state_str, has_branch_state) = self
-            .branch_state
+        // Main state (merged column: ^✗_⊂↕↑↓)
+        let (main_state_str, has_main_state) = self
+            .main_state
             .styled()
             .map_or((String::new(), false), |s| (s, true));
-        let (main_divergence_str, has_main_divergence) = self
-            .main_divergence
-            .styled(DivergenceContext::Main)
-            .map_or((String::new(), false), |s| (s, true));
+
+        // Upstream divergence (|⇅⇡⇣)
         let (upstream_divergence_str, has_upstream_divergence) = self
             .upstream_divergence
             .styled(DivergenceContext::Upstream)
             .map_or((String::new(), false), |s| (s, true));
 
-        let worktree_state_str = match self.worktree_state {
-            WorktreeState::None => String::new(),
-            // Branch indicator (/) is informational (dimmed)
-            WorktreeState::Branch => cformat!("<dim>{}</>", self.worktree_state),
-            // Path mismatch (⚑) is a stronger warning (red)
-            WorktreeState::PathMismatch => cformat!("<red>{}</>", self.worktree_state),
-            // Other worktree attrs (⊟⊞) are warnings (yellow)
-            _ => cformat!("<yellow>{}</>", self.worktree_state),
+        // Worktree state: operations (✘⤴⤵) take priority over location (/⚑⊟⊞)
+        let (worktree_str, has_worktree) = if self.operation_state != OperationState::None {
+            // Operation state takes priority
+            (self.operation_state.styled().unwrap_or_default(), true)
+        } else {
+            // Fall back to location state
+            match self.worktree_state {
+                WorktreeState::None => (String::new(), false),
+                // Branch indicator (/) is informational (dimmed)
+                WorktreeState::Branch => (cformat!("<dim>{}</>", self.worktree_state), true),
+                // Path mismatch (⚑) is a stronger warning (red)
+                WorktreeState::PathMismatch => (cformat!("<red>{}</>", self.worktree_state), true),
+                // Other worktree attrs (⊟⊞) are warnings (yellow)
+                _ => (cformat!("<yellow>{}</>", self.worktree_state), true),
+            }
         };
 
         let user_marker_str = self.user_marker.as_deref().unwrap_or("").to_string();
 
-        // CRITICAL: Display order is working_tree first (staged, modified, untracked), then other symbols.
-        // NEVER change this order - it ensures progressive and final rendering match exactly.
+        // CRITICAL: Display order must match position indices for correct rendering.
+        // Order: Working tree (0-2) → Worktree (3) → Main (4) → Remote (5) → User (6)
         [
             (PositionMask::STAGED, staged_str, has_staged),
             (PositionMask::MODIFIED, modified_str, has_modified),
             (PositionMask::UNTRACKED, untracked_str, has_untracked),
-            (
-                PositionMask::BRANCH_STATE,
-                branch_state_str,
-                has_branch_state,
-            ),
-            (
-                PositionMask::MAIN_DIVERGENCE,
-                main_divergence_str,
-                has_main_divergence,
-            ),
+            (PositionMask::WORKTREE_STATE, worktree_str, has_worktree),
+            (PositionMask::MAIN_STATE, main_state_str, has_main_state),
             (
                 PositionMask::UPSTREAM_DIVERGENCE,
                 upstream_divergence_str,
                 has_upstream_divergence,
-            ),
-            (
-                PositionMask::WORKTREE_STATE,
-                worktree_state_str,
-                self.worktree_state != WorktreeState::None,
             ),
             (
                 PositionMask::USER_MARKER,
@@ -1322,60 +1381,130 @@ mod tests {
     }
 
     #[test]
-    fn test_branch_state_as_json_str() {
-        assert_eq!(BranchState::None.as_json_str(), None);
-        assert_eq!(BranchState::Conflicts.as_json_str(), Some("conflicts"));
-        assert_eq!(BranchState::Rebase.as_json_str(), Some("rebase"));
-        assert_eq!(BranchState::Merge.as_json_str(), Some("merge"));
+    fn test_main_state_as_json_str() {
+        assert_eq!(MainState::None.as_json_str(), None);
+        assert_eq!(MainState::IsMain.as_json_str(), Some("is_main"));
         assert_eq!(
-            BranchState::WouldConflict.as_json_str(),
+            MainState::WouldConflict.as_json_str(),
             Some("would_conflict")
         );
-        assert_eq!(BranchState::SameCommit.as_json_str(), Some("same_commit"));
+        assert_eq!(MainState::SameCommit.as_json_str(), Some("same_commit"));
         assert_eq!(
-            BranchState::Integrated(IntegrationReason::TreesMatch).as_json_str(),
+            MainState::Integrated(IntegrationReason::TreesMatch).as_json_str(),
             Some("integrated")
         );
+        assert_eq!(MainState::Diverged.as_json_str(), Some("diverged"));
+        assert_eq!(MainState::Ahead.as_json_str(), Some("ahead"));
+        assert_eq!(MainState::Behind.as_json_str(), Some("behind"));
     }
 
     #[test]
-    fn test_integration_reason_as_json_str() {
-        assert_eq!(IntegrationReason::SameCommit.as_json_str(), "same_commit");
-        assert_eq!(IntegrationReason::Ancestor.as_json_str(), "ancestor");
-        assert_eq!(IntegrationReason::TreesMatch.as_json_str(), "trees_match");
-        assert_eq!(
-            IntegrationReason::NoAddedChanges.as_json_str(),
-            "no_added_changes"
-        );
-        assert_eq!(
-            IntegrationReason::MergeAddsNothing.as_json_str(),
-            "merge_adds_nothing"
-        );
+    fn test_integration_reason_into_static_str() {
+        let s: &'static str = IntegrationReason::SameCommit.into();
+        assert_eq!(s, "same_commit");
+        let s: &'static str = IntegrationReason::Ancestor.into();
+        assert_eq!(s, "ancestor");
+        let s: &'static str = IntegrationReason::TreesMatch.into();
+        assert_eq!(s, "trees_match");
+        let s: &'static str = IntegrationReason::NoAddedChanges.into();
+        assert_eq!(s, "no_added_changes");
+        let s: &'static str = IntegrationReason::MergeAddsNothing.into();
+        assert_eq!(s, "merge_adds_nothing");
     }
 
     #[test]
-    fn test_branch_state_integration_reason() {
+    fn test_main_state_integration_reason() {
         // Non-integrated states return None
-        assert_eq!(BranchState::None.integration_reason(), None);
-        assert_eq!(BranchState::Conflicts.integration_reason(), None);
-        assert_eq!(BranchState::SameCommit.integration_reason(), None);
+        assert_eq!(MainState::None.integration_reason(), None);
+        assert_eq!(MainState::IsMain.integration_reason(), None);
+        assert_eq!(MainState::WouldConflict.integration_reason(), None);
+        assert_eq!(MainState::SameCommit.integration_reason(), None);
+        assert_eq!(MainState::Diverged.integration_reason(), None);
+        assert_eq!(MainState::Ahead.integration_reason(), None);
+        assert_eq!(MainState::Behind.integration_reason(), None);
 
         // Integrated states return the reason
         assert_eq!(
-            BranchState::Integrated(IntegrationReason::Ancestor).integration_reason(),
+            MainState::Integrated(IntegrationReason::Ancestor).integration_reason(),
             Some(IntegrationReason::Ancestor)
         );
         assert_eq!(
-            BranchState::Integrated(IntegrationReason::TreesMatch).integration_reason(),
+            MainState::Integrated(IntegrationReason::TreesMatch).integration_reason(),
             Some(IntegrationReason::TreesMatch)
         );
         assert_eq!(
-            BranchState::Integrated(IntegrationReason::NoAddedChanges).integration_reason(),
+            MainState::Integrated(IntegrationReason::NoAddedChanges).integration_reason(),
             Some(IntegrationReason::NoAddedChanges)
         );
         assert_eq!(
-            BranchState::Integrated(IntegrationReason::MergeAddsNothing).integration_reason(),
+            MainState::Integrated(IntegrationReason::MergeAddsNothing).integration_reason(),
             Some(IntegrationReason::MergeAddsNothing)
         );
+    }
+
+    #[test]
+    fn test_main_state_from_integration_and_counts() {
+        // IsMain takes priority
+        assert!(matches!(
+            MainState::from_integration_and_counts(true, false, false, None, 5, 3),
+            MainState::IsMain
+        ));
+
+        // WouldConflict next
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, true, false, None, 5, 3),
+            MainState::WouldConflict
+        ));
+
+        // SameCommit next
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, true, None, 0, 0),
+            MainState::SameCommit
+        ));
+
+        // Integrated next
+        assert!(matches!(
+            MainState::from_integration_and_counts(
+                false,
+                false,
+                false,
+                Some(IntegrationReason::Ancestor),
+                0,
+                5
+            ),
+            MainState::Integrated(IntegrationReason::Ancestor)
+        ));
+
+        // Diverged (both ahead and behind)
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, false, None, 3, 2),
+            MainState::Diverged
+        ));
+
+        // Ahead only
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, false, None, 3, 0),
+            MainState::Ahead
+        ));
+
+        // Behind only
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, false, None, 0, 2),
+            MainState::Behind
+        ));
+
+        // None (in sync)
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, false, None, 0, 0),
+            MainState::None
+        ));
+    }
+
+    #[test]
+    fn test_operation_state_as_json_str() {
+        assert_eq!(OperationState::None.as_json_str(), None);
+        assert_eq!(OperationState::Conflicts.as_json_str(), Some("conflicts"));
+        assert_eq!(OperationState::Rebase.as_json_str(), Some("rebase"));
+        assert_eq!(OperationState::Merge.as_json_str(), Some("merge"));
     }
 }

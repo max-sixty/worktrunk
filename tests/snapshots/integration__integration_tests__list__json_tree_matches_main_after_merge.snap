@@ -47,6 +47,7 @@ exit_code: 0
         "deleted": 0
       }
     },
+    "main_state": "is_main",
     "worktree": {
       "detached": false,
       "bare": false
@@ -81,7 +82,7 @@ exit_code: 0
         "deleted": 0
       }
     },
-    "branch_state": "integrated",
+    "main_state": "integrated",
     "integration_reason": "no_added_changes",
     "main": {
       "ahead": 2,
@@ -92,8 +93,8 @@ exit_code: 0
       "bare": false
     },
     "is_main": false,
-    "statusline": "feature-merged  /u001b[2m⊂/u001b[22m/u001b[2m↑/u001b[22m  /u001b[32m↑2/u001b[0m",
-    "symbols": "⊂↑"
+    "statusline": "feature-merged  /u001b[2m⊂/u001b[22m  /u001b[32m↑2/u001b[0m",
+    "symbols": "⊂"
   }
 ]
 

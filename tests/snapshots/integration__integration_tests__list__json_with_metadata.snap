@@ -47,6 +47,7 @@ exit_code: 0
         "deleted": 0
       }
     },
+    "main_state": "is_main",
     "worktree": {
       "detached": false,
       "bare": false
@@ -81,7 +82,7 @@ exit_code: 0
         "deleted": 0
       }
     },
-    "branch_state": "same_commit",
+    "main_state": "same_commit",
     "main": {
       "ahead": 0,
       "behind": 0
@@ -119,7 +120,7 @@ exit_code: 0
         "deleted": 0
       }
     },
-    "branch_state": "same_commit",
+    "main_state": "same_commit",
     "main": {
       "ahead": 0,
       "behind": 0
@@ -131,7 +132,7 @@ exit_code: 0
       "bare": false
     },
     "is_main": false,
-    "statusline": "locked-feature  /u001b[2m_/u001b[22m/u001b[33m⊞/u001b[39m",
+    "statusline": "locked-feature  /u001b[33m⊞/u001b[39m/u001b[2m_/u001b[22m",
     "symbols": "_⊞"
   }
 ]

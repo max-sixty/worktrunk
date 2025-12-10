@@ -15,11 +15,11 @@
 //! - Empty positions render as single space for grid alignment
 //! - No leading spaces before the first symbol
 //!
-//! Example with branch_state, working_tree, and user_marker used:
+//! Example with working_tree, main_state, and user_marker used:
 //! ```text
-//! Row 1: "_   🤖"   (branch=_, working=space, user=🤖)
-//! Row 2: "_?!   "   (branch=_, working=?!, user=space)
-//! Row 3: "  💬"     (branch=space, working=space, user=💬)
+//! Row 1: "   _🤖"   (working=space, main=_, user=🤖)
+//! Row 2: "?! _  "   (working=?!, main=_, user=space)
+//! Row 3: "    💬"   (working=space, main=space, user=💬)
 //! ```
 //!
 //! ## Width Calculation
@@ -442,8 +442,8 @@ fn build_estimated_widths(max_branch: usize, skip_tasks: &HashSet<TaskKind>) -> 
     // Values exceeding these widths use compact notation (K suffix)
     //
     // Status column: Must match PositionMask::FULL width for consistent alignment
-    // PositionMask::FULL allocates: 1+1+1+1+1+1+1+2 = 9 chars
-    let status_fixed = fit_header(HEADER_STATUS, 9);
+    // PositionMask::FULL allocates: 1+1+1+1+1+1+2 = 8 chars (7 positions)
+    let status_fixed = fit_header(HEADER_STATUS, 8);
     let working_diff_fixed = fit_header(HEADER_WORKING_DIFF, 9); // "+999 -999"
     let ahead_behind_fixed = fit_header(HEADER_AHEAD_BEHIND, 7); // "↑99 ↓99"
     let branch_diff_fixed = fit_header(HEADER_BRANCH_DIFF, 9); // "+999 -999"
@@ -674,7 +674,7 @@ fn allocate_columns_with_priority(
 /// - Paths (with common prefix removed)
 ///
 /// Pre-allocated estimates (generous to minimize truncation):
-/// - Status: 9 chars (PositionMask::FULL)
+/// - Status: 8 chars (PositionMask::FULL, 7 positions)
 /// - Working diff: 9 chars ("+999 -999")
 /// - Ahead/behind: 7 chars ("↑99 ↓99")
 /// - Branch diff: 9 chars ("+999 -999")

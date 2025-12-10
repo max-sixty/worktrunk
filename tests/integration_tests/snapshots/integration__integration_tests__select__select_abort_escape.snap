@@ -3,8 +3,8 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch  Status         HEAD±    main↕  Path  Remote⇅  Co│Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
-> @ main        ^                          .              ..│
+    Branch  Status        HEAD±    main↕  Path  Remote⇅  Com│Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+> @ main        ^                         .              b..│
                                                             │⚪ main has no uncommitted changes
                                                             │
                                                             │

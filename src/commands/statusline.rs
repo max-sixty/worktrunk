@@ -84,41 +84,47 @@ impl ClaudeCodeContext {
 /// - `/home/user` -> `~`
 /// - `/tmp/test` -> `/t/test`
 fn format_directory_fish_style(path: &str) -> String {
-    let home = env::var("HOME").unwrap_or_default();
+    use std::path::{Component, PathBuf};
 
-    // Replace home with ~
-    let path = if !home.is_empty() && path.starts_with(&home) {
-        format!("~{}", &path[home.len()..])
-    } else {
-        path.to_string()
-    };
+    let path = PathBuf::from(path);
 
-    let is_absolute = path.starts_with('/');
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    // Replace $HOME prefix with ~
+    let (suffix, tilde_prefix) = env::var_os("HOME")
+        .and_then(|home| {
+            path.strip_prefix(&home)
+                .ok()
+                .map(|s| (s.to_path_buf(), true))
+        })
+        .unwrap_or_else(|| (path.clone(), false));
 
-    if parts.is_empty() {
-        return path;
+    // Collect normal components (skip RootDir, CurDir, etc.)
+    let components: Vec<_> = suffix
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .collect();
+
+    // Build result: ~/a/b/last or /a/b/last
+    let abbreviated = components
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            if i == components.len() - 1 {
+                s.to_string() // Keep last component full
+            } else {
+                s.chars().next().map(String::from).unwrap_or_default()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    match (tilde_prefix, abbreviated.is_empty()) {
+        (true, true) => "~".to_string(),
+        (true, false) => format!("~/{}", abbreviated.join("/")),
+        (false, _) if path.is_absolute() => format!("/{}", abbreviated.join("/")),
+        (false, _) => abbreviated.join("/"),
     }
-
-    let mut result = String::new();
-    if is_absolute {
-        result.push('/');
-    }
-
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            result.push('/');
-        }
-
-        // Keep ~ and last component full, abbreviate others to first char
-        if (i == 0 && *part == "~") || i == parts.len() - 1 {
-            result.push_str(part);
-        } else if let Some(c) = part.chars().next() {
-            result.push(c);
-        }
-    }
-
-    result
 }
 
 /// Run the statusline command.
@@ -284,12 +290,25 @@ mod tests {
 
         // Test with actual HOME (if set)
         if let Ok(home) = env::var("HOME") {
+            // Basic home substitution
             let test_path = format!("{home}/workspace/project");
             let result = format_directory_fish_style(&test_path);
             assert!(result.starts_with("~/"), "Expected ~ prefix, got: {result}");
             assert!(
                 result.ends_with("/project"),
                 "Expected /project suffix, got: {result}"
+            );
+
+            // Exact HOME path should become just ~
+            assert_eq!(format_directory_fish_style(&home), "~");
+
+            // Path that shares HOME as string prefix but not as path component
+            // e.g., /home/user vs /home/usered/nested
+            let path_outside_home = format!("{home}ed/nested");
+            let result = format_directory_fish_style(&path_outside_home);
+            assert!(
+                !result.starts_with("~"),
+                "Path sharing HOME string prefix should not use ~: {result}"
             );
         }
     }
