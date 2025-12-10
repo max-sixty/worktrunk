@@ -98,6 +98,9 @@ fn exec_in_pty_with_input_expectations(
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
 ) -> (Vec<u8>, i32) {
+    // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+    crate::common::ignore_tty_signals();
+
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {

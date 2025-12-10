@@ -353,6 +353,9 @@ fn exec_in_pty_interactive(
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
     use std::io::{Read, Write};
 
+    // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+    crate::common::ignore_tty_signals();
+
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -452,6 +455,9 @@ fn exec_bash_truly_interactive(
     use std::io::{Read, Write};
     use std::thread;
     use std::time::Duration;
+
+    // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+    crate::common::ignore_tty_signals();
 
     // Write setup script to a temp file
     let tmp_dir = tempfile::tempdir().unwrap();
@@ -2571,6 +2577,9 @@ test = "echo 'Running tests...'"
         repo.commit("Add config");
 
         // Direct PTY execution (not through shell wrapper) for interactive prompt
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        crate::common::ignore_tty_signals();
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -2750,6 +2759,9 @@ fi
         );
 
         // Execute in PTY
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        crate::common::ignore_tty_signals();
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -2903,6 +2915,9 @@ fi
         );
 
         // Execute in PTY
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        crate::common::ignore_tty_signals();
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -3188,6 +3203,9 @@ echo "SCRIPT_COMPLETED"
         };
 
         // Execute in PTY
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        crate::common::ignore_tty_signals();
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -3402,6 +3420,9 @@ echo "SCRIPT_COMPLETED"
         };
 
         // Execute in PTY (simulates interactive terminal)
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        crate::common::ignore_tty_signals();
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {

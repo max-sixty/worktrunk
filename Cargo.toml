@@ -84,6 +84,10 @@ which = "7.0"
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
 
+[target.'cfg(unix)'.dev-dependencies]
+# Match version used by portable-pty to avoid compiling multiple nix versions
+nix = { version = "0.29", default-features = false, features = ["signal"] }
+
 [build-dependencies]
 vergen-gitcl = { version = "1.0.8", features = ["build"] }
 

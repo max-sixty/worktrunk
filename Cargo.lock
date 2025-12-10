@@ -2965,6 +2965,7 @@ dependencies = [
  "insta-cmd",
  "log",
  "minijinja",
+ "nix 0.29.0",
  "normalize-path",
  "osc8",
  "portable-pty",

@@ -34,6 +34,41 @@ pub mod progressive_output;
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 pub mod shell;
 
+use std::cell::Cell;
+
+thread_local! {
+    static TTY_SIGNALS_BLOCKED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Block SIGTTIN and SIGTTOU signals to prevent test processes from being
+/// stopped when PTY operations interact with terminal control in background
+/// process groups.
+///
+/// This is needed when running tests in environments like Codex where the test
+/// process may be in the background process group of a controlling terminal.
+/// PTY operations (via `portable_pty`) can trigger these signals, causing the
+/// process to be stopped rather than continuing execution.
+///
+/// Signal masks are per-thread, so this must be called on each thread that
+/// performs PTY operations. It's idempotent within a thread (safe to call
+/// multiple times on the same thread).
+pub fn ignore_tty_signals() {
+    TTY_SIGNALS_BLOCKED.with(|blocked| {
+        if blocked.get() {
+            return;
+        }
+        use nix::sys::signal::{SigSet, SigmaskHow, Signal, pthread_sigmask};
+        let mut mask = SigSet::empty();
+        mask.add(Signal::SIGTTIN);
+        mask.add(Signal::SIGTTOU);
+        // Block these signals in the current thread's signal mask.
+        // Fail fast if this doesn't work - silent failure would cause flaky tests.
+        pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&mask), None)
+            .expect("failed to block SIGTTIN/SIGTTOU signals");
+        blocked.set(true);
+    });
+}
+
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

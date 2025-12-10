@@ -329,6 +329,9 @@ pub fn capture_progressive_output(
     args: &[&str],
     options: ProgressiveCaptureOptions,
 ) -> ProgressiveOutput {
+    // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+    super::ignore_tty_signals();
+
     let start_time = Instant::now();
 
     // Create PTY
