@@ -100,7 +100,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip project hooks (--no-verify)
+verify = false  # Skip all hooks (--no-verify)
 ```
 
 ### LLM commit messages

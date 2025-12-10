@@ -841,7 +841,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip project hooks (--no-verify)
+verify = false  # Skip all hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -1013,7 +1013,7 @@ wt step push
 ## See also
 
 - [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- [wt hook](@/hook.md) — Run project-defined lifecycle hooks
+- [wt hook](@/hook.md) — Run lifecycle hooks manually
 "#
     )]
     Step {
@@ -1021,12 +1021,12 @@ wt step push
         action: StepCommand,
     },
 
-    /// Run project hooks
+    /// Run hooks manually
     #[command(
         name = "hook",
-        after_long_help = r#"Run project-defined lifecycle hooks from `.config/wt.toml`.
+        after_long_help = r#"Run lifecycle hooks manually for testing or CI.
 
-Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Use `wt hook` to run them manually for testing or CI.
+Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```console
 wt hook pre-merge           # Run pre-merge hooks (for testing)
@@ -1189,7 +1189,7 @@ Project commands require approval on first run:
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
 - Use `--force` to bypass prompts (useful for CI/automation)
-- Use `--no-verify` to skip all project hooks
+- Use `--no-verify` to skip all hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 

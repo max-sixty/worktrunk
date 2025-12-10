@@ -119,7 +119,7 @@ Set persistent flag values for commands. These apply unless explicitly overridde
   [2msquash = false  # Preserve individual commits (--no-squash)[0m
   [2mcommit = false  # Skip committing uncommitted changes (--no-commit)[0m
   [2mremove = false  # Keep worktree after merge (--no-remove)[0m
-  [2mverify = false  # Skip project hooks (--no-verify)[0m
+  [2mverify = false  # Skip all hooks (--no-verify)[0m
 
 [1mLLM commit messages[0m
 

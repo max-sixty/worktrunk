@@ -8,9 +8,9 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt hook --help-page` — edit cli.rs to update -->
 
-Run project-defined lifecycle hooks from `.config/wt.toml`.
+Run lifecycle hooks manually for testing or CI.
 
-Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Use `wt hook` to run them manually for testing or CI.
+Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```bash
 wt hook pre-merge           # Run pre-merge hooks (for testing)
@@ -173,7 +173,7 @@ Project commands require approval on first run:
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
 - Use `--force` to bypass prompts (useful for CI/automation)
-- Use `--no-verify` to skip all project hooks
+- Use `--no-verify` to skip all hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
@@ -346,7 +346,7 @@ env = "cp {{ repo_root }}/.env.local .env"
 ## Command reference
 
 ```
-wt hook - Run project hooks
+wt hook - Run hooks manually
 Usage: wt hook [OPTIONS] <COMMAND>
 
 Commands:
