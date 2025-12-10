@@ -50,7 +50,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
           Skip approval prompts
 
       [1m[36m--no-verify[0m
-          Skip all project hooks
+          Skip hooks
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')

@@ -24,7 +24,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRunning pre-commit:[39m
+🔄 [36mRunning project pre-commit:[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
 [0m❌ [31mpre-commit command failed: exit status: 1[39m
 

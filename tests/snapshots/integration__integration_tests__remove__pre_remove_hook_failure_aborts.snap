@@ -25,7 +25,7 @@ exit_code: 1
 
 ----- stderr -----
 🔄 [36mRemoving worktree for [1mfeature-fail[22m...[39m
-🔄 [36mRunning pre-remove:[39m
+🔄 [36mRunning project pre-remove:[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
 [0m❌ [31mpre-remove command failed: exit status: 1[39m
 

@@ -1165,11 +1165,11 @@ fn test_merge_pre_merge_command_no_hooks() {
         .output()
         .unwrap();
 
-    // Merge with --no-hooks - should skip pre-merge commands and succeed
+    // Merge with --no-verify - should skip pre-merge commands and succeed
     snapshot_merge(
         "merge_pre_merge_command_no_hooks",
         &repo,
-        &["main", "--no-hooks"],
+        &["main", "--no-verify"],
         Some(&feature_wt),
     );
 }

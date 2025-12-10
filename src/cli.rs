@@ -582,7 +582,7 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
 
-        /// Skip pre-commit hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -608,7 +608,7 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
 
-        /// Skip pre-commit hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -643,7 +643,7 @@ pub enum StepCommand {
     },
 }
 
-/// Run project hooks
+/// Run project and user hooks
 #[derive(Subcommand)]
 pub enum HookCommand {
     /// Run post-create hooks
@@ -841,7 +841,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip project hooks (--no-verify)
+verify = false  # Skip hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -869,6 +869,22 @@ approved-commands = [
 ```
 
 Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
+
+### User hooks
+
+Personal hooks that run for all repositories. Use the same syntax as project hooks:
+
+```toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
+
+See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
 ## Project config
 
@@ -997,7 +1013,7 @@ wt step push
 ## See also
 
 - [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- [wt hook](@/hook.md) — Run project-defined lifecycle hooks
+- [wt hook](@/hook.md) — Run lifecycle hooks manually
 "#
     )]
     Step {
@@ -1005,12 +1021,12 @@ wt step push
         action: StepCommand,
     },
 
-    /// Run project hooks
+    /// Run hooks manually
     #[command(
         name = "hook",
-        after_long_help = r#"Run project-defined lifecycle hooks from `.config/wt.toml`.
+        after_long_help = r#"Run lifecycle hooks manually for testing or CI.
 
-Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Use `wt hook` to run them manually for testing or CI.
+Hooks are commands that run automatically during worktree operations (`wt switch --create`, `wt merge`, `wt remove`). Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```console
 wt hook pre-merge           # Run pre-merge hooks (for testing)
@@ -1141,6 +1157,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
 | `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |
 | `{{ remote }}` | origin | Primary remote name |
+| `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
 
@@ -1172,9 +1189,58 @@ Project commands require approval on first run:
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
 - Use `--force` to bypass prompts (useful for CI/automation)
-- Use `--no-verify` to skip all project hooks
+- Use `--no-verify` to skip hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
+
+## User hooks
+
+User hooks are personal hooks defined in `~/.config/worktrunk/config.toml` that run for all repositories. They execute **before** project hooks and don't require approval.
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks support the same hook types and template variables as project hooks.
+
+**Key differences from project hooks:**
+
+| Aspect | Project hooks | User hooks |
+|--------|--------------|------------|
+| Location | `.config/wt.toml` | `~/.config/worktrunk/config.toml` |
+| Scope | Single repository | All repositories |
+| Approval | Required | Not required |
+| Execution order | After user hooks | Before project hooks |
+
+Skip hooks with `--no-verify`.
+
+**Use cases:**
+- Personal notifications or logging
+- Editor/IDE integration
+- Repository-agnostic setup tasks
+- Filtering by repository using JSON context
+
+**Filtering by repository:**
+
+User hooks receive JSON context on stdin, enabling repository-specific behavior:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-create]
+gitlab-setup = """
+python3 -c '
+import json, sys, subprocess
+ctx = json.load(sys.stdin)
+if "gitlab" in ctx.get("remote", ""):
+    subprocess.run(["glab", "mr", "create", "--fill"])
+'
+"""
+```
 
 ## Examples
 
@@ -1611,7 +1677,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
         #[arg(short = 'f', long)]
         force: bool,
 
-        /// Skip all project hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
@@ -1691,7 +1757,7 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
         #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
         background: bool,
 
-        /// Skip pre-remove hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
@@ -1786,11 +1852,11 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
         #[arg(long = "no-remove", overrides_with = "remove")]
         no_remove: bool,
 
-        /// Force running project hooks
+        /// Force running hooks
         #[arg(long, overrides_with = "no_verify", hide = true)]
         verify: bool,
 
-        /// Skip all project hooks
+        /// Skip hooks
         #[arg(long = "no-verify", overrides_with = "verify")]
         no_verify: bool,
 

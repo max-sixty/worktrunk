@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
+use worktrunk::HookType;
 use worktrunk::config::{
-    Command, CommandConfig, CommandPhase, WorktrunkConfig, expand_template, sanitize_branch_name,
+    Command, CommandConfig, WorktrunkConfig, expand_template, sanitize_branch_name,
 };
 use worktrunk::git::{Repository, WorktrunkError};
 
@@ -85,7 +86,11 @@ fn build_hook_context(
     }
 
     if let Ok(remote) = ctx.repo.primary_remote() {
-        map.insert("remote".into(), remote);
+        map.insert("remote".into(), remote.clone());
+        // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
+        if let Ok(url) = ctx.repo.run_command(&["remote", "get-url", &remote]) {
+            map.insert("remote_url".into(), url.trim().into());
+        }
         if let Ok(Some(upstream)) = ctx.repo.upstream_branch(ctx.branch) {
             map.insert("upstream".into(), upstream);
         }
@@ -174,9 +179,9 @@ pub fn prepare_project_commands(
     ctx: &CommandContext<'_>,
     auto_trust: bool,
     extra_vars: &[(&str, &str)],
-    phase: CommandPhase,
+    hook_type: HookType,
 ) -> anyhow::Result<Vec<PreparedCommand>> {
-    let commands = command_config.commands_with_phase(phase);
+    let commands = command_config.commands_with_phase(hook_type);
     if commands.is_empty() {
         return Ok(Vec::new());
     }
@@ -208,6 +213,39 @@ pub fn prepare_project_commands(
     {
         return Err(WorktrunkError::CommandNotApproved.into());
     }
+
+    Ok(expanded_with_json
+        .into_iter()
+        .map(|(cmd, context_json)| PreparedCommand {
+            name: cmd.name,
+            expanded: cmd.expanded,
+            context_json,
+        })
+        .collect())
+}
+
+/// Prepare user hooks for execution without approval
+///
+/// Unlike project commands, user hooks don't require approval because they're
+/// defined in the user's own config file. The user implicitly approves them
+/// by adding them to their config.
+///
+/// This function:
+/// 1. Expands command templates with context variables
+/// 2. Returns prepared commands ready for execution, each with JSON context for stdin
+pub fn prepare_user_commands(
+    command_config: &CommandConfig,
+    ctx: &CommandContext<'_>,
+    extra_vars: &[(&str, &str)],
+    hook_type: HookType,
+) -> anyhow::Result<Vec<PreparedCommand>> {
+    let commands = command_config.commands_with_phase(hook_type);
+    if commands.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Expand commands (no approval needed for user hooks)
+    let expanded_with_json = expand_commands(&commands, ctx, extra_vars)?;
 
     Ok(expanded_with_json
         .into_iter()

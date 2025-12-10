@@ -32,7 +32,7 @@ exit_code: 0
 [107m [0m  Implement login and token refresh endpoints with JWT validation.
 [107m [0m  Includes comprehensive test coverage and input validation.
 ✅ [32mSquashed @ [2m69200cc[22m[39m
-🔄 [36mRunning pre-merge [1mtest[22m:[39m
+🔄 [36mRunning project pre-merge [1mtest[22m:[39m
 [107m [0m  [2m[0m[2m[34muv[0m[2m run pytest[0m
 [0m
 ============================= test session starts ==============================
@@ -44,7 +44,7 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 
 ============================== 3 passed in 0.8s ===============================
 
-🔄 [36mRunning pre-merge [1mlint[22m:[39m
+🔄 [36mRunning project pre-merge [1mlint[22m:[39m
 [107m [0m  [2m[0m[2m[34muv[0m[2m run ruff check[0m
 [0m
 All checks passed!

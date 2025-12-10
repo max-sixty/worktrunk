@@ -1,10 +1,26 @@
+// TODO(hook-naming): Refine hook display and filtering when user and project have same name
+//
+// Current behavior with `wt hook pre-merge foo`:
+// - Both user's "foo" and project's "foo" run (name filter applied to each source separately)
+// - Output: "Running user pre-merge foo:" then "Running project pre-merge foo:"
+//
+// Alternative approaches to consider:
+// 1. Show source in name: "Running pre-merge user:foo" / "Running pre-merge project:foo"
+// 2. Allow filtering by source: `wt hook pre-merge user:foo` runs only user's foo
+// 3. Current approach: always show "user"/"project" prefix, filter runs both
+//
+// The source prefix in filtering (option 2) would need to be used elsewhere too to justify
+// the syntax. Current behavior is reasonable but worth revisiting if users find it confusing.
+
 use color_print::cformat;
 use worktrunk::HookType;
-use worktrunk::config::{CommandConfig, CommandPhase, ProjectConfig};
-use worktrunk::git::{GitError, WorktrunkError};
+use worktrunk::config::{CommandConfig, ProjectConfig};
+use worktrunk::git::WorktrunkError;
 use worktrunk::styling::{format_bash_with_gutter, progress_message, warning_message};
 
-use super::command_executor::{CommandContext, PreparedCommand, prepare_project_commands};
+use super::command_executor::{
+    CommandContext, PreparedCommand, prepare_project_commands, prepare_user_commands,
+};
 use crate::commands::process::spawn_detached;
 use crate::output::execute_command_in_worktree;
 
@@ -17,7 +33,30 @@ pub enum HookFailureStrategy {
     Warn,
 }
 
-/// Helper for preparing and executing project hook commands.
+/// Distinguishes between user hooks and project hooks for command preparation.
+pub enum HookSource {
+    /// User hooks from ~/.config/worktrunk/config.toml (no approval required)
+    User,
+    /// Project hooks from .worktrunk.toml (may require approval)
+    Project { auto_trust: bool },
+}
+
+impl HookSource {
+    /// Returns the label prefix for this source
+    fn label_prefix(&self) -> &'static str {
+        match self {
+            HookSource::User => "user",
+            HookSource::Project { .. } => "project",
+        }
+    }
+
+    /// Format a label for display: "user pre-merge" or "project pre-merge"
+    fn format_label(&self, hook_type: HookType) -> String {
+        format!("{} {}", self.label_prefix(), hook_type)
+    }
+}
+
+/// Helper for preparing and executing hook commands.
 pub struct HookPipeline<'a> {
     ctx: CommandContext<'a>,
 }
@@ -30,65 +69,66 @@ impl<'a> HookPipeline<'a> {
     fn prepare_commands(
         &self,
         command_config: &CommandConfig,
-        phase: CommandPhase,
-        auto_trust: bool,
+        hook_type: HookType,
+        source: &HookSource,
         extra_vars: &[(&str, &str)],
         name_filter: Option<&str>,
     ) -> anyhow::Result<Vec<PreparedCommand>> {
-        let commands =
-            prepare_project_commands(command_config, &self.ctx, auto_trust, extra_vars, phase)?;
-
-        // Filter by name if specified
-        match name_filter {
-            Some(name) => {
-                // Collect available names before consuming the iterator
-                let available: Vec<String> =
-                    commands.iter().filter_map(|cmd| cmd.name.clone()).collect();
-
-                let filtered: Vec<_> = commands
-                    .into_iter()
-                    .filter(|cmd| cmd.name.as_deref() == Some(name))
-                    .collect();
-
-                if filtered.is_empty() {
-                    return Err(GitError::HookCommandNotFound {
-                        name: name.to_string(),
-                        available,
-                    }
-                    .into());
-                }
-
-                Ok(filtered)
+        let commands = match source {
+            HookSource::User => {
+                prepare_user_commands(command_config, &self.ctx, extra_vars, hook_type)?
             }
-            None => Ok(commands),
+            HookSource::Project { auto_trust } => prepare_project_commands(
+                command_config,
+                &self.ctx,
+                *auto_trust,
+                extra_vars,
+                hook_type,
+            )?,
+        };
+        Ok(Self::filter_by_name(commands, name_filter))
+    }
+
+    /// Filter commands by name (returns empty vec if name not found - caller decides if that's an error)
+    fn filter_by_name(
+        commands: Vec<PreparedCommand>,
+        name_filter: Option<&str>,
+    ) -> Vec<PreparedCommand> {
+        match name_filter {
+            Some(name) => commands
+                .into_iter()
+                .filter(|cmd| cmd.name.as_deref() == Some(name))
+                .collect(),
+            None => commands,
         }
     }
 
     /// Run hook commands sequentially, using the provided failure strategy.
-    #[allow(clippy::too_many_arguments)]
+    /// Returns the number of commands that were run.
     pub fn run_sequential(
         &self,
         command_config: &CommandConfig,
-        phase: CommandPhase,
-        auto_trust: bool,
-        extra_vars: &[(&str, &str)],
-        label_prefix: &str,
         hook_type: HookType,
+        source: HookSource,
+        extra_vars: &[(&str, &str)],
         failure_strategy: HookFailureStrategy,
         name_filter: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<usize> {
         let commands =
-            self.prepare_commands(command_config, phase, auto_trust, extra_vars, name_filter)?;
+            self.prepare_commands(command_config, hook_type, &source, extra_vars, name_filter)?;
         if commands.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
+        let command_count = commands.len();
 
         // Track first failure for Warn strategy (to propagate exit code after all commands run)
         let mut first_failure: Option<(String, Option<String>, i32)> = None;
 
+        let label_prefix = source.format_label(hook_type);
+
         for prepared in commands {
             let label =
-                crate::commands::format_command_label(label_prefix, prepared.name.as_deref());
+                crate::commands::format_command_label(&label_prefix, prepared.name.as_deref());
             crate::output::print(progress_message(format!("{label}:")))?;
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
@@ -153,34 +193,36 @@ impl<'a> HookPipeline<'a> {
             .into());
         }
 
-        Ok(())
+        Ok(command_count)
     }
 
     /// Spawn hook commands in the background (used for post-start hooks).
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_detached(
+    pub fn spawn_background(
         &self,
         command_config: &CommandConfig,
-        phase: CommandPhase,
-        auto_trust: bool,
+        hook_type: HookType,
+        source: HookSource,
         extra_vars: &[(&str, &str)],
-        label_prefix: &str,
         name_filter: Option<&str>,
     ) -> anyhow::Result<()> {
         let commands =
-            self.prepare_commands(command_config, phase, auto_trust, extra_vars, name_filter)?;
+            self.prepare_commands(command_config, hook_type, &source, extra_vars, name_filter)?;
         if commands.is_empty() {
             return Ok(());
         }
 
+        // Derive operation name from hook type (e.g., "post-start")
+        let operation_prefix = hook_type.to_string();
+        let label_prefix = source.format_label(hook_type);
+
         for prepared in commands {
             let label =
-                crate::commands::format_command_label(label_prefix, prepared.name.as_deref());
+                crate::commands::format_command_label(&label_prefix, prepared.name.as_deref());
             crate::output::print(progress_message(format!("{label}:")))?;
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
             let name = prepared.name.as_deref().unwrap_or("cmd");
-            let operation = format!("post-start-{}", name);
+            let operation = format!("{}-{}", operation_prefix, name);
             if let Err(err) = spawn_detached(
                 self.ctx.repo,
                 self.ctx.worktree_path,
@@ -220,13 +262,12 @@ impl<'a> HookPipeline<'a> {
 
         self.run_sequential(
             pre_commit_config,
-            CommandPhase::PreCommit,
-            auto_trust,
-            &extra_vars,
-            "pre-commit",
             HookType::PreCommit,
+            HookSource::Project { auto_trust },
+            &extra_vars,
             HookFailureStrategy::FailFast,
             name_filter,
-        )
+        )?;
+        Ok(())
     }
 }

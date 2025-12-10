@@ -100,7 +100,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip project hooks (--no-verify)
+verify = false  # Skip hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -128,6 +128,22 @@ approved-commands = [
 ```
 
 Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
+
+### User hooks
+
+Personal hooks that run for all repositories. Use the same syntax as project hooks:
+
+```toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
+
+See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
 ## Project config
 

@@ -1402,8 +1402,8 @@ approved-commands = ["echo 'background task'"]
         // Critical assertion: progress messages should appear to users
         // This is the test that catches the bug where progress() is suppressed in directive mode
         assert!(
-            output.combined.contains("Running post-start"),
-            "Progress message 'Running post-start' missing from output. \
+            output.combined.contains("Running project post-start"),
+            "Progress message 'Running project post-start' missing from output. \
          Output:\n{}",
             output.combined
         );
@@ -1469,8 +1469,8 @@ approved-commands = ["echo 'fish background task'"]
 
         // Critical: progress messages should appear to users through Fish wrapper
         assert!(
-            output.combined.contains("Running post-start"),
-            "Progress message 'Running post-start' missing from Fish wrapper output. \
+            output.combined.contains("Running project post-start"),
+            "Progress message 'Running project post-start' missing from Fish wrapper output. \
          Output:\n{}",
             output.combined
         );

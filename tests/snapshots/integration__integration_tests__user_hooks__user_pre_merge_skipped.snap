@@ -1,0 +1,35 @@
+---
+source: tests/integration_tests/user_hooks.rs
+info:
+  program: wt
+  args:
+    - merge
+    - main
+    - "--force"
+    - "--no-remove"
+    - "--no-user-hooks"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    LANG: C
+    LC_ALL: C
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+---
+success: false
+exit_code: 2
+----- stdout -----
+
+----- stderr -----
+[1m[31merror:[0m unexpected argument '[1m[33m--no-user-hooks[0m' found
+
+  [1m[32mtip:[0m to pass '[1m[33m--no-user-hooks[0m' as a value, use '[1m[32m-- --no-user-hooks[0m'
+
+[1m[32mUsage:[0m [1m[36mwt merge[0m [1m[36m--force[0m [1m[36m--no-remove[0m [36m<TARGET>[0m
+
+For more information, try '[1m[36m--help[0m'.

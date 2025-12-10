@@ -37,7 +37,7 @@ exit_code: 0
 [107m [0m  - Add JWT encoding/decoding with signature verification
 [107m [0m  - Create test suite covering all authentication flows
 ✅ [32mSquashed @ [2m95c3316[22m[39m
-🔄 [36mRunning pre-merge [1mtest[22m:[39m
+🔄 [36mRunning project pre-merge [1mtest[22m:[39m
 [107m [0m  [2m[0m[2m[34mcargo[0m[2m test[0m
 [0m    Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
@@ -49,7 +49,7 @@ test auth::tests::test_token_refresh ... ok
 test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-🔄 [36mRunning pre-merge [1mlint[22m:[39m
+🔄 [36mRunning project pre-merge [1mlint[22m:[39m
 [107m [0m  [2m[0m[2m[34mcargo[0m[2m clippy[0m
 [0m    Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
@@ -61,7 +61,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 [107m [0m   3 files changed, 33 insertions(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 3 files, [32m+33[39m[39m[90m)[39m[39m
 🔄 [36m[36mRemoving [1mfeature-auth[22m worktree & branch in background (already in main)[39m[39m
-🔄 [36mRunning post-merge [1minstall[22m:[39m
+🔄 [36mRunning project post-merge [1minstall[22m:[39m
 [107m [0m  [2m[0m[2m[34mcargo[0m[2m install [0m[2m[36m--path[0m[2m .[0m
 [0m  Installing worktrunk v0.1.0
    Compiling worktrunk v0.1.0
