@@ -769,13 +769,17 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         .root_path()
         .canonicalize()
         .unwrap_or_else(|_| repo.root_path().to_path_buf());
-    settings.add_filter(&regex::escape(root_canonical.to_str().unwrap()), "[REPO]");
+    let root_str = root_canonical.to_str().unwrap();
+    // Add both backslash and forward-slash versions for Windows compatibility
+    // (output may have either format depending on when filters are applied)
+    settings.add_filter(&regex::escape(root_str), "[REPO]");
+    settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
     for (name, path) in &repo.worktrees {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        settings.add_filter(
-            &regex::escape(canonical.to_str().unwrap()),
-            format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
-        );
+        let path_str = canonical.to_str().unwrap();
+        let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
+        settings.add_filter(&regex::escape(path_str), &replacement);
+        settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
     }
 
     // Normalize backslashes for Windows compatibility
