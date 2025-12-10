@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, bail};
 use normalize_path::NormalizePath;
 
-use crate::path::canonicalize;
+use dunce::canonicalize;
 
 // Import types and functions from parent module (mod.rs)
 use super::{
@@ -494,7 +494,7 @@ impl Repository {
 
         // Resolve relative paths against the repo's directory
         if path.is_relative() {
-            canonicalize(&self.path.join(&path)).context("Failed to resolve git common directory")
+            canonicalize(self.path.join(&path)).context("Failed to resolve git common directory")
         } else {
             Ok(path)
         }
@@ -509,7 +509,7 @@ impl Repository {
 
         // Resolve relative paths against the repo's directory
         if path.is_relative() {
-            canonicalize(&self.path.join(&path)).context("Failed to resolve git directory")
+            canonicalize(self.path.join(&path)).context("Failed to resolve git directory")
         } else {
             Ok(path)
         }

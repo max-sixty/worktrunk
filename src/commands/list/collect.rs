@@ -20,9 +20,9 @@
 //!
 //! This ensures fast operations don't wait for slow ones (e.g., CI doesn't block ahead/behind counts)
 use crossbeam_channel as chan;
+use dunce::canonicalize;
 use rayon::prelude::*;
 use worktrunk::git::{LineDiff, Repository, Worktree};
-use worktrunk::path::canonicalize;
 use worktrunk::styling::{INFO_EMOJI, warning_message};
 
 use super::ci_status::PrStatus;
