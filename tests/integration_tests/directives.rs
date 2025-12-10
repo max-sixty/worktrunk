@@ -98,6 +98,11 @@ fn test_remove_internal_powershell_directive() {
     let mut settings = setup_snapshot_settings(&repo);
     // Normalize the PowerShell Set-Location path
     settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
+    // Normalize removal messages (varies between platforms due to worktree/branch state)
+    settings.add_filter(
+        r"Removing.*worktree.*background.*",
+        "Removing worktree in background [REMOVAL_DETAILS]",
+    );
 
     settings.bind(|| {
         let mut cmd = wt_command();
