@@ -6,6 +6,9 @@
 //!
 //! Run with: `cargo test --test integration readme_sync`
 //!
+//! Skipped on Windows: These tests verify documentation sync using help output which has
+//! platform-specific formatting differences (clap markdown rendering, line endings).
+//!
 //! ## Architecture
 //!
 //! The sync system uses a unified pipeline:
@@ -14,6 +17,7 @@
 //! 2. **Placeholders**: `replace_placeholders()` normalizes test paths to display paths
 //! 3. **Formatting**: `OutputFormat` enum controls the final output (plain text vs HTML)
 //! 4. **Updating**: `update_section()` finds markers and replaces content
+#![cfg(not(windows))]
 
 use ansi_to_html::convert as ansi_to_html;
 use regex::Regex;

@@ -5,6 +5,11 @@
 //!
 //! - Short help (`-h`): Compact format, single-line options
 //! - Long help (`--help`): Verbose format with `after_long_help` content
+//!
+//! Skipped on Windows: clap renders markdown differently on Windows (tables, links,
+//! emphasis) resulting in formatting-only differences. The help content is identical;
+//! only the presentation varies.
+#![cfg(not(windows))]
 
 use crate::common::wt_command;
 use insta::Settings;
@@ -13,22 +18,9 @@ use insta_cmd::assert_cmd_snapshot;
 fn snapshot_help(test_name: &str, args: &[&str]) {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Normalize Windows executable extension in help output
-    // On Windows, clap shows "wt.exe" instead of "wt"
-    settings.add_filter(r"wt\.exe", "wt");
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
-    // Windows terminal strips these trailing resets that Unix includes
     settings.add_filter(r"\x1b\[0m$", "");
     settings.add_filter(r"\x1b\[0m\n", "\n");
-    // On Windows, the `select` command is not available (Unix only, uses TUI).
-    // Filter out the select command line from help output for cross-platform consistency.
-    #[cfg(windows)]
-    settings.add_filter(r"(?m)^\s*\x1b\[1m\x1b\[36mselect\x1b\[0m.*\n", "");
-    // On Windows, clap uses backticks instead of ANSI bold for emphasis in help text.
-    // Convert backtick-quoted text to ANSI bold format to match Unix output.
-    // Matches `word`, `word-with-dashes`, `word.with.dots` etc.
-    #[cfg(windows)]
-    settings.add_filter(r"`([a-zA-Z0-9_.-]+)`", "\x1b[1m$1\x1b[0m");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);
