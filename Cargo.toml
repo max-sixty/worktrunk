@@ -83,6 +83,8 @@ which = "7.0"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
+nix = { version = "0.29", default-features = false, features = ["process", "signal"] }
+signal-hook = { version = "0.3.17", default-features = false, features = ["iterator"] }
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.8", features = ["build"] }

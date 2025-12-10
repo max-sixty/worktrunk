@@ -402,6 +402,60 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn test_pre_merge_hook_receives_sigint() {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::io::Read;
+
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+
+    // Project pre-merge hook: write start, then sleep, then write done (if not interrupted)
+    repo.write_project_config(
+        r#"[pre-merge]
+long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
+"#,
+    );
+    repo.commit("Add pre-merge hook");
+
+    // Spawn wt hook pre-merge (skip approval with --force)
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.args(["hook", "pre-merge", "--force"]);
+    let mut child = cmd.spawn().expect("failed to spawn wt hook pre-merge");
+
+    // Wait until hook writes "start" to hook.log (verifies the hook is running)
+    let hook_log = repo.root_path().join("hook.log");
+    wait_for_file(&hook_log, Duration::from_secs(5));
+
+    // Send SIGINT to wt (simulates Ctrl-C)
+    kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).expect("failed to send SIGINT");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    // Expect conventional Ctrl-C exit code 130
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "wt should exit with 130 on SIGINT, status: {status:?}"
+    );
+
+    // Give the (killed) hook a moment; it must not append "done"
+    thread::sleep(Duration::from_millis(500));
+
+    let mut contents = String::new();
+    std::fs::File::open(&hook_log)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    assert!(
+        contents.trim() == "start",
+        "hook should not have reached 'done'; got: {contents:?}"
+    );
+}
+
 // ============================================================================
 // User Post-Merge Hook Tests
 // ============================================================================
