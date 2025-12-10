@@ -521,7 +521,9 @@ fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<
     });
 }
 
+/// Skipped on Windows: Uses /tmp path and file locking prevents worktree removal.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_user_pre_remove_hook_executes() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");

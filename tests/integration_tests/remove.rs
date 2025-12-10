@@ -497,7 +497,10 @@ fn test_remove_branch_matching_tree_content() {
 /// 1. Linked worktrees can be removed (whether from within them or from elsewhere)
 /// 2. The main worktree cannot be removed under any circumstances
 /// 3. This is true regardless of which branch is checked out in the main worktree
+///
+/// Skipped on Windows: File locking prevents worktree removal during test execution.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_remove_main_worktree_vs_linked_worktree() {
     let mut repo = setup_remove_repo();
 
@@ -1028,7 +1031,10 @@ approved-commands = ["echo 'hook ran' > {}"]
 ///
 /// Even when a worktree is in detached HEAD state (no branch), the pre-remove
 /// hook should still execute.
+///
+/// Skipped on Windows: File locking prevents worktree removal during test execution.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_pre_remove_hook_runs_for_detached_head() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
@@ -1122,7 +1128,10 @@ approved-commands = ["touch {marker_path}"]
 /// (macOS temp paths are ~60 chars vs Linux ~20 chars). The snapshot version
 /// of this test (`test_pre_remove_hook_runs_for_detached_head`) verifies the hook runs;
 /// this test verifies the specific template expansion behavior.
+///
+/// Skipped on Windows: File locking prevents worktree removal during test execution.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_pre_remove_hook_branch_expansion_detached_head() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");

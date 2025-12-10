@@ -16,6 +16,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: false
@@ -24,9 +25,9 @@ exit_code: 2
 
 ----- stderr -----
 [1m[31merror:[0m the following required arguments were not provided:
-  [1m[32m<BRANCH>[0m
+  [1m[32m<BRANCH>
 
-[1m[32mUsage:[0m [1m[36mwt switch[0m [36m<BRANCH>[0m
+[1m[32mUsage:[0m [1m[36mwt switch[0m [36m<BRANCH>
 
 For more information, try '[1m[36m--help[0m'.
 [32m[1mQuick switches:[39m[22m

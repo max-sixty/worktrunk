@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -27,4 +28,3 @@ cd '[REPO].existing-wt'
 
 ----- stderr -----
 ✅ [32m[32mSwitched to worktree for [1mexisting-wt[22m at [1m[REPO].existing-wt[39m[22m[39m
-[0m

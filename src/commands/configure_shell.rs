@@ -214,20 +214,12 @@ pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
 ) -> Result<ScanResult, String> {
-    let shells = if let Some(shell) = shell_filter {
-        vec![shell]
-    } else {
-        // Try all supported shells in consistent order
-        // On Windows, also include PowerShell for native Windows users
-        #[cfg(windows)]
-        {
-            vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell]
-        }
-        #[cfg(not(windows))]
-        {
-            vec![Shell::Bash, Shell::Zsh, Shell::Fish]
-        }
-    };
+    #[cfg(windows)]
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    #[cfg(not(windows))]
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+
+    let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
     let mut results = Vec::new();
     let mut skipped = Vec::new();
@@ -699,11 +691,12 @@ fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
 ) -> Result<UninstallScanResult, String> {
-    let shells = if let Some(shell) = shell_filter {
-        vec![shell]
-    } else {
-        vec![Shell::Bash, Shell::Zsh, Shell::Fish]
-    };
+    #[cfg(windows)]
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+    #[cfg(not(windows))]
+    let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish];
+
+    let shells = shell_filter.map_or(default_shells, |shell| vec![shell]);
 
     let mut results = Vec::new();
     let mut not_found = Vec::new();

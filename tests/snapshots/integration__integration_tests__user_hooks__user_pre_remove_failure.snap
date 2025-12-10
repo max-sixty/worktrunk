@@ -25,7 +25,7 @@ exit_code: 1
 
 ----- stderr -----
 🔄 [36mRunning user pre-remove [1mblock[22m:[39m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 1
 [0m❌ [31mpre-remove command failed: [1mblock[22m: exit status: 1[39m
 
 💡 [2mUse [90m--no-verify[39m to skip pre-remove commands[22m

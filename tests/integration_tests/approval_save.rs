@@ -350,6 +350,7 @@ args = ["-s"]
 /// root can write to read-only files. Consider using capabilities or other mechanisms
 /// to test permission handling in all environments.
 #[test]
+#[cfg(unix)]
 fn test_permission_error_prevents_save() {
     use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt;

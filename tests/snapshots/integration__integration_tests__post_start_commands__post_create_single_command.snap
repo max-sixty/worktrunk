@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -26,7 +27,7 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mRunning project post-create:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setup complete'[0m[2m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Setup complete'[0m[2m
 [0mSetup complete
 ✅ [32m[32mCreated new worktree for [1mfeature[22m from [1mmain[22m at [1m[REPO].feature[39m[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

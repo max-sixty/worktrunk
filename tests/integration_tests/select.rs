@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! TUI snapshot tests for `wt select`
 //!
 //! These tests use PTY execution combined with vt100 terminal emulation to capture

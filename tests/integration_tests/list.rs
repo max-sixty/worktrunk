@@ -2161,8 +2161,8 @@ fn test_list_with_c_flag() {
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(["-C", repo.root_path().to_str().unwrap(), "list"]);
-        // Run from /tmp to ensure -C is actually being used
-        cmd.current_dir("/tmp");
+        // Run from system temp dir to ensure -C is actually being used
+        cmd.current_dir(std::env::temp_dir());
         assert_cmd_snapshot!("list_with_c_flag", cmd);
     });
 }

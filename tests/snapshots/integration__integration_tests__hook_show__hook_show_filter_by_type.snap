@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
@@ -31,6 +32,6 @@ exit_code: 0
 
 [36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
 ❓ pre-merge [1mbuild[22m: [2m(requires approval)[22m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m build[0m
+[107m [0m  [2m[0m[2m[34mcargo[0m[2m build
 ❓ pre-merge [1mtest[22m: [2m(requires approval)[22m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m test[0m
+[107m [0m  [2m[0m[2m[34mcargo[0m[2m test
