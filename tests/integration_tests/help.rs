@@ -24,6 +24,11 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
     // Filter out the select command line from help output for cross-platform consistency.
     #[cfg(windows)]
     settings.add_filter(r"(?m)^\s*\x1b\[1m\x1b\[36mselect\x1b\[0m.*\n", "");
+    // On Windows, clap uses backticks instead of ANSI bold for emphasis in help text.
+    // Convert backtick-quoted text to ANSI bold format to match Unix output.
+    // Matches `word`, `word-with-dashes`, `word.with.dots` etc.
+    #[cfg(windows)]
+    settings.add_filter(r"`([a-zA-Z0-9_.-]+)`", "\x1b[1m$1\x1b[0m");
     settings.bind(|| {
         let mut cmd = wt_command();
         cmd.args(args);
