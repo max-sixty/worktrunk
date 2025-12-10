@@ -894,11 +894,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // On Windows, clap shows "wt.exe" instead of "wt"
     settings.add_filter(r"wt\.exe", "wt");
 
-    // On Windows, clap renders backticked text as bold (ESC[1m) instead of dim (ESC[2m)
-    // Normalize to dim for consistency with Unix snapshots
-    #[cfg(windows)]
-    settings.add_filter(r"\x1b\[1m", "\x1b[2m");
-
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
     // Windows terminal strips these trailing resets that Unix includes
     settings.add_filter(r"\x1b\[0m$", "");
