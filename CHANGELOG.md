@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.18
+
+### Added
+
+- **Windows support**: Git Bash with PowerShell fallback enables worktrunk on Windows. Git Bash is preferred (same bash hook syntax across platforms); PowerShell works for basic commands with limitations. ([#122](https://github.com/max-sixty/worktrunk/pull/122))
+- **Winget publishing**: Release workflow now publishes to Windows Package Manager. ([079c9df](https://github.com/max-sixty/worktrunk/commit/079c9df3))
+
+### Changed
+
+- **Approvals command moved**: `wt config approvals` is now `wt hook approvals` since approvals manage hook commands. ([b7b1b9e](https://github.com/max-sixty/worktrunk/commit/b7b1b9e3))
+- **Approval prompts show templates**: Approval prompts now display command templates (what gets saved) rather than expanded values. ([2315d26](https://github.com/max-sixty/worktrunk/commit/2315d268))
+- **Preview mode renamed**: The `history` preview mode is now `log` for clarity. ([0461152](https://github.com/max-sixty/worktrunk/commit/04611524))
+
+### Fixed
+
+- **PR/MR source filtering**: Filter PRs by source repository instead of author, fixing false matches when multiple users have PRs with the same branch name. ([e9ccdf7](https://github.com/max-sixty/worktrunk/commit/e9ccdf77))
+
 ## 0.1.17
 
 ### Added

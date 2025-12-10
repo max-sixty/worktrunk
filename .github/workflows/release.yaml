@@ -291,32 +291,34 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --locked
 
-  publish-winget:
-    needs:
-      - plan
-      - host
-    runs-on: ubuntu-latest
-    if: ${{ needs.plan.outputs.publishing == 'true' }}
-    steps:
-      - name: Publish to winget
-        uses: vedantmgoyal9/winget-releaser@v2
-        with:
-          identifier: max-sixty.worktrunk
-          version: ${{ needs.plan.outputs.tag }}
-          installers-regex: '^worktrunk-.*-windows-.*\.zip$'
-          token: ${{ secrets.WINGET_TOKEN }}
-          fork-user: max-sixty
+  # TODO: Enable after initial manual submission to winget-pkgs repository
+  # See: https://github.com/microsoft/winget-pkgs/blob/master/CONTRIBUTING.md
+  # publish-winget:
+  #   needs:
+  #     - plan
+  #     - host
+  #   runs-on: ubuntu-latest
+  #   if: ${{ needs.plan.outputs.publishing == 'true' }}
+  #   steps:
+  #     - name: Publish to winget
+  #       uses: vedantmgoyal9/winget-releaser@v2
+  #       with:
+  #         identifier: max-sixty.worktrunk
+  #         version: ${{ needs.plan.outputs.tag }}
+  #         installers-regex: '^worktrunk-.*-windows-.*\.zip$'
+  #         token: ${{ secrets.WINGET_TOKEN }}
+  #         fork-user: max-sixty
 
   announce:
     needs:
       - plan
       - host
       - publish-cargo
-      - publish-winget
+      # - publish-winget
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') && (needs.publish-winget.result == 'success' || needs.publish-winget.result == 'skipped') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
