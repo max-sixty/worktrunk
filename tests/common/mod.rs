@@ -838,10 +838,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // when capturing stderr from shell commands due to timing/buffering differences
     settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
 
-    // Normalize OS-specific error messages in gutter output
-    // Ubuntu may produce "Broken pipe (os error 32)" instead of the expected error
-    // when capturing stderr from shell commands due to timing/buffering differences
-    settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
+    // Filter out PowerShell lines on Windows - these appear only on Windows
+    // and would cause snapshot mismatches with Unix snapshots
+    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
 
     settings
 }
@@ -871,6 +870,9 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
         "[TEMP_HOME]",
     );
     settings.add_filter(r"\\", "/");
+    // Filter out PowerShell lines on Windows - these appear only on Windows
+    // and would cause snapshot mismatches with Unix snapshots
+    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
     settings
 }
 
