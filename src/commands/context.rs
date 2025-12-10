@@ -17,7 +17,8 @@ use super::command_executor::CommandContext;
 /// broader contexts without forcing config loads or branch resolution.
 pub struct CommandEnv {
     pub repo: Repository,
-    pub branch: String,
+    /// Current branch name, if on a branch (None in detached HEAD state).
+    pub branch: Option<String>,
     pub config: WorktrunkConfig,
     pub worktree_path: PathBuf,
     pub repo_root: PathBuf,
@@ -37,6 +38,29 @@ impl CommandEnv {
 
         Ok(Self {
             repo,
+            branch: Some(branch),
+            config,
+            worktree_path,
+            repo_root,
+        })
+    }
+
+    /// Load the command environment without requiring a branch.
+    ///
+    /// Use this for commands that can operate in detached HEAD state,
+    /// such as running hooks (where `{{ branch }}` expands to "HEAD" if detached).
+    pub fn for_action_branchless() -> anyhow::Result<Self> {
+        let repo = Repository::current();
+        let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
+        // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
+        let branch = repo
+            .current_branch()
+            .context("Failed to determine current branch")?;
+        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let repo_root = repo.worktree_base()?;
+
+        Ok(Self {
+            repo,
             branch,
             config,
             worktree_path,
@@ -49,10 +73,20 @@ impl CommandEnv {
         CommandContext::new(
             &self.repo,
             &self.config,
-            &self.branch,
+            self.branch.as_deref(),
             &self.worktree_path,
             &self.repo_root,
             force,
         )
+    }
+
+    /// Get branch name, returning error if in detached HEAD state.
+    pub fn require_branch(&self, action: &str) -> anyhow::Result<&str> {
+        self.branch.as_deref().ok_or_else(|| {
+            worktrunk::git::GitError::DetachedHead {
+                action: Some(action.into()),
+            }
+            .into()
+        })
     }
 }

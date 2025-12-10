@@ -476,14 +476,13 @@ fn handle_removed_worktree_output(
 
     // Execute pre-remove hooks in the worktree being removed
     // Non-zero exit aborts removal (FailFast strategy)
-    // For detached HEAD, branch expands to empty string in templates
+    // For detached HEAD, {{ branch }} expands to "HEAD" in templates
     if verify && let Ok(config) = WorktrunkConfig::load() {
         let target_repo = Repository::at(worktree_path);
-        let hook_branch = branch_name.unwrap_or("");
         let ctx = CommandContext::new(
             &target_repo,
             &config,
-            hook_branch,
+            branch_name,
             worktree_path,
             main_path,
             false, // force=false for CommandContext (not approval-related)

@@ -84,7 +84,8 @@ pub fn handle_merge(
     let env = CommandEnv::for_action("merge")?;
     let repo = &env.repo;
     let config = &env.config;
-    let current_branch = env.branch.clone();
+    // Merge requires being on a branch (can't merge from detached HEAD)
+    let current_branch = env.require_branch("merge")?.to_string();
 
     // Validate --no-commit: requires clean working tree
     if !commit && repo.is_dirty()? {
@@ -242,7 +243,7 @@ pub fn handle_merge(
         let ctx = CommandContext::new(
             &destination_repo,
             config,
-            &current_branch,
+            Some(&current_branch),
             &destination_path,
             &destination_repo_root,
             force,

@@ -24,11 +24,13 @@ use super::repository_ext::RepositoryCliExt;
 ///
 /// When explicitly invoking hooks, ALL hooks run (both user and project).
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
+///
+/// Works in detached HEAD state - `{{ branch }}` template variable will be "HEAD".
 pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> anyhow::Result<()> {
     use super::command_approval::approve_hooks_filtered;
 
-    // Derive context from current environment
-    let env = CommandEnv::for_action(&format!("run {hook_type} hook"))?;
+    // Derive context from current environment (branch-optional for CI compatibility)
+    let env = CommandEnv::for_action_branchless()?;
     let repo = &env.repo;
     let ctx = env.context(force);
 
@@ -104,11 +106,11 @@ pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> 
             // which already handle user hooks (approval already happened at gate)
             // Use current branch as target (matches approval prompt for wt hook)
             let project_cfg = project_config.unwrap_or_default();
-            run_pre_merge_commands(&project_cfg, &ctx, &env.branch, name_filter)
+            run_pre_merge_commands(&project_cfg, &ctx, ctx.branch_or_head(), name_filter)
         }
         HookType::PostMerge => {
             // Use current branch as target (matches approval prompt for wt hook)
-            execute_post_merge_commands(&ctx, &env.branch, name_filter)
+            execute_post_merge_commands(&ctx, ctx.branch_or_head(), name_filter)
         }
         HookType::PreRemove => execute_pre_remove_commands(&ctx, name_filter),
     }
@@ -259,7 +261,8 @@ pub fn handle_squash(
 
     let env = CommandEnv::for_action("squash")?;
     let repo = &env.repo;
-    let current_branch = env.branch.clone();
+    // Squash requires being on a branch (can't squash in detached HEAD)
+    let current_branch = env.require_branch("squash")?.to_string();
     let ctx = env.context(force);
     let generator = CommitGenerator::new(&env.config.commit_generation);
 
@@ -671,8 +674,9 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
 
     // Build context for template expansion (only used if --expanded)
     // Need to keep CommandEnv alive for the lifetime of ctx
+    // Uses branchless mode - template expansion uses "HEAD" in detached HEAD state
     let env = if expanded {
-        Some(CommandEnv::for_action("show hooks")?)
+        Some(CommandEnv::for_action_branchless()?)
     } else {
         None
     };
@@ -891,7 +895,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
         }
         HookType::PreMerge | HookType::PostMerge => {
             // Pre-merge and post-merge use current branch as target
-            vec![("target", ctx.branch)]
+            vec![("target", ctx.branch_or_head())]
         }
         _ => Vec::new(),
     };
@@ -904,7 +908,7 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown"),
-        ctx.branch,
+        ctx.branch_or_head(),
         &template_ctx
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))

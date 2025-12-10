@@ -1072,7 +1072,7 @@ fn main() {
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        &branch,
+                        Some(&branch),
                         &worktree_path,
                         &repo_root,
                         force,
@@ -1114,7 +1114,7 @@ fn main() {
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        &resolved_branch,
+                        Some(&resolved_branch),
                         path,
                         &repo_root,
                         force,
@@ -1159,11 +1159,12 @@ fn main() {
                     let worktree_path =
                         std::env::current_dir().context("Failed to get current directory")?;
                     let repo_root = repo.worktree_base()?;
-                    let current_branch = repo.current_branch()?.unwrap_or_default();
+                    // Keep as Option so detached HEAD maps to None -> "HEAD" via branch_or_head()
+                    let current_branch = repo.current_branch()?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        &current_branch,
+                        current_branch.as_deref(),
                         &worktree_path,
                         &repo_root,
                         force,

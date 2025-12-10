@@ -228,7 +228,7 @@ impl<'a> HookPipeline<'a> {
                 self.ctx.repo,
                 self.ctx.worktree_path,
                 &prepared.expanded,
-                self.ctx.branch,
+                self.ctx.branch_or_head(),
                 &operation,
                 Some(&prepared.context_json),
             ) {

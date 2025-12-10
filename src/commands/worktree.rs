@@ -489,7 +489,7 @@ pub fn handle_switch(
         let ctx = CommandContext::new(
             &repo,
             config,
-            &resolved_branch,
+            Some(&resolved_branch),
             &worktree_path,
             &repo_root,
             force,

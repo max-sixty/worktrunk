@@ -17,7 +17,8 @@ pub struct PreparedCommand {
 pub struct CommandContext<'a> {
     pub repo: &'a Repository,
     pub config: &'a WorktrunkConfig,
-    pub branch: &'a str,
+    /// Current branch name, if on a branch (None in detached HEAD state).
+    pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
     pub repo_root: &'a Path,
     pub force: bool,
@@ -27,7 +28,7 @@ impl<'a> CommandContext<'a> {
     pub fn new(
         repo: &'a Repository,
         config: &'a WorktrunkConfig,
-        branch: &'a str,
+        branch: Option<&'a str>,
         worktree_path: &'a Path,
         repo_root: &'a Path,
         force: bool,
@@ -40,6 +41,11 @@ impl<'a> CommandContext<'a> {
             repo_root,
             force,
         }
+    }
+
+    /// Get branch name, using "HEAD" as fallback for detached HEAD state.
+    pub fn branch_or_head(&self) -> &str {
+        self.branch.unwrap_or("HEAD")
     }
 }
 
@@ -66,7 +72,7 @@ pub fn build_hook_context(
 
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
-    map.insert("branch".into(), sanitize_branch_name(ctx.branch));
+    map.insert("branch".into(), sanitize_branch_name(ctx.branch_or_head()));
     map.insert("worktree".into(), worktree.into());
     map.insert("worktree_name".into(), worktree_name.into());
     map.insert("repo_root".into(), repo_root.to_string_lossy().into());
@@ -89,7 +95,9 @@ pub fn build_hook_context(
         if let Ok(url) = ctx.repo.run_command(&["remote", "get-url", &remote]) {
             map.insert("remote_url".into(), url.trim().into());
         }
-        if let Ok(Some(upstream)) = ctx.repo.upstream_branch(ctx.branch) {
+        if let Some(branch) = ctx.branch
+            && let Ok(Some(upstream)) = ctx.repo.upstream_branch(branch)
+        {
             map.insert("upstream".into(), upstream);
         }
     }
@@ -132,14 +140,16 @@ fn expand_commands(
     let mut result = Vec::new();
 
     for cmd in commands {
-        let expanded_str = expand_template(&cmd.template, repo_name, ctx.branch, &extras_ref)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to expand command template '{}': {}",
-                    cmd.template,
-                    e
-                )
-            })?;
+        let expanded_str =
+            expand_template(&cmd.template, repo_name, ctx.branch_or_head(), &extras_ref).map_err(
+                |e| {
+                    anyhow::anyhow!(
+                        "Failed to expand command template '{}': {}",
+                        cmd.template,
+                        e
+                    )
+                },
+            )?;
 
         // Build per-command JSON with hook_type and hook_name
         let mut cmd_context = base_context.clone();

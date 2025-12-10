@@ -1173,12 +1173,12 @@ approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Verify {{ branch }} expanded to empty string
+    // Verify {{ branch }} expanded to "HEAD" (fallback for detached HEAD state)
     let content =
         std::fs::read_to_string(&branch_file).expect("Hook should have created the branch file");
     assert_eq!(
         content.trim(),
-        "branch=",
-        "{{ branch }} should expand to empty string for detached HEAD worktrees"
+        "branch=HEAD",
+        "{{ branch }} should expand to 'HEAD' for detached HEAD worktrees"
     );
 }
