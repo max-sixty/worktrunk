@@ -89,6 +89,9 @@ Options:
       --no-verify
           Skip hooks
 
+      --force
+          Skip approval prompts
+
   -h, --help
           Print help (see a summary with '-h')
 

@@ -217,7 +217,14 @@ pub fn handle_merge(
             target_branch: Some(target_branch.clone()),
         };
         // Run hooks during merge removal (pass through verify flag)
-        crate::output::handle_remove_output(&remove_result, Some(&current_branch), true, verify)?;
+        // auto_trust=true: batch approval happened in MergeCommandCollector
+        crate::output::handle_remove_output(
+            &remove_result,
+            Some(&current_branch),
+            true,
+            verify,
+            true,
+        )?;
     } else {
         // Print comprehensive summary (worktree preserved)
         // Priority: main worktree > on target > --no-remove flag
