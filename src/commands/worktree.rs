@@ -638,7 +638,8 @@ impl<'a> CommandContext<'a> {
             &[],
             HookFailureStrategy::Warn,
             None,
-        )
+        )?;
+        Ok(())
     }
 
     /// Spawn post-start commands in parallel as background processes (non-blocking)

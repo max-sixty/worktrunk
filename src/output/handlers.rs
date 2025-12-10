@@ -475,6 +475,7 @@ fn handle_removed_worktree_output(
     // Execute pre-remove hooks in the worktree being removed
     // Non-zero exit aborts removal (FailFast strategy)
     // For detached HEAD, branch expands to empty string in templates
+    // auto_trust=true: User already consented to merge/remove operation, don't prompt again
     if verify && let Ok(config) = WorktrunkConfig::load() {
         let target_repo = Repository::at(worktree_path);
         let hook_branch = branch_name.unwrap_or("");
@@ -484,9 +485,9 @@ fn handle_removed_worktree_output(
             hook_branch,
             worktree_path,
             main_path,
-            false, // force=false, prompt for approval
+            false, // force=false for CommandContext (not approval-related)
         );
-        execute_pre_remove_commands(&ctx, false, None)?;
+        execute_pre_remove_commands(&ctx, true, None)?;
     }
 
     // Handle detached HEAD case (no branch known)

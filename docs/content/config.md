@@ -100,7 +100,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip all hooks (--no-verify)
+verify = false  # Skip hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -141,7 +141,7 @@ setup = "echo 'Setting up worktree...'"
 notify = "notify-send 'Merging {{ branch }}'"
 ```
 
-User hooks run **before** project hooks and don't require approval. Skip all hooks with `--no-verify`.
+User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
 
 See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
@@ -468,7 +468,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,
 # downloading assets too large for git (images, ML models, binaries), long-running tasks
 # The worktree switch completes immediately, these run in parallel
-# Output is logged to .git/wt-logs/{branch}-post-start-{name}.log
+# Output is logged to .git/wt-logs/{branch}-{source}-post-start-{name}.log (source: user/project)
 #
 # Format options:
 # 1. Single string:
