@@ -648,12 +648,13 @@ fn handle_removed_worktree_output(
 
 /// Execute a command with streaming output
 ///
-/// Uses Stdio::inherit to preserve TTY behavior - this ensures commands like cargo detect they're
-/// connected to a terminal and don't buffer their output.
+/// Uses Stdio::inherit for stderr to preserve TTY behavior - this ensures commands like cargo
+/// detect they're connected to a terminal and don't buffer their output.
 ///
-/// If `redirect_stdout_to_stderr` is true, wraps the command in `{ command; } 1>&2` to merge
-/// stdout into stderr. This ensures deterministic output ordering (all output flows through stderr).
-/// Per CLAUDE.md: child process output goes to stderr, worktrunk output goes to stdout.
+/// If `redirect_stdout_to_stderr` is true, redirects child stdout to our stderr at the OS level
+/// (via `Stdio::from(io::stderr())`). This ensures deterministic output ordering (all child output
+/// flows through stderr). Per CLAUDE.md: child process output goes to stderr, worktrunk output
+/// goes to stdout.
 ///
 /// If `stdin_content` is provided, it will be piped to the command's stdin (used for hook context JSON).
 ///
@@ -671,7 +672,7 @@ fn handle_removed_worktree_output(
 /// - If the child was killed by a signal, we return exit code 128 + signal number
 /// - This follows Unix conventions (e.g., exit code 130 for SIGINT)
 ///
-/// The child process receives SIGINT directly from the terminal (via Stdio::inherit).
+/// The child process receives SIGINT directly from the terminal (via Stdio::inherit for stderr).
 pub(crate) fn execute_streaming(
     command: &str,
     working_dir: &std::path::Path,
@@ -684,29 +685,15 @@ pub(crate) fn execute_streaming(
 
     let shell = ShellConfig::get();
 
-    // Determine stdout handling based on shell and redirect flag
-    let (command_to_run, stdout_mode) = if redirect_stdout_to_stderr {
-        if shell.is_posix() {
-            // POSIX: wrap command to redirect stdout to stderr at shell level
-            // Use newline instead of semicolon before closing brace to support
-            // multi-line commands with control structures (if/fi, for/done, etc.)
-            (
-                format!("{{ {}\n}} 1>&2", command),
-                std::process::Stdio::inherit(),
-            )
-        } else {
-            // Non-POSIX (PowerShell): redirect stdout to stderr at OS level
-            // PowerShell doesn't support shell-level stdout-to-stderr redirection (*>&2 fails).
-            // Use Stdio::from(io::stderr()) to redirect child stdout to our stderr.
-            // This keeps stdout clean for directive scripts while hook output goes to stderr.
-            // See: https://github.com/PowerShell/PowerShell/issues/7620
-            (
-                command.to_string(),
-                std::process::Stdio::from(std::io::stderr()),
-            )
-        }
+    // Determine stdout handling based on redirect flag
+    // When redirecting, use Stdio::from(stderr) to redirect child stdout to our stderr at OS level.
+    // This keeps stdout clean for directive scripts while hook output goes to stderr.
+    // Previously used shell-level `{ cmd } 1>&2` wrapping, but OS-level redirect is simpler
+    // and may improve signal handling by removing an extra shell process layer.
+    let stdout_mode = if redirect_stdout_to_stderr {
+        std::process::Stdio::from(std::io::stderr())
     } else {
-        (command.to_string(), std::process::Stdio::inherit())
+        std::process::Stdio::inherit()
     };
 
     let stdin_mode = if stdin_content.is_some() {
@@ -715,7 +702,7 @@ pub(crate) fn execute_streaming(
         std::process::Stdio::null()
     };
 
-    let mut cmd = shell.command(&command_to_run);
+    let mut cmd = shell.command(command);
     let mut child = cmd
         .current_dir(working_dir)
         .stdin(stdin_mode)
