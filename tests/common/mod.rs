@@ -34,12 +34,6 @@ pub mod progressive_output;
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 pub mod shell;
 
-use std::cell::Cell;
-
-thread_local! {
-    static TTY_SIGNALS_BLOCKED: Cell<bool> = const { Cell::new(false) };
-}
-
 /// Block SIGTTIN and SIGTTOU signals to prevent test processes from being
 /// stopped when PTY operations interact with terminal control in background
 /// process groups.
@@ -52,7 +46,14 @@ thread_local! {
 /// Signal masks are per-thread, so this must be called on each thread that
 /// performs PTY operations. It's idempotent within a thread (safe to call
 /// multiple times on the same thread).
+///
+/// On non-Unix platforms, this is a no-op.
+#[cfg(unix)]
 pub fn ignore_tty_signals() {
+    use std::cell::Cell;
+    thread_local! {
+        static TTY_SIGNALS_BLOCKED: Cell<bool> = const { Cell::new(false) };
+    }
     TTY_SIGNALS_BLOCKED.with(|blocked| {
         if blocked.get() {
             return;
@@ -68,6 +69,10 @@ pub fn ignore_tty_signals() {
         blocked.set(true);
     });
 }
+
+/// No-op on non-Unix platforms.
+#[cfg(not(unix))]
+pub fn ignore_tty_signals() {}
 
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
