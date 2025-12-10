@@ -141,6 +141,7 @@ Hooks can use template variables that expand at runtime:
 | `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
 | `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |
 | `{{ remote }}` | origin | Primary remote name |
+| `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
 

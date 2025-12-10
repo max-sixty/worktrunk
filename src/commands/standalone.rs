@@ -47,7 +47,6 @@ pub fn handle_standalone_run_hook(
         HookType::PostCreate => {
             let user_config = user_hook!(post_create);
             let project_config = project_config.as_ref().and_then(|c| c.post_create.as_ref());
-            check_any_hook_configured(user_config, project_config, hook_type)?;
             run_hook_with_filter(
                 &ctx,
                 user_config,
@@ -60,7 +59,6 @@ pub fn handle_standalone_run_hook(
         HookType::PostStart => {
             let user_config = user_hook!(post_start);
             let project_config = project_config.as_ref().and_then(|c| c.post_start.as_ref());
-            check_any_hook_configured(user_config, project_config, hook_type)?;
             run_hook_with_filter(
                 &ctx,
                 user_config,
@@ -72,8 +70,7 @@ pub fn handle_standalone_run_hook(
         }
         HookType::PreCommit => {
             let user_config = user_hook!(pre_commit);
-            let project_config_ref = project_config.as_ref().and_then(|c| c.pre_commit.as_ref());
-            check_any_hook_configured(user_config, project_config_ref, hook_type)?;
+            let project_config = project_config.as_ref().and_then(|c| c.pre_commit.as_ref());
             // Pre-commit hook can optionally use target branch context
             let target_branch = repo.default_branch().ok();
             let extra_vars: Vec<(&str, &str)> = target_branch
@@ -84,7 +81,7 @@ pub fn handle_standalone_run_hook(
             run_hook_with_filter(
                 &ctx,
                 user_config,
-                project_config_ref,
+                project_config,
                 hook_type,
                 &extra_vars,
                 name_filter,
@@ -104,6 +101,7 @@ pub fn handle_standalone_run_hook(
 /// Run user and project hooks with optional name filter (used by standalone hook commands)
 ///
 /// Runs user hooks first, then project hooks.
+/// Returns an error if no hooks are configured for this hook type.
 fn run_hook_with_filter(
     ctx: &super::command_executor::CommandContext,
     user_config: Option<&worktrunk::config::CommandConfig>,
@@ -113,6 +111,14 @@ fn run_hook_with_filter(
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
     use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
+
+    // Check at least one hook is configured
+    if user_config.is_none() && project_config.is_none() {
+        return Err(worktrunk::git::GitError::Other {
+            message: format!("No {hook_type} hook configured (neither user nor project)"),
+        }
+        .into());
+    }
 
     let pipeline = HookPipeline::new(*ctx);
 
@@ -140,21 +146,6 @@ fn run_hook_with_filter(
         )?;
     }
 
-    Ok(())
-}
-
-/// Check if at least one hook (user or project) is configured
-fn check_any_hook_configured<T, U>(
-    user_hook: Option<&T>,
-    project_hook: Option<&U>,
-    hook_type: HookType,
-) -> anyhow::Result<()> {
-    if user_hook.is_none() && project_hook.is_none() {
-        return Err(worktrunk::git::GitError::Other {
-            message: format!("No {hook_type} hook configured (neither user nor project)"),
-        }
-        .into());
-    }
     Ok(())
 }
 
