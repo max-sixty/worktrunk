@@ -124,6 +124,8 @@ $ cargo install worktrunk
 $ wt config shell install
 ```
 
+**Windows name collision:** Windows ships a built-in `wt.exe` (Windows Terminal). Worktrunk installs a `worktree` shim alongside `wt`; use `worktree` to avoid hitting Windows Terminal.
+
 ## Next steps
 
 - Learn the core commands: [wt switch](https://worktrunk.dev/switch/), [wt list](https://worktrunk.dev/list/), [wt merge](https://worktrunk.dev/merge/), [wt remove](https://worktrunk.dev/remove/)
