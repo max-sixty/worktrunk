@@ -115,8 +115,8 @@ use normalize_path::NormalizePath;
 use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::path::canonicalize;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
+use worktrunk::path::canonicalize;
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
