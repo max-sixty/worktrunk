@@ -28,22 +28,13 @@ if (Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) {
         & (Get-Command {{ cmd_prefix }} -CommandType Application) @filteredArgs
     }
 
-    # Tab completion using clap's PowerShell completer
-    Register-ArgumentCompleter -Native -CommandName {{ cmd_prefix }} -ScriptBlock {
-        param($wordToComplete, $commandAst, $cursorPosition)
-
-        $env:COMPLETE = "powershell"
-        try {
-            # Get the command line up to the cursor
-            $commandLine = $commandAst.ToString()
-
-            # Call wt with completion environment
-            & (Get-Command {{ cmd_prefix }} -CommandType Application) $commandLine.Split() 2>$null | ForEach-Object {
-                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
-            }
-        }
-        finally {
-            Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue
-        }
+    # Tab completion - generate clap's completer script and eval it
+    # This registers Register-ArgumentCompleter with proper handling
+    $env:COMPLETE = "powershell"
+    try {
+        & (Get-Command {{ cmd_prefix }} -CommandType Application) | Out-String | Invoke-Expression
+    }
+    finally {
+        Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue
     }
 }
