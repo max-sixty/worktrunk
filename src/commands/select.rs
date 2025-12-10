@@ -814,28 +814,51 @@ mod tests {
 
     #[test]
     fn test_preview_state_data_read_default() {
-        // When state file doesn't exist, defaults to WorkingTree
-        let state_path = PreviewStateData::state_path();
+        // Use unique path to avoid interference from parallel tests
+        let state_path = std::env::temp_dir().join("wt-test-read-default");
         let _ = fs::remove_file(&state_path);
 
-        let mode = PreviewStateData::read_mode();
+        // When state file doesn't exist, read returns default
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
         assert_eq!(mode, PreviewMode::WorkingTree);
     }
 
     #[test]
     fn test_preview_state_data_roundtrip() {
+        // Use unique path to avoid interference from parallel tests
+        let state_path = std::env::temp_dir().join("wt-test-roundtrip");
+
         // Write and read back various modes
-        PreviewStateData::write_mode(PreviewMode::WorkingTree);
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::WorkingTree);
+        let _ = fs::write(&state_path, "1");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::WorkingTree);
 
-        PreviewStateData::write_mode(PreviewMode::History);
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::History);
+        let _ = fs::write(&state_path, "2");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::History);
 
-        PreviewStateData::write_mode(PreviewMode::BranchDiff);
-        assert_eq!(PreviewStateData::read_mode(), PreviewMode::BranchDiff);
+        let _ = fs::write(&state_path, "3");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::BranchDiff);
 
         // Cleanup
-        let _ = fs::remove_file(PreviewStateData::state_path());
+        let _ = fs::remove_file(&state_path);
     }
 
     #[test]

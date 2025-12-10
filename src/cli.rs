@@ -590,7 +590,7 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
 
-        /// Skip all hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -616,7 +616,7 @@ pub enum StepCommand {
         #[arg(short, long)]
         force: bool,
 
-        /// Skip all hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -863,7 +863,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip all hooks (--no-verify)
+verify = false  # Skip hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -890,7 +890,7 @@ approved-commands = [
 ]
 ```
 
-Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
+Manage approvals with `wt config approvals add` and `wt config approvals clear <repo>`.
 
 ### User hooks
 
@@ -904,7 +904,7 @@ setup = "echo 'Setting up worktree...'"
 notify = "notify-send 'Merging {{ branch }}'"
 ```
 
-User hooks run **before** project hooks and don't require approval. Skip all hooks with `--no-verify`.
+User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
 
 See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
@@ -1094,7 +1094,7 @@ build = "npm run build"
 server = "npm run dev"
 ```
 
-Output logged to `.git/wt-logs/{branch}-post-start-{name}.log`.
+Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log` (source is `user` or `project`).
 
 ### pre-commit
 
@@ -1211,7 +1211,7 @@ Project commands require approval on first run:
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
 - Use `--force` to bypass prompts (useful for CI/automation)
-- Use `--no-verify` to skip all hooks
+- Use `--no-verify` to skip hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
@@ -1239,7 +1239,7 @@ User hooks support the same hook types and template variables as project hooks.
 | Approval | Required | Not required |
 | Execution order | After user hooks | Before project hooks |
 
-Skip all hooks with `--no-verify`.
+Skip hooks with `--no-verify`.
 
 **Use cases:**
 - Personal notifications or logging
@@ -1505,24 +1505,24 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | Working tree (1) | `+` | Staged files |
 | Working tree (2) | `!` | Modified files (unstaged) |
 | Working tree (3) | `?` | Untracked files |
-| Branch state | `✘` | Merge conflicts |
+| Worktree | `✘` | Merge conflicts |
 | | `⤴` | Rebase in progress |
 | | `⤵` | Merge in progress |
-| | `✗` | Would conflict if merged to main |
-| | `_` | Same commit as main |
-| | `⊂` | [Content integrated](@/remove.md#branch-cleanup) (`--full` detects additional cases) |
-| Main divergence | `^` | Is the main branch |
-| | `↕` | Diverged from main |
-| | `↑` | Ahead of main |
-| | `↓` | Behind main |
-| Remote divergence | `\|` | In sync with remote |
-| | `⇅` | Diverged from remote |
-| | `⇡` | Ahead of remote |
-| | `⇣` | Behind remote |
-| Worktree state | `/` | Branch without worktree |
+| | `/` | Branch without worktree |
 | | `⚑` | Path doesn't match template |
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
+| Main | `^` | Is the main branch |
+| | `✗` | Would conflict if merged to main |
+| | `_` | Same commit as main |
+| | `⊂` | [Content integrated](@/remove.md#branch-cleanup) (`--full` detects additional cases) |
+| | `↕` | Diverged from main |
+| | `↑` | Ahead of main |
+| | `↓` | Behind main |
+| Remote | `\|` | In sync with remote |
+| | `⇅` | Diverged from remote |
+| | `⇡` | Ahead of remote |
+| | `⇣` | Behind remote |
 
 Rows are dimmed when the branch [content is already in main](@/remove.md#branch-cleanup) (`_` same commit or `⊂` content integrated).
 
@@ -1531,8 +1531,8 @@ Rows are dimmed when the branch [content is already in main](@/remove.md#branch-
 Query structured data with `--format=json`:
 
 ```console
-# Worktrees with conflicts
-wt list --format=json | jq '.[] | select(.branch_state == "conflicts")'
+# Worktrees with merge conflicts
+wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
 # Uncommitted changes
 wt list --format=json | jq '.[] | select(.working_tree.modified)'
@@ -1544,7 +1544,7 @@ wt list --format=json | jq '.[] | select(.is_current)'
 wt list --format=json | jq '.[] | select(.main.ahead > 0)'
 
 # Integrated branches (ready to clean up)
-wt list --format=json | jq '.[] | select(.branch_state == "integrated" or .branch_state == "same_commit")'
+wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "same_commit")'
 ```
 
 **Fields:**
@@ -1556,8 +1556,9 @@ wt list --format=json | jq '.[] | select(.branch_state == "integrated" or .branc
 | `kind` | `"worktree"` or `"branch"` |
 | `commit` | `{sha, short_sha, message, timestamp}` |
 | `working_tree` | `{staged, modified, untracked, renamed, deleted, diff, diff_vs_main}` |
-| `branch_state` | `"conflicts"` `"rebase"` `"merge"` `"would_conflict"` `"same_commit"` `"integrated"` |
-| `integration_reason` | `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` (when `branch_state == "integrated"`) |
+| `main_state` | `"is_main"` `"would_conflict"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"` |
+| `integration_reason` | `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` (when `main_state == "integrated"`) |
+| `operation_state` | `"conflicts"` `"rebase"` `"merge"` (absent when no operation in progress) |
 | `main` | `{ahead, behind, diff}` (absent when `is_main`) |
 | `remote` | `{name, branch, ahead, behind}` (absent when no tracking branch) |
 | `worktree` | `{state, reason, detached, bare}` |
@@ -1699,7 +1700,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
         #[arg(short = 'f', long)]
         force: bool,
 
-        /// Skip all hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
     },
@@ -1779,7 +1780,7 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
         #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
         background: bool,
 
-        /// Skip all hooks
+        /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
@@ -1882,7 +1883,7 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
         #[arg(long, overrides_with = "no_verify", hide = true)]
         verify: bool,
 
-        /// Skip all hooks
+        /// Skip hooks
         #[arg(long = "no-verify", overrides_with = "verify")]
         no_verify: bool,
 

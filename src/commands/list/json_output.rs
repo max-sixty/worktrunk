@@ -9,8 +9,9 @@
 //!
 //! Fields are organized by concept, matching the status display subcolumns:
 //! - `working_tree`: staged/modified/untracked changes
-//! - `branch_state`: conflicts, rebase, merge, would_conflict, same_commit, integrated
-//! - `main`: relationship to main branch (ahead/behind/diff)
+//! - `main_state`: relationship to main (would_conflict, same_commit, integrated, diverged, ahead, behind)
+//! - `operation_state`: git operations in progress (conflicts, rebase, merge)
+//! - `main`: relationship to main branch (ahead/behind/diff counts)
 //! - `remote`: relationship to tracking branch
 //! - `worktree`: worktree-specific state (locked, prunable, etc.)
 
@@ -42,14 +43,19 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree: Option<JsonWorkingTree>,
 
-    /// Branch state: conflicts, rebase, merge, would_conflict, same_commit, integrated
+    /// Main branch relationship: would_conflict, same_commit, integrated, diverged, ahead, behind
+    /// (null for main branch itself)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub branch_state: Option<&'static str>,
+    pub main_state: Option<&'static str>,
 
-    /// Why branch is integrated (only present when branch_state == "integrated")
+    /// Why branch is integrated (only present when main_state == "integrated")
     /// Values: ancestor, trees_match, no_added_changes, merge_adds_nothing
     #[serde(skip_serializing_if = "Option::is_none")]
     pub integration_reason: Option<&'static str>,
+
+    /// Git operation in progress: conflicts, rebase, merge (null when none)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_state: Option<&'static str>,
 
     /// Relationship to main branch (absent when is_main == true)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,19 +269,22 @@ impl JsonItem {
             })
         });
 
-        // Branch state and integration reason - now directly from BranchState
-        let (branch_state, integration_reason) = item
+        // Main state and integration reason
+        let (main_state, integration_reason) = item
             .status_symbols
             .as_ref()
             .map(|symbols| {
-                let state = symbols.branch_state.as_json_str();
-                let reason = symbols
-                    .branch_state
-                    .integration_reason()
-                    .map(|r| r.as_json_str());
+                let state = symbols.main_state.as_json_str();
+                let reason = symbols.main_state.integration_reason().map(|r| r.into());
                 (state, reason)
             })
             .unwrap_or((None, None));
+
+        // Operation state (conflicts, rebase, merge)
+        let operation_state = item
+            .status_symbols
+            .as_ref()
+            .and_then(|symbols| symbols.operation_state.as_json_str());
 
         // Main relationship (absent when is_main)
         let main = if is_main {
@@ -329,8 +338,9 @@ impl JsonItem {
             kind: kind_str,
             commit,
             working_tree,
-            branch_state,
+            main_state,
             integration_reason,
+            operation_state,
             main,
             remote,
             worktree,
@@ -424,16 +434,10 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
         result.push_str(&wt_symbols);
     }
 
-    // Branch state
-    let branch_state = symbols.branch_state.to_string();
-    if !branch_state.is_empty() {
-        result.push_str(&branch_state);
-    }
-
-    // Main divergence
-    let main_div = symbols.main_divergence.symbol(DivergenceContext::Main);
-    if !main_div.is_empty() {
-        result.push_str(main_div);
+    // Main state (merged: ^✗_⊂↕↑↓)
+    let main_state = symbols.main_state.to_string();
+    if !main_state.is_empty() {
+        result.push_str(&main_state);
     }
 
     // Upstream divergence
@@ -444,10 +448,15 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
         result.push_str(upstream_div);
     }
 
-    // Worktree state
-    let wt_state = symbols.worktree_state.to_string();
-    if !wt_state.is_empty() {
-        result.push_str(&wt_state);
+    // Worktree state (operations ✘⤴⤵ take priority over location /⚑⊟⊞)
+    let op_state = symbols.operation_state.to_string();
+    if !op_state.is_empty() {
+        result.push_str(&op_state);
+    } else {
+        let wt_state = symbols.worktree_state.to_string();
+        if !wt_state.is_empty() {
+            result.push_str(&wt_state);
+        }
     }
 
     // User marker

@@ -22,10 +22,10 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-  [1mBranch[0m       [1mStatus[0m         [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
-@ [1mmain[0m             [2m^[22m                          [1m./repo[0m                       [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
-+ feature-api      [2m↑[22m  🤖              [32m↑1[0m      ./repo.feature-api           [2m9606cd0f[0m  [2m1d[0m    [2mAdd REST API endpoints[0m
-+ review-ui      [36m?[39m [2m↑[22m  💬              [32m↑1[0m      ./repo.review-ui             [2mafd3b353[0m  [2m1d[0m    [2mAdd dashboard component[0m
-+ [2mwip-docs[0m       [36m?[39m[2m_[22m                           [2m./repo.wip-docs[0m              [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
+  [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage[0m
+@ [1mmain[0m             [2m^[22m                         [1m./repo[0m                       [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
++ feature-api      [2m↑[22m 🤖              [32m↑1[0m      ./repo.feature-api           [2m9606cd0f[0m  [2m1d[0m    [2mAdd REST API endpoints[0m
++ review-ui      [36m?[39m [2m↑[22m 💬              [32m↑1[0m      ./repo.review-ui             [2mafd3b353[0m  [2m1d[0m    [2mAdd dashboard component[0m
++ [2mwip-docs[0m       [36m?[39m [2m_[22m                         [2m./repo.wip-docs[0m              [2mb834638e[0m  [2m1d[0m    [2mInitial commit[0m
 
 ⚪ [2mShowing 4 worktrees, 2 ahead[0m

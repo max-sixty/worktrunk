@@ -87,7 +87,7 @@ Options:
           Run removal in foreground
 
       --no-verify
-          Skip all hooks
+          Skip hooks
 
       --force
           Skip approval prompts

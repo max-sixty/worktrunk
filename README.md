@@ -85,10 +85,10 @@ See all worktrees at a glance:
 
 ```console
 $ wt list
-  Branch       Status         HEAD±    main↕  Path                Remote⇅  Commit    Age   Message
-@ feature-api  +   ↕⇡      +54   -5   ↑4  ↓1  ./repo.feature-api   ⇡3      28d38c20  30m   Add API tests
-^ main             ^⇅                         ./repo               ⇡1  ⇣1  2e6b7a8f  4d    Merge fix-auth:…
-+ fix-auth         ↕|                 ↑2  ↓1  ./repo.fix-auth        |     1d697d5b  5h    Add secure token…
+  Branch       Status        HEAD±    main↕  Path                Remote⇅  Commit    Age   Message
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  ./repo.feature-api   ⇡3      28d38c20  30m   Add API tests
+^ main             ^⇅                        ./repo               ⇡1  ⇣1  2e6b7a8f  4d    Merge fix-auth:…
++ fix-auth         ↕|                ↑2  ↓1  ./repo.fix-auth        |     1d697d5b  5h    Add secure token…
 
 ⚪ Showing 3 worktrees, 1 with changes, 2 ahead
 ```

@@ -55,12 +55,14 @@ pub use repository::{Repository, ResolvedWorktree, set_base_path};
 /// 3. [`NoAddedChanges`](Self::NoAddedChanges) - three-dot diff (~50-100ms)
 /// 4. [`TreesMatch`](Self::TreesMatch) - tree SHA comparison (~100-300ms)
 /// 5. [`MergeAddsNothing`](Self::MergeAddsNothing) - merge simulation (~500ms-2s)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum IntegrationReason {
     /// Branch HEAD is literally the same commit as target.
     ///
-    /// Symbol in `wt list`: `_`
+    /// Used by `wt remove` to determine if branch is safely deletable.
+    /// In `wt list`, same-commit state is shown via `MainState::SameCommit` (symbol `_`).
     SameCommit,
 
     /// Branch HEAD is an ancestor of target (target has moved past this branch).
@@ -96,17 +98,6 @@ impl IntegrationReason {
             Self::NoAddedChanges => "no file changes",
             Self::TreesMatch => "files match",
             Self::MergeAddsNothing => "all changes in",
-        }
-    }
-
-    /// Returns the JSON string representation.
-    pub fn as_json_str(self) -> &'static str {
-        match self {
-            Self::SameCommit => "same_commit",
-            Self::Ancestor => "ancestor",
-            Self::NoAddedChanges => "no_added_changes",
-            Self::TreesMatch => "trees_match",
-            Self::MergeAddsNothing => "merge_adds_nothing",
         }
     }
 }

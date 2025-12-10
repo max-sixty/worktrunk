@@ -64,7 +64,7 @@ pub struct ProjectConfig {
 
     /// Commands to execute after successful merge in the main worktree (blocking)
     /// Supports string (single command) or table (named, sequential)
-    /// Runs after push succeeds but before cleanup
+    /// Runs after push and cleanup complete
     ///
     /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ worktree_name }}`, `{{ repo_root }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ upstream }}`, `{{ target }}`
     #[serde(default, rename = "post-merge")]

@@ -56,7 +56,7 @@ build = "npm run build"
 server = "npm run dev"
 ```
 
-Output logged to `.git/wt-logs/{branch}-post-start-{name}.log`.
+Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log` (source is `user` or `project`).
 
 ### pre-commit
 
@@ -173,7 +173,7 @@ Project commands require approval on first run:
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
 - Use `--force` to bypass prompts (useful for CI/automation)
-- Use `--no-verify` to skip all hooks
+- Use `--no-verify` to skip hooks
 
 Manage approvals with `wt config approvals add` and `wt config approvals clear`.
 
@@ -201,7 +201,7 @@ User hooks support the same hook types and template variables as project hooks.
 | Approval | Required | Not required |
 | Execution order | After user hooks | Before project hooks |
 
-Skip all hooks with `--no-verify`.
+Skip hooks with `--no-verify`.
 
 **Use cases:**
 - Personal notifications or logging

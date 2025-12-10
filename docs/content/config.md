@@ -100,7 +100,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip all hooks (--no-verify)
+verify = false  # Skip hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -127,7 +127,7 @@ approved-commands = [
 ]
 ```
 
-Manage approvals with `wt config approvals list` and `wt config approvals clear <repo>`.
+Manage approvals with `wt config approvals add` and `wt config approvals clear <repo>`.
 
 ### User hooks
 
@@ -141,7 +141,7 @@ setup = "echo 'Setting up worktree...'"
 notify = "notify-send 'Merging {{ branch }}'"
 ```
 
-User hooks run **before** project hooks and don't require approval. Skip all hooks with `--no-verify`.
+User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
 
 See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
@@ -508,7 +508,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 
 # Post-Merge Hook
 # Runs SEQUENTIALLY in the main worktree after successful merge (blocking)
-# Runs after push succeeds but before cleanup
+# Runs after push and cleanup complete
 # Use for: updating production builds, notifications, cleanup
 #
 # Single command:
