@@ -1,6 +1,6 @@
 use crate::common::{
     TestRepo, make_snapshot_cmd, resolve_git_common_dir, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content, wait_for_file_count, wait_for_file_lines,
+    wait_for_file_content, wait_for_file_count, wait_for_file_lines, wait_for_valid_json,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -581,21 +581,10 @@ approved-commands = ["cat > context.json"]
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Find the worktree and wait for the background command to write the file
+    // Find the worktree and wait for valid JSON (polls until cat finishes writing)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.bg-json");
     let json_file = worktree_path.join("context.json");
-
-    // Wait for file to exist and have content (cat creates empty file immediately)
-    wait_for_file(&json_file, Duration::from_secs(5));
-
-    // Give time for printf to pipe through
-    thread::sleep(Duration::from_millis(500));
-
-    let contents = fs::read_to_string(&json_file).unwrap();
-
-    // Parse and verify the JSON
-    let json: serde_json::Value = serde_json::from_str(&contents)
-        .unwrap_or_else(|e| panic!("Should be valid JSON: {}\nContents: {}", e, contents));
+    let json = wait_for_valid_json(&json_file, Duration::from_secs(5));
 
     assert_eq!(
         json["branch"].as_str(),

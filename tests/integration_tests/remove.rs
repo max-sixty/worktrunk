@@ -1008,8 +1008,8 @@ approved-commands = ["echo 'hook ran' > {}"]
         None,
     );
 
-    // Wait a bit for any potential hook execution
-    thread::sleep(Duration::from_millis(100));
+    // Wait for any potential hook execution (absence check - can't poll, use 500ms per guidelines)
+    thread::sleep(Duration::from_millis(500));
 
     // Marker file should NOT exist - --no-verify skips the hook
     assert!(

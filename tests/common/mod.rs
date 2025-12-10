@@ -1124,6 +1124,30 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize, timeout: std::tim
     );
 }
 
+/// Wait for a file to contain valid JSON, polling with exponential backoff.
+/// Use when a background process writes JSON that may be partially written.
+pub fn wait_for_valid_json(path: &Path, timeout: std::time::Duration) -> serde_json::Value {
+    let start = std::time::Instant::now();
+    let mut attempt = 0;
+    let mut last_error = String::new();
+    while start.elapsed() < timeout {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            match serde_json::from_str(&content) {
+                Ok(json) => return json,
+                Err(e) => last_error = format!("{e} (content: {content})"),
+            }
+        }
+        exponential_sleep(attempt);
+        attempt += 1;
+    }
+    panic!(
+        "File did not contain valid JSON within {:?}: {}\nLast error: {}",
+        timeout,
+        path.display(),
+        last_error
+    );
+}
+
 /// Convert Unix timestamp to ISO 8601 format for consistent git date handling
 ///
 /// Git interprets `@timestamp` format inconsistently across versions and platforms.

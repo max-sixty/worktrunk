@@ -6,7 +6,9 @@
 //! - Don't require approval
 //! - Skipped together with project hooks via --no-verify
 
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings, wait_for_file};
+use crate::common::{
+    TestRepo, make_snapshot_cmd, setup_snapshot_settings, wait_for_file, wait_for_file_content,
+};
 use insta_cmd::assert_cmd_snapshot;
 use std::fs;
 use std::process::Command;
@@ -212,10 +214,10 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 
     snapshot_switch("user_post_start_executes", &repo, &["--create", "feature"]);
 
-    // Wait for background hook to complete
+    // Wait for background hook to complete and write content
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let marker_file = worktree_path.join("user_bg_marker.txt");
-    wait_for_file(&marker_file, Duration::from_secs(5));
+    wait_for_file_content(&marker_file, Duration::from_secs(5));
 
     let contents = fs::read_to_string(&marker_file).unwrap();
     assert!(

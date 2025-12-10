@@ -198,9 +198,16 @@ fn exec_in_pty_with_input_sequence(
     // Drop writer to signal EOF on stdin
     drop(writer);
 
-    // Give the process a moment to exit gracefully, then kill if needed
-    std::thread::sleep(Duration::from_millis(100));
-    let _ = child.kill();
+    // Poll for process exit (fast polling, long timeout for CI)
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(5);
+    while start.elapsed() < timeout {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill(); // Kill if still running after timeout
 
     // Drain any remaining output
     drain_output(&rx, &mut parser, &mut raw_output);
