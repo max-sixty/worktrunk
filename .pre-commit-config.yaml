@@ -25,7 +25,7 @@ repos:
     rev: v1.0.1
     hooks:
       - id: clippy
-        args: ["--all-targets", "--", "-D", "warnings"]
+        args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
   - repo: https://github.com/lycheeverse/lychee
     rev: lychee-v0.22.0
     hooks:

@@ -61,42 +61,11 @@ jobs:
         echo "Using Git Bash for Windows tests"
       shell: pwsh
 
-    - name: 🏭 Compile
-      uses: clechasseur/rs-cargo@v4
-      with:
-        command: test
-        args: --no-run --locked --features shell-integration-tests
+    - name: 🔍 Pre-commit hooks
+      uses: pre-commit/action@v3.0.1
 
-    - name: 📋 Test
-      uses: clechasseur/rs-cargo@v4
-      timeout-minutes: 10
-      with:
-        command: insta
-        args: test --test-runner=nextest --features shell-integration-tests
-
-    - name: 📖 Doctest
-      uses: clechasseur/rs-cargo@v4
-      with:
-        command: test
-        args: --doc --locked
-
-    - name: 📎 Clippy
-      uses: clechasseur/rs-cargo@v4
-      with:
-        command: clippy
-        args: --all-targets --all-features -- -D warnings
-
-    - name: ⌨️ Fmt
-      uses: clechasseur/rs-cargo@v4
-      with:
-        command: fmt
-        args: --all --check
-
-    - name: 🗒️ Doc
-      uses: clechasseur/rs-cargo@v4
-      with:
-        command: doc
-        args: --no-deps
+    - name: 🧪 Pre-merge hooks
+      run: cargo run --locked -- hook pre-merge --force
 
   check-links:
     runs-on: ubuntu-latest

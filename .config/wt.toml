@@ -42,4 +42,5 @@ pre-commit = "pre-commit run --all-files"
 # a TOML table section, and everything after it would be inside that section
 [pre-merge]
 insta = "RUSTFLAGS='-D warnings' NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never cargo insta test --dnd --check --features shell-integration-tests"
+doctest = "cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"
