@@ -1324,7 +1324,7 @@ approved-commands = ["echo 'test command executed'"]
 
     #[test]
     fn test_readme_example_simple_switch() {
-        let mut repo = TestRepo::new();
+        let repo = TestRepo::new();
         repo.commit("Initial commit");
 
         // Create worktree through shell wrapper (suppresses hint)
@@ -1340,7 +1340,7 @@ approved-commands = ["echo 'test command executed'"]
 
     #[test]
     fn test_readme_example_switch_back() {
-        let mut repo = TestRepo::new();
+        let repo = TestRepo::new();
         repo.commit("Initial commit");
 
         // Create worktrees (fix-auth is where we are after step 2, feature-api exists from earlier)
@@ -1363,7 +1363,7 @@ approved-commands = ["echo 'test command executed'"]
 
     #[test]
     fn test_readme_example_remove() {
-        let mut repo = TestRepo::new();
+        let repo = TestRepo::new();
         repo.commit("Initial commit");
 
         // Create worktrees
@@ -2463,7 +2463,7 @@ command = "{}"
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
     #[test]
     fn test_readme_example_hooks_post_create() {
-        let mut repo = TestRepo::new();
+        let repo = TestRepo::new();
         repo.commit("Initial commit");
 
         // Create project config with post-create and post-start hooks
