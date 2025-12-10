@@ -20,23 +20,23 @@ exit_code: 0
 ----- stderr -----
 wt config show - Show configuration files & locations
 
-Usage: [1m[36mwt config show[0m [36m[OPTIONS][0m
+Usage: [1m[36mwt config show[0m [36m[OPTIONS]
 
-[1m[32mOptions:[0m
-      [1m[36m--doctor[0m
+[1m[32mOptions:
+      [1m[36m--doctor
           Test commit generation pipeline
 
-  [1m[36m-h[0m, [1m[36m--help[0m
+  [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>[0m
+      [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m
+  [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
 Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
@@ -44,11 +44,11 @@ and project config ([2m.config/wt.toml[0m).
 
 If a config file doesn't exist, shows defaults that would be used.
 
-[32mDoctor mode[0m
+[32mDoctor mode
 
 Use [2m--doctor[0m to test commit generation with a synthetic diff:
 
-  [2mwt config show --doctor[0m
+  [2mwt config show --doctor
 
 This verifies that the LLM command is configured correctly and can generate
 commit messages.

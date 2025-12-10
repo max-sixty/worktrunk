@@ -20,52 +20,52 @@ exit_code: 0
 ----- stderr -----
 wt hook approvals - Manage command approvals
 
-Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>
 
-[1m[32mCommands:[0m
+[1m[32mCommands:
   [1m[36madd[0m    Store approvals in config
   [1m[36mclear[0m  Clear approved commands from config
 
-[1m[32mOptions:[0m
-  [1m[36m-h[0m, [1m[36m--help[0m
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>[0m
+      [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m
+  [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-[32mHow Approvals Work[0m
+[32mHow Approvals Work
 
 Commands from project hooks ([2m.config/wt.toml[0m) and LLM configuration require
 approval on first run. This prevents untrusted projects from running arbitrary
 commands.
 
-[1mApproval flow:[0m
+[1mApproval flow:
 1. Command is shown with expanded template variables
 2. User approves or denies
-3. Approved commands are saved to user config under [2m[projects."project-id"][0m
+3. Approved commands are saved to user config under [2m[projects."project-id"]
 
-[1mWhen re-approval is required:[0m
+[1mWhen re-approval is required:
 - Command template changes (not just variable values)
 - Project ID changes (repository moves)
 
-[1mBypassing prompts:[0m
+[1mBypassing prompts:
 - [2m--force[0m flag on individual commands (e.g., [2mwt merge --force[0m)
 - Useful for CI/automation where prompts aren't possible
 
-[32mExamples[0m
+[32mExamples
 
 Pre-approve all commands for current project:
-  [2mwt hook approvals add[0m
+  [2mwt hook approvals add
 
 Clear approvals for current project:
-  [2mwt hook approvals clear[0m
+  [2mwt hook approvals clear
 
 Clear global approvals:
-  [2mwt hook approvals clear --global[0m
+  [2mwt hook approvals clear --global

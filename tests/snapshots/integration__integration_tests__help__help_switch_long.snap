@@ -19,52 +19,52 @@ exit_code: 0
 ----- stderr -----
 wt switch - Switch to a worktree
 
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
 
-[1m[32mArguments:[0m
-  [36m<BRANCH>[0m
-          Branch or worktree name[0m
-          [0m
-          Shortcuts: '^' (main), '-' (previous), '@' (current)[0m
+[1m[32mArguments:
+  [36m<BRANCH>
+          Branch or worktree name
+          
+          Shortcuts: '^' (main), '-' (previous), '@' (current)
 
-[1m[32mOptions:[0m
-  [1m[36m-c[0m, [1m[36m--create[0m
+[1m[32mOptions:
+  [1m[36m-c[0m, [1m[36m--create
           Create a new branch
 
-  [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
-          Base branch[0m
-          [0m
-          Defaults to default branch.[0m
+  [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>
+          Base branch
+          
+          Defaults to default branch.
 
-  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
-          Command to run after switch[0m
-          [0m
+  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>
+          Command to run after switch
+          
           Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other
-          interactive tools.[0m
+          interactive tools.
+          
+          Especially useful in shell aliases to create a worktree and start working in one command:
+          
+            [1m[1malias wsc='wt switch --create --execute=claude'
           [0m
-          Especially useful in shell aliases to create a worktree and start working in one command:[0m
-          [0m
-            [1m[1malias wsc='wt switch --create --execute=claude'[0m
-          [0m[0m
-          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.[0m
+          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.
 
-  [1m[36m-f[0m, [1m[36m--force[0m
+  [1m[36m-f[0m, [1m[36m--force
           Skip approval prompts
 
-      [1m[36m--no-verify[0m
+      [1m[36m--no-verify
           Skip hooks
 
-  [1m[36m-h[0m, [1m[36m--help[0m
+  [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>[0m
+      [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m
+  [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
 Two distinct operations:
@@ -72,16 +72,16 @@ Two distinct operations:
 - [1mSwitch to existing worktree[0m — Changes directory, nothing else
 - [1mCreate new worktree[0m ([2m--create[0m) — Creates branch and worktree, runs hooks
 
-[32mExamples[0m
+[32mExamples
 
-  [2mwt switch feature-auth           # Switch to existing worktree[0m
-  [2mwt switch -                      # Previous worktree (like cd -)[0m
-  [2mwt switch --create new-feature   # Create branch and worktree[0m
-  [2mwt switch --create hotfix --base production[0m
+  [2mwt switch feature-auth           # Switch to existing worktree
+  [2mwt switch -                      # Previous worktree (like cd -)
+  [2mwt switch --create new-feature   # Create branch and worktree
+  [2mwt switch --create hotfix --base production
 
 For interactive selection, use `wt select`.
 
-[32mCreating worktrees[0m
+[32mCreating worktrees
 
 With [2m--create[0m, worktrunk:
 
@@ -91,12 +91,12 @@ With [2m--create[0m, worktrunk:
 4. Switches to new directory
 5. Spawns post-start hooks (background)
 
-  [2mwt switch --create api-refactor[0m
-  [2mwt switch --create fix --base release-2.0[0m
-  [2mwt switch --create docs --execute "code ."[0m
-  [2mwt switch --create temp --no-verify      # Skip hooks[0m
+  [2mwt switch --create api-refactor
+  [2mwt switch --create fix --base release-2.0
+  [2mwt switch --create docs --execute "code ."
+  [2mwt switch --create temp --no-verify      # Skip hooks
 
-[32mShortcuts[0m
+[32mShortcuts
 
   Shortcut  Meaning                      
   ────────  ─────────────────────────────
@@ -104,11 +104,11 @@ With [2m--create[0m, worktrunk:
   [2m@[0m         Current branch/worktree      
   [2m-[0m         Previous worktree (like [2mcd -[0m)
 
-  [2mwt switch -                      # Back to previous[0m
-  [2mwt switch ^                      # Main worktree[0m
-  [2mwt switch --create fix --base=@  # Branch from current HEAD[0m
+  [2mwt switch -                      # Back to previous
+  [2mwt switch ^                      # Main worktree
+  [2mwt switch --create fix --base=@  # Branch from current HEAD
 
-[32mSee also[0m
+[32mSee also
 
 - wt select — Interactive worktree selection
 - wt list — View all worktrees

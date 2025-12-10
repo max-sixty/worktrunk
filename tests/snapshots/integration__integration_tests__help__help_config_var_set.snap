@@ -21,42 +21,42 @@ exit_code: 0
 ----- stderr -----
 wt config var set - Set a variable value
 
-Usage: [1m[36mwt config var set[0m [36m[OPTIONS][0m [36m<KEY>[0m [36m<VALUE>[0m
+Usage: [1m[36mwt config var set[0m [36m[OPTIONS][0m [36m<KEY>[0m [36m<VALUE>
 
-[1m[32mArguments:[0m
-  [36m<KEY>[0m
+[1m[32mArguments:
+  [36m<KEY>
           Variable: 'marker'
           
           [possible values: marker]
 
-  [36m<VALUE>[0m
+  [36m<VALUE>
           Value to set
 
-[1m[32mOptions:[0m
-      [1m[36m--branch[0m[36m [0m[36m<BRANCH>[0m
+[1m[32mOptions:
+      [1m[36m--branch[0m[36m [0m[36m<BRANCH>
           Target branch (defaults to current)
 
-  [1m[36m-h[0m, [1m[36m--help[0m
+  [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>[0m
+      [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m
+  [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
 Variables:
 
 - [1mmarker[0m: Custom status marker displayed in [2mwt list[0m output
 
-[32mExamples[0m
+[32mExamples
 
 Set marker for current branch:
-  [2mwt config var set marker "🚧 WIP"[0m
+  [2mwt config var set marker "🚧 WIP"
 
 Set marker for a specific branch:
-  [2mwt config var set marker "✅ ready" --branch=feature[0m
+  [2mwt config var set marker "✅ ready" --branch=feature
