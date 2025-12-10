@@ -4,6 +4,7 @@
 
 // column_alignment merged into spacing_edge_cases
 pub mod approval_pty;
+
 pub mod approval_save;
 pub mod approval_ui;
 pub mod approvals;
@@ -21,6 +22,7 @@ pub mod default_branch;
 pub mod directives;
 pub mod e2e_shell;
 pub mod e2e_shell_post_start;
+pub mod git_error_display;
 pub mod help;
 pub mod hook_show;
 pub mod init;
@@ -30,6 +32,7 @@ pub mod list_column_alignment;
 pub mod list_config;
 pub mod list_progressive;
 pub mod merge;
+pub mod output_system_guard;
 pub mod post_start_commands;
 pub mod push;
 pub mod readme_sync;

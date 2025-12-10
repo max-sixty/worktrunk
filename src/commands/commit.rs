@@ -3,7 +3,9 @@ use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
-use worktrunk::styling::{format_with_gutter, hint_message, progress_message, success_message};
+use worktrunk::styling::{
+    format_with_gutter, hint_message, info_message, progress_message, success_message,
+};
 
 use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
@@ -152,7 +154,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if self.no_verify && any_hooks_exist {
-            crate::output::print(hint_message(cformat!(
+            crate::output::print(info_message(cformat!(
                 "Skipping pre-commit hooks (<bright-black>--no-verify</>)"
             )))?;
         }

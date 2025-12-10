@@ -140,4 +140,11 @@ $ wt config shell install
 
 <!-- END AUTO-GENERATED -->
 
+## Contributing
+
+- ⭐ Star the repo
+- 🐛 [Open an issue](https://github.com/max-sixty/worktrunk/issues) with feedback or feature requests
+- 💡 What worktree friction does Worktrunk not yet solve? [Tell us](https://github.com/max-sixty/worktrunk/issues)
+- 📣 Share: [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev) · [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management) · [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)
+
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚

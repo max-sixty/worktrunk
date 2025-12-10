@@ -27,7 +27,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-💡 [2mSkipping pre-commit hooks ([90m--no-verify[39m)[22m
+⚪ Skipping pre-commit hooks ([90m--no-verify[39m)
 🔄 [36mSquashing 2 commits & tracked changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
 💡 [2mBackup created @ 31e06e8[22m
 🔄 [36mGenerating squash commit message...[39m

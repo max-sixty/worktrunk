@@ -668,20 +668,35 @@ footer {
     padding: 1.5rem 0;
     border-top: 1px solid var(--wt-color-border-subtle);
     display: flex;
-    flex-direction: row;
     justify-content: center;
-    gap: 2rem;
-    flex-wrap: wrap;
     background-color: var(--wt-color-bg-soft);
+}
+
+.footer-social {
+    display: flex;
+    gap: 0.75rem;
 
     a {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
         color: var(--wt-color-text-muted);
-        font-size: 0.9rem;
-        transition: all 150ms;
+        background: var(--wt-color-bg);
+        border: 1px solid var(--wt-color-border-subtle);
+        transition: color 150ms, border-color 150ms, background 150ms;
 
-        &:hover {
+        &:hover,
+        &:focus-visible {
             color: var(--wt-color-text);
-            text-decoration: underline;
+            border-color: var(--wt-color-accent);
+            background: var(--wt-color-accent-soft);
+        }
+
+        svg {
+            flex-shrink: 0;
         }
     }
 }
@@ -1188,25 +1203,6 @@ input:focus-visible {
     color: var(--wt-color-text);
 }
 
-// Footer link underlines
-footer a {
-    position: relative;
-
-    &::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        bottom: -1px;
-        width: 0;
-        height: 1px;
-        background: var(--wt-color-text-muted);
-        transition: width 200ms ease-out;
-    }
-
-    &:hover::after {
-        width: 100%;
-    }
-}
 
 // Nav item hover underlines
 header nav .nav-item {

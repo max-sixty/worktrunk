@@ -45,13 +45,13 @@ Avoid mixing: "main/default branch worktree" is confusing. Use "main worktree" f
 ### Running Tests
 
 ```bash
-# Unit tests (fast, ~210 tests)
+# Unit tests (fast)
 cargo test --lib --bins
 
-# Integration tests without shell tests (~370 tests, no external dependencies)
+# Integration tests without shell tests (no external dependencies)
 cargo test --test integration
 
-# Integration tests WITH shell tests (~420 tests, requires bash/zsh/fish)
+# Integration tests WITH shell tests (requires bash/zsh/fish)
 cargo test --test integration --features shell-integration-tests
 
 # Run all tests via pre-merge hook (recommended before committing)
@@ -195,9 +195,17 @@ Seven canonical message patterns with their emojis:
 2. **Success**: ✅ (successful completion)
 3. **Errors**: ❌ (failures, invalid states)
 4. **Warnings**: 🟡 (non-blocking issues)
-5. **Hints**: 💡 (actionable suggestions, tips for user)
-6. **Info**: ⚪ (neutral status, system feedback, metadata)
+5. **Hints**: 💡 (actionable — user could/should do something)
+6. **Info**: ⚪ (status — acknowledging state or user choices, no action needed)
 7. **Prompts**: ❓ (questions requiring user input)
+
+**Hint vs Info decision:** If the message suggests the user take an action, it's a hint. If it's acknowledging what happened (including flag effects), it's info.
+
+| Hint 💡 | Info ⚪ |
+|---------|---------|
+| "Run `wt merge` to continue" | "Already up to date with main" |
+| "Use `--force` to override" | "Skipping hooks (--no-verify)" |
+| "Branch can be deleted" | "Worktree preserved (main worktree)" |
 
 **Message formatting functions** add emoji AND semantic color. Callers provide content with optional inner styling (like `<bold>`), then pass to `output::print()`:
 

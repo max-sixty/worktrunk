@@ -821,6 +821,12 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Normalize backslashes for Windows compatibility
     settings.add_filter(r"\\", "/");
 
+    // Windows fallback: use a regex pattern to catch tilde-prefixed Windows temp paths.
+    // This handles cases where path formats differ between home::home_dir() and the actual
+    // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
+    // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
+    settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "[REPO]");
+
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
     settings.add_filter(
@@ -887,6 +893,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Normalize Windows executable extension in help output
     // On Windows, clap shows "wt.exe" instead of "wt"
     settings.add_filter(r"wt\.exe", "wt");
+
+    // Normalize ANSI dim (ESC[2m) to bold (ESC[1m) for cross-platform consistency
+    // On Windows, clap's help styling may render backticked code as dim instead of bold
+    settings.add_filter(r"\x1b\[2m", "\x1b[1m");
 
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
     // Windows terminal strips these trailing resets that Unix includes

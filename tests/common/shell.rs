@@ -1,6 +1,6 @@
 use super::{TestRepo, wt_command};
 use insta_cmd::get_cargo_bin;
-use std::{collections::HashSet, process::Command, sync::LazyLock};
+use std::{collections::HashSet, env, path::PathBuf, process::Command, sync::LazyLock};
 
 /// Set of shells available on this system (cached at first access)
 static AVAILABLE_SHELLS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -55,8 +55,63 @@ pub fn shell_available(shell: &str) -> bool {
     AVAILABLE_SHELLS.contains(shell)
 }
 
-/// Path to dev-detach binary (workspace member built automatically by cargo).
-static DEV_DETACH_BIN: LazyLock<std::path::PathBuf> = LazyLock::new(|| get_cargo_bin("dev-detach"));
+/// Path to dev-detach binary (workspace member built automatically by `cargo test`).
+///
+/// Uses custom binary detection (matching insta_cmd's logic) to provide a clearer
+/// error message when the binary is missing. The standard `get_cargo_bin()` panics
+/// with "Cannot determine path to executable 'dev-detach'" which doesn't explain
+/// how to fix the issue.
+///
+/// Note: The binary is only built when running `cargo test` without package filters.
+/// Commands like `cargo test -p worktrunk` or `cargo test --test integration` do NOT
+/// build the dev-detach binary. Use `cargo test` or `cargo test --workspace` instead.
+static DEV_DETACH_BIN: LazyLock<PathBuf> = LazyLock::new(|| {
+    // Check for CARGO_BIN_EXE_dev-detach first (set when dev-detach is a build dependency)
+    if let Some(path) = env::var_os("CARGO_BIN_EXE_dev-detach") {
+        return PathBuf::from(path);
+    }
+
+    // Fall back to target directory detection
+    let target_dir = env::current_exe()
+        .ok()
+        .map(|mut path| {
+            path.pop();
+            if path.ends_with("deps") || path.ends_with("examples") {
+                path.pop();
+            }
+            path
+        })
+        .expect("Could not determine target directory from current exe");
+
+    let binary_name = format!("dev-detach{}", env::consts::EXE_SUFFIX);
+    let path = target_dir.join(&binary_name);
+
+    if !path.is_file() {
+        panic!(
+            "\n\
+            ══════════════════════════════════════════════════════════════════════════════\n\
+            dev-detach binary not found at: {}\n\
+            \n\
+            The dev-detach binary is only built when running `cargo test` without\n\
+            package filters. Commands like these do NOT build it:\n\
+            \n\
+              cargo test -p worktrunk\n\
+              cargo test --test integration\n\
+              cargo test --lib --bins\n\
+            \n\
+            To fix, run one of these first:\n\
+            \n\
+              cargo build -p dev-detach     # just build the binary\n\
+              cargo test                    # or run full workspace tests\n\
+            \n\
+            Then re-run your specific test command.\n\
+            ══════════════════════════════════════════════════════════════════════════════\n",
+            path.display()
+        );
+    }
+
+    path
+});
 
 /// Convert signal number to human-readable name
 #[cfg(unix)]

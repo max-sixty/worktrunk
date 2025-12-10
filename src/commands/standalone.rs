@@ -292,7 +292,7 @@ pub fn handle_squash(
     let has_any_pre_commit = has_project_pre_commit || has_user_pre_commit;
 
     if skip_pre_commit && has_any_pre_commit {
-        crate::output::print(hint_message(cformat!(
+        crate::output::print(info_message(cformat!(
             "Skipping pre-commit hooks (<bright-black>--no-verify</>)"
         )))?;
     }

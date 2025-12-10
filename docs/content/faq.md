@@ -105,6 +105,24 @@ Arguments resolve by checking the filesystem before git branches:
 3. Otherwise, look up as branch name
 4. If the path and branch resolve to different worktrees (e.g., `repo.foo/` tracks branch `bar`), the path takes precedence
 
+## Does Worktrunk work on Windows?
+
+**Experimental.** Core functionality works, but some features are unavailable.
+
+| Feature | Git Bash | PowerShell |
+|---------|----------|------------|
+| Core commands (`list`, `switch`, `merge`, etc.) | ✅ | ✅ |
+| Shell integration | ✅ | ✅ |
+| Tab completion | ✅ | ✅ |
+| Hooks | ✅ | ❌ (bash syntax) |
+| `wt select` | ❌ | ❌ |
+
+**Git Bash** (recommended) comes with [Git for Windows](https://gitforwindows.org/). Worktrunk auto-detects it when installed.
+
+**PowerShell** works for basic operations, but hooks fail in pure PowerShell because they use bash syntax. With Git for Windows installed, Worktrunk auto-detects Git Bash for hook execution even when PowerShell is the interactive shell.
+
+**`wt select`** uses [skim](https://github.com/skim-rs/skim), which only supports Unix. Use `wt list` and `wt switch <branch>` instead.
+
 ## Installation fails with C compilation errors
 
 Errors related to tree-sitter or C compilation (C99 mode, `le16toh` undefined) can be avoided by installing without syntax highlighting:
@@ -114,13 +132,6 @@ $ cargo install worktrunk --no-default-features
 ```
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
-
-## How can I contribute?
-
-- Star the repo
-- Try it out and [open an issue](https://github.com/max-sixty/worktrunk/issues) with feedback
-- Send to a friend
-- Post about it on [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fgithub.com%2Fmax-sixty%2Fworktrunk), [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2Fmax-sixty%2Fworktrunk&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management), or [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fmax-sixty%2Fworktrunk)
 
 ## Running tests (for contributors)
 
@@ -137,3 +148,11 @@ Shell integration tests require bash, zsh, and fish:
 ```bash
 $ cargo test --test integration --features shell-integration-tests
 ```
+
+## How can I contribute?
+
+- Star the repo
+- Try it out and [open an issue](https://github.com/max-sixty/worktrunk/issues) with feedback
+- What worktree friction does Worktrunk not yet solve? [Tell us](https://github.com/max-sixty/worktrunk/issues)
+- Send to a friend
+- Post about it on [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev), [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management), or [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)

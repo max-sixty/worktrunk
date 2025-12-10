@@ -17,6 +17,7 @@
 //! - **Fast polling** (10ms) means tests complete quickly when things work
 //! - **Content-based readiness** detects when skim has rendered ("> " prompt)
 //! - **Stabilization detection** waits for screen to stop changing
+//! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
 use crate::common::TestRepo;
 use insta::assert_snapshot;
@@ -78,21 +79,25 @@ fn exec_in_pty_with_input(
     env_vars: &[(String, String)],
     input: &str,
 ) -> (Vec<u8>, i32) {
-    exec_in_pty_with_input_sequence(command, args, working_dir, env_vars, &[input])
+    exec_in_pty_with_input_expectations(command, args, working_dir, env_vars, &[(input, None)])
 }
 
-/// Execute a command in a PTY with a sequence of inputs, polling for readiness
+/// Execute a command in a PTY with a sequence of inputs and optional content expectations.
 ///
-/// Instead of fixed delays, this function:
-/// 1. Polls until skim shows its ready state ("> " prompt)
-/// 2. After each input, polls until the screen stabilizes (no changes for STABLE_DURATION)
-/// 3. Uses long timeouts but fast polling for reliability + speed
-fn exec_in_pty_with_input_sequence(
+/// Each input can optionally specify expected content that must appear before considering
+/// the screen stable. This is essential for async preview panels where time-based stability
+/// alone may capture intermediate placeholder content under system congestion.
+///
+/// Example: `[("feature", None), ("3", Some("diff --git")), ("\x1b", None)]`
+/// - After typing "feature": wait for time-based stability only
+/// - After pressing "3" (switch to diff panel): wait until "diff --git" appears
+/// - After pressing Escape: wait for time-based stability only
+fn exec_in_pty_with_input_expectations(
     command: &str,
     args: &[&str],
     working_dir: &Path,
     env_vars: &[(String, String)],
-    inputs: &[&str],
+    inputs: &[(&str, Option<&str>)],
 ) -> (Vec<u8>, i32) {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -188,12 +193,12 @@ fn exec_in_pty_with_input_sequence(
     wait_for_stable(&rx, &mut parser, &mut raw_output);
 
     // Send each input and wait for screen to stabilize after each
-    for input in inputs {
+    for (input, expected_content) in inputs {
         writer.write_all(input.as_bytes()).unwrap();
         writer.flush().unwrap();
 
-        // Wait for screen to stabilize after this input
-        wait_for_stable(&rx, &mut parser, &mut raw_output);
+        // Wait for screen to stabilize after this input, optionally requiring specific content
+        wait_for_stable_with_content(&rx, &mut parser, &mut raw_output, *expected_content);
     }
 
     // Drop writer to signal EOF on stdin
@@ -225,6 +230,20 @@ fn wait_for_stable(
     parser: &mut vt100::Parser,
     raw_output: &mut Vec<u8>,
 ) {
+    wait_for_stable_with_content(rx, parser, raw_output, None);
+}
+
+/// Wait for screen content to stabilize, optionally requiring specific content.
+///
+/// If `expected_content` is provided, waits until the screen contains that string
+/// AND has stabilized. This is essential for async preview panels where the initial
+/// render may show placeholder content before the actual data loads.
+fn wait_for_stable_with_content(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    parser: &mut vt100::Parser,
+    raw_output: &mut Vec<u8>,
+    expected_content: Option<&str>,
+) {
     let start = Instant::now();
     let mut last_change = Instant::now();
     let mut last_content = parser.screen().contents();
@@ -238,12 +257,18 @@ fn wait_for_stable(
 
         let current_content = parser.screen().contents();
         if current_content != last_content {
-            last_content = current_content;
+            last_content = current_content.clone();
             last_change = Instant::now();
         }
 
-        // Screen hasn't changed for STABLE_DURATION - consider it ready
-        if last_change.elapsed() >= STABLE_DURATION {
+        // Check if expected content is present (if required)
+        let content_ready = match expected_content {
+            Some(expected) => current_content.contains(expected),
+            None => true,
+        };
+
+        // Screen hasn't changed for STABLE_DURATION and content is ready
+        if last_change.elapsed() >= STABLE_DURATION && content_ready {
             return;
         }
 
@@ -426,12 +451,17 @@ fn test_select_preview_panel_uncommitted() {
 
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter to just the feature worktree, press 1 for HEAD± panel
-    let (raw_output, exit_code) = exec_in_pty_with_input_sequence(
+    // Wait for "diff --git" to appear after pressing 1 - the async preview can be slow under congestion
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
         get_cargo_bin("wt").to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
-        &["feature", "1", "\x1b"], // Type "feature" to filter, 1, Escape
+        &[
+            ("feature", None),
+            ("1", Some("diff --git")), // Wait for diff to load
+            ("\x1b", None),
+        ],
     );
 
     assert_valid_abort_exit_code(exit_code);
@@ -476,12 +506,17 @@ fn test_select_preview_panel_log() {
 
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 2 for log panel
-    let (raw_output, exit_code) = exec_in_pty_with_input_sequence(
+    // Wait for commit log format "* [hash]" to appear - the async preview can be slow under congestion
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
         get_cargo_bin("wt").to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
-        &["feature", "2", "\x1b"], // Type "feature", 2, Escape
+        &[
+            ("feature", None),
+            ("2", Some("* ")), // Wait for git log output (starts with "* [hash]")
+            ("\x1b", None),
+        ],
     );
 
     assert_valid_abort_exit_code(exit_code);
@@ -557,12 +592,17 @@ fn test_new_feature() {
 
     let env_vars = repo.test_env_vars();
     // Type "feature" to filter, press 3 for main…± panel
-    let (raw_output, exit_code) = exec_in_pty_with_input_sequence(
+    // Wait for "diff --git" to appear after pressing 3 - the async preview can be slow under congestion
+    let (raw_output, exit_code) = exec_in_pty_with_input_expectations(
         get_cargo_bin("wt").to_str().unwrap(),
         &["select"],
         repo.root_path(),
         &env_vars,
-        &["feature", "3", "\x1b"], // Type "feature", 3, Escape
+        &[
+            ("feature", None),
+            ("3", Some("diff --git")), // Wait for diff to load
+            ("\x1b", None),
+        ],
     );
 
     assert_valid_abort_exit_code(exit_code);
