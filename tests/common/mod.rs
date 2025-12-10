@@ -778,8 +778,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     }
 
     // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
-    let root_canonical = canonicalize(repo.root_path())
-        .unwrap_or_else(|_| repo.root_path().to_path_buf());
+    let root_canonical =
+        canonicalize(repo.root_path()).unwrap_or_else(|_| repo.root_path().to_path_buf());
     let root_str = root_canonical.to_str().unwrap();
     // Add both backslash and forward-slash versions for Windows compatibility
     // (output may have either format depending on when filters are applied)
