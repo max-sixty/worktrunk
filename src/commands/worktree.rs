@@ -112,8 +112,13 @@
 
 use color_print::cformat;
 use normalize_path::NormalizePath;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use worktrunk::HookType;
+
+/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{
@@ -351,10 +356,10 @@ pub fn handle_switch(
 
     // Helper to build switch result for an existing worktree
     let switch_to_existing = |path: PathBuf, branch: String| -> (SwitchResult, String) {
-        let canonical_path = path.canonicalize().unwrap_or(path);
+        let canonical_path = canonicalize(&path).unwrap_or(path);
         let current_dir = std::env::current_dir()
             .ok()
-            .and_then(|p| p.canonicalize().ok());
+            .and_then(|p| canonicalize(&p).ok());
         let already_at_worktree = current_dir
             .as_ref()
             .map(|cur| cur == &canonical_path)

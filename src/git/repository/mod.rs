@@ -5,6 +5,15 @@ use std::sync::OnceLock;
 use anyhow::{Context, bail};
 use normalize_path::NormalizePath;
 
+/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
+///
+/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
+/// which external tools like git cannot handle. The `dunce` crate strips this
+/// prefix when safe. On Unix, this is equivalent to `std::fs::canonicalize()`.
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
+
 // Import types and functions from parent module (mod.rs)
 use super::{
     BranchCategory, CompletionBranch, DefaultBranchName, DiffStats, GitError, LineDiff, Worktree,
@@ -109,10 +118,8 @@ impl Repository {
             return Ok(layout);
         }
 
-        let git_common_dir = self
-            .git_common_dir()?
-            .canonicalize()
-            .context("Failed to canonicalize path")?;
+        let git_common_dir =
+            canonicalize(&self.git_common_dir()?).context("Failed to canonicalize path")?;
 
         let is_bare = self.is_bare_repo()?;
 
@@ -494,10 +501,7 @@ impl Repository {
 
         // Resolve relative paths against the repo's directory
         if path.is_relative() {
-            self.path
-                .join(&path)
-                .canonicalize()
-                .context("Failed to resolve git common directory")
+            canonicalize(&self.path.join(&path)).context("Failed to resolve git common directory")
         } else {
             Ok(path)
         }
@@ -512,10 +516,7 @@ impl Repository {
 
         // Resolve relative paths against the repo's directory
         if path.is_relative() {
-            self.path
-                .join(&path)
-                .canonicalize()
-                .context("Failed to resolve git directory")
+            canonicalize(&self.path.join(&path)).context("Failed to resolve git directory")
         } else {
             Ok(path)
         }
@@ -564,8 +565,7 @@ impl Repository {
     pub fn worktree_root(&self) -> anyhow::Result<PathBuf> {
         let stdout = self.run_command(&["rev-parse", "--show-toplevel"])?;
         let path = PathBuf::from(stdout.trim());
-        path.canonicalize()
-            .context("Failed to canonicalize worktree root")
+        canonicalize(&path).context("Failed to canonicalize worktree root")
     }
 
     /// Check if the path is in a worktree (vs the main repository).

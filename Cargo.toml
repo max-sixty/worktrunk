@@ -78,6 +78,9 @@ home = "0.5.12"
 dirs = "6.0"
 normalize-path = "0.2.1"
 which = "7.0"
+# Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
+# which external tools like git cannot handle. On Unix, it's a no-op wrapper.
+dunce = "1.0"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
@@ -96,9 +99,6 @@ portable-pty = "0.9"
 regex = "1.12"
 vt100 = "0.16"
 ansi-to-html = "0.2.2"
-# Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
-# which git cannot handle. On Unix, it's a no-op wrapper around std::fs::canonicalize.
-dunce = "1.0"
 
 [[bench]]
 name = "completion"

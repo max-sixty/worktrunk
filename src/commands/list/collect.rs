@@ -21,8 +21,14 @@
 //! This ensures fast operations don't wait for slow ones (e.g., CI doesn't block ahead/behind counts)
 use crossbeam_channel as chan;
 use rayon::prelude::*;
+use std::path::{Path, PathBuf};
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::styling::{INFO_EMOJI, warning_message};
+
+/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -535,7 +541,7 @@ pub fn collect(
             // (On Windows, paths from git worktree list may differ from git rev-parse --show-toplevel)
             let is_current = current_worktree_path
                 .as_ref()
-                .is_some_and(|cp| wt.path.canonicalize().as_ref().ok() == Some(cp));
+                .is_some_and(|cp| canonicalize(&wt.path).as_ref().ok() == Some(cp));
             let is_previous = previous_branch
                 .as_deref()
                 .is_some_and(|prev| wt.branch.as_deref() == Some(prev));
@@ -553,8 +559,8 @@ pub fn collect(
                         // Template path is relative to main worktree, resolve it
                         let expected_path = main_worktree.path.join(&expected_relative);
                         // Canonicalize both paths for comparison (handles symlinks, .., etc.)
-                        let actual_canonical = wt.path.canonicalize().ok();
-                        let expected_canonical = expected_path.canonicalize().ok();
+                        let actual_canonical = canonicalize(&wt.path).ok();
+                        let expected_canonical = canonicalize(&expected_path).ok();
                         match (actual_canonical, expected_canonical) {
                             (Some(actual), Some(expected)) => actual != expected,
                             // Can't canonicalize one or both paths (e.g., worktree deleted,
