@@ -22,9 +22,10 @@ wt config shell - Shell integration setup
 Usage: [1m[36mwt config shell[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
 
 [1m[32mCommands:[0m
-  [1m[36minit[0m       Generate shell integration code
-  [1m[36minstall[0m    Write shell integration to config files
-  [1m[36muninstall[0m  Remove shell integration from config files
+  [1m[36minit[0m        Generate shell integration code
+  [1m[36minstall[0m     Write shell integration to config files
+  [1m[36muninstall[0m   Remove shell integration from config files
+  [1m[36mshow-theme[0m  Show output theme samples
 
 [1m[32mOptions:[0m
   [1m[36m-h[0m, [1m[36m--help[0m  Print help

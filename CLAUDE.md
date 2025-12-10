@@ -199,24 +199,25 @@ Seven canonical message patterns with their emojis:
 6. **Info**: ⚪ (neutral status, system feedback, metadata)
 7. **Prompts**: ❓ (questions requiring user input)
 
-**Output functions automatically add emoji AND semantic color.** Callers provide content with optional inner styling (like `<bold>`):
+**Message formatting functions** add emoji AND semantic color. Callers provide content with optional inner styling (like `<bold>`), then pass to `output::print()`:
 
 ```rust
-// Simple message - function adds emoji + color
-output::success("Created worktree")?;
-output::hint("Run 'wt config' to configure")?;
+// Simple message - formatting function adds emoji + color
+output::print(success_message("Created worktree"))?;
+output::print(hint_message("Run 'wt config' to configure"))?;
 
 // With inner styling - use cformat! for bold/dim within the message
-output::success(cformat!("Created worktree for <bold>{branch}</>"))?;
-output::warning(cformat!("Branch <bold>{name}</> not found"))?;
+output::print(success_message(cformat!("Created worktree for <bold>{branch}</>")))?;
+output::print(warning_message(cformat!("Branch <bold>{name}</> not found")))?;
 ```
 
-**Semantic colors added automatically:**
-- `success()` → green
-- `progress()` → cyan
-- `hint()` → dimmed
-- `warning()` → yellow
-- `info()` → no color (neutral status)
+**Semantic colors from formatting functions:**
+- `success_message()` → green
+- `progress_message()` → cyan
+- `hint_message()` → dimmed
+- `warning_message()` → yellow
+- `info_message()` → no color (neutral status)
+- `error_message()` → red
 
 **Every user-facing message requires either an emoji or a gutter** for consistent visual separation.
 
@@ -236,11 +237,11 @@ output::warning(cformat!("Branch <bold>{name}</> not found"))?;
 
 **Directive mode** additionally emits a shell script to stdout at the end.
 
-Use the output system (`output::success()`, `output::progress()`, etc.) to handle both modes automatically. Never write directly to stdout/stderr in command code.
+Use the output system (`output::print()` with message formatting functions) to handle both modes automatically. Never write directly to stdout/stderr in command code.
 
 ```rust
 // ✅ GOOD - use output system (handles both modes)
-output::success("Branch created")?;
+output::print(success_message("Branch created"))?;
 
 // ❌ BAD - direct writes bypass output system
 println!("Branch created");
@@ -260,9 +261,9 @@ Output should appear immediately adjacent to the operations it describes. Progre
 Sequential operations should show immediate feedback:
 ```rust
 for item in items {
-    output::progress(format!("Removing {item}..."))?;
+    output::print(progress_message(format!("Removing {item}...")))?;
     perform_operation(item)?;
-    output::success(format!("Removed {item}"))?;  // Immediate feedback
+    output::print(success_message(format!("Removed {item}")))?;  // Immediate feedback
 }
 ```
 
@@ -283,9 +284,9 @@ Progress messages should include all relevant details (what's being done, counts
 
 ```rust
 // ✅ GOOD - detailed progress, minimal success
-output::progress("Squashing 3 commits & working tree changes into a single commit (5 files, +60)...")?;
+output::print(progress_message("Squashing 3 commits & working tree changes into a single commit (5 files, +60)..."))?;
 perform_squash()?;
-output::success("Squashed @ a1b2c3d")?;
+output::print(success_message("Squashed @ a1b2c3d"))?;
 ```
 
 ### Style Constants
@@ -301,17 +302,17 @@ For all other styling, use color-print tags in `cformat!`: `<red>`, `<green>`, `
 
 ### Styling in Command Code
 
-Use `output::` functions with `cformat!` for styled content. The output function adds the emoji + semantic color, and `cformat!` handles inner styling:
+Use `output::print()` with message formatting functions. The formatting function adds the emoji + semantic color, and `cformat!` handles inner styling:
 
 ```rust
-// ✅ GOOD - output:: handles emoji + outer color, cformat! handles inner styling
-output::success(cformat!("Created <bold>{branch}</> from <bold>{base}</>"))?;
-output::warning(cformat!("Branch <bold>{name}</> has <dim>uncommitted changes</>"))?;
-output::hint(cformat!("Run <bright-black>wt merge</> to continue"))?;
+// ✅ GOOD - formatting function handles emoji + outer color, cformat! handles inner styling
+output::print(success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")))?;
+output::print(warning_message(cformat!("Branch <bold>{name}</> has <dim>uncommitted changes</>")))?;
+output::print(hint_message(cformat!("Run <bright-black>wt merge</> to continue")))?;
 
 // ✅ GOOD - plain strings work too (no inner styling needed)
-output::progress("Rebasing onto main...")?;
-output::hint("No changes to commit")?;
+output::print(progress_message("Rebasing onto main..."))?;
+output::print(hint_message("No changes to commit"))?;
 ```
 
 **Available color-print tags:** `<bold>`, `<dim>`, `<bright-black>`, `<red>`, `<green>`, `<yellow>`, `<cyan>`, `<magenta>`
@@ -388,19 +389,19 @@ Use `format_with_gutter()` for quoted content. Gutter content displays external 
 
 ```rust
 // Show warning message, then external error in gutter
-output::warning(cformat!("Could not delete branch <bold>{branch_name}</>"))?;
+output::print(warning_message(cformat!("Could not delete branch <bold>{branch_name}</>")))?;
 output::gutter(format_with_gutter(&e.to_string(), "", None))?;
 ```
 
-**Linebreaks:** Gutter content requires a single newline before it, never double newlines. Output functions (`progress()`, `success()`, etc.) use `println!()` internally, adding a trailing newline. Messages passed to these functions should not include `\n`:
+**Linebreaks:** Gutter content requires a single newline before it, never double newlines. The `output::print()` function uses `println!()` internally, adding a trailing newline. Messages passed to it should not include `\n`:
 
 ```rust
 // ✅ GOOD - no trailing \n
-output::progress("Merging...")?;
+output::print(progress_message("Merging..."))?;
 output::gutter(format_with_gutter(&log, "", None))?;
 
 // ❌ BAD - trailing \n creates blank line
-output::progress("Merging...\n")?;
+output::print(progress_message("Merging...\n"))?;
 ```
 
 ### Error Message Formatting
@@ -480,7 +481,7 @@ if mode == OutputMode::Interactive {
 }
 
 // ✅ ALWAYS DO THIS
-output::success("Success!")?;
+output::print(success_message("Success!"))?;
 ```
 
 Decide once at the edge (`main()`), initialize globally, trust internally:
@@ -490,7 +491,7 @@ Decide once at the edge (`main()`), initialize globally, trust internally:
 output::initialize(if internal { OutputMode::Directive } else { OutputMode::Interactive });
 
 // Everywhere else - just use the output functions
-output::success("Created worktree")?;
+output::print(success_message("Created worktree"))?;
 output::change_directory(&path)?;
 ```
 
@@ -498,12 +499,7 @@ output::change_directory(&path)?;
 
 The output module (`src/output/global.rs`) provides:
 
-- `success(message)` - Successful completion (✅, both modes)
-- `progress(message)` - Operations in progress (🔄, both modes)
-- `info(message)` - Neutral status/metadata (⚪, both modes)
-- `warning(message)` - Non-blocking issues (🟡, both modes)
-- `hint(message)` - Actionable suggestions (💡, both modes)
-- `print(message)` - Write message as-is (caller formats, both modes)
+- `print(message)` - Write message as-is (use with message formatting functions)
 - `shell_integration_hint(message)` - Shell integration hints (💡, suppressed in directive)
 - `gutter(content)` - Gutter-formatted content (use with `format_with_gutter()`)
 - `blank()` - Blank line for visual separation
@@ -515,7 +511,16 @@ The output module (`src/output/global.rs`) provides:
 - `flush_for_stderr_prompt()` - Flush before interactive prompts
 - `terminate_output()` - Emit shell script in directive mode (no-op in interactive)
 
-For the complete API, see `src/output/global.rs`.
+**Message formatting functions** (from `worktrunk::styling`):
+
+- `success_message(content)` - ✅ green
+- `progress_message(content)` - 🔄 cyan
+- `info_message(content)` - ⚪ no color
+- `warning_message(content)` - 🟡 yellow
+- `hint_message(content)` - 💡 dimmed
+- `error_message(content)` - ❌ red
+
+For the complete API, see `src/output/global.rs` and `src/styling/constants.rs`.
 
 ### Adding New Output Functions
 
