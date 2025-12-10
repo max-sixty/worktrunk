@@ -100,7 +100,7 @@ stage = "all"    # "all" (default), "tracked", or "none"
 squash = false  # Preserve individual commits (--no-squash)
 commit = false  # Skip committing uncommitted changes (--no-commit)
 remove = false  # Keep worktree after merge (--no-remove)
-verify = false  # Skip hooks (--no-verify)
+verify = false  # Skip all hooks (--no-verify)
 ```
 
 ### LLM commit messages
@@ -141,7 +141,7 @@ setup = "echo 'Setting up worktree...'"
 notify = "notify-send 'Merging {{ branch }}'"
 ```
 
-User hooks run **before** project hooks and don't require approval. Skip hooks with `--no-verify`.
+User hooks run **before** project hooks and don't require approval. Skip all hooks with `--no-verify`.
 
 See [wt hook](@/hook.md#user-hooks) for complete documentation.
 

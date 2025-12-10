@@ -120,7 +120,7 @@ Set persistent flag values for commands. These apply unless explicitly overridde
   [2msquash = false  # Preserve individual commits (--no-squash)[0m
   [2mcommit = false  # Skip committing uncommitted changes (--no-commit)[0m
   [2mremove = false  # Keep worktree after merge (--no-remove)[0m
-  [2mverify = false  # Skip hooks (--no-verify)[0m
+  [2mverify = false  # Skip all hooks (--no-verify)[0m
 
 [1mLLM commit messages[0m
 
@@ -154,7 +154,7 @@ Personal hooks that run for all repositories. Use the same syntax as project hoo
   [2m[pre-merge][0m
   [2mnotify = "notify-send 'Merging {{ branch }}'"[0m
 
-User hooks run [1mbefore[0m project hooks and don't require approval. Skip hooks with [2m--no-verify[0m.
+User hooks run [1mbefore[0m project hooks and don't require approval. Skip all hooks with [2m--no-verify[0m.
 
 See wt hook for complete documentation.
 

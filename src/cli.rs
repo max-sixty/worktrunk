@@ -1782,6 +1782,10 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
         /// Skip all hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
+
+        /// Skip approval prompts
+        #[arg(long)]
+        force: bool,
     },
 
     /// Merge worktree into target branch

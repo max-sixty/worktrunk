@@ -1,12 +1,29 @@
 //! Command approval and execution utilities
 //!
 //! Shared helpers for approving commands declared in project configuration.
+//!
+//! # "Approve at the Gate" Pattern
+//!
+//! Commands that run hooks should approve all project commands **upfront** before any execution:
+//!
+//! ```text
+//! User runs command
+//!     ↓
+//! collect_and_approve_hooks() ← Single approval prompt
+//!     ↓
+//! Execute hooks (approval already done)
+//! ```
+//!
+//! This ensures approval happens exactly once at the command entry point,
+//! eliminating the need to thread `auto_trust` through execution layers.
 
+use super::project_config::collect_commands_for_hooks;
+use super::repository_ext::RepositoryCliExt;
 use crate::output;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::{Command, WorktrunkConfig};
-use worktrunk::git::GitError;
+use worktrunk::git::{GitError, HookType, Repository};
 use worktrunk::styling::{
     INFO_EMOJI, PROMPT_EMOJI, WARNING_EMOJI, eprint, eprintln, format_bash_with_gutter,
     hint_message, stderr, warning_message,
@@ -132,4 +149,44 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> anyhow:
     eprintln!();
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Collect project commands for the given hook types and request batch approval.
+///
+/// This is the "gate" function that should be called at command entry points
+/// (like `wt remove`, `wt switch --create`, `wt merge`) before any hooks execute.
+///
+/// Returns `Ok(true)` if approved (or no commands need approval), `Ok(false)` if declined.
+///
+/// # Example
+///
+/// ```ignore
+/// // At command entry point (e.g., wt remove)
+/// let approved = collect_and_approve_hooks(
+///     &repo,
+///     &config,
+///     &[HookType::PreRemove],
+///     force,
+/// )?;
+///
+/// // Later: execute hooks with auto_trust=true (approval already happened)
+/// ```
+pub fn collect_and_approve_hooks(
+    repo: &Repository,
+    config: &WorktrunkConfig,
+    hook_types: &[HookType],
+    force: bool,
+) -> anyhow::Result<bool> {
+    let project_config = match repo.load_project_config()? {
+        Some(cfg) => cfg,
+        None => return Ok(true), // No project config = no commands to approve
+    };
+
+    let commands = collect_commands_for_hooks(&project_config, hook_types);
+    if commands.is_empty() {
+        return Ok(true);
+    }
+
+    let project_id = repo.project_identifier()?;
+    approve_command_batch(&commands, &project_id, config, force, false)
 }

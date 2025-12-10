@@ -104,7 +104,7 @@ Options:
           Skip approval prompts
 
       --no-verify
-          Skip hooks
+          Skip all hooks
 
   -h, --help
           Print help (see a summary with '-h')

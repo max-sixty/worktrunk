@@ -26,13 +26,13 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, RebaseResult, SquashResult, handle_cache_clear, handle_cache_refresh,
-    handle_cache_show, handle_config_create, handle_config_show, handle_configure_shell,
-    handle_hook_show, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
-    handle_remove_by_path, handle_remove_current, handle_show_theme, handle_squash,
-    handle_standalone_add_approvals, handle_standalone_clear_approvals, handle_standalone_commit,
-    handle_standalone_run_hook, handle_switch, handle_unconfigure_shell, handle_var_clear,
-    handle_var_get, handle_var_set, resolve_worktree_path_first,
+    ConfigAction, RebaseResult, SquashResult, collect_and_approve_hooks, handle_cache_clear,
+    handle_cache_refresh, handle_cache_show, handle_config_create, handle_config_show,
+    handle_configure_shell, handle_hook_show, handle_init, handle_list, handle_merge,
+    handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current, handle_show_theme,
+    handle_squash, handle_standalone_add_approvals, handle_standalone_clear_approvals,
+    handle_standalone_commit, handle_standalone_run_hook, handle_switch, handle_unconfigure_shell,
+    handle_var_clear, handle_var_get, handle_var_set, resolve_worktree_path_first,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -1086,6 +1086,7 @@ fn main() {
             force_delete,
             background,
             verify,
+            force,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
@@ -1097,15 +1098,28 @@ fn main() {
                     .into());
                 }
 
+                // "Approve at the Gate": collect and approve pre-remove hooks upfront
+                // This ensures approval happens once at the command entry point
+                let repo = Repository::current();
+                if verify {
+                    let _approved = collect_and_approve_hooks(
+                        &repo,
+                        &config,
+                        &[worktrunk::git::HookType::PreRemove],
+                        force,
+                    )?;
+                    // Note: if declined, hooks won't run but removal continues
+                    // (pre-remove is fail-fast only on execution failure, not on approval decline)
+                }
+
                 if worktrees.is_empty() {
                     // No worktrees specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
                     let result = handle_remove_current(!delete_branch, force_delete, background)?;
-                    handle_remove_output(&result, None, background, verify)
+                    // auto_trust=true: approval already happened at the gate
+                    handle_remove_output(&result, None, background, verify, true)
                 } else {
                     use worktrunk::git::ResolvedWorktree;
-
-                    let repo = Repository::current();
                     // When removing multiple worktrees, we need to handle the current worktree last
                     // to avoid deleting the directory we're currently in
                     let current_worktree = repo.worktree_root().ok();
@@ -1132,6 +1146,7 @@ fn main() {
                     }
 
                     // Remove other worktrees first
+                    // auto_trust=true for all: approval already happened at the gate
                     for (path, branch) in &others {
                         if let Some(branch_name) = branch {
                             let result = handle_remove(
@@ -1140,12 +1155,18 @@ fn main() {
                                 force_delete,
                                 background,
                             )?;
-                            handle_remove_output(&result, Some(branch_name), background, verify)?;
+                            handle_remove_output(
+                                &result,
+                                Some(branch_name),
+                                background,
+                                verify,
+                                true,
+                            )?;
                         } else {
                             // Non-current worktree is detached - remove by path (no branch to delete)
                             let result =
                                 handle_remove_by_path(path, None, force_delete, background)?;
-                            handle_remove_output(&result, None, background, verify)?;
+                            handle_remove_output(&result, None, background, verify, true)?;
                         }
                     }
 
@@ -1153,14 +1174,14 @@ fn main() {
                     for branch in &branch_only {
                         let result =
                             handle_remove(branch, !delete_branch, force_delete, background)?;
-                        handle_remove_output(&result, Some(branch), background, verify)?;
+                        handle_remove_output(&result, Some(branch), background, verify, true)?;
                     }
 
                     // Remove current worktree last (if it was in the list)
                     if let Some((_path, branch)) = current {
                         let result =
                             handle_remove_current(!delete_branch, force_delete, background)?;
-                        handle_remove_output(&result, branch.as_deref(), background, verify)?;
+                        handle_remove_output(&result, branch.as_deref(), background, verify, true)?;
                     }
 
                     Ok(())

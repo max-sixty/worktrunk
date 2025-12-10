@@ -17,6 +17,7 @@ pub mod standalone;
 pub mod statusline;
 pub mod worktree;
 
+pub use command_approval::collect_and_approve_hooks;
 pub use config::{
     handle_cache_clear, handle_cache_refresh, handle_cache_show, handle_config_create,
     handle_config_show, handle_var_clear, handle_var_get, handle_var_set,

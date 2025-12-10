@@ -15,7 +15,7 @@
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, ProjectConfig};
-use worktrunk::git::{GitError, WorktrunkError};
+use worktrunk::git::WorktrunkError;
 use worktrunk::styling::{format_bash_with_gutter, progress_message, warning_message};
 
 use super::command_executor::{
@@ -86,40 +86,25 @@ impl<'a> HookPipeline<'a> {
                 hook_type,
             )?,
         };
-        Self::filter_by_name(commands, name_filter)
+        Ok(Self::filter_by_name(commands, name_filter))
     }
 
-    /// Filter commands by name, returning an error if name is specified but not found
+    /// Filter commands by name (returns empty vec if name not found - caller decides if that's an error)
     fn filter_by_name(
         commands: Vec<PreparedCommand>,
         name_filter: Option<&str>,
-    ) -> anyhow::Result<Vec<PreparedCommand>> {
+    ) -> Vec<PreparedCommand> {
         match name_filter {
-            Some(name) => {
-                // Collect available names before consuming the iterator
-                let available: Vec<String> =
-                    commands.iter().filter_map(|cmd| cmd.name.clone()).collect();
-
-                let filtered: Vec<_> = commands
-                    .into_iter()
-                    .filter(|cmd| cmd.name.as_deref() == Some(name))
-                    .collect();
-
-                if filtered.is_empty() {
-                    return Err(GitError::HookCommandNotFound {
-                        name: name.to_string(),
-                        available,
-                    }
-                    .into());
-                }
-
-                Ok(filtered)
-            }
-            None => Ok(commands),
+            Some(name) => commands
+                .into_iter()
+                .filter(|cmd| cmd.name.as_deref() == Some(name))
+                .collect(),
+            None => commands,
         }
     }
 
     /// Run hook commands sequentially, using the provided failure strategy.
+    /// Returns the number of commands that were run.
     pub fn run_sequential(
         &self,
         command_config: &CommandConfig,
@@ -128,12 +113,13 @@ impl<'a> HookPipeline<'a> {
         extra_vars: &[(&str, &str)],
         failure_strategy: HookFailureStrategy,
         name_filter: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<usize> {
         let commands =
             self.prepare_commands(command_config, hook_type, &source, extra_vars, name_filter)?;
         if commands.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
+        let command_count = commands.len();
 
         // Track first failure for Warn strategy (to propagate exit code after all commands run)
         let mut first_failure: Option<(String, Option<String>, i32)> = None;
@@ -207,7 +193,7 @@ impl<'a> HookPipeline<'a> {
             .into());
         }
 
-        Ok(())
+        Ok(command_count)
     }
 
     /// Spawn hook commands in the background (used for post-start hooks).
@@ -236,7 +222,9 @@ impl<'a> HookPipeline<'a> {
             crate::output::gutter(format_bash_with_gutter(&prepared.expanded, ""))?;
 
             let name = prepared.name.as_deref().unwrap_or("cmd");
-            let operation = format!("{}-{}", operation_prefix, name);
+            // Include source in operation name to prevent log file collisions between
+            // user and project hooks with the same name
+            let operation = format!("{}-{}-{}", source.label_prefix(), operation_prefix, name);
             if let Err(err) = spawn_detached(
                 self.ctx.repo,
                 self.ctx.worktree_path,
@@ -281,6 +269,7 @@ impl<'a> HookPipeline<'a> {
             &extra_vars,
             HookFailureStrategy::FailFast,
             name_filter,
-        )
+        )?;
+        Ok(())
     }
 }
