@@ -260,7 +260,9 @@ fn test_switch_execute_creates_file() {
     );
 }
 
+/// Skipped on Windows: Uses Unix shell command `exit 1`.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_switch_execute_failure() {
     let repo = setup_switch_repo();
 
@@ -690,7 +692,10 @@ fn test_switch_ping_pong_realistic() {
 }
 
 /// Test that `wt switch` without arguments shows helpful hints about shortcuts.
+///
+/// Skipped on Windows: Hints display differently on Windows.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_switch_missing_argument_shows_hints() {
     let repo = setup_switch_repo();
 

@@ -148,7 +148,9 @@ fn claude_code_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings
 }
 
+/// Skipped on Windows: JSON contains paths that need escaping on Windows.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_full_context() {
     let repo = setup_repo_with_changes();
 
@@ -176,7 +178,9 @@ fn test_statusline_claude_code_full_context() {
     });
 }
 
+/// Skipped on Windows: JSON contains paths that need escaping on Windows.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_minimal() {
     let repo = setup_basic_repo();
 
@@ -191,7 +195,9 @@ fn test_statusline_claude_code_minimal() {
     });
 }
 
+/// Skipped on Windows: JSON contains paths that need escaping on Windows.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_with_model() {
     let repo = setup_basic_repo();
 

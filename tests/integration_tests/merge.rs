@@ -1771,7 +1771,10 @@ fn test_merge_no_remote() {
 /// Output is used in README.md "What It Does" section.
 /// Merge output: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap
 /// Switch output: tests/snapshots/integration__integration_tests__merge__readme_example_simple_switch.snap
+///
+/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_readme_example_simple() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
@@ -1827,7 +1830,10 @@ pub fn refresh(refresh_token: &str) -> String {
 ///
 /// Output is used in README.md "Advanced Features" or "Project Automation" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap
+///
+/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_readme_example_complex() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
@@ -2064,7 +2070,10 @@ command = "{}"
 ///
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap
+///
+/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_post_create() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
@@ -2150,7 +2159,10 @@ fi
 ///
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap
+///
+/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_pre_merge() {
     let mut repo = TestRepo::new();
     repo.commit("Initial commit");
