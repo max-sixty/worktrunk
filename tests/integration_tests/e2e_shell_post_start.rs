@@ -1,5 +1,5 @@
 //! Post-start command shell integration tests.
-#![cfg(feature = "shell-integration-tests")]
+#![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::{
     TestRepo, resolve_git_common_dir,

@@ -1,5 +1,5 @@
 //! End-to-end shell integration tests.
-#![cfg(feature = "shell-integration-tests")]
+#![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::{
     TestRepo,

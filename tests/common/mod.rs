@@ -23,8 +23,11 @@
 //! like /var -> /private/var). This ensures snapshot filters work correctly.
 
 pub mod list_snapshots;
+// Progressive output tests use PTY and are Unix-only for now
+#[cfg(unix)]
 pub mod progressive_output;
-#[cfg(feature = "shell-integration-tests")]
+// Shell integration tests are Unix-only for now (Windows support planned)
+#[cfg(all(unix, feature = "shell-integration-tests"))]
 pub mod shell;
 
 use insta_cmd::get_cargo_bin;

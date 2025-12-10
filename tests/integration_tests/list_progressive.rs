@@ -2,6 +2,7 @@
 //!
 //! These tests capture multiple snapshots of the output as it renders,
 //! verifying that the table structure appears first and data fills in progressively.
+#![cfg(unix)]
 
 use crate::common::TestRepo;
 use crate::common::progressive_output::{ProgressiveCaptureOptions, capture_progressive_output};

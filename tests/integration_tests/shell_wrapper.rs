@@ -32,7 +32,8 @@
 //! is necessary, and file snapshots are the right storage format for escape-code-heavy output.
 
 // All shell integration tests and infrastructure gated by feature flag
-#![cfg(feature = "shell-integration-tests")]
+// Unix-only for now - Windows shell integration is planned
+#![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::TestRepo;
 use crate::common::shell::shell_available;
