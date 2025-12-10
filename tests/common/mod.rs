@@ -811,6 +811,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
     settings.add_redaction(".env.HOME", "[TEST_HOME]");
+    // Windows: the `home` crate uses USERPROFILE for home_dir()
+    settings.add_redaction(".env.USERPROFILE", "[TEST_HOME]");
     settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
 
