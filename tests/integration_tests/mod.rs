@@ -22,6 +22,7 @@ pub mod directives;
 pub mod e2e_shell;
 pub mod e2e_shell_post_start;
 pub mod help;
+pub mod hook_show;
 pub mod init;
 pub mod internal_flag;
 pub mod list;

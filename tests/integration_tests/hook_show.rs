@@ -1,0 +1,197 @@
+//! Integration tests for `wt hook show` command
+
+use crate::common::{TestRepo, set_temp_home_env, setup_snapshot_settings_with_home, wt_command};
+use insta_cmd::assert_cmd_snapshot;
+use std::fs;
+use tempfile::TempDir;
+
+/// Test `wt hook show` with both user and project hooks
+#[test]
+fn test_hook_show_with_both_configs() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    let temp_home = TempDir::new().unwrap();
+
+    // Create user config with hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[pre-commit]
+user-lint = "pre-commit run --all-files"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with hooks
+    repo.write_project_config(
+        r#"[post-start]
+deps = "npm install"
+
+[pre-merge]
+build = "cargo build"
+test = "cargo test"
+"#,
+    );
+    repo.commit("Add project config");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test `wt hook show` with no hooks configured
+#[test]
+fn test_hook_show_no_hooks() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    let temp_home = TempDir::new().unwrap();
+
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test `wt hook show` filtering by hook type
+#[test]
+fn test_hook_show_filter_by_type() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    let temp_home = TempDir::new().unwrap();
+
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config with multiple hook types
+    repo.write_project_config(
+        r#"[post-start]
+deps = "npm install"
+
+[pre-merge]
+build = "cargo build"
+test = "cargo test"
+
+[post-merge]
+deploy = "scripts/deploy.sh"
+"#,
+    );
+    repo.commit("Add project config");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("hook")
+            .arg("show")
+            .arg("pre-merge")
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test `wt hook show` shows approval status for project hooks
+#[test]
+fn test_hook_show_approval_status() {
+    let repo = TestRepo::new();
+    repo.commit("Initial commit");
+    let temp_home = TempDir::new().unwrap();
+
+    // Create user config at XDG path with one approved command
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    let config_path = global_config_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[projects."repo"]
+approved-commands = ["cargo build"]
+"#,
+    )
+    .unwrap();
+
+    // Create project config with approved and unapproved hooks
+    repo.write_project_config(
+        r#"[pre-merge]
+build = "cargo build"
+test = "cargo test"
+"#,
+    );
+    repo.commit("Add project config");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        // Override config path to point to our test config with approval
+        cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test `wt hook show` outside git repo
+#[test]
+fn test_hook_show_outside_git_repo() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_home = TempDir::new().unwrap();
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[pre-commit]
+lint = "pre-commit run"
+"#,
+    )
+    .unwrap();
+
+    let mut settings = insta::Settings::clone_current();
+    // Replace temp home path with ~ for stable snapshots
+    settings.add_filter(temp_home.path().to_string_lossy().as_ref(), "~");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg("hook").arg("show").current_dir(temp_dir.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}

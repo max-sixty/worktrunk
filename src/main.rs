@@ -28,9 +28,9 @@ use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     ConfigAction, RebaseResult, SquashResult, collect_and_approve_hooks_with_context,
     compute_worktree_path, handle_cache_clear, handle_cache_refresh, handle_cache_show,
-    handle_config_create, handle_config_show, handle_configure_shell, handle_init, handle_list,
-    handle_merge, handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current,
-    handle_show_theme, handle_squash, handle_standalone_add_approvals,
+    handle_config_create, handle_config_show, handle_configure_shell, handle_hook_show,
+    handle_init, handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_by_path,
+    handle_remove_current, handle_show_theme, handle_squash, handle_standalone_add_approvals,
     handle_standalone_clear_approvals, handle_standalone_commit, handle_standalone_run_hook,
     handle_switch, handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
     resolve_worktree_path_first,
@@ -973,6 +973,10 @@ fn main() {
             }
         },
         Commands::Hook { action } => match action {
+            HookCommand::Show {
+                hook_type,
+                expanded,
+            } => handle_hook_show(hook_type.as_deref(), expanded),
             HookCommand::PostCreate { name, force } => {
                 handle_standalone_run_hook(HookType::PostCreate, force, name.as_deref())
             }

@@ -719,7 +719,8 @@ fn test_complete_hook_subcommands() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
-    // Hook types
+    // Hook types and commands
+    assert!(subcommands.contains(&"show"), "Missing show");
     assert!(subcommands.contains(&"post-create"), "Missing post-create");
     assert!(subcommands.contains(&"post-start"), "Missing post-start");
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
@@ -728,8 +729,8 @@ fn test_complete_hook_subcommands() {
     assert!(subcommands.contains(&"pre-remove"), "Missing pre-remove");
     assert_eq!(
         subcommands.len(),
-        6,
-        "Should have exactly 6 hook subcommands"
+        7,
+        "Should have exactly 7 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands

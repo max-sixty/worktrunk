@@ -47,7 +47,7 @@ impl<'a> CommandContext<'a> {
 ///
 /// The resulting HashMap is passed to hook commands as JSON on stdin,
 /// and used directly for template variable expansion.
-fn build_hook_context(
+pub fn build_hook_context(
     ctx: &CommandContext<'_>,
     extra_vars: &[(&str, &str)],
 ) -> HashMap<String, String> {
