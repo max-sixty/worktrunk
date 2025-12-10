@@ -127,10 +127,15 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("COLUMNS", "150");
 }
 
-/// Set `HOME` and `XDG_CONFIG_HOME` for commands that rely on isolated temp homes.
+/// Set home environment variables for commands that rely on isolated temp homes.
+///
+/// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
+/// so the `home` crate can find the temp home directory on all platforms.
 pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     cmd.env("HOME", home);
     cmd.env("XDG_CONFIG_HOME", home.join(".config"));
+    // Windows: the `home` crate uses USERPROFILE for home_dir()
+    cmd.env("USERPROFILE", home);
 }
 
 pub struct TestRepo {
