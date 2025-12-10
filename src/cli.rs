@@ -876,7 +876,7 @@ approved-commands = [
 ]
 ```
 
-Manage approvals with `wt config approvals add` and `wt config approvals clear <repo>`.
+Manage approvals with `wt config approvals add` to review and pre-approve commands, and `wt config approvals clear` to reset (add `--global` to clear all projects).
 
 ## Project config
 

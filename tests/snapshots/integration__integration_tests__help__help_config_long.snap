@@ -142,7 +142,8 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
   [2m    "pre-merge.test = npm test",[0m
   [2m][0m
 
-Manage approvals with [2mwt config approvals add[0m and [2mwt config approvals clear <repo>[0m.
+Manage approvals with [2mwt config approvals add[0m to review and pre-approve commands, and [2mwt config approvals clear[0m to reset (add [2m--global[0m to clear
+all projects).
 
 [32mProject config[0m
 
