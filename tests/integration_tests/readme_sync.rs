@@ -428,8 +428,32 @@ fn parse_snapshot_content_for_docs(content: &str) -> Result<String, String> {
     let content = parse_snapshot_raw(content);
     let content = replace_placeholders(&content);
     let content = literal_to_escape(&content);
+    // Ensure each line ends with a reset so ansi-to-html produces clean per-line HTML.
+    // This handles snapshots where trailing resets were stripped for cross-platform consistency.
+    let content = ensure_line_resets(&content);
     let html = ansi_to_html(&content).map_err(|e| format!("ANSI conversion failed: {e}"))?;
     Ok(clean_ansi_html(&html))
+}
+
+/// Ensure each line ends with a reset code so ansi-to-html produces clean per-line HTML
+///
+/// When trailing ANSI resets are stripped from snapshots for cross-platform consistency,
+/// the ansi-to-html library will carry styles across lines (e.g., `<b>text\nmore</b>`).
+/// By adding a reset at the end of each line, we ensure proper HTML tag closure.
+fn ensure_line_resets(ansi: &str) -> String {
+    const RESET: &str = "\x1b[0m";
+
+    ansi.lines()
+        .map(|line| {
+            // Add reset at end of line if it doesn't already end with one
+            if line.ends_with(RESET) {
+                line.to_string()
+            } else {
+                format!("{}{}", line, RESET)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Clean up HTML output from ansi-to-html conversion

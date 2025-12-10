@@ -52,16 +52,16 @@ server = "npm run dev"
 
         ----- stderr -----
         ⚪ User Config: [1m~/.config/worktrunk/config.toml[22m
-        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
+        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
         [107m [0m  
-        [107m [0m  [1m[36m[projects."test-project"][0m
+        [107m [0m  [1m[36m[projects."test-project"]
         [107m [0m  approved-commands = [[32m"npm install"[0m]
 
         ⚪ Project Config: [1m[REPO]/.config/wt.toml[22m
-        [107m [0m  post-create = [32m"npm install"[0m
+        [107m [0m  post-create = [32m"npm install"
         [107m [0m  
-        [107m [0m  [1m[36m[post-start][0m
-        [107m [0m  server = [32m"npm run dev"[0m
+        [107m [0m  [1m[36m[post-start]
+        [107m [0m  server = [32m"npm run dev"
 
         [2m⚪ Skipped bash; ~/.bashrc not found[22m
         [2m⚪ Skipped zsh; ~/.zshrc not found[22m
@@ -100,7 +100,7 @@ fn test_config_show_no_project_config() {
 
         ----- stderr -----
         ⚪ User Config: [1m~/.config/worktrunk/config.toml[22m
-        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
+        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
 
         ⚪ Project Config: [1m[REPO]/.config/wt.toml[22m
         💡 [2mNot found[22m
@@ -299,12 +299,12 @@ fn test_config_show_warns_unknown_project_keys() {
 
         ----- stderr -----
         ⚪ User Config: [1m~/.config/worktrunk/config.toml[22m
-        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
+        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
 
         ⚪ Project Config: [1m[REPO]/.config/wt.toml[22m
         🟡 [33mUnknown key [1mpost-merge-command[22m will be ignored[39m
-        [107m [0m  [1m[36m[post-merge-command][0m
-        [107m [0m  deploy = [32m"task deploy"[0m
+        [107m [0m  [1m[36m[post-merge-command]
+        [107m [0m  deploy = [32m"task deploy"
 
         [2m⚪ Skipped bash; ~/.bashrc not found[22m
         [2m⚪ Skipped zsh; ~/.zshrc not found[22m
@@ -343,10 +343,10 @@ fn test_config_show_warns_unknown_user_keys() {
         ----- stderr -----
         ⚪ User Config: [1m~/.config/worktrunk/config.toml[22m
         🟡 [33mUnknown key [1mcommit-gen[22m will be ignored[39m
-        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"[0m
+        [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
         [107m [0m  
-        [107m [0m  [1m[36m[commit-gen][0m
-        [107m [0m  command = [32m"llm"[0m
+        [107m [0m  [1m[36m[commit-gen]
+        [107m [0m  command = [32m"llm"
 
         ⚪ Project Config: [1m[REPO]/.config/wt.toml[22m
         💡 [2mNot found[22m
