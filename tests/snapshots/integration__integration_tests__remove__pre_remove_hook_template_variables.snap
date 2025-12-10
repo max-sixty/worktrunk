@@ -26,12 +26,12 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRemoving worktree for [1mfeature-templates[22m...[39m
 🔄 [36mRunning project pre-remove [1mbranch[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-templates'[0m[2m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-templates'[0m[2m
 [0mBranch: feature-templates
 🔄 [36mRunning project pre-remove [1mworktree[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-templates'[0m[2m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-templates'[0m[2m
 [0mWorktree: [REPO].feature-templates
 🔄 [36mRunning project pre-remove [1mworktree_name[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Name: repo.feature-templates'[0m[2m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Name: repo.feature-templates'[0m[2m
 [0mName: repo.feature-templates
 ✅ [32mRemoved [1mfeature-templates[22m worktree & branch (already in main)[39m

@@ -21,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -33,6 +34,5 @@ exit 7
 ----- stderr -----
 ✅ [32m[32mCreated new worktree for [1moutput-exit-test[22m from [1mmain[22m at [1m[REPO].output-exit-test[39m[22m[39m
 🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'doing work'[0m[2m[0m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 7[0m
-[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'doing work'[0m[2m
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 7

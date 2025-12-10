@@ -852,6 +852,11 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // On Windows, clap shows "wt.exe" instead of "wt"
     settings.add_filter(r"wt\.exe", "wt");
 
+    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
+    // Windows terminal strips these trailing resets that Unix includes
+    settings.add_filter(r"\x1b\[0m$", "");
+    settings.add_filter(r"\x1b\[0m\n", "\n");
+
     settings
 }
 

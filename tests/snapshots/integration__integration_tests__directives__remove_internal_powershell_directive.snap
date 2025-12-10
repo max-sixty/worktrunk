@@ -25,4 +25,3 @@ Set-Location '[PATH]'
 
 ----- stderr -----
 🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (already in main)[39m[39m
-[0m

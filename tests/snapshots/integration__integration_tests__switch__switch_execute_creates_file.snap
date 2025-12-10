@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -29,4 +30,4 @@ exit_code: 0
 ----- stderr -----
 ✅ [32m[32mCreated new worktree for [1mfile-test[22m from [1mmain[22m at [1m[REPO].file-test[39m[22m[39m
 🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test content'[0m[2m [0m[2m[36m>[0m[2m test.txt[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test content'[0m[2m [0m[2m[36m>[0m[2m test.txt

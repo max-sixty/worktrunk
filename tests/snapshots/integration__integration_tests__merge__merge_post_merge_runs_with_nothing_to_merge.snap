@@ -27,5 +27,4 @@ exit_code: 0
 ⚪ Already up to date with [1mmain[22m (no new commits, no rebase needed)
 🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (already in main)[39m[39m
 🔄 [36mRunning project post-merge:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt[0m
-[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt
