@@ -1,9 +1,11 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, resolve_git_common_dir, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content, wait_for_file_count, wait_for_file_lines, wait_for_valid_json,
+    TestRepo, make_snapshot_cmd, repo, resolve_git_common_dir, setup_snapshot_settings,
+    wait_for_file, wait_for_file_content, wait_for_file_count, wait_for_file_lines,
+    wait_for_valid_json,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use std::thread;
 use std::time::Duration;
@@ -36,20 +38,16 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 // Post-Create Command Tests (sequential, blocking)
 // ============================================================================
 
-#[test]
-fn test_post_create_no_config() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_create_no_config(repo: TestRepo) {
     // Switch without project config should work normally
     snapshot_switch("post_create_no_config", &repo, &["--create", "feature"]);
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_single_command() {
-    let repo = TestRepo::new();
-
+fn test_post_create_single_command(repo: TestRepo) {
     // Create project config with a single command (string format)
     repo.write_project_config(r#"post-create = "echo 'Setup complete'""#);
 
@@ -73,11 +71,9 @@ approved-commands = ["echo 'Setup complete'"]
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_named_commands() {
-    let repo = TestRepo::new();
-
+fn test_post_create_named_commands(repo: TestRepo) {
     // Create project config with named commands (table format)
     repo.write_project_config(
         r#"[post-create]
@@ -109,11 +105,9 @@ approved-commands = [
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_failing_command() {
-    let repo = TestRepo::new();
-
+fn test_post_create_failing_command(repo: TestRepo) {
     // Create project config with a command that will fail
     repo.write_project_config(r#"post-create = "exit 1""#);
 
@@ -138,10 +132,8 @@ approved-commands = ["exit 1"]
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_template_expansion() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_create_template_expansion(repo: TestRepo) {
     // Create project config with template variables
     repo.write_project_config(
         r#"[post-create]
@@ -206,10 +198,8 @@ approved-commands = [
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_default_branch_template() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_create_default_branch_template(repo: TestRepo) {
     // Create project config with default_branch template variable
     repo.write_project_config(
         r#"post-create = "echo 'Default: {{ default_branch }}' > default.txt""#,
@@ -252,9 +242,8 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_git_variables_template() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_post_create_git_variables_template(mut repo: TestRepo) {
     repo.setup_remote("main");
 
     // Set up an upstream tracking branch
@@ -329,9 +318,8 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_upstream_template() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_post_create_upstream_template(mut repo: TestRepo) {
     repo.setup_remote("main");
 
     // Push main to set up tracking
@@ -372,12 +360,10 @@ fn test_post_create_upstream_template() {
 
 /// Test that hooks receive JSON context on stdin
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_json_stdin() {
+fn test_post_create_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
-
-    let repo = TestRepo::new();
 
     // Create project config with a command that reads JSON from stdin
     // Use cat to capture stdin to a file
@@ -456,13 +442,11 @@ approved-commands = ["cat > context.json"]
 }
 
 /// Test that an actual script file can read JSON from stdin
-#[test]
+#[rstest]
 #[cfg(unix)]
-fn test_post_create_script_reads_json() {
+fn test_post_create_script_reads_json(repo: TestRepo) {
     use crate::common::wt_command;
     use std::os::unix::fs::PermissionsExt;
-
-    let repo = TestRepo::new();
 
     // Create a scripts directory and a Python script that reads JSON from stdin
     let scripts_dir = repo.root_path().join("scripts");
@@ -558,12 +542,10 @@ approved-commands = ["./scripts/setup.py"]
 /// Test that background hooks also receive JSON context on stdin
 ///
 /// Skipped on Windows: Uses `cat` command which is not available natively on Windows.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_post_start_json_stdin() {
+fn test_post_start_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
-
-    let repo = TestRepo::new();
 
     // Create project config with a background command that reads JSON from stdin
     repo.write_project_config(r#"post-start = "cat > context.json""#);
@@ -624,10 +606,8 @@ approved-commands = ["cat > context.json"]
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_single_background_command() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_single_background_command(repo: TestRepo) {
     // Create project config with a background command
     repo.write_project_config(
         r#"post-start = "sleep 0.1 && echo 'Background task done' > background.txt""#,
@@ -664,10 +644,8 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_multiple_background_commands() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_multiple_background_commands(repo: TestRepo) {
     // Create project config with multiple background commands (table format)
     repo.write_project_config(
         r#"[post-start]
@@ -711,10 +689,8 @@ approved-commands = [
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_both_post_create_and_post_start() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_both_post_create_and_post_start(repo: TestRepo) {
     // Create project config with both command types
     repo.write_project_config(
         r#"post-create = "echo 'Setup done' > setup.txt"
@@ -755,10 +731,8 @@ approved-commands = [
     );
 }
 
-#[test]
-fn test_invalid_toml() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_invalid_toml(repo: TestRepo) {
     // Create invalid TOML
     repo.write_project_config("post-create = [invalid syntax\n");
 
@@ -774,10 +748,8 @@ fn test_invalid_toml() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_log_file_captures_output() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_log_file_captures_output(repo: TestRepo) {
     // Create command that writes to both stdout and stderr
     repo.write_project_config(r#"post-start = "echo 'stdout output' && echo 'stderr output' >&2""#);
 
@@ -832,10 +804,8 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     ");
 }
 
-#[test]
-fn test_post_start_invalid_command_handling() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_invalid_command_handling(repo: TestRepo) {
     // Create command with syntax error (missing quote)
     repo.write_project_config(r#"post-start = "echo 'unclosed quote""#);
 
@@ -867,10 +837,8 @@ approved-commands = ["echo 'unclosed quote"]
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_multiple_commands_separate_logs() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_multiple_commands_separate_logs(repo: TestRepo) {
     // Create multiple background commands with distinct output
     repo.write_project_config(
         r#"[post-start]
@@ -952,10 +920,8 @@ approved-commands = [
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_execute_flag_with_post_start_commands() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_execute_flag_with_post_start_commands(repo: TestRepo) {
     // Create post-start command
     repo.write_project_config(r#"post-start = "echo 'Background task' > background.txt""#);
 
@@ -999,10 +965,8 @@ approved-commands = ["echo 'Background task' > background.txt"]
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_complex_shell_commands() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_complex_shell_commands(repo: TestRepo) {
     // Create command with pipes and redirects
     repo.write_project_config(
         r#"post-start = "echo 'line1\nline2\nline3' | grep line2 > filtered.txt""#,
@@ -1032,10 +996,8 @@ approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_multiline_commands_with_newlines() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_multiline_commands_with_newlines(repo: TestRepo) {
     // Create command with actual newlines (using TOML triple-quoted string)
     repo.write_project_config(
         r#"post-start = """
@@ -1084,10 +1046,8 @@ approved-commands = ["""
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_create_multiline_with_control_structures() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_create_multiline_with_control_structures(repo: TestRepo) {
     // Test multiline command with if-else control structure
     repo.write_project_config(
         r#"post-create = """
@@ -1147,10 +1107,8 @@ approved-commands = ["""
 /// `wt switch` operations instead of only on `wt switch --create`.
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_post_start_skipped_on_existing_worktree() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_post_start_skipped_on_existing_worktree(repo: TestRepo) {
     // Create project config with post-start command
     repo.write_project_config(r#"post-start = "echo 'POST-START-RAN' > post_start_marker.txt""#);
 

@@ -1,7 +1,8 @@
 //! Tests for command approval UI
 
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -40,10 +41,8 @@ fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: b
     });
 }
 
-#[test]
-fn test_approval_single_command() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_approval_single_command(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'Worktree path: {{ worktree }}'""#);
 
     repo.commit("Add config");
@@ -56,10 +55,8 @@ fn test_approval_single_command() {
     );
 }
 
-#[test]
-fn test_approval_multiple_commands() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_approval_multiple_commands(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 branch = "echo 'Branch: {{ branch }}'"
@@ -79,10 +76,8 @@ pwd = "cd {{ worktree }} && pwd"
     );
 }
 
-#[test]
-fn test_approval_mixed_approved_unapproved() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_approval_mixed_approved_unapproved(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -111,11 +106,9 @@ approved-commands = ["echo 'Second command'"]
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_force_flag_does_not_save_approvals() {
-    let repo = TestRepo::new();
-
+fn test_force_flag_does_not_save_approvals(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command' > output.txt""#);
 
     repo.commit("Add config");
@@ -151,11 +144,9 @@ fn test_force_flag_does_not_save_approvals() {
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_already_approved_commands_skip_prompt() {
-    let repo = TestRepo::new();
-
+fn test_already_approved_commands_skip_prompt(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'approved' > output.txt""#);
 
     repo.commit("Add config");
@@ -177,10 +168,8 @@ approved-commands = ["echo 'approved' > output.txt"]
     });
 }
 
-#[test]
-fn test_decline_approval_skips_only_unapproved() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_decline_approval_skips_only_unapproved(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -212,10 +201,8 @@ approved-commands = ["echo 'Second command'"]
     );
 }
 
-#[test]
-fn test_approval_named_commands() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_approval_named_commands(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 install = "echo 'Installing dependencies...'"
@@ -272,10 +259,8 @@ fn snapshot_run_hook(test_name: &str, repo: &TestRepo, hook_type: &str, approve:
 ///
 /// This verifies the fix for the security issue where hooks were bypassing approval.
 /// Before the fix, pre-merge hooks ran with auto_trust=true, skipping approval prompts.
-#[test]
-fn test_run_hook_pre_merge_requires_approval() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_run_hook_pre_merge_requires_approval(repo: TestRepo) {
     repo.write_project_config(r#"pre-merge = "echo 'Running pre-merge checks on {{ branch }}'""#);
 
     repo.commit("Add pre-merge hook");
@@ -293,10 +278,8 @@ fn test_run_hook_pre_merge_requires_approval() {
 ///
 /// This verifies the fix for the security issue where hooks were bypassing approval.
 /// Before the fix, post-merge hooks ran with auto_trust=true, skipping approval prompts.
-#[test]
-fn test_run_hook_post_merge_requires_approval() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_run_hook_post_merge_requires_approval(repo: TestRepo) {
     repo.write_project_config(r#"post-merge = "echo 'Post-merge cleanup for {{ branch }}'""#);
 
     repo.commit("Add post-merge hook");
@@ -314,10 +297,8 @@ fn test_run_hook_post_merge_requires_approval() {
 ///
 /// When stdin is not a TTY (e.g., CI/CD, piped input), approval prompts cannot be shown.
 /// The command should fail with a clear error telling users to use --force.
-#[test]
-fn test_approval_fails_in_non_tty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_approval_fails_in_non_tty(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -334,11 +315,9 @@ fn test_approval_fails_in_non_tty() {
 ///
 /// Even in non-TTY environments, --force should allow commands to execute.
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_force_bypasses_tty_check() {
-    let repo = TestRepo::new();
-
+fn test_force_bypasses_tty_check(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -361,11 +340,9 @@ fn test_force_bypasses_tty_check() {
 /// variable should be the current branch, not always the default branch.
 /// This allows hooks to behave correctly when testing from feature worktrees.
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_hook_post_merge_target_is_current_branch() {
-    let repo = TestRepo::new();
-
+fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
     // Hook that writes {{ target }} to a file so we can verify its value
     repo.write_project_config(r#"post-merge = "echo '{{ target }}' > target-branch.txt""#);
     repo.commit("Add post-merge hook");
@@ -402,11 +379,9 @@ fn test_hook_post_merge_target_is_current_branch() {
 
 /// Test that `{{ target }}` is the current branch for pre-merge standalone
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_hook_pre_merge_target_is_current_branch() {
-    let repo = TestRepo::new();
-
+fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
     // Hook that writes {{ target }} to a file so we can verify its value
     repo.write_project_config(r#"pre-merge = "echo '{{ target }}' > target-branch.txt""#);
     repo.commit("Add pre-merge hook");
@@ -443,11 +418,9 @@ fn test_hook_pre_merge_target_is_current_branch() {
 
 /// Test running a specific named hook command
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_step_hook_run_named_command() {
-    let repo = TestRepo::new();
-
+fn test_step_hook_run_named_command(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
         r#"[pre-merge]
@@ -488,10 +461,8 @@ build = "echo 'running build' > build.txt"
 }
 
 /// Test error message when named hook command doesn't exist
-#[test]
-fn test_step_hook_unknown_name_error() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_step_hook_unknown_name_error(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
         r#"[pre-merge]
@@ -515,10 +486,8 @@ lint = "echo 'lint'"
 }
 
 /// Test error message when hook has no named commands
-#[test]
-fn test_step_hook_name_filter_on_unnamed_command() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_step_hook_name_filter_on_unnamed_command(repo: TestRepo) {
     // Config with a single unnamed command (no table)
     repo.write_project_config(r#"pre-merge = "echo 'test'""#);
     repo.commit("Add pre-merge hook");
@@ -533,11 +502,9 @@ fn test_step_hook_name_filter_on_unnamed_command() {
 
 /// Test running all hooks (no name filter) still works
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_step_hook_run_all_commands() {
-    let repo = TestRepo::new();
-
+fn test_step_hook_run_all_commands(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
         r#"[pre-merge]

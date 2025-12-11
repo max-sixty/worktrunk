@@ -7,9 +7,11 @@
 //! - Skipped together with project hooks via --no-verify
 
 use crate::common::{
-    TestRepo, make_snapshot_cmd, setup_snapshot_settings, wait_for_file, wait_for_file_content,
+    TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings, wait_for_file,
+    wait_for_file_content,
 };
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use std::process::Command;
 use std::thread;
@@ -32,11 +34,9 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_post_create_hook_executes() {
-    let repo = TestRepo::new();
-
+fn test_user_post_create_hook_executes(repo: TestRepo) {
     // Write user config with post-create hook (no project config)
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -64,11 +64,9 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_hooks_run_before_project_hooks() {
-    let repo = TestRepo::new();
-
+fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
     repo.commit("Add project config");
@@ -101,11 +99,9 @@ approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_hooks_no_approval_required() {
-    let repo = TestRepo::new();
-
+fn test_user_hooks_no_approval_required(repo: TestRepo) {
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
     repo.write_test_config(
@@ -127,10 +123,8 @@ setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
     );
 }
 
-#[test]
-fn test_no_verify_flag_skips_all_hooks() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' > project_marker.txt""#);
     repo.commit("Add project config");
@@ -172,11 +166,9 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_post_create_hook_failure() {
-    let repo = TestRepo::new();
-
+fn test_user_post_create_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -202,11 +194,9 @@ failing = "exit 1"
 // ============================================================================
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_post_start_hook_executes() {
-    let repo = TestRepo::new();
-
+fn test_user_post_start_hook_executes(repo: TestRepo) {
     // Write user config with post-start hook (background)
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -230,10 +220,8 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
     );
 }
 
-#[test]
-fn test_user_post_start_skipped_with_no_verify() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_user_post_start_skipped_with_no_verify(repo: TestRepo) {
     // Write user config with post-start hook
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -274,11 +262,9 @@ fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_pre_merge_hook_executes() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_merge_hook_executes(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
@@ -319,11 +305,9 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_pre_merge_hook_failure_blocks_merge() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_merge_hook_failure_blocks_merge(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
@@ -360,10 +344,8 @@ check = "exit 1"
     );
 }
 
-#[test]
-fn test_user_pre_merge_skipped_with_no_verify() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_user_pre_merge_skipped_with_no_verify(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
@@ -406,15 +388,13 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
     );
 }
 
-#[test]
+#[rstest]
 #[cfg(unix)]
-fn test_pre_merge_hook_receives_sigint() {
+fn test_pre_merge_hook_receives_sigint(repo: TestRepo) {
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use std::io::Read;
     use std::process::Stdio;
-
-    let repo = TestRepo::new();
     repo.commit("Initial commit");
 
     // Project pre-merge hook: write start, then sleep, then write done (if not interrupted)
@@ -469,11 +449,9 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 // ============================================================================
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_post_merge_hook_executes() {
-    let mut repo = TestRepo::new();
-
+fn test_user_post_merge_hook_executes(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
@@ -531,11 +509,9 @@ fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<
 }
 
 /// Skipped on Windows: Uses /tmp path and file locking prevents worktree removal.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_user_pre_remove_hook_executes() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_remove_hook_executes(mut repo: TestRepo) {
     // Create a worktree to remove
     let _feature_wt = repo.add_worktree("feature");
 
@@ -563,11 +539,9 @@ cleanup = "echo 'USER_PRE_REMOVE_RAN' > /tmp/user_preremove_marker.txt"
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_pre_remove_failure_blocks_removal() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_remove_failure_blocks_removal(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
 
@@ -595,11 +569,9 @@ block = "exit 1"
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_pre_remove_skipped_with_no_verify() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_remove_skipped_with_no_verify(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
 
@@ -639,11 +611,9 @@ block = "exit 1"
 // ============================================================================
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_pre_commit_hook_executes() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_commit_hook_executes(mut repo: TestRepo) {
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
 
@@ -672,11 +642,9 @@ lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
 }
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_pre_commit_failure_blocks_commit() {
-    let mut repo = TestRepo::new();
-
+fn test_user_pre_commit_failure_blocks_commit(mut repo: TestRepo) {
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
 
@@ -706,11 +674,9 @@ lint = "exit 1"
 // ============================================================================
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_hook_template_variables() {
-    let repo = TestRepo::new();
-
+fn test_user_hook_template_variables(repo: TestRepo) {
     // Write user config with hook using template variables
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
@@ -745,11 +711,9 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 // ============================================================================
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_user_and_project_post_start_both_run() {
-    let repo = TestRepo::new();
-
+fn test_user_and_project_post_start_both_run(repo: TestRepo) {
     // Create project config with post-start hook
     repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
     repo.commit("Add project config");
