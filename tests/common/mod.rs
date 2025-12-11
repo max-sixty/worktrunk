@@ -112,6 +112,32 @@ pub fn pty_safe() {
     ignore_tty_signals();
 }
 
+/// Convert a path string to POSIX format for Git Bash compatibility.
+///
+/// On Windows, Git Bash expects paths like `/c/foo/bar` instead of `C:\foo\bar`.
+/// This is used to create snapshot filters that match paths output by hooks
+/// running in Git Bash on Windows.
+///
+/// Examples:
+/// - `C:\Users\test\repo` -> `/c/Users/test/repo`
+/// - `D:\a\worktrunk\worktrunk` -> `/d/a/worktrunk/worktrunk`
+/// - `/tmp/test/repo` -> `/tmp/test/repo` (unchanged on Unix)
+fn to_posix_path(path: &str) -> String {
+    let chars: Vec<char> = path.chars().collect();
+    // Check for Windows drive letter pattern: X:\ or X:/
+    if chars.len() >= 3
+        && chars[0].is_ascii_alphabetic()
+        && chars[1] == ':'
+        && (chars[2] == '\\' || chars[2] == '/')
+    {
+        let drive = chars[0].to_ascii_lowercase();
+        let rest: String = chars[3..].iter().collect();
+        return format!("/{}/{}", drive, rest.replace('\\', "/"));
+    }
+    // Just convert backslashes to forward slashes
+    path.replace('\\', "/")
+}
+
 /// Basic TestRepo fixture - creates a fresh git repository.
 ///
 /// Use with `#[rstest]` to inject a new repo into tests:
@@ -1539,6 +1565,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // (output may have either format depending on when filters are applied)
     settings.add_filter(&regex::escape(root_str), "[REPO]");
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
+    // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
+    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "[REPO]");
 
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
@@ -1568,6 +1596,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
         settings.add_filter(&regex::escape(path_str), &replacement);
         settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
+        // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
+        settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
 
         // Also add tilde-prefixed worktree path filter for Windows
         if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
@@ -1586,6 +1616,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
     // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
     settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "[REPO]");
+    // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
+    // Pattern: /c/Users/.../Temp/.tmpXXXXXX/repo and worktrees like /c/.../repo.feature-test
+    settings.add_filter(r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?", "[REPO]$1");
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
