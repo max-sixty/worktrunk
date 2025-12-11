@@ -74,12 +74,17 @@ jobs:
         # Skip lychee - the dedicated check-links job handles link checking
         SKIP: lychee
 
-    # This installs from crates.io, not from the PR code. Pre-merge hooks
-    # run against the published version, testing the hook configuration.
-    - name: Install wt
+    # On Linux/macOS: Install from crates.io (pre-merge hooks run against published version)
+    # On Windows: Build from source (published version may not have Git Bash detection fixes)
+    - name: Install wt (Linux/macOS)
+      if: runner.os != 'Windows'
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
+
+    - name: Install wt (Windows - from source)
+      if: runner.os == 'Windows'
+      run: cargo install --path .
 
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --force
