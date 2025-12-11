@@ -1618,7 +1618,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "[REPO]");
     // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
     // Pattern: /c/Users/.../Temp/.tmpXXXXXX/repo and worktrees like /c/.../repo.feature-test
-    settings.add_filter(r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?", "[REPO]$1");
+    settings.add_filter(
+        r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?",
+        "[REPO]$1",
+    );
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
