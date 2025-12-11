@@ -38,6 +38,10 @@ path = "src/lib.rs"
 name = "wt"
 path = "src/main.rs"
 
+[[bin]]
+name = "worktrunk"
+path = "src/worktrunk.rs"
+
 
 [dependencies]
 anyhow = "1.0"
