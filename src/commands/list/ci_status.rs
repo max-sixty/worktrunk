@@ -418,11 +418,32 @@ fn tool_available(tool: &str, args: &[&str]) -> bool {
             cmd_str.push(' ');
             cmd_str.push_str(arg);
         }
-        Command::new("cmd")
+
+        // Debug: print what we're running when test env var is set
+        let debug = std::env::var("WORKTRUNK_DEBUG_TOOL_AVAILABLE").is_ok();
+        if debug {
+            if let Ok(path) = std::env::var("PATH") {
+                eprintln!("[TOOL_AVAILABLE DEBUG] {}: PATH={}", tool, path);
+            }
+        }
+
+        let result = Command::new("cmd")
             .args(["/c", &cmd_str])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .map(|o| {
+                if debug {
+                    eprintln!(
+                        "[TOOL_AVAILABLE DEBUG] {} exit={}, stdout={:?}, stderr={:?}",
+                        cmd_str,
+                        o.status.code().unwrap_or(-1),
+                        String::from_utf8_lossy(&o.stdout).trim(),
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
+                }
+                o.status.success()
+            })
+            .unwrap_or(false);
+        result
     }
     #[cfg(not(windows))]
     {

@@ -1368,8 +1368,23 @@ exit /b 1
             }
 
             paths.insert(0, mock_bin.clone());
-            let new_path = std::env::join_paths(paths).unwrap();
+            let new_path = std::env::join_paths(&paths).unwrap();
+
+            // Debug output for Windows CI troubleshooting
+            #[cfg(windows)]
+            {
+                eprintln!("[DEBUG] configure_mock_commands: PATH={}", new_path.to_string_lossy());
+                eprintln!("[DEBUG] mock_bin contents:");
+                if let Ok(entries) = std::fs::read_dir(mock_bin) {
+                    for entry in entries.flatten() {
+                        eprintln!("[DEBUG]   {}", entry.path().display());
+                    }
+                }
+            }
+
             cmd.env("PATH", new_path);
+            // Enable debug output in tool_available() on Windows
+            cmd.env("WORKTRUNK_DEBUG_TOOL_AVAILABLE", "1");
         }
     }
 }
