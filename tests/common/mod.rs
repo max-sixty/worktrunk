@@ -150,6 +150,115 @@ pub fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
     repo
 }
 
+/// Merge test setup with a single commit on feature branch.
+///
+/// Creates a repo with:
+/// - A worktree for main at `repo.main-wt`
+/// - A feature worktree with one commit adding `feature.txt`
+///
+/// Returns `(repo, feature_worktree_path)`.
+///
+/// # Example
+/// ```ignore
+/// #[rstest]
+/// fn test_merge(merge_scenario: (TestRepo, PathBuf)) {
+///     let (repo, feature_wt) = merge_scenario;
+///     // feature_wt has one commit ready to merge
+/// }
+/// ```
+#[rstest::fixture]
+pub fn merge_scenario(mut repo: TestRepo) -> (TestRepo, PathBuf) {
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Create a feature worktree and make a commit
+    let feature_wt = repo.add_worktree("feature");
+    std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "feature.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Add feature file"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    (repo, feature_wt)
+}
+
+/// Merge test setup with multiple commits on feature branch.
+///
+/// Creates a repo with:
+/// - A worktree for main at `repo.main-wt`
+/// - A feature worktree with two commits: `file1.txt` and `file2.txt`
+///
+/// Returns `(repo, feature_worktree_path)`.
+///
+/// # Example
+/// ```ignore
+/// #[rstest]
+/// fn test_squash(merge_scenario_multi_commit: (TestRepo, PathBuf)) {
+///     let (repo, feature_wt) = merge_scenario_multi_commit;
+///     // feature_wt has two commits ready to squash-merge
+/// }
+/// ```
+#[rstest::fixture]
+pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
+    // Create a worktree for main
+    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Create a feature worktree and make multiple commits
+    let feature_wt = repo.add_worktree("feature");
+
+    std::fs::write(feature_wt.join("file1.txt"), "content 1").unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file1.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 1"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    std::fs::write(feature_wt.join("file2.txt"), "content 2").unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "file2.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "feat: add file 2"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    (repo, feature_wt)
+}
+
 /// Returns a PTY system after ensuring SIGTTIN/SIGTTOU signals are blocked.
 ///
 /// Use this instead of `portable_pty::native_pty_system()` directly to ensure

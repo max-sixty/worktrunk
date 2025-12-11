@@ -1,5 +1,6 @@
-use crate::common::{TestRepo, wt_command, wt_completion_command};
+use crate::common::{TestRepo, repo, wt_command, wt_completion_command};
 use insta::Settings;
+use rstest::rstest;
 use std::process::Command;
 
 fn only_option_suggestions(stdout: &str) -> bool {
@@ -29,21 +30,20 @@ fn value_suggestions(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
-#[test]
-fn test_complete_switch_shows_branches() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_shows_branches(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create some branches using git
     Command::new("git")
         .args(["branch", "feature/new"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "hotfix/bug"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -51,7 +51,7 @@ fn test_complete_switch_shows_branches() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("feature/new"));
@@ -60,18 +60,17 @@ fn test_complete_switch_shows_branches() {
     });
 }
 
-#[test]
-fn test_complete_switch_shows_all_branches_including_worktrees() {
-    let mut temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_shows_all_branches_including_worktrees(mut repo: TestRepo) {
+    repo.commit("initial");
 
     // Create worktree (this creates a new branch "feature/new")
-    temp.add_worktree("feature/new");
+    repo.add_worktree("feature/new");
 
     // Create another branch without worktree
     Command::new("git")
         .args(["branch", "hotfix/bug"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -79,7 +78,7 @@ fn test_complete_switch_shows_all_branches_including_worktrees() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+        let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("feature/new"));
@@ -88,18 +87,17 @@ fn test_complete_switch_shows_all_branches_including_worktrees() {
     });
 }
 
-#[test]
-fn test_complete_push_shows_all_branches() {
-    let mut temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_push_shows_all_branches(mut repo: TestRepo) {
+    repo.commit("initial");
 
     // Create worktree (creates "feature/new" branch)
-    temp.add_worktree("feature/new");
+    repo.add_worktree("feature/new");
 
     // Create another branch without worktree
     Command::new("git")
         .args(["branch", "hotfix/bug"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -107,7 +105,7 @@ fn test_complete_push_shows_all_branches() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "step", "push", ""])
             .output()
             .unwrap();
@@ -123,21 +121,20 @@ fn test_complete_push_shows_all_branches() {
     });
 }
 
-#[test]
-fn test_complete_base_flag_all_formats() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_base_flag_all_formats(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches
     Command::new("git")
         .args(["branch", "develop"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "feature/existing"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -152,7 +149,7 @@ fn test_complete_base_flag_all_formats() {
     ];
 
     for args in test_cases {
-        let output = temp.completion_cmd(args).output().unwrap();
+        let output = repo.completion_cmd(args).output().unwrap();
         assert!(output.status.success(), "Failed for args: {:?}", args);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let branches = value_suggestions(&stdout);
@@ -172,7 +169,7 @@ fn test_complete_base_flag_all_formats() {
     }
 
     // Test partial completion --base=m (shell handles filtering, we return all)
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "--create", "new-branch", "--base=m"])
         .output()
         .unwrap();
@@ -182,7 +179,7 @@ fn test_complete_base_flag_all_formats() {
     assert!(branches.iter().any(|b| b.contains("main")));
 }
 
-#[test]
+#[rstest]
 fn test_complete_outside_git_repo() {
     let temp = tempfile::tempdir().unwrap();
     let mut settings = Settings::clone_current();
@@ -205,7 +202,7 @@ fn test_complete_outside_git_repo() {
     });
 }
 
-#[test]
+#[rstest]
 fn test_complete_empty_repo() {
     let repo = TestRepo::empty();
     let mut settings = Settings::clone_current();
@@ -225,9 +222,8 @@ fn test_complete_empty_repo() {
     });
 }
 
-#[test]
-fn test_complete_unknown_command() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_complete_unknown_command(repo: TestRepo) {
     repo.commit("initial");
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -248,9 +244,8 @@ fn test_complete_unknown_command() {
     });
 }
 
-#[test]
-fn test_complete_step_commit_no_positionals() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_complete_step_commit_no_positionals(repo: TestRepo) {
     repo.commit("initial");
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -272,9 +267,8 @@ fn test_complete_step_commit_no_positionals() {
     });
 }
 
-#[test]
-fn test_complete_list_command() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_complete_list_command(repo: TestRepo) {
     repo.commit("initial");
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -294,7 +288,7 @@ fn test_complete_list_command() {
     });
 }
 
-#[test]
+#[rstest]
 fn test_init_fish_no_inline_completions() {
     // Test that fish init does NOT have inline completions (they're in a separate file)
     let mut cmd = wt_command();
@@ -321,27 +315,26 @@ fn test_init_fish_no_inline_completions() {
     );
 }
 
-#[test]
-fn test_complete_with_partial_prefix() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_with_partial_prefix(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches with common prefix
     Command::new("git")
         .args(["branch", "feature/one"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "feature/two"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "hotfix/bug"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -349,7 +342,7 @@ fn test_complete_with_partial_prefix() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "switch", "feat"])
             .output()
             .unwrap();
@@ -360,17 +353,16 @@ fn test_complete_with_partial_prefix() {
     });
 }
 
-#[test]
-fn test_complete_switch_shows_all_branches_even_with_worktrees() {
-    let mut temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_shows_all_branches_even_with_worktrees(mut repo: TestRepo) {
+    repo.commit("initial");
 
     // Create two branches, both with worktrees
-    temp.add_worktree("feature/new");
-    temp.add_worktree("hotfix/bug");
+    repo.add_worktree("feature/new");
+    repo.add_worktree("hotfix/bug");
 
     // From the main worktree, test completion - should show all branches
-    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -380,28 +372,27 @@ fn test_complete_switch_shows_all_branches_even_with_worktrees() {
     assert!(stdout.contains("hotfix/bug"));
 }
 
-#[test]
-fn test_complete_excludes_remote_branches() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_excludes_remote_branches(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create local branches
     Command::new("git")
         .args(["branch", "feature/local"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Set up a fake remote
     Command::new("git")
         .args(["remote", "add", "origin", "https://example.com/repo.git"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Create a remote-tracking branch by fetching from a local "remote"
     // First, create a bare repo to act as remote
-    let remote_dir = temp.root_path().parent().unwrap().join("remote.git");
+    let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
     Command::new("git")
         .args(["init", "--bare", remote_dir.to_str().unwrap()])
         .output()
@@ -410,32 +401,32 @@ fn test_complete_excludes_remote_branches() {
     // Update remote URL to point to our bare repo
     Command::new("git")
         .args(["remote", "set-url", "origin", remote_dir.to_str().unwrap()])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Push to create remote branches
     Command::new("git")
         .args(["push", "origin", "main"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["push", "origin", "feature/local:feature/remote"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Fetch to create remote-tracking branches
     Command::new("git")
         .args(["fetch", "origin"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test completion
-    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -458,23 +449,22 @@ fn test_complete_excludes_remote_branches() {
     );
 }
 
-#[test]
-fn test_complete_merge_shows_branches() {
-    let mut temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_merge_shows_branches(mut repo: TestRepo) {
+    repo.commit("initial");
 
     // Create worktree (creates "feature/new" branch)
-    temp.add_worktree("feature/new");
+    repo.add_worktree("feature/new");
 
     // Create another branch without worktree
     Command::new("git")
         .args(["branch", "hotfix/bug"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test completion for merge (should show ALL branches, including those with worktrees)
-    let output = temp.completion_cmd(&["wt", "merge", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "merge", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -485,10 +475,9 @@ fn test_complete_merge_shows_branches() {
     assert!(branches.iter().any(|b| b.contains("hotfix/bug")));
 }
 
-#[test]
-fn test_complete_with_special_characters_in_branch_names() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_with_special_characters_in_branch_names(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches with various special characters
     let branch_names = vec![
@@ -501,13 +490,13 @@ fn test_complete_with_special_characters_in_branch_names() {
     for branch in &branch_names {
         Command::new("git")
             .args(["branch", branch])
-            .current_dir(temp.root_path())
+            .current_dir(repo.root_path())
             .output()
             .unwrap();
     }
 
     // Test completion
-    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -523,21 +512,20 @@ fn test_complete_with_special_characters_in_branch_names() {
     }
 }
 
-#[test]
-fn test_complete_stops_after_branch_provided() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_stops_after_branch_provided(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches
     Command::new("git")
         .args(["branch", "feature/one"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "feature/two"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -545,7 +533,7 @@ fn test_complete_stops_after_branch_provided() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "switch", "feature/one", ""])
             .output()
             .unwrap();
@@ -561,7 +549,7 @@ fn test_complete_stops_after_branch_provided() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "step", "push", "feature/one", ""])
             .output()
             .unwrap();
@@ -577,7 +565,7 @@ fn test_complete_stops_after_branch_provided() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "merge", "feature/one", ""])
             .output()
             .unwrap();
@@ -590,14 +578,13 @@ fn test_complete_stops_after_branch_provided() {
     });
 }
 
-#[test]
-fn test_complete_switch_with_create_flag_no_completion() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_with_create_flag_no_completion(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "feature/existing"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -605,7 +592,7 @@ fn test_complete_switch_with_create_flag_no_completion() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "switch", "--create", ""])
             .output()
             .unwrap();
@@ -621,7 +608,7 @@ fn test_complete_switch_with_create_flag_no_completion() {
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
     settings.bind(|| {
-        let output = temp
+        let output = repo
             .completion_cmd(&["wt", "switch", "-c", ""])
             .output()
             .unwrap();
@@ -634,20 +621,19 @@ fn test_complete_switch_with_create_flag_no_completion() {
     });
 }
 
-#[test]
-fn test_complete_switch_base_flag_after_branch() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_base_flag_after_branch(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches
     Command::new("git")
         .args(["branch", "develop"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test completion for --base even after --create and branch name
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "--create", "new-feature", "--base", ""])
         .output()
         .unwrap();
@@ -659,23 +645,22 @@ fn test_complete_switch_base_flag_after_branch() {
     assert!(stdout.contains("develop"));
 }
 
-#[test]
-fn test_complete_remove_excludes_remote_only_branches() {
-    let mut temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_remove_excludes_remote_only_branches(mut repo: TestRepo) {
+    repo.commit("initial");
 
     // Create worktree (creates "feature/new" branch)
-    temp.add_worktree("feature/new");
+    repo.add_worktree("feature/new");
 
     // Create another local branch without worktree
     Command::new("git")
         .args(["branch", "hotfix/bug"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test completion for remove (should show local branches, exclude remote-only)
-    let output = temp.completion_cmd(&["wt", "remove", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "remove", ""]).output().unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -687,13 +672,12 @@ fn test_complete_remove_excludes_remote_only_branches() {
     assert!(branches.iter().any(|b| b.contains("hotfix/bug")));
 }
 
-#[test]
-fn test_complete_step_subcommands() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_step_subcommands(repo: TestRepo) {
+    repo.commit("initial");
 
     // Test: No input - shows all step subcommands (git operations only)
-    let output = temp.completion_cmd(&["wt", "step", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "step", ""]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
@@ -710,13 +694,12 @@ fn test_complete_step_subcommands() {
     );
 }
 
-#[test]
-fn test_complete_hook_subcommands() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_hook_subcommands(repo: TestRepo) {
+    repo.commit("initial");
 
     // Test 1: No input - shows all hook subcommands
-    let output = temp.completion_cmd(&["wt", "hook", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "hook", ""]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
@@ -736,7 +719,7 @@ fn test_complete_hook_subcommands() {
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
-    let output = temp.completion_cmd(&["wt", "hook", "po"]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "hook", "po"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let subcommands = value_suggestions(&stdout);
@@ -747,13 +730,12 @@ fn test_complete_hook_subcommands() {
     assert!(!subcommands.contains(&"pre-merge"));
 }
 
-#[test]
-fn test_complete_init_shell_all_variations() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_init_shell_all_variations(repo: TestRepo) {
+    repo.commit("initial");
 
     // Test 1: No input - shows all supported shells
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "config", "shell", "init", ""])
         .output()
         .unwrap();
@@ -767,7 +749,7 @@ fn test_complete_init_shell_all_variations() {
     assert!(!shells.contains(&"nushell"));
 
     // Test 2: Partial input "fi" - filters to fish
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "config", "shell", "init", "fi"])
         .output()
         .unwrap();
@@ -778,7 +760,7 @@ fn test_complete_init_shell_all_variations() {
     assert!(!shells.contains(&"bash"));
 
     // Test 3: Partial input "z" - filters to zsh
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "config", "shell", "init", "z"])
         .output()
         .unwrap();
@@ -790,7 +772,7 @@ fn test_complete_init_shell_all_variations() {
     assert!(!shells.contains(&"fish"));
 
     // Test 4: With --source flag - same behavior
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "--source", "config", "shell", "init", ""])
         .output()
         .unwrap();
@@ -804,13 +786,12 @@ fn test_complete_init_shell_all_variations() {
 
 // test_complete_init_shell_all_with_source removed - duplicate of test_complete_init_shell_with_source_flag
 
-#[test]
-fn test_complete_list_format_flag() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_list_format_flag(repo: TestRepo) {
+    repo.commit("initial");
 
     // Test completion for list --format flag
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "list", "--format", ""])
         .output()
         .unwrap();
@@ -825,14 +806,13 @@ fn test_complete_list_format_flag() {
     assert!(values.contains(&"json"));
 }
 
-#[test]
-fn test_complete_switch_execute_all_formats() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_execute_all_formats(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "feature"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -845,7 +825,7 @@ fn test_complete_switch_execute_all_formats() {
     ];
 
     for args in test_cases {
-        let output = temp.completion_cmd(args).output().unwrap();
+        let output = repo.completion_cmd(args).output().unwrap();
         assert!(output.status.success(), "Failed for args: {:?}", args);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let branches: Vec<&str> = stdout.lines().collect();
@@ -864,20 +844,19 @@ fn test_complete_switch_execute_all_formats() {
     }
 }
 
-#[test]
-fn test_complete_switch_with_double_dash_terminator() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_with_double_dash_terminator(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "feature"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch -- <cursor>
     // After --, everything is positional, should complete branches
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "--", ""])
         .output()
         .unwrap();
@@ -889,20 +868,19 @@ fn test_complete_switch_with_double_dash_terminator() {
     assert!(branches.iter().any(|b| b.contains("main")));
 }
 
-#[test]
-fn test_complete_switch_positional_already_provided() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_positional_already_provided(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "existing"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch existing <cursor>
     // Positional already provided, should NOT complete branches
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "existing", ""])
         .output()
         .unwrap();
@@ -915,20 +893,19 @@ fn test_complete_switch_positional_already_provided() {
     );
 }
 
-#[test]
-fn test_complete_switch_completing_execute_value() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_completing_execute_value(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "develop"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch --execute <cursor>
     // Currently typing the value for --execute, should NOT complete branches
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "--execute", ""])
         .output()
         .unwrap();
@@ -939,20 +916,19 @@ fn test_complete_switch_completing_execute_value() {
     assert_eq!(stdout.trim(), "");
 }
 
-#[test]
-fn test_complete_merge_with_flags() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_merge_with_flags(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "hotfix"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt merge --no-remove --force <cursor>
     // Should complete branches for positional (boolean flags don't consume arguments)
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "merge", "--no-remove", "--force", ""])
         .output()
         .unwrap();
@@ -964,27 +940,26 @@ fn test_complete_merge_with_flags() {
     assert!(branches.iter().any(|b| b.contains("main")));
 }
 
-#[test]
-fn test_complete_switch_base_after_execute_equals() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_base_after_execute_equals(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches
     Command::new("git")
         .args(["branch", "develop"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "production"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch --create --execute=claude --base <cursor>
     // This is the reported failing case - should complete branches for --base
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "--create", "--execute=claude", "--base", ""])
         .output()
         .unwrap();
@@ -1008,20 +983,19 @@ fn test_complete_switch_base_after_execute_equals() {
     );
 }
 
-#[test]
-fn test_complete_switch_flexible_argument_ordering() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_flexible_argument_ordering(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "develop"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test that .last(true) allows positional before flags
     // wt switch feature --base <cursor>
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "feature", "--base", ""])
         .output()
         .unwrap();
@@ -1041,19 +1015,18 @@ fn test_complete_switch_flexible_argument_ordering() {
     );
 }
 
-#[test]
-fn test_complete_remove_flexible_argument_ordering() {
-    let mut temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_remove_flexible_argument_ordering(mut repo: TestRepo) {
+    repo.commit("initial");
 
     // Create two worktrees
-    temp.add_worktree("feature");
-    temp.add_worktree("bugfix");
+    repo.add_worktree("feature");
+    repo.add_worktree("bugfix");
 
     // Test that .last(true) allows positional before flags
     // wt remove feature --no-delete-branch <cursor>
     // Since remove accepts multiple worktrees, should suggest more worktrees
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "remove", "feature", "--no-delete-branch", ""])
         .output()
         .unwrap();
@@ -1069,20 +1042,19 @@ fn test_complete_remove_flexible_argument_ordering() {
     );
 }
 
-#[test]
-fn test_complete_filters_options_when_positionals_exist() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_filters_options_when_positionals_exist(repo: TestRepo) {
+    repo.commit("initial");
 
     Command::new("git")
         .args(["branch", "feature"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch <cursor>
     // Should show branches but NOT options like --config, --verbose, -C
-    let output = temp.completion_cmd(&["wt", "switch", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -1097,14 +1069,13 @@ fn test_complete_filters_options_when_positionals_exist() {
     );
 }
 
-#[test]
-fn test_complete_subcommands_filter_options() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_subcommands_filter_options(repo: TestRepo) {
+    repo.commit("initial");
 
     // Test: wt <cursor>
     // Should show subcommands but NOT global options
-    let output = temp.completion_cmd(&["wt", ""]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", ""]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let suggestions = value_suggestions(&stdout);
@@ -1122,7 +1093,7 @@ fn test_complete_subcommands_filter_options() {
 
     // Test: wt --<cursor>
     // Now options SHOULD appear
-    let output = temp.completion_cmd(&["wt", "--"]).output().unwrap();
+    let output = repo.completion_cmd(&["wt", "--"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -1132,27 +1103,26 @@ fn test_complete_subcommands_filter_options() {
     );
 }
 
-#[test]
-fn test_complete_switch_option_prefix_shows_options_not_branches() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_option_prefix_shows_options_not_branches(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create branches that happen to contain "-c" in the name
     Command::new("git")
         .args(["branch", "fish-switch-complete"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     Command::new("git")
         .args(["branch", "zsh-bash-complete"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch --c<cursor>
     // Should show options starting with --c (like --create), NOT branches containing "-c"
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "--c"])
         .output()
         .unwrap();
@@ -1176,21 +1146,20 @@ fn test_complete_switch_option_prefix_shows_options_not_branches() {
     );
 }
 
-#[test]
-fn test_complete_switch_single_dash_shows_options_not_branches() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_switch_single_dash_shows_options_not_branches(repo: TestRepo) {
+    repo.commit("initial");
 
     // Create a branch that contains "-" in the name
     Command::new("git")
         .args(["branch", "feature-branch"])
-        .current_dir(temp.root_path())
+        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
     // Test: wt switch -<cursor>
     // Should show short options, NOT branches containing "-"
-    let output = temp
+    let output = repo
         .completion_cmd(&["wt", "switch", "-"])
         .output()
         .unwrap();
@@ -1215,14 +1184,13 @@ fn test_complete_switch_single_dash_shows_options_not_branches() {
 /// This is a regression test for a bug where --help was missing from zsh completions
 /// because clap's built-in help flag was disabled (to participate in completion filtering)
 /// but not replaced with a visible alternative.
-#[test]
-fn test_complete_help_flag_all_shells() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_help_flag_all_shells(repo: TestRepo) {
+    repo.commit("initial");
 
     for shell in ["bash", "zsh", "fish"] {
         // Test: wt --help<cursor> - should complete --help
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "--help"], shell)
             .output()
             .unwrap();
@@ -1234,7 +1202,7 @@ fn test_complete_help_flag_all_shells() {
         );
 
         // Test: wt config --help<cursor> - should complete --help on subcommands too
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "config", "--help"], shell)
             .output()
             .unwrap();
@@ -1248,14 +1216,13 @@ fn test_complete_help_flag_all_shells() {
 }
 
 /// Verify --version appears in completions across all supported shells (root command only).
-#[test]
-fn test_complete_version_flag_all_shells() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_version_flag_all_shells(repo: TestRepo) {
+    repo.commit("initial");
 
     for shell in ["bash", "zsh", "fish"] {
         // Test: wt --version<cursor> - should complete --version
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "--version"], shell)
             .output()
             .unwrap();
@@ -1273,14 +1240,13 @@ fn test_complete_version_flag_all_shells() {
 /// The --internal flag is used by shell wrappers and should never be exposed to users.
 /// This is a regression test for a bug where global hidden args would appear in completions
 /// due to clap's "all hidden = all shown" behavior when completing `--`.
-#[test]
-fn test_complete_internal_flag_never_shown() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_internal_flag_never_shown(repo: TestRepo) {
+    repo.commit("initial");
 
     for shell in ["bash", "zsh", "fish"] {
         // Test: wt --<cursor> - should NOT show --internal
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "--"], shell)
             .output()
             .unwrap();
@@ -1292,7 +1258,7 @@ fn test_complete_internal_flag_never_shown() {
         );
 
         // Test: wt config --<cursor> - should NOT show --internal on subcommands either
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "config", "--"], shell)
             .output()
             .unwrap();
@@ -1304,7 +1270,7 @@ fn test_complete_internal_flag_never_shown() {
         );
 
         // Test: wt -<cursor> - should NOT show --internal even with single dash
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "-"], shell)
             .output()
             .unwrap();
@@ -1321,14 +1287,13 @@ fn test_complete_internal_flag_never_shown() {
 ///
 /// When completing `wt -`, users should see both short flags like `-h` and long flags
 /// like `--help`. This is more discoverable than requiring users to type `--` first.
-#[test]
-fn test_complete_single_dash_shows_both_short_and_long_flags() {
-    let temp = TestRepo::new();
-    temp.commit("initial");
+#[rstest]
+fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
+    repo.commit("initial");
 
     for shell in ["bash", "zsh", "fish"] {
         // Test: wt -<cursor> - should show both -h and --help
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "-"], shell)
             .output()
             .unwrap();
@@ -1356,7 +1321,7 @@ fn test_complete_single_dash_shows_both_short_and_long_flags() {
         );
 
         // Test: wt config -<cursor> - same behavior on subcommands
-        let output = temp
+        let output = repo
             .completion_cmd_for_shell(&["wt", "config", "-"], shell)
             .output()
             .unwrap();

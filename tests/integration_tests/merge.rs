@@ -1,7 +1,11 @@
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{
+    TestRepo, make_snapshot_cmd, merge_scenario, merge_scenario_multi_commit, repo,
+    setup_snapshot_settings,
+};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Helper to create snapshot with normalized paths
@@ -40,104 +44,16 @@ fn snapshot_merge_with_env(
     });
 }
 
-/// Standard merge test setup: creates repo with main worktree and feature worktree with one commit.
-/// Returns (repo, feature_wt_path).
-///
-/// Note: No remote is set up - merge works with local branches only. Tests that
-/// specifically need remote behavior should call `repo.setup_remote()` explicitly.
-fn setup_merge_scenario() -> (TestRepo, std::path::PathBuf) {
-    let mut repo = TestRepo::new();
-
-    // Create a worktree for main
-    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    // Create a feature worktree and make a commit
-    let feature_wt = repo.add_worktree("feature");
-    std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "feature.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add feature file"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    (repo, feature_wt)
-}
-
-/// Merge test setup with multiple commits on feature branch.
-/// Returns (repo, feature_wt_path).
-fn setup_merge_scenario_multi_commit() -> (TestRepo, std::path::PathBuf) {
-    let mut repo = TestRepo::new();
-
-    // Create a worktree for main
-    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    // Create a feature worktree and make multiple commits
-    let feature_wt = repo.add_worktree("feature");
-
-    std::fs::write(feature_wt.join("file1.txt"), "content 1").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file1.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 1"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    std::fs::write(feature_wt.join("file2.txt"), "content 2").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file2.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 2"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    (repo, feature_wt)
-}
-
-#[test]
-fn test_merge_fast_forward() {
-    let (repo, feature_wt) = setup_merge_scenario();
+#[rstest]
+fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
 
     // Merge feature into main
     snapshot_merge("merge_fast_forward", &repo, &["main"], Some(&feature_wt));
 }
 
-#[test]
-fn test_merge_when_primary_not_on_default_but_default_has_worktree() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_when_primary_not_on_default_but_default_has_worktree(mut repo: TestRepo) {
     // Move the primary worktree off main
     repo.switch_primary_to("develop");
 
@@ -170,9 +86,9 @@ fn test_merge_when_primary_not_on_default_but_default_has_worktree() {
     );
 }
 
-#[test]
-fn test_merge_with_no_remove_flag() {
-    let (repo, feature_wt) = setup_merge_scenario();
+#[rstest]
+fn test_merge_with_no_remove_flag(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
 
     // Merge with --no-remove flag (should not finish worktree)
     snapshot_merge(
@@ -183,18 +99,14 @@ fn test_merge_with_no_remove_flag() {
     );
 }
 
-#[test]
-fn test_merge_already_on_target() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_already_on_target(repo: TestRepo) {
     // Already on main branch (repo root)
     snapshot_merge("merge_already_on_target", &repo, &[], None);
 }
 
-#[test]
-fn test_merge_dirty_working_tree() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_dirty_working_tree(mut repo: TestRepo) {
     // Create a feature worktree with uncommitted changes
     let feature_wt = repo.add_worktree("feature");
     std::fs::write(feature_wt.join("dirty.txt"), "uncommitted content").unwrap();
@@ -208,10 +120,8 @@ fn test_merge_dirty_working_tree() {
     );
 }
 
-#[test]
-fn test_merge_not_fast_forward() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_not_fast_forward(mut repo: TestRepo) {
     // Create commits in both branches
     // Add commit to main (repo root)
     std::fs::write(repo.root_path().join("main.txt"), "main content").unwrap();
@@ -260,10 +170,8 @@ fn test_merge_not_fast_forward() {
 /// Test that `wt merge --no-commit` shows merge-context hint when main has newer commits.
 /// The --no-commit flag skips the rebase step, so the push fails with not-fast-forward error.
 /// The hint should say "Run 'wt merge' again" (not "Use 'wt merge'").
-#[test]
-fn test_merge_no_commit_not_fast_forward() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
     // Get the initial commit SHA to create feature branch from there
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
@@ -336,10 +244,8 @@ fn test_merge_no_commit_not_fast_forward() {
     );
 }
 
-#[test]
-fn test_merge_rebase_conflict() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_rebase_conflict(repo: TestRepo) {
     // Create a shared file
     std::fs::write(repo.root_path().join("shared.txt"), "initial content\n").unwrap();
 
@@ -425,26 +331,24 @@ fn test_merge_rebase_conflict() {
     snapshot_merge("merge_rebase_conflict", &repo, &["main"], Some(&feature_wt));
 }
 
-#[test]
-fn test_merge_to_default_branch() {
-    let (repo, feature_wt) = setup_merge_scenario();
+#[rstest]
+fn test_merge_to_default_branch(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
 
     // Merge without specifying target (should use default branch)
     snapshot_merge("merge_to_default", &repo, &[], Some(&feature_wt));
 }
 
-#[test]
-fn test_merge_with_caret_symbol() {
-    let (repo, feature_wt) = setup_merge_scenario();
+#[rstest]
+fn test_merge_with_caret_symbol(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
 
     // Merge using ^ symbol (should resolve to default branch)
     snapshot_merge("merge_with_caret", &repo, &["^"], Some(&feature_wt));
 }
 
-#[test]
-fn test_merge_error_detached_head() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_error_detached_head(repo: TestRepo) {
     // Detach HEAD in the repo
     repo.detach_head();
 
@@ -457,10 +361,8 @@ fn test_merge_error_detached_head() {
     );
 }
 
-#[test]
-fn test_merge_squash_deterministic() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_squash_deterministic(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -524,10 +426,8 @@ fn test_merge_squash_deterministic() {
     );
 }
 
-#[test]
-fn test_merge_squash_with_llm() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_squash_with_llm(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -581,10 +481,8 @@ args = ["-c", "cat >/dev/null && echo 'feat: implement user authentication syste
     snapshot_merge("merge_squash_with_llm", &repo, &["main"], Some(&feature_wt));
 }
 
-#[test]
-fn test_merge_squash_llm_command_not_found() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_squash_llm_command_not_found(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -638,10 +536,9 @@ fn test_merge_squash_llm_command_not_found() {
     );
 }
 
-#[test]
-fn test_merge_squash_llm_error() {
+#[rstest]
+fn test_merge_squash_llm_error(mut repo: TestRepo) {
     // Test that LLM command errors show proper gutter formatting with full command
-    let mut repo = TestRepo::new();
 
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
@@ -704,10 +601,8 @@ args = ["-c", "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"]
     );
 }
 
-#[test]
-fn test_merge_squash_single_commit() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_squash_single_commit(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -743,9 +638,9 @@ fn test_merge_squash_single_commit() {
     );
 }
 
-#[test]
-fn test_merge_no_squash() {
-    let (repo, feature_wt) = setup_merge_scenario_multi_commit();
+#[rstest]
+fn test_merge_no_squash(merge_scenario_multi_commit: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario_multi_commit;
 
     // Merge with --no-squash - should NOT squash the commits
     snapshot_merge(
@@ -756,10 +651,8 @@ fn test_merge_no_squash() {
     );
 }
 
-#[test]
-fn test_merge_squash_empty_changes() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_squash_empty_changes(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -830,10 +723,8 @@ fn test_merge_squash_empty_changes() {
     );
 }
 
-#[test]
-fn test_merge_auto_commit_deterministic() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_auto_commit_deterministic(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -873,10 +764,8 @@ fn test_merge_auto_commit_deterministic() {
     );
 }
 
-#[test]
-fn test_merge_auto_commit_with_llm() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_auto_commit_with_llm(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -925,9 +814,9 @@ args = ["-c", "cat >/dev/null && echo 'fix: improve auth validation logic'"]
     );
 }
 
-#[test]
-fn test_merge_auto_commit_and_squash() {
-    let (repo, feature_wt) = setup_merge_scenario_multi_commit();
+#[rstest]
+fn test_merge_auto_commit_and_squash(merge_scenario_multi_commit: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario_multi_commit;
 
     // Add uncommitted tracked changes
     std::fs::write(feature_wt.join("file1.txt"), "updated content 1").unwrap();
@@ -950,10 +839,8 @@ args = ["-c", "cat >/dev/null && echo 'fix: update file 1 content'"]
     );
 }
 
-#[test]
-fn test_merge_with_untracked_files() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_with_untracked_files(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -998,10 +885,8 @@ fn test_merge_with_untracked_files() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_merge_command_success() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_merge_command_success(mut repo: TestRepo) {
     // Create project config with pre-merge command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1047,10 +932,8 @@ fn test_merge_pre_merge_command_success() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_merge_command_failure() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_merge_command_failure(mut repo: TestRepo) {
     // Create project config with failing pre-merge command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1094,10 +977,8 @@ fn test_merge_pre_merge_command_failure() {
     );
 }
 
-#[test]
-fn test_merge_pre_merge_command_no_hooks() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_merge_command_no_hooks(mut repo: TestRepo) {
     // Create project config with failing pre-merge command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1143,10 +1024,8 @@ fn test_merge_pre_merge_command_no_hooks() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_merge_command_named() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_merge_command_named(mut repo: TestRepo) {
     // Create project config with named pre-merge commands
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1201,10 +1080,8 @@ test = "exit 0"
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_post_merge_command_success() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_post_merge_command_success(mut repo: TestRepo) {
     // Create project config with post-merge command that writes a marker file
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1265,10 +1142,8 @@ fn test_merge_post_merge_command_success() {
     );
 }
 
-#[test]
-fn test_merge_post_merge_command_skipped_with_no_verify() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
     // Create project config with post-merge command that writes a marker file
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1325,10 +1200,8 @@ fn test_merge_post_merge_command_skipped_with_no_verify() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_post_merge_command_failure() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     // Create project config with failing post-merge command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1374,10 +1247,8 @@ fn test_merge_post_merge_command_failure() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_post_merge_command_named() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_post_merge_command_named(mut repo: TestRepo) {
     // Create project config with named post-merge commands
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1443,10 +1314,9 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_post_merge_runs_with_nothing_to_merge() {
+#[rstest]
+fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     // Verify post-merge hooks run even when there's nothing to merge
-    let mut repo = TestRepo::new();
 
     // Create project config with post-merge command
     let config_dir = repo.root_path().join(".config");
@@ -1489,10 +1359,9 @@ fn test_merge_post_merge_runs_with_nothing_to_merge() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_post_merge_runs_from_main_branch() {
+#[rstest]
+fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     // Verify post-merge hooks run when merging from main to main (nothing to do)
-    let repo = TestRepo::new();
 
     // Create project config with post-merge command
     let config_dir = repo.root_path().join(".config");
@@ -1523,10 +1392,8 @@ fn test_merge_post_merge_runs_from_main_branch() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_commit_command_success() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_commit_command_success(mut repo: TestRepo) {
     // Create project config with pre-commit command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1562,10 +1429,8 @@ fn test_merge_pre_commit_command_success() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_commit_command_failure() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_commit_command_failure(mut repo: TestRepo) {
     // Create project config with failing pre-commit command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1597,10 +1462,8 @@ fn test_merge_pre_commit_command_failure() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_squash_command_success() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_squash_command_success(mut repo: TestRepo) {
     // Create project config with pre-commit command (used for both squash and no-squash)
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1650,10 +1513,8 @@ fn test_merge_pre_squash_command_success() {
 
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_merge_pre_squash_command_failure() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_pre_squash_command_failure(mut repo: TestRepo) {
     // Create project config with failing pre-commit command (used for both squash and no-squash)
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -1697,9 +1558,8 @@ fn test_merge_pre_squash_command_failure() {
     );
 }
 
-#[test]
-fn test_merge_no_remote() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_merge_no_remote(mut repo: TestRepo) {
     // Deliberately NOT calling setup_remote to test the error case
 
     // Create a feature worktree and make a commit
@@ -1737,11 +1597,9 @@ fn test_merge_no_remote() {
 /// Switch output: tests/snapshots/integration__integration_tests__merge__readme_example_simple_switch.snap
 ///
 /// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_readme_example_simple() {
-    let repo = TestRepo::new();
-
+fn test_readme_example_simple(repo: TestRepo) {
     // Snapshot the switch --create command (runs from bare repo)
     snapshot_switch(
         "readme_example_simple_switch",
@@ -1794,11 +1652,9 @@ pub fn refresh(refresh_token: &str) -> String {
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap
 ///
 /// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_readme_example_complex() {
-    let mut repo = TestRepo::new();
-
+fn test_readme_example_complex(mut repo: TestRepo) {
     // Create project config with multiple hooks
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -2032,11 +1888,9 @@ command = "{}"
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap
 ///
 /// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_readme_example_hooks_post_create() {
-    let repo = TestRepo::new();
-
+fn test_readme_example_hooks_post_create(repo: TestRepo) {
     // Create project config with post-create and post-start hooks
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -2119,11 +1973,9 @@ fi
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap
 ///
 /// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_readme_example_hooks_pre_merge() {
-    let mut repo = TestRepo::new();
-
+fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
     // Create project config with pre-merge hooks
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -2374,10 +2226,8 @@ command = "{}"
     );
 }
 
-#[test]
-fn test_merge_no_commit_with_clean_tree() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_no_commit_with_clean_tree(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -2430,10 +2280,8 @@ fn test_merge_no_commit_with_clean_tree() {
     });
 }
 
-#[test]
-fn test_merge_no_commit_with_dirty_tree() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
     // Create a feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("committed.txt"), "committed content").unwrap();
@@ -2473,10 +2321,8 @@ fn test_merge_no_commit_with_dirty_tree() {
     });
 }
 
-#[test]
-fn test_merge_no_commit_no_squash_no_remove_redundant() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_no_commit_no_squash_no_remove_redundant(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -2529,10 +2375,8 @@ fn test_merge_no_commit_no_squash_no_remove_redundant() {
     });
 }
 
-#[test]
-fn test_merge_no_commits() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_no_commits(mut repo: TestRepo) {
     // Create a worktree for main
     repo.add_main_worktree();
 
@@ -2543,10 +2387,8 @@ fn test_merge_no_commits() {
     snapshot_merge("merge_no_commits", &repo, &["main"], Some(&feature_wt));
 }
 
-#[test]
-fn test_merge_no_commits_with_changes() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_no_commits_with_changes(mut repo: TestRepo) {
     // Create a worktree for main
     repo.add_main_worktree();
 
@@ -2563,11 +2405,10 @@ fn test_merge_no_commits_with_changes() {
     );
 }
 
-#[test]
-fn test_merge_rebase_fast_forward() {
+#[rstest]
+fn test_merge_rebase_fast_forward(mut repo: TestRepo) {
     // Test fast-forward case: branch has no commits, main moved ahead
     // Should show "Fast-forwarded to main" without progress message
-    let mut repo = TestRepo::new();
 
     // Create a feature worktree with NO commits (just branched from main)
     let feature_wt = repo.add_worktree("fast-forward-test");
@@ -2598,11 +2439,10 @@ fn test_merge_rebase_fast_forward() {
     );
 }
 
-#[test]
-fn test_merge_rebase_true_rebase() {
+#[rstest]
+fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
     // Test true rebase case: branch has commits and main moved ahead
     // Should show "Rebasing onto main..." progress message
-    let mut repo = TestRepo::new();
 
     // Create a feature worktree with a commit
     let feature_wt = repo.add_worktree("true-rebase-test");
@@ -2648,10 +2488,8 @@ fn test_merge_rebase_true_rebase() {
     );
 }
 
-#[test]
-fn test_merge_primary_on_different_branch() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_primary_on_different_branch(mut repo: TestRepo) {
     repo.switch_primary_to("develop");
     assert_eq!(repo.current_branch(), "develop");
 
@@ -2684,10 +2522,8 @@ fn test_merge_primary_on_different_branch() {
     assert_eq!(repo.current_branch(), "develop");
 }
 
-#[test]
-fn test_merge_primary_on_different_branch_dirty() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
     // Make main and develop diverge - modify file.txt on main
     fs::write(repo.root_path().join("file.txt"), "main version").unwrap();
 
@@ -2753,10 +2589,8 @@ fn test_merge_primary_on_different_branch_dirty() {
     );
 }
 
-#[test]
-fn test_merge_race_condition_commit_after_push() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_race_condition_commit_after_push(mut repo: TestRepo) {
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
     let mut cmd = Command::new("git");
@@ -2859,10 +2693,8 @@ fn test_merge_race_condition_commit_after_push() {
     );
 }
 
-#[test]
-fn test_merge_to_non_default_target() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_to_non_default_target(repo: TestRepo) {
     // Switch back to main and add a commit there
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
@@ -2973,10 +2805,8 @@ fn test_merge_to_non_default_target() {
     );
 }
 
-#[test]
-fn test_merge_squash_with_working_tree_creates_backup() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_merge_squash_with_working_tree_creates_backup(mut repo: TestRepo) {
     // Create a worktree for main
     repo.add_main_worktree();
 
@@ -3047,18 +2877,19 @@ fn test_merge_squash_with_working_tree_creates_backup() {
     );
 }
 
-#[test]
-fn test_merge_when_default_branch_missing_worktree() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_merge_when_default_branch_missing_worktree(repo: TestRepo) {
     // Move primary off default branch so no worktree holds it
     repo.switch_primary_to("develop");
 
     snapshot_merge("merge_default_branch_missing_worktree", &repo, &[], None);
 }
 
-#[test]
-fn test_merge_does_not_permanently_set_receive_deny_current_branch() {
-    let (repo, feature_wt) = setup_merge_scenario();
+#[rstest]
+fn test_merge_does_not_permanently_set_receive_deny_current_branch(
+    merge_scenario: (TestRepo, PathBuf),
+) {
+    let (repo, feature_wt) = merge_scenario;
 
     // Explicitly set config to "refuse" - this would block pushes to checked-out branches
     let mut cmd = Command::new("git");
@@ -3137,10 +2968,8 @@ fn snapshot_step_commit_with_env(
     });
 }
 
-#[test]
-fn test_step_squash_with_no_verify_flag() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
     // Create a feature worktree with multiple commits
     let feature_wt = repo.add_worktree("feature");
 
@@ -3197,10 +3026,8 @@ fn test_step_squash_with_no_verify_flag() {
     );
 }
 
-#[test]
-fn test_step_squash_with_stage_tracked_flag() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
     fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
@@ -3249,10 +3076,8 @@ fn test_step_squash_with_stage_tracked_flag() {
     );
 }
 
-#[test]
-fn test_step_squash_with_both_flags() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_step_squash_with_both_flags(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
     // Add a pre-commit hook so --no-verify has something to skip
@@ -3310,10 +3135,9 @@ fn test_step_squash_with_both_flags() {
     );
 }
 
-#[test]
-fn test_step_squash_no_commits() {
+#[rstest]
+fn test_step_squash_no_commits(mut repo: TestRepo) {
     // Test "nothing to squash; no commits ahead" message
-    let mut repo = TestRepo::new();
 
     // Create a feature worktree but don't add any commits
     let feature_wt = repo.add_worktree("feature");
@@ -3321,10 +3145,9 @@ fn test_step_squash_no_commits() {
     snapshot_step_squash_with_env("step_squash_no_commits", &repo, &[], Some(&feature_wt), &[]);
 }
 
-#[test]
-fn test_step_squash_single_commit() {
+#[rstest]
+fn test_step_squash_single_commit(mut repo: TestRepo) {
     // Test "nothing to squash; already a single commit" message
-    let mut repo = TestRepo::new();
 
     // Create a feature worktree with exactly one commit
     let feature_wt = repo.add_worktree("feature");
@@ -3352,10 +3175,8 @@ fn test_step_squash_single_commit() {
     );
 }
 
-#[test]
-fn test_step_commit_with_no_verify_flag() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_step_commit_with_no_verify_flag(repo: TestRepo) {
     // Add a pre-commit hook so --no-verify has something to skip
     fs::create_dir_all(repo.root_path().join(".config")).expect("Failed to create .config");
     fs::write(
@@ -3378,10 +3199,8 @@ fn test_step_commit_with_no_verify_flag() {
     );
 }
 
-#[test]
-fn test_step_commit_with_stage_tracked_flag() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
     fs::write(repo.root_path().join("tracked.txt"), "initial").expect("Failed to write file");
     repo.commit("add tracked file");
 
@@ -3407,10 +3226,8 @@ fn test_step_commit_with_stage_tracked_flag() {
     );
 }
 
-#[test]
-fn test_step_commit_with_both_flags() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_step_commit_with_both_flags(repo: TestRepo) {
     // Add a pre-commit hook so --no-verify has something to skip
     fs::create_dir_all(repo.root_path().join(".config")).expect("Failed to create .config");
     fs::write(
@@ -3436,10 +3253,8 @@ fn test_step_commit_with_both_flags() {
     );
 }
 
-#[test]
-fn test_step_commit_nothing_to_commit() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_step_commit_nothing_to_commit(repo: TestRepo) {
     // No changes made - commit should fail with "nothing to commit"
     snapshot_step_commit_with_env(
         "step_commit_nothing_to_commit",
@@ -3460,10 +3275,9 @@ fn test_step_commit_nothing_to_commit() {
 // Error message snapshot tests
 // =============================================================================
 
-#[test]
-fn test_merge_error_uncommitted_changes_with_no_commit() {
+#[rstest]
+fn test_merge_error_uncommitted_changes_with_no_commit(mut repo: TestRepo) {
     // Tests the `uncommitted_changes()` error function when using --no-commit with dirty tree
-    let mut repo = TestRepo::new();
 
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
@@ -3489,11 +3303,10 @@ fn test_merge_error_uncommitted_changes_with_no_commit() {
     );
 }
 
-#[test]
-fn test_merge_error_conflicting_changes_in_target() {
+#[rstest]
+fn test_merge_error_conflicting_changes_in_target(mut repo: TestRepo) {
     // Tests the `conflicting_changes()` error function when target worktree has
     // uncommitted changes that overlap with files being pushed
-    let mut repo = TestRepo::new();
 
     // Switch primary worktree off main so we can create a worktree for main
     repo.switch_primary_to("develop");

@@ -1,8 +1,10 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, setup_snapshot_settings, wt_command,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, repo, repo_with_remote, setup_snapshot_settings,
+    wt_command,
 };
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::path::Path;
 use std::process::Command;
 
@@ -220,17 +222,13 @@ fn push_branch(repo: &TestRepo, branch_name: &str) {
         .unwrap();
 }
 
-#[test]
-fn test_list_single_worktree() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_list_single_worktree(repo: TestRepo) {
     snapshot_list("single_worktree", &repo);
 }
 
-#[test]
-fn test_list_multiple_worktrees() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 
@@ -240,10 +238,8 @@ fn test_list_multiple_worktrees() {
 /// Test that the `-` gutter symbol appears for the previous worktree (target of `wt switch -`).
 ///
 /// Simulates realistic usage by running switch commands from the correct worktree directories.
-#[test]
-fn test_list_previous_worktree_gutter() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_previous_worktree_gutter(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     let feature_path = repo.root_path().parent().unwrap().join(format!(
@@ -268,20 +264,17 @@ fn test_list_previous_worktree_gutter() {
     snapshot_list("previous_worktree_gutter", &repo);
 }
 
-#[test]
-fn test_list_detached_head() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_list_detached_head(repo: TestRepo) {
     repo.detach_head();
 
     snapshot_list("detached_head", &repo);
 }
 
-#[test]
-fn test_list_detached_head_in_worktree() {
+#[rstest]
+fn test_list_detached_head_in_worktree(mut repo: TestRepo) {
     // Non-main worktree in detached HEAD SHOULD show path mismatch flag
     // (detached HEAD = "not at home", not on any branch)
-    let mut repo = TestRepo::new();
 
     repo.add_worktree("feature");
     repo.detach_head_in_worktree("feature");
@@ -289,20 +282,16 @@ fn test_list_detached_head_in_worktree() {
     snapshot_list("detached_head_in_worktree", &repo);
 }
 
-#[test]
-fn test_list_locked_worktree() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_locked_worktree(mut repo: TestRepo) {
     repo.add_worktree("locked-feature");
     repo.lock_worktree("locked-feature", Some("Testing lock functionality"));
 
     snapshot_list("locked_worktree", &repo);
 }
 
-#[test]
-fn test_list_locked_no_reason() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_locked_no_reason(mut repo: TestRepo) {
     repo.add_worktree("locked-no-reason");
     repo.lock_worktree("locked-no-reason", None);
 
@@ -311,10 +300,8 @@ fn test_list_locked_no_reason() {
 
 // Removed: test_list_long_branch_name - covered by spacing_edge_cases.rs
 
-#[test]
-fn test_list_long_commit_message() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_long_commit_message(mut repo: TestRepo) {
     // Create commit with very long message
     repo.commit("This is a very long commit message that should test how the message column handles truncation and word boundary detection in the list output");
 
@@ -326,10 +313,8 @@ fn test_list_long_commit_message() {
 
 // Removed: test_list_unicode_branch_name - covered by spacing_edge_cases.rs
 
-#[test]
-fn test_list_unicode_commit_message() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_unicode_commit_message(mut repo: TestRepo) {
     // Create commit with Unicode message
     repo.commit("Add support for 日本語 and émoji 🎉");
 
@@ -339,10 +324,8 @@ fn test_list_unicode_commit_message() {
     snapshot_list("unicode_commit_message", &repo);
 }
 
-#[test]
-fn test_list_many_worktrees_with_varied_stats() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_many_worktrees_with_varied_stats(mut repo: TestRepo) {
     // Create multiple worktrees with different characteristics
     repo.add_worktree("short");
 
@@ -359,10 +342,8 @@ fn test_list_many_worktrees_with_varied_stats() {
 // Removed: test_list_json_single_worktree and test_list_json_multiple_worktrees
 // Basic JSON serialization is covered by test_list_json_with_metadata
 
-#[test]
-fn test_list_json_with_metadata() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_json_with_metadata(mut repo: TestRepo) {
     // Create worktree with detached head
     repo.add_worktree("feature-detached");
 
@@ -375,10 +356,8 @@ fn test_list_json_with_metadata() {
 
 /// Test that committed_trees_match is true when a branch has commits ahead but identical tree content.
 /// This tests the merge commit scenario where content matches main even with different commit history.
-#[test]
-fn test_list_json_tree_matches_main_after_merge() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_json_tree_matches_main_after_merge(mut repo: TestRepo) {
     // Create feature branch with a worktree
     let feature_path = repo.add_worktree("feature-merged");
 
@@ -425,10 +404,8 @@ fn test_list_json_tree_matches_main_after_merge() {
     snapshot_list_json("json_tree_matches_main_after_merge", &repo);
 }
 
-#[test]
-fn test_list_with_branches_flag() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_with_branches_flag(mut repo: TestRepo) {
     // Create some branches without worktrees
     create_branch(&repo, "feature-without-worktree");
     create_branch(&repo, "another-branch");
@@ -440,10 +417,8 @@ fn test_list_with_branches_flag() {
     snapshot_list_with_branches("with_branches_flag", &repo);
 }
 
-#[test]
-fn test_list_with_branches_flag_no_available() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_with_branches_flag_no_available(mut repo: TestRepo) {
     // All branches have worktrees (only main exists and has worktree)
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
@@ -451,10 +426,8 @@ fn test_list_with_branches_flag_no_available() {
     snapshot_list_with_branches("with_branches_flag_none_available", &repo);
 }
 
-#[test]
-fn test_list_with_branches_flag_only_branches() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_list_with_branches_flag_only_branches(repo: TestRepo) {
     // Create several branches without worktrees
     create_branch(&repo, "branch-alpha");
     create_branch(&repo, "branch-beta");
@@ -463,12 +436,8 @@ fn test_list_with_branches_flag_only_branches() {
     snapshot_list_with_branches("with_branches_flag_only_branches", &repo);
 }
 
-#[test]
-fn test_list_with_remotes_flag() {
-    let mut repo = TestRepo::new();
-    // Setup remote creates origin and pushes main to it
-    repo.setup_remote("main");
-
+#[rstest]
+fn test_list_with_remotes_flag(#[from(repo_with_remote)] repo: TestRepo) {
     // Create feature branches in the main repo and push them
     create_branch(&repo, "remote-feature-1");
     create_branch(&repo, "remote-feature-2");
@@ -491,11 +460,8 @@ fn test_list_with_remotes_flag() {
     snapshot_list_with_remotes("with_remotes_flag", &repo);
 }
 
-#[test]
-fn test_list_with_remotes_and_branches() {
-    let mut repo = TestRepo::new();
-    repo.setup_remote("main");
-
+#[rstest]
+fn test_list_with_remotes_and_branches(#[from(repo_with_remote)] repo: TestRepo) {
     // Create local-only branches (not worktrees, not pushed)
     create_branch(&repo, "local-only-1");
     create_branch(&repo, "local-only-2");
@@ -521,11 +487,8 @@ fn test_list_with_remotes_and_branches() {
     snapshot_list_with_branches_and_remotes("with_remotes_and_branches", &repo);
 }
 
-#[test]
-fn test_list_with_remotes_filters_existing_worktrees() {
-    let mut repo = TestRepo::new();
-    repo.setup_remote("main");
-
+#[rstest]
+fn test_list_with_remotes_filters_existing_worktrees(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create a worktree and push the branch
     repo.add_worktree("feature-with-worktree");
     push_branch(&repo, "feature-with-worktree");
@@ -548,9 +511,8 @@ fn test_list_with_remotes_filters_existing_worktrees() {
     snapshot_list_with_remotes("with_remotes_filters_worktrees", &repo);
 }
 
-#[test]
-fn test_list_json_with_display_fields() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_json_with_display_fields(mut repo: TestRepo) {
     repo.commit("Initial commit on main");
 
     // Create feature branch with commits (ahead of main)
@@ -595,18 +557,16 @@ fn test_list_json_with_display_fields() {
     snapshot_list_json("json_with_display_fields", &repo);
 }
 
-#[test]
-fn test_list_ordering_rules() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_ordering_rules(mut repo: TestRepo) {
     let current_path = setup_timestamped_worktrees(&mut repo);
 
     // Run from feature-current worktree to test "current worktree" logic
     snapshot_list_from_dir("list_ordering_rules", &repo, &current_path);
 }
 
-#[test]
-fn test_list_with_upstream_tracking() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     repo.commit("Initial commit on main");
 
     // Set up remote - this already pushes main
@@ -748,10 +708,8 @@ fn test_list_with_upstream_tracking() {
     });
 }
 
-#[test]
-fn test_list_primary_on_different_branch() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     repo.switch_primary_to("develop");
     assert_eq!(repo.current_branch(), "develop");
 
@@ -761,9 +719,8 @@ fn test_list_primary_on_different_branch() {
     snapshot_list("list_primary_on_different_branch", &repo);
 }
 
-#[test]
-fn test_list_with_user_marker() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_with_user_marker(mut repo: TestRepo) {
     repo.commit_with_age("Initial commit", DAY);
 
     // Branch ahead of main with commits and user marker 🤖
@@ -821,9 +778,8 @@ fn test_list_with_user_marker() {
     snapshot_list("with_user_marker", &repo);
 }
 
-#[test]
-fn test_list_json_with_user_marker() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_json_with_user_marker(mut repo: TestRepo) {
     repo.commit_with_age("Initial commit", DAY);
 
     // Worktree with user marker (emoji only)
@@ -843,10 +799,9 @@ fn test_list_json_with_user_marker() {
     snapshot_list_json("json_with_user_marker", &repo);
 }
 
-#[test]
-fn test_list_json_with_git_operation() {
+#[rstest]
+fn test_list_json_with_git_operation(mut repo: TestRepo) {
     // Test JSON output includes git_operation field when worktree is in rebase state
-    let mut repo = TestRepo::new();
 
     // Create initial commit with a file that will conflict
     std::fs::write(
@@ -916,10 +871,9 @@ fn test_list_json_with_git_operation() {
     snapshot_list_json("json_with_git_operation", &repo);
 }
 
-#[test]
-fn test_list_branch_only_with_status() {
+#[rstest]
+fn test_list_branch_only_with_status(repo: TestRepo) {
     // Test that branch-only entries (no worktree) can display branch-keyed status
-    let repo = TestRepo::new();
 
     // Create a branch-only entry (no worktree)
     let mut cmd = Command::new("git");
@@ -941,10 +895,8 @@ fn test_list_branch_only_with_status() {
     snapshot_list_with_branches("branch_only_with_status", &repo);
 }
 
-#[test]
-fn test_list_user_marker_with_special_characters() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
     // Test with single emoji
     repo.add_worktree("emoji");
 
@@ -1846,7 +1798,7 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 /// Shows worktree states with status symbols, divergence, and remote tracking.
 /// Uses narrower width (100 cols) to fit in doc site code blocks.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list.snap
-#[test]
+#[rstest]
 fn test_readme_example_list() {
     let (repo, feature_api) = setup_readme_example_repo();
     snapshot_readme_list_from_dir("readme_example_list", &repo, &feature_api);
@@ -1857,7 +1809,7 @@ fn test_readme_example_list() {
 /// Shows additional columns: main…± (line diffs in commits) and CI status.
 /// Uses narrower width (100 cols) to fit in doc site code blocks.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
-#[test]
+#[rstest]
 fn test_readme_example_list_full() {
     let (repo, feature_api) = setup_readme_example_repo();
     snapshot_readme_list_full_from_dir("readme_example_list_full", &repo, &feature_api);
@@ -1868,7 +1820,7 @@ fn test_readme_example_list_full() {
 /// Shows branches without worktrees (⎇ symbol) alongside worktrees, plus CI status.
 /// Uses narrower width (100 cols) to fit in doc site code blocks.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
-#[test]
+#[rstest]
 fn test_readme_example_list_branches() {
     let (repo, feature_api) = setup_readme_example_repo();
     snapshot_readme_list_branches_full_from_dir(
@@ -1878,9 +1830,8 @@ fn test_readme_example_list_branches() {
     );
 }
 
-#[test]
-fn test_list_progressive_flag() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_progressive_flag(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 
@@ -1889,19 +1840,16 @@ fn test_list_progressive_flag() {
     snapshot_list_progressive("progressive_flag", &repo);
 }
 
-#[test]
-fn test_list_no_progressive_flag() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_no_progressive_flag(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     // Explicitly force buffered mode
     snapshot_list_no_progressive("no_progressive_flag", &repo);
 }
 
-#[test]
-fn test_list_progressive_with_branches() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_progressive_with_branches(mut repo: TestRepo) {
     // Create worktrees
     repo.add_worktree("feature-a");
 
@@ -1918,17 +1866,13 @@ fn test_list_progressive_with_branches() {
 // Task DAG Mode Tests
 // ============================================================================
 
-#[test]
-fn test_list_task_dag_single_worktree() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_list_task_dag_single_worktree(repo: TestRepo) {
     snapshot_list_progressive("task_dag_single_worktree", &repo);
 }
 
-#[test]
-fn test_list_task_dag_multiple_worktrees() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_task_dag_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
     repo.add_worktree("feature-c");
@@ -1936,10 +1880,8 @@ fn test_list_task_dag_multiple_worktrees() {
     snapshot_list_progressive("task_dag_multiple_worktrees", &repo);
 }
 
-#[test]
-fn test_list_task_dag_full_with_diffs() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_task_dag_full_with_diffs(mut repo: TestRepo) {
     // Create worktree with changes
     let feature_a = repo.add_worktree("feature-a");
     std::fs::write(feature_a.join("new.txt"), "content").unwrap();
@@ -1963,9 +1905,8 @@ fn test_list_task_dag_full_with_diffs() {
     snapshot_list_progressive_full("task_dag_full_with_diffs", &repo);
 }
 
-#[test]
-fn test_list_task_dag_with_upstream() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_task_dag_with_upstream(mut repo: TestRepo) {
     repo.commit("Initial commit on main");
     repo.setup_remote("main");
 
@@ -2000,10 +1941,8 @@ fn test_list_task_dag_with_upstream() {
     snapshot_list_progressive_full("task_dag_with_upstream", &repo);
 }
 
-#[test]
-fn test_list_task_dag_many_worktrees() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_task_dag_many_worktrees(mut repo: TestRepo) {
     // Create 10 worktrees to test parallel processing
     for i in 1..=10 {
         repo.add_worktree(&format!("feature-{}", i));
@@ -2012,10 +1951,8 @@ fn test_list_task_dag_many_worktrees() {
     snapshot_list_progressive("task_dag_many_worktrees", &repo);
 }
 
-#[test]
-fn test_list_task_dag_with_locked_worktree() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_task_dag_with_locked_worktree(mut repo: TestRepo) {
     repo.add_worktree("normal");
     repo.add_worktree("locked");
     repo.lock_worktree("locked", Some("Testing task DAG with locked worktree"));
@@ -2023,19 +1960,17 @@ fn test_list_task_dag_with_locked_worktree() {
     snapshot_list_progressive("task_dag_with_locked", &repo);
 }
 
-#[test]
-fn test_list_task_dag_detached_head() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_list_task_dag_detached_head(repo: TestRepo) {
     repo.detach_head();
 
     snapshot_list_progressive("task_dag_detached_head", &repo);
 }
 
-#[test]
-fn test_list_task_dag_ordering_stability() {
+#[rstest]
+fn test_list_task_dag_ordering_stability(mut repo: TestRepo) {
     // Test that task_dag mode produces same ordering as buffered mode
     // Regression test for progressive rendering order instability
-    let mut repo = TestRepo::new();
     let current_path = setup_timestamped_worktrees(&mut repo);
 
     // Run from feature-current worktree
@@ -2047,8 +1982,8 @@ fn test_list_task_dag_ordering_stability() {
     );
 }
 
-#[test]
-fn test_list_progressive_vs_buffered_identical_data() {
+#[rstest]
+fn test_list_progressive_vs_buffered_identical_data(mut repo: TestRepo) {
     // Critical test: Verify that progressive and buffered modes collect identical data
     // despite using different rendering strategies (real-time UI vs collect-then-print).
     // This ensures consolidation on task DAG data collection works correctly.
@@ -2057,8 +1992,6 @@ fn test_list_progressive_vs_buffered_identical_data() {
     // - Progressive mode renders headers before knowing final column widths (uses estimates)
     // - Buffered mode renders headers after data collection (uses actual widths)
     // - The DATA must be identical, but table formatting may differ slightly
-
-    let mut repo = TestRepo::new();
 
     // Create varied worktrees to test multiple data points
     repo.add_worktree("feature-a");
@@ -2105,10 +2038,8 @@ fn test_list_progressive_vs_buffered_identical_data() {
     );
 }
 
-#[test]
-fn test_list_with_c_flag() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_with_c_flag(mut repo: TestRepo) {
     // Create some worktrees
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
@@ -2126,10 +2057,8 @@ fn test_list_with_c_flag() {
     });
 }
 
-#[test]
-fn test_list_large_diffs_alignment() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_large_diffs_alignment(mut repo: TestRepo) {
     // Worktree with large uncommitted changes and ahead commits
     // Use a longer branch name similar to user's "wli-sequence" to trigger column width
     let large_wt = repo.add_worktree("feature-changes");
@@ -2233,10 +2162,8 @@ fn test_list_large_diffs_alignment() {
     snapshot_list("large_diffs_alignment", &repo);
 }
 
-#[test]
-fn test_list_status_column_padding_with_emoji() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
     // Create worktree matching user's exact scenario: "wli-sequence"
     let wli_seq = repo.add_worktree("wli-sequence");
 
@@ -2336,12 +2263,11 @@ fn test_list_status_column_padding_with_emoji() {
     snapshot_list("status_column_padding_emoji", &repo);
 }
 
-#[test]
-fn test_list_maximum_working_tree_symbols() {
+#[rstest]
+fn test_list_maximum_working_tree_symbols(mut repo: TestRepo) {
     // Test that all 5 working tree symbols can appear simultaneously:
     // ? (untracked), ! (modified), + (staged), » (renamed), ✘ (deleted)
     // This verifies the maximum width of the working_tree position (5 chars)
-    let mut repo = TestRepo::new();
 
     let feature = repo.add_worktree("feature");
 
@@ -2400,12 +2326,11 @@ fn test_list_maximum_working_tree_symbols() {
     snapshot_list("maximum_working_tree_symbols", &repo);
 }
 
-#[test]
-fn test_list_maximum_status_with_git_operation() {
+#[rstest]
+fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
     // Test maximum status symbols including git operation (rebase/merge):
     // ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // This pushes the Status column to ~10-11 chars of actual content
-    let mut repo = TestRepo::new();
 
     // Create initial commit with a file that will conflict
     std::fs::write(
@@ -2516,12 +2441,11 @@ fn test_list_maximum_status_with_git_operation() {
     });
 }
 
-#[test]
-fn test_list_maximum_status_symbols() {
+#[rstest]
+fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     // Test the maximum status symbols possible:
     // ?!+»✘ (5) + ⚠ (1) + ⊠ (1) + ↕ (1) + ⇅ (1) + 🤖 (2) = 11 chars
     // Missing: ✖ (actual conflicts), ↻ (git operation - can't have with divergence), ◇ (bare), ⚠ (prunable)
-    let mut repo = TestRepo::new();
 
     // Create initial commit on main with shared files
     std::fs::write(repo.root_path().join("shared.txt"), "original").unwrap();
@@ -2682,9 +2606,8 @@ fn test_list_maximum_status_symbols() {
     });
 }
 
-#[test]
-fn test_list_warns_when_default_branch_missing_worktree() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_list_warns_when_default_branch_missing_worktree(repo: TestRepo) {
     // Move primary worktree off the default branch so no worktree holds it
     repo.switch_primary_to("develop");
 
