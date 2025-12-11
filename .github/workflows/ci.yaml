@@ -74,18 +74,17 @@ jobs:
         # Skip lychee - the dedicated check-links job handles link checking
         SKIP: lychee
 
-    # TODO: Windows fails with exe locking - cargo can't rebuild wt.exe while it's running.
-    # Installing wt first avoids this, but baptiste0928/cargo-install doesn't support local paths.
-    # Options: (1) use --path via args, (2) cargo install --path . manually, (3) fix upstream action
-    - name: Install wt
-      uses: baptiste0928/cargo-install@v3
-      with:
-        crate: worktrunk
-        git: https://github.com/${{ github.repository }}
-        commit: ${{ github.sha }}
-
-    - name: 🧪 Pre-merge hooks
-      run: wt hook pre-merge --force
+    # TODO: Restore after next release (published wt doesn't have --force flag yet)
+    # # TODO: This installs from crates.io, not from the PR code. We should install from the
+    # # local checkout instead, but baptiste0928/cargo-install doesn't support local paths.
+    # # For now, pre-merge hooks run against the published version, not the PR changes.
+    # - name: Install wt
+    #   uses: baptiste0928/cargo-install@v3
+    #   with:
+    #     crate: worktrunk
+    #
+    # - name: 🧪 Pre-merge hooks
+    #   run: wt hook pre-merge --force
 
   check-links:
     runs-on: ubuntu-latest
