@@ -166,3 +166,44 @@ jobs:
         command: bench
         # Run completion benchmarks (list has slow real_repo tests)
         args: --bench completion -- --warm-up-time 0.3 --measurement-time 1
+
+  code-coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-llvm-cov
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Install shells (zsh, fish)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zsh fish
+
+    # Ensure nothing remains from caching
+    - run: cargo llvm-cov clean --workspace
+
+    - name: 📊 Generate coverage report
+      run: cargo llvm-cov --cobertura --output-path=cobertura.xml
+
+    - name: Upload code coverage results
+      uses: actions/upload-artifact@v4
+      with:
+        name: code-coverage-report
+        path: cobertura.xml
+
+    - name: Upload to codecov.io
+      # Codecov action raises errors on forks; allow running on PRs to main repo
+      if: github.repository_owner == 'max-sixty'
+      uses: codecov/codecov-action@v5
+      with:
+        files: cobertura.xml
+        fail_ci_if_error: true
+        token: ${{ secrets.CODECOV_TOKEN }}
