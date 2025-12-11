@@ -210,8 +210,17 @@ mod tests {
             .command("echo hello")
             .output()
             .expect("Failed to execute shell command");
-        assert!(output.status.success(), "echo should succeed");
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "echo should succeed. Shell: {} ({:?}), exit: {:?}, stdout: '{}', stderr: '{}'",
+            config.name,
+            config.executable,
+            output.status.code(),
+            stdout.trim(),
+            stderr.trim()
+        );
         assert!(
             stdout.contains("hello"),
             "stdout should contain 'hello', got: '{}'",
@@ -268,8 +277,17 @@ mod tests {
             .output()
             .expect("Failed to execute echo");
 
-        assert!(output.status.success(), "echo should succeed");
         let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "echo should succeed. Shell: {} ({:?}), exit: {:?}, stdout: '{}', stderr: '{}'",
+            config.name,
+            config.executable,
+            output.status.code(),
+            stdout.trim(),
+            stderr.trim()
+        );
         assert!(
             stdout.contains("test_output"),
             "stdout should contain 'test_output', got: '{}'",
@@ -288,11 +306,17 @@ mod tests {
                 .output()
                 .expect("Failed to execute redirection test");
 
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 output.status.success(),
-                "redirection command should succeed"
+                "redirection command should succeed. Shell: {} ({:?}), exit: {:?}, stdout: '{}', stderr: '{}'",
+                config.name,
+                config.executable,
+                output.status.code(),
+                stdout.trim(),
+                stderr.trim()
             );
-            let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains("redirected"),
                 "stderr should contain 'redirected' (stdout redirected to stderr), got: '{}'",
