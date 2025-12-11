@@ -43,6 +43,7 @@ fn test_list_with_internal_flag() {
 ///
 /// Config show doesn't emit directives, but should work fine with --internal.
 #[test]
+#[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
 fn test_config_show_with_internal_flag() {
     let mut repo = TestRepo::new();
     let temp_home = TempDir::new().unwrap();
