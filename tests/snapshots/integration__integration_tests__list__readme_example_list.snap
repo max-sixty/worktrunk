@@ -5,6 +5,7 @@ info:
   args:
     - list
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "115"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -12,10 +13,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -23,8 +28,8 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ [1mfeature-api[0m  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m  [1m./repo.feature-api[0m   [32m⇡3[0m      [2md35485d7[0m  [2m30m[0m   [2mAdd API tests
-^ main             [2m^[22m[2m⇅[22m                        ./repo               [32m⇡1[0m  [2m[31m⇣1[0m  [2me18e1b4d[0m  [2m4d[0m    [2mMerge fix-auth:…
-+ fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m  ./repo.fix-auth        [2m|[0m     [2m2517d700[0m  [2m5h[0m    [2mAdd secure token…
+@ [1mfeature-api[0m  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m  [1m./repo.feature-api[0m   [32m⇡3[0m      [2mec97decc[0m  [2m30m[0m   [2mAdd API tests
+^ main             [2m^[22m[2m⇅[22m                        ./repo               [32m⇡1[0m  [2m[31m⇣1[0m  [2m6088adb3[0m  [2m4d[0m    [2mMerge fix-auth:…
++ fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m  ./repo.fix-auth        [2m|[0m     [2m127407de[0m  [2m5h[0m    [2mAdd secure token…
 
 ⚪ [2mShowing 3 worktrees, 1 with changes, 2 ahead

@@ -6,6 +6,7 @@ info:
     - merge
     - main
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,12 +14,16 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: commit changes"
     WORKTRUNK_COMMIT_GENERATION__COMMAND: echo
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -29,12 +34,12 @@ exit_code: 0
 [107m [0m  untracked1.txt
 [107m [0m  untracked2.txt
 🔄 [36mSquashing 1 commit & working tree changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
-💡 [2mBackup created @ b8f4f9c[22m
+💡 [2mBackup created @ fefa700[22m
 🔄 [36mGenerating squash commit message...[39m
 [107m [0m  [1mfix: commit changes[22m
-✅ [32mSquashed @ [2mc785ba8[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mc785ba8[22m (no rebase needed)[39m
-[107m [0m  * [33mc785ba8[m fix: commit changes
+✅ [32mSquashed @ [2m69f015f[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2m69f015f[22m (no rebase needed)[39m
+[107m [0m  * [33m69f015f[m fix: commit changes
 [107m [0m   file1.txt      | 1 [32m+[m
 [107m [0m   untracked1.txt | 1 [32m+[m
 [107m [0m   untracked2.txt | 1 [32m+[m

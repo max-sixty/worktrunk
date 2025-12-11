@@ -6,6 +6,7 @@ info:
     - list
     - "--format=json"
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,10 +14,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -27,8 +32,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "ede2fd3bb9c1e19c7b803c11c0648d0b6d335ea2",
-      "short_sha": "ede2fd3",
+      "sha": "33c3e5aa9f928d3eab87da8cbcd187e2ab921064",
+      "short_sha": "33c3e5a",
       "message": "Same content on main",
       "timestamp": 0
     },
@@ -62,8 +67,8 @@ exit_code: 0
     "path": "[REPO].feature-merged",
     "kind": "worktree",
     "commit": {
-      "sha": "034aef5b37347d10e770bb86865c148124ff8546",
-      "short_sha": "034aef5",
+      "sha": "ee45656141f6f30e6e036767adf380b3ccc639d7",
+      "short_sha": "ee45656",
       "message": "Merge main into feature",
       "timestamp": 0
     },

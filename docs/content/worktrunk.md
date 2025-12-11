@@ -73,9 +73,9 @@ See all worktrees at a glance:
 {% terminal() %}
 <span class="prompt">$</span> <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ <b>feature-api</b>  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <b>./repo.feature-api</b>   <span class=g>⇡3</span>      <span class=d>d35485d7</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                        ./repo               <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>e18e1b4d</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth:…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  ./repo.fix-auth        <span class=d>|</span>     <span class=d>2517d700</span>  <span class=d>5h</span>    <span class=d>Add secure token…</span>
+@ <b>feature-api</b>  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <b>./repo.feature-api</b>   <span class=g>⇡3</span>      <span class=d>ec97decc</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                        ./repo               <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>6088adb3</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth:…</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  ./repo.fix-auth        <span class=d>|</span>     <span class=d>127407de</span>  <span class=d>5h</span>    <span class=d>Add secure token…</span>
 
 ⚪ <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead</span>
 {% end %}

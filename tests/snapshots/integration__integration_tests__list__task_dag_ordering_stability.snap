@@ -6,6 +6,7 @@ info:
     - list
     - "--progressive"
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,10 +14,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -24,10 +29,10 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m           [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                    [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ [1mfeature-current[0m      [2m↑[22m                 [32m↑1[0m      [1m./repo.feature-current[0m           [2m0a3c2673[0m  [2m23h[0m   [2mCommit at 01:00
-^ main                 [2m^[22m                         ./repo                           [2m98ef56c1[0m  [2m1d[0m    [2mInitial commit on main
-+ feature-newest       [2m↑[22m                 [32m↑1[0m      ./repo.feature-newest            [2mfecd7fba[0m  [2m21h[0m   [2mCommit at 03:00
-+ feature-middle       [2m↑[22m                 [32m↑1[0m      ./repo.feature-middle            [2mb3bdc202[0m  [2m22h[0m   [2mCommit at 02:00
-+ feature-oldest       [2m↑[22m                 [32m↑1[0m      ./repo.feature-oldest            [2m4e1d6a2d[0m  [2m23h[0m   [2mCommit at 00:30
+@ [1mfeature-current[0m      [2m↑[22m                 [32m↑1[0m      [1m./repo.feature-current[0m           [2m431987e2[0m  [2m23h[0m   [2mCommit at 01:00
+^ main                 [2m^[22m                         ./repo                           [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
++ feature-newest       [2m↑[22m                 [32m↑1[0m      ./repo.feature-newest            [2m721211d9[0m  [2m21h[0m   [2mCommit at 03:00
++ feature-middle       [2m↑[22m                 [32m↑1[0m      ./repo.feature-middle            [2ma84219ce[0m  [2m22h[0m   [2mCommit at 02:00
++ feature-oldest       [2m↑[22m                 [32m↑1[0m      ./repo.feature-oldest            [2m9777b5e4[0m  [2m23h[0m   [2mCommit at 00:30
 
 ⚪ [2mShowing 5 worktrees, 4 ahead

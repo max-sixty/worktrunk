@@ -29,7 +29,7 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m     [1mmain…±[0m  [1mPath[0m            [1mRemote⇅[0m  [1mCI[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ [1mmain[0m         [2m^[22m                                    [1m./repo[0m                       [2m966ac172[0m  [2m1d[0m    [2mMain conflicting changes
-+ feature  [36m+[39m[36m![39m[36m?[39m[31m✘[39m  🤖    [32m+7[0m                           ./repo.feature               [2m966ac172[0m  [2m1d[0m    [2mMain conflicting changes
+@ [1mmain[0m         [2m^[22m                                    [1m./repo[0m                       [2m1c3b3fec[0m  [2m1d[0m    [2mMain conflicting changes
++ feature  [36m+[39m[36m![39m[36m?[39m[31m✘[39m  🤖    [32m+7[0m                           ./repo.feature               [2m1c3b3fec[0m  [2m1d[0m    [2mMain conflicting changes
 
 ⚪ [2mShowing 2 worktrees, 1 with changes

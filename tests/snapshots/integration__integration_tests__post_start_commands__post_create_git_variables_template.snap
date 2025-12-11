@@ -8,6 +8,7 @@ info:
     - feature
     - "--force"
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -18,9 +19,11 @@ info:
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -28,9 +31,9 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mRunning project post-create [1mcommit[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Commit: 549b3f44d1c4dfb3c7a36090fda2db14ff8b90df'[0m[2m [0m[2m[36m>[0m[2m git_vars.txt
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Commit: 5caad75ed9319b7bd5c35c626d7051d252f987e7'[0m[2m [0m[2m[36m>[0m[2m git_vars.txt
 [0m🔄 [36mRunning project post-create [1mshort[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Short: 549b3f4'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Short: 5caad75'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
 [0m🔄 [36mRunning project post-create [1mremote[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Remote: origin'[0m[2m [0m[2m[36m>>[0m[2m git_vars.txt
 [0m🔄 [36mRunning project post-create [1mworktree_name[22m:[39m

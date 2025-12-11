@@ -6,6 +6,7 @@ info:
     - list
     - "--format=json"
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,10 +14,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -27,8 +32,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "3109da74e45839c90409a6e4774cdf0bae50a284",
-      "short_sha": "3109da7",
+      "sha": "33244e69fc0c568ce7cffd49b04c9c89ffb22510",
+      "short_sha": "33244e6",
       "message": "Main conflicting changes",
       "timestamp": 0
     },
@@ -62,8 +67,8 @@ exit_code: 0
     "path": "[REPO].feature",
     "kind": "worktree",
     "commit": {
-      "sha": "3109da74e45839c90409a6e4774cdf0bae50a284",
-      "short_sha": "3109da7",
+      "sha": "33244e69fc0c568ce7cffd49b04c9c89ffb22510",
+      "short_sha": "33244e6",
       "message": "Main conflicting changes",
       "timestamp": 0
     },

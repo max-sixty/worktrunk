@@ -8,6 +8,7 @@ info:
     - "--force"
     - "--no-remove"
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -15,10 +16,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -32,9 +37,9 @@ exit_code: 0
 [0m🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
 💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
 [107m [0m  [1mChanges to uncommitted.txt[22m
-✅ [32mCommitted changes @ [2m234d7f9[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m234d7f9[22m (no rebase needed)[39m
-[107m [0m  * [33m234d7f9[m Changes to uncommitted.txt
+✅ [32mCommitted changes @ [2mfc0fed2[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc0fed2[22m (no rebase needed)[39m
+[107m [0m  * [33mfc0fed2[m Changes to uncommitted.txt
 [107m [0m   uncommitted.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m

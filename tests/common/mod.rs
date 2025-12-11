@@ -454,6 +454,13 @@ fn copy_fixture_template(dest: &Path) {
     // Copy file.txt (part of the initial commit)
     std::fs::copy(template.join("file.txt"), repo_path.join("file.txt")).unwrap();
 
+    // Copy .gitattributes (forces LF line endings on all platforms)
+    std::fs::copy(
+        template.join(".gitattributes"),
+        repo_path.join(".gitattributes"),
+    )
+    .unwrap();
+
     // Copy gitconfig
     std::fs::copy(template.join("gitconfig"), dest.join("test-gitconfig")).unwrap();
 }

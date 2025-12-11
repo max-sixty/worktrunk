@@ -6,6 +6,7 @@ info:
     - merge
     - main
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,10 +14,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -24,12 +29,12 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mSquashing 2 commits & working tree changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-💡 [2mBackup created @ e997a6b[22m
+💡 [2mBackup created @ 14fc72d[22m
 🔄 [36mGenerating squash commit message...[39m
 [107m [0m  [1mfix: update file 1 content[22m
-✅ [32mSquashed @ [2m735173c[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m735173c[22m (no rebase needed)[39m
-[107m [0m  * [33m735173c[m fix: update file 1 content
+✅ [32mSquashed @ [2mf1c474c[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mf1c474c[22m (no rebase needed)[39m
+[107m [0m  * [33mf1c474c[m fix: update file 1 content
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

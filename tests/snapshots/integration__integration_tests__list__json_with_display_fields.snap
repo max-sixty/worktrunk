@@ -6,6 +6,7 @@ info:
     - list
     - "--format=json"
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,10 +14,14 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
@@ -27,8 +32,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "2c97a38e97cba7ea1d95d6c8b948b0cf5199fc79",
-      "short_sha": "2c97a38",
+      "sha": "4803e9416c19681b83017135ac3a8c1b04898868",
+      "short_sha": "4803e94",
       "message": "Main commit 2",
       "timestamp": 0
     },
@@ -62,8 +67,8 @@ exit_code: 0
     "path": "[REPO].feature-ahead",
     "kind": "worktree",
     "commit": {
-      "sha": "13797c6a6136f965d1186fdb1f4fa2de2707df6d",
-      "short_sha": "13797c6",
+      "sha": "1080181c245695ed0d64aba6b0b0b7c0bfff9530",
+      "short_sha": "1080181",
       "message": "Feature commit 2",
       "timestamp": 0
     },
@@ -96,8 +101,8 @@ exit_code: 0
     "path": "[REPO].feature-behind",
     "kind": "worktree",
     "commit": {
-      "sha": "98ef56c1ce6de2d5c942729c2be35461c4441a8a",
-      "short_sha": "98ef56c",
+      "sha": "b8b9f4453f95a585105de3ae3439d8017dee67f3",
+      "short_sha": "b8b9f44",
       "message": "Initial commit on main",
       "timestamp": 0
     },

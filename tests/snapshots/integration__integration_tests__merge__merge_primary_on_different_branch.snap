@@ -6,6 +6,7 @@ info:
     - merge
     - main
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -13,18 +14,22 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m3cf9bf5[22m (no commit/squash/rebase needed)[39m
-[107m [0m  * [33m3cf9bf5[m Add feature file
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
+[107m [0m  * [33mfc12499[m Add feature file
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
