@@ -514,13 +514,7 @@ pub enum CiStatus {
 
 /// Source of CI status
 ///
-/// TODO: Current visual distinction (● for PR, ○ for branch) means main branch
-/// always shows hollow circle when running branch CI. This may not be ideal.
-/// Possible improvements:
-/// - Use different symbols entirely (e.g., ● vs ◎ double circle, ● vs ⊙ circled dot)
-/// - Add a third state for "primary branch" (main/master)
-/// - Use different shape families (e.g., ● circle vs ■ square, ● vs ◆ diamond)
-/// - Consider directional symbols for branch CI (e.g., ▶ right arrow)
+/// Visual distinction: ● (filled) for PR, ◒ (lower half black) for branch CI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CiSource {
@@ -746,13 +740,13 @@ impl PrStatus {
     ///
     /// - Error: ⚠ (overrides source indicator)
     /// - PullRequest: ● (filled circle)
-    /// - Branch: ○ (hollow circle)
+    /// - Branch: ◒ (lower half black circle)
     pub fn indicator(&self) -> &'static str {
         match self.ci_status {
             CiStatus::Error => "⚠",
             _ => match self.source {
                 CiSource::PullRequest => "●",
-                CiSource::Branch => "○",
+                CiSource::Branch => "◒",
             },
         }
     }
