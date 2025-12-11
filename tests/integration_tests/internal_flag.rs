@@ -42,7 +42,6 @@ fn test_list_with_internal_flag(repo: TestRepo) {
 ///
 /// Config show doesn't emit directives, but should work fine with --internal.
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
 fn test_config_show_with_internal_flag(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();

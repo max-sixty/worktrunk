@@ -13,7 +13,7 @@ fn snapshot_for_each(test_name: &str, repo: &TestRepo, args: &[&str]) {
     });
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
+/// Skipped on Windows: git status shows line-ending differences (CRLF vs LF).
 #[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_for_each_single_worktree(repo: TestRepo) {
@@ -25,7 +25,7 @@ fn test_for_each_single_worktree(repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
+/// Skipped on Windows: git status shows line-ending differences (CRLF vs LF).
 #[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_for_each_multiple_worktrees(mut repo: TestRepo) {
@@ -40,7 +40,7 @@ fn test_for_each_multiple_worktrees(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
+/// Skipped on Windows: git show error messages may differ.
 #[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_for_each_command_fails_in_one(mut repo: TestRepo) {
@@ -60,7 +60,7 @@ fn test_for_each_no_args_error(repo: TestRepo) {
     snapshot_for_each("for_each_no_args", &repo, &["for-each"]);
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
+/// Skipped on Windows: git status shows line-ending differences (CRLF vs LF).
 #[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_for_each_with_detached_head(mut repo: TestRepo) {
@@ -75,7 +75,7 @@ fn test_for_each_with_detached_head(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
+/// Skipped on Windows: `echo` command has different quoting behavior.
 #[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_for_each_with_template(repo: TestRepo) {
