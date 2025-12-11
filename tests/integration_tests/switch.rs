@@ -222,7 +222,8 @@ fn test_switch_error_path_occupied(repo: TestRepo) {
     // Cleanup
     std::fs::remove_dir_all(&expected_path).ok();
 }
-// Execute flag tests (Unix only due to shell differences)
+// Execute flag tests
+#[rstest]
 fn test_switch_execute_success(repo: TestRepo) {
     snapshot_switch(
         "switch_execute_success",
@@ -231,6 +232,7 @@ fn test_switch_execute_success(repo: TestRepo) {
     );
 }
 
+#[rstest]
 fn test_switch_execute_creates_file(repo: TestRepo) {
     let create_file_cmd = "echo 'test content' > test.txt";
 
@@ -252,6 +254,7 @@ fn test_switch_execute_failure(repo: TestRepo) {
     );
 }
 
+#[rstest]
 fn test_switch_execute_with_existing_worktree(mut repo: TestRepo) {
     repo.add_worktree("existing-exec");
 
@@ -264,6 +267,7 @@ fn test_switch_execute_with_existing_worktree(mut repo: TestRepo) {
     );
 }
 
+#[rstest]
 fn test_switch_execute_multiline(repo: TestRepo) {
     let multiline_cmd = "echo 'line1'\necho 'line2'\necho 'line3'";
 
@@ -274,6 +278,7 @@ fn test_switch_execute_multiline(repo: TestRepo) {
     );
 }
 // --no-verify flag tests
+#[rstest]
 fn test_switch_no_config_commands_execute_still_runs(repo: TestRepo) {
     snapshot_switch(
         "switch_no_hooks_execute_still_runs",
@@ -330,6 +335,7 @@ approved-commands = ["{}"]
     );
 }
 
+#[rstest]
 fn test_switch_no_config_commands_with_existing_worktree(mut repo: TestRepo) {
     repo.add_worktree("existing-no-hooks");
 

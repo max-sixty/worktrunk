@@ -44,6 +44,7 @@ fn test_post_create_no_config(repo: TestRepo) {
     snapshot_switch("post_create_no_config", &repo, &["--create", "feature"]);
 }
 
+#[rstest]
 fn test_post_create_single_command(repo: TestRepo) {
     // Create project config with a single command (string format)
     repo.write_project_config(r#"post-create = "echo 'Setup complete'""#);
@@ -67,6 +68,7 @@ approved-commands = ["echo 'Setup complete'"]
     );
 }
 
+#[rstest]
 fn test_post_create_named_commands(repo: TestRepo) {
     // Create project config with named commands (table format)
     repo.write_project_config(
@@ -339,6 +341,9 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
 }
 
 /// Test that hooks receive JSON context on stdin
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_post_create_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
 
