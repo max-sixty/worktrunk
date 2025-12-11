@@ -5,6 +5,7 @@ use worktrunk::config::{
     Command, CommandConfig, WorktrunkConfig, expand_template, sanitize_branch_name,
 };
 use worktrunk::git::Repository;
+use worktrunk::path::to_posix_path;
 
 #[derive(Debug)]
 pub struct PreparedCommand {
@@ -63,7 +64,9 @@ pub fn build_hook_context(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    let worktree = ctx.worktree_path.to_string_lossy();
+    // Convert paths to POSIX format for Git Bash compatibility on Windows.
+    // This avoids shell escaping of `:` and `\` characters in Windows paths.
+    let worktree = to_posix_path(&ctx.worktree_path.to_string_lossy());
     let worktree_name = ctx
         .worktree_path
         .file_name()
@@ -74,9 +77,12 @@ pub fn build_hook_context(
     map.insert("repo".into(), repo_name.into());
     map.insert("main_worktree".into(), repo_name.into()); // Alias for repo
     map.insert("branch".into(), sanitize_branch_name(ctx.branch_or_head()));
-    map.insert("worktree".into(), worktree.into());
+    map.insert("worktree".into(), worktree);
     map.insert("worktree_name".into(), worktree_name.into());
-    map.insert("repo_root".into(), repo_root.to_string_lossy().into());
+    map.insert(
+        "repo_root".into(),
+        to_posix_path(&repo_root.to_string_lossy()),
+    );
 
     if let Ok(default_branch) = ctx.repo.default_branch() {
         map.insert("default_branch".into(), default_branch);

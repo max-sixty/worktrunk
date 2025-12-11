@@ -418,6 +418,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
+use worktrunk::path::to_posix_path;
 
 /// Path to the fixture template repo (relative to crate root).
 /// Contains `_git/` (renamed .git) and `gitconfig`.
@@ -1539,6 +1540,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // (output may have either format depending on when filters are applied)
     settings.add_filter(&regex::escape(root_str), "[REPO]");
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
+    // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
+    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "[REPO]");
 
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
@@ -1568,6 +1571,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
         settings.add_filter(&regex::escape(path_str), &replacement);
         settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
+        // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
+        settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
 
         // Also add tilde-prefixed worktree path filter for Windows
         if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
@@ -1586,6 +1591,12 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
     // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
     settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "[REPO]");
+    // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
+    // Pattern: /c/Users/.../Temp/.tmpXXXXXX/repo and worktrees like /c/.../repo.feature-test
+    settings.add_filter(
+        r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?",
+        "[REPO]$1",
+    );
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]

@@ -736,8 +736,6 @@ approved-commands = ["echo 'About to remove worktree'"]
 }
 
 /// Test pre-remove hook has access to template variables.
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_pre_remove_hook_template_variables(mut repo: TestRepo) {
     // Create project config with template variables
@@ -776,8 +774,6 @@ approved-commands = [
 }
 
 /// Test pre-remove hook runs even in background mode (before spawning background process).
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_pre_remove_hook_runs_in_background_mode(mut repo: TestRepo) {
     use crate::common::wait_for_file;
@@ -1003,8 +999,6 @@ approved-commands = ["touch {marker_path}"]
 ///
 /// This complements `test_pre_remove_hook_runs_for_detached_head` by verifying
 /// the hook also runs when removal happens in background (the default).
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_pre_remove_hook_runs_for_detached_head_background(mut repo: TestRepo) {
     // Create marker file path in the repo root

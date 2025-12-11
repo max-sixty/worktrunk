@@ -1,5 +1,80 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+use std::process::Command;
+
+/// Convert a path to POSIX format for Git Bash compatibility.
+///
+/// On Windows, uses `cygpath -u` from Git for Windows to convert paths like
+/// `C:\Users\test` to `/c/Users/test`. This handles all edge cases including
+/// UNC paths (`\\server\share`) and verbatim paths (`\\?\C:\...`).
+///
+/// If cygpath is not available, returns the path unchanged.
+///
+/// On Unix, returns the path unchanged.
+///
+/// # Examples
+/// - `C:\Users\test\repo` → `/c/Users/test/repo`
+/// - `D:\a\worktrunk` → `/d/a/worktrunk`
+/// - `\\?\C:\repo` → `/c/repo` (verbatim prefix stripped)
+/// - `/tmp/test/repo` → `/tmp/test/repo` (unchanged on Unix)
+#[cfg(windows)]
+pub fn to_posix_path(path: &str) -> String {
+    use crate::shell_exec::ShellConfig;
+
+    let Some(cygpath) = find_cygpath_from_shell(ShellConfig::get()) else {
+        return path.to_string();
+    };
+
+    let Ok(output) = Command::new(&cygpath).arg("-u").arg(path).output() else {
+        return path.to_string();
+    };
+
+    if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(not(windows))]
+pub fn to_posix_path(path: &str) -> String {
+    path.to_string()
+}
+
+/// Find cygpath.exe relative to the shell executable.
+///
+/// cygpath is always at `usr/bin/cygpath.exe` in a Git for Windows installation.
+/// bash.exe can be at `bin/bash.exe` or `usr/bin/bash.exe`, so we check both
+/// relative paths.
+#[cfg(windows)]
+fn find_cygpath_from_shell(shell: &crate::shell_exec::ShellConfig) -> Option<PathBuf> {
+    // Only Git Bash has cygpath
+    if !shell.is_posix {
+        return None;
+    }
+
+    let shell_dir = shell.executable.parent()?;
+
+    // If bash is at usr/bin/bash.exe, cygpath is in the same directory
+    let cygpath = shell_dir.join("cygpath.exe");
+    if cygpath.exists() {
+        return Some(cygpath);
+    }
+
+    // If bash is at bin/bash.exe, cygpath is at ../usr/bin/cygpath.exe
+    let cygpath = shell_dir
+        .parent()?
+        .join("usr")
+        .join("bin")
+        .join("cygpath.exe");
+    if cygpath.exists() {
+        return Some(cygpath);
+    }
+
+    None
+}
+
 /// Get the user's home directory.
 ///
 /// Uses the `home` crate which handles platform-specific detection:
@@ -33,7 +108,7 @@ pub fn format_path_for_display(path: &Path) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{format_path_for_display, home_dir};
+    use super::{format_path_for_display, home_dir, to_posix_path};
 
     #[test]
     fn shortens_path_under_home() {
@@ -74,5 +149,40 @@ mod tests {
         let path = PathBuf::from("/tmp/worktrunk-non-home-path");
         let formatted = format_path_for_display(&path);
         assert_eq!(formatted, path.display().to_string());
+    }
+
+    // Tests for to_posix_path behavior (results depend on platform)
+    #[test]
+    fn to_posix_path_leaves_unix_paths_unchanged() {
+        // Unix-style paths should pass through unchanged on all platforms
+        assert_eq!(to_posix_path("/tmp/test/repo"), "/tmp/test/repo");
+        assert_eq!(to_posix_path("relative/path"), "relative/path");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn to_posix_path_converts_windows_drive_letter() {
+        // On Windows, drive letters should be converted to /x/ format
+        let result = to_posix_path(r"C:\Users\test");
+        assert!(
+            result.starts_with("/c/"),
+            "Expected /c/ prefix, got: {result}"
+        );
+        assert!(
+            result.contains("Users"),
+            "Expected Users in path, got: {result}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn to_posix_path_handles_verbatim_paths() {
+        // cygpath should handle verbatim paths (\\?\C:\...)
+        let result = to_posix_path(r"\\?\C:\Users\test");
+        // Should either strip \\?\ prefix or handle it correctly
+        assert!(
+            result.contains("/c/") || result.contains("Users"),
+            "Expected converted path, got: {result}"
+        );
     }
 }

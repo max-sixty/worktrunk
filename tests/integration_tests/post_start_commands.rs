@@ -124,8 +124,6 @@ approved-commands = ["exit 1"]
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_create_template_expansion(repo: TestRepo) {
     // Create project config with template variables
@@ -190,8 +188,6 @@ approved-commands = [
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_create_default_branch_template(repo: TestRepo) {
     // Create project config with default_branch template variable
@@ -234,8 +230,6 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up an upstream tracking branch
@@ -308,8 +302,6 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Push main to set up tracking
@@ -349,9 +341,7 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
 }
 
 /// Test that hooks receive JSON context on stdin
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_post_create_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
 
@@ -530,10 +520,7 @@ approved-commands = ["./scripts/setup.py"]
 }
 
 /// Test that background hooks also receive JSON context on stdin
-///
-/// Skipped on Windows: Uses `cat` command which is not available natively on Windows.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_post_start_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
 
@@ -730,8 +717,6 @@ fn test_invalid_toml(repo: TestRepo) {
 // Additional Coverage Tests
 // ============================================================================
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_start_log_file_captures_output(repo: TestRepo) {
     // Create command that writes to both stdout and stderr
@@ -819,8 +804,6 @@ approved-commands = ["echo 'unclosed quote"]
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_start_multiple_commands_separate_logs(repo: TestRepo) {
     // Create multiple background commands with distinct output
@@ -902,8 +885,6 @@ approved-commands = [
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_execute_flag_with_post_start_commands(repo: TestRepo) {
     // Create post-start command
@@ -947,8 +928,6 @@ approved-commands = ["echo 'Background task' > background.txt"]
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_start_complex_shell_commands(repo: TestRepo) {
     // Create command with pipes and redirects
@@ -978,8 +957,6 @@ approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
     assert_snapshot!(contents, @"line2");
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_start_multiline_commands_with_newlines(repo: TestRepo) {
     // Create command with actual newlines (using TOML triple-quoted string)
@@ -1028,8 +1005,6 @@ approved-commands = ["""
     ");
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_create_multiline_with_control_structures(repo: TestRepo) {
     // Test multiline command with if-else control structure
@@ -1089,8 +1064,6 @@ approved-commands = ["""
 ///
 /// This is a regression test for a bug where post-start commands were running on ALL
 /// `wt switch` operations instead of only on `wt switch --create`.
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_post_start_skipped_on_existing_worktree(repo: TestRepo) {
     // Create project config with post-start command
