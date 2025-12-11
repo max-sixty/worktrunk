@@ -74,17 +74,15 @@ jobs:
         # Skip lychee - the dedicated check-links job handles link checking
         SKIP: lychee
 
-    # TODO: Restore after next release (published wt doesn't have --force flag yet)
-    # # TODO: This installs from crates.io, not from the PR code. We should install from the
-    # # local checkout instead, but baptiste0928/cargo-install doesn't support local paths.
-    # # For now, pre-merge hooks run against the published version, not the PR changes.
-    # - name: Install wt
-    #   uses: baptiste0928/cargo-install@v3
-    #   with:
-    #     crate: worktrunk
-    #
-    # - name: 🧪 Pre-merge hooks
-    #   run: wt hook pre-merge --force
+    # This installs from crates.io, not from the PR code. Pre-merge hooks
+    # run against the published version, testing the hook configuration.
+    - name: Install wt
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: worktrunk
+
+    - name: 🧪 Pre-merge hooks
+      run: wt hook pre-merge --force
 
   check-links:
     runs-on: ubuntu-latest
