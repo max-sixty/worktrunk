@@ -26,6 +26,8 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
         cmd.env("HOME", temp_home.path());
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        cmd.env("USERPROFILE", temp_home.path());
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -391,6 +393,8 @@ approved-commands = ["cat > context.json"]
         .args(["switch", "--create", "feature-json"])
         .current_dir(repo.root_path())
         .env("HOME", temp_home.path())
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        .env("USERPROFILE", temp_home.path())
         .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
         .output()
         .expect("failed to run wt switch");
@@ -446,6 +450,7 @@ approved-commands = ["cat > context.json"]
 
 /// Test that an actual script file can read JSON from stdin
 #[test]
+#[cfg(unix)]
 fn test_post_create_script_reads_json() {
     use crate::common::wt_command;
     use std::os::unix::fs::PermissionsExt;
@@ -496,6 +501,8 @@ approved-commands = ["./scripts/setup.py"]
         .args(["switch", "--create", "feature-script"])
         .current_dir(repo.root_path())
         .env("HOME", temp_home.path())
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        .env("USERPROFILE", temp_home.path())
         .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
         .output()
         .expect("failed to run wt switch");
@@ -543,7 +550,10 @@ approved-commands = ["./scripts/setup.py"]
 }
 
 /// Test that background hooks also receive JSON context on stdin
+///
+/// Skipped on Windows: Uses `cat` command which is not available natively on Windows.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_post_start_json_stdin() {
     use crate::common::wt_command;
 
@@ -570,6 +580,8 @@ approved-commands = ["cat > context.json"]
         .args(["switch", "--create", "bg-json"])
         .current_dir(repo.root_path())
         .env("HOME", temp_home.path())
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        .env("USERPROFILE", temp_home.path())
         .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
         .output()
         .expect("failed to run wt switch");

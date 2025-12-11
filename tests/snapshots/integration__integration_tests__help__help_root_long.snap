@@ -18,9 +18,9 @@ exit_code: 0
 ----- stderr -----
 wt - Git worktree management
 
-Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
+Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
 
-[1m[32mCommands:[0m
+[1m[32mCommands:
   [1m[36mconfig[0m  Manage configuration and shell integration
   [1m[36mstep[0m    Run individual workflow operations
   [1m[36mhook[0m    Run hooks independently
@@ -30,21 +30,21 @@ Usage: [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND][0m
   [1m[36mremove[0m  Remove worktree and branch
   [1m[36mmerge[0m   Merge worktree into target branch
 
-[1m[32mOptions:[0m
-  [1m[36m-h[0m, [1m[36m--help[0m
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
-  [1m[36m-V[0m, [1m[36m--version[0m
+  [1m[36m-V[0m, [1m[36m--version
           Print version
 
-[1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>[0m
+      [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m
+  [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
 Getting started

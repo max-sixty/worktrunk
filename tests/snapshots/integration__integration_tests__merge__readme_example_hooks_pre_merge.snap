@@ -33,8 +33,8 @@ exit_code: 0
 [107m [0m  Includes comprehensive test coverage and input validation.
 ✅ [32mSquashed @ [2m69200cc[22m[39m
 🔄 [36mRunning project pre-merge [1mtest[22m:[39m
-[107m [0m  [2m[0m[2m[34muv[0m[2m run pytest[0m
-[0m
+[107m [0m  [2m[0m[2m[34muv[0m[2m run pytest
+
 ============================= test session starts ==============================
 collected 3 items
 
@@ -45,8 +45,8 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 ============================== 3 passed in 0.8s ===============================
 
 🔄 [36mRunning project pre-merge [1mlint[22m:[39m
-[107m [0m  [2m[0m[2m[34muv[0m[2m run ruff check[0m
-[0m
+[107m [0m  [2m[0m[2m[34muv[0m[2m run ruff check
+
 All checks passed!
 
 🔄 [36mMerging 1 commit to [1mmain[22m @ [2m69200cc[22m (no rebase needed)[39m

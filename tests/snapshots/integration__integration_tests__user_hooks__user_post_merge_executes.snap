@@ -32,5 +32,4 @@ exit_code: 0
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
 ⚪ Worktree preserved (--no-remove)
 🔄 [36mRunning user post-merge [1mnotify[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_POST_MERGE_RAN'[0m[2m [0m[2m[36m>[0m[2m user_postmerge.txt[0m
-[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_POST_MERGE_RAN'[0m[2m [0m[2m[36m>[0m[2m user_postmerge.txt

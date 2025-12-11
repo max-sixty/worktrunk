@@ -26,7 +26,7 @@ exit_code: 1
 
 ----- stderr -----
 🔄 [36mRunning user pre-merge [1mcheck[22m:[39m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1[0m
+[107m [0m  [2m[0m[2m[34mexit[0m[2m 1
 [0m❌ [31mpre-merge command failed: [1mcheck[22m: exit status: 1[39m
 
 💡 [2mUse [90m--no-verify[39m to skip pre-merge commands[22m

@@ -1,3 +1,10 @@
+//! Snapshot tests for `wt config shell init` command output.
+//!
+//! Skipped on Windows: These tests verify shell init scripts for bash/zsh/fish.
+//! Windows line endings (CRLF) cause snapshot mismatches, and these Unix shells
+//! are not the primary shell integration path on Windows (PowerShell is).
+#![cfg(not(windows))]
+
 use crate::common::{TestRepo, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;

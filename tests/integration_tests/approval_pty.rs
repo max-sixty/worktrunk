@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! PTY-based tests for interactive approval prompts
 //!
 //! These tests verify the approval workflow in a real PTY environment where stdin is a TTY.

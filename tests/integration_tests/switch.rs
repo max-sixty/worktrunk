@@ -45,6 +45,8 @@ fn snapshot_switch_with_home(
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd_with_global_flags(repo, "switch", args, None, global_flags);
         cmd.env("HOME", home);
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        cmd.env("USERPROFILE", home);
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -258,7 +260,9 @@ fn test_switch_execute_creates_file() {
     );
 }
 
+/// Skipped on Windows: Uses Unix shell command `exit 1`.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_switch_execute_failure() {
     let repo = setup_switch_repo();
 
@@ -615,6 +619,8 @@ fn snapshot_switch_from_dir(test_name: &str, repo: &TestRepo, args: &[&str], cwd
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd_with_global_flags(repo, "switch", args, Some(cwd), &[]);
         cmd.env("HOME", default_home.path());
+        // Windows: the `home` crate uses USERPROFILE for home_dir()
+        cmd.env("USERPROFILE", default_home.path());
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -685,7 +691,10 @@ fn test_switch_ping_pong_realistic() {
 }
 
 /// Test that `wt switch` without arguments shows helpful hints about shortcuts.
+///
+/// Skipped on Windows: Hints display differently on Windows.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_switch_missing_argument_shows_hints() {
     let repo = setup_switch_repo();
 

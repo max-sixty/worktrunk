@@ -14,7 +14,7 @@ use std::path::Path;
 use std::time::Duration;
 use worktrunk::git::Repository;
 
-use super::list::{self, CollectOptions, collect::TaskKind};
+use super::list::{self, CollectOptions};
 
 /// Claude Code context parsed from stdin JSON
 struct ClaudeCodeContext {
@@ -259,14 +259,8 @@ fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
     let mut items = vec![list::build_worktree_item(wt, is_main, true, false)];
 
     // Populate computed fields (parallel git operations) and format status_line
-    list::populate_items(
-        &mut items,
-        &default_branch,
-        CollectOptions {
-            // Statusline: fetch CI, skip only merge-tree conflicts
-            skip_tasks: [TaskKind::MergeTreeConflicts].into_iter().collect(),
-        },
-    )?;
+    // Compute everything (same as --full) for complete status symbols
+    list::populate_items(&mut items, &default_branch, CollectOptions::default())?;
 
     // Return the pre-formatted statusline
     if let Some(ref statusline) = items[0].display.statusline {

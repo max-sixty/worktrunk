@@ -1,7 +1,3 @@
-// Test utilities are Unix-only as they're used by integration tests
-// which rely on Unix-specific behavior (PTY, shell integration, etc.)
-#![cfg(unix)]
-
 //! # Test Utilities for worktrunk
 //!
 //! This module provides test harnesses for testing the worktrunk CLI tool.
@@ -25,6 +21,10 @@
 //!
 //! Paths are canonicalized to handle platform differences (especially macOS symlinks
 //! like /var -> /private/var). This ensures snapshot filters work correctly.
+//!
+//! On Windows, `std::fs::canonicalize()` returns verbatim paths (`\\?\C:\...`) which
+//! git cannot handle. We use `normalize_path()` to strip these prefixes while
+//! preserving the symlink resolution behavior needed on macOS.
 
 pub mod list_snapshots;
 // Progressive output tests use PTY and are Unix-only for now
@@ -81,6 +81,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
+
+/// Canonicalize a path without Windows verbatim prefix (`\\?\`).
+///
+/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
+/// which git cannot handle. The `dunce` crate strips this prefix when safe.
+/// On Unix, this is equivalent to `std::fs::canonicalize()`.
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
 
 /// Time constants for `commit_with_age()` - use as `5 * MINUTE`, `2 * HOUR`, etc.
 pub const MINUTE: i64 = 60;
@@ -174,10 +183,18 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("COLUMNS", "150");
 }
 
-/// Set `HOME` and `XDG_CONFIG_HOME` for commands that rely on isolated temp homes.
+/// Set home environment variables for commands that rely on isolated temp homes.
+///
+/// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
+/// so the `home` crate can find the temp home directory on all platforms.
 pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     cmd.env("HOME", home);
     cmd.env("XDG_CONFIG_HOME", home.join(".config"));
+    // Windows: the `home` crate uses USERPROFILE for home_dir()
+    cmd.env("USERPROFILE", home);
+    // Windows: etcetera uses APPDATA for config_dir() (AppData\Roaming)
+    // Map it to .config to match Unix XDG_CONFIG_HOME behavior
+    cmd.env("APPDATA", home.join(".config"));
 }
 
 pub struct TestRepo {
@@ -201,7 +218,7 @@ impl TestRepo {
         let root = temp_dir.path().join("repo");
         std::fs::create_dir(&root).unwrap();
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
-        let root = root.canonicalize().unwrap();
+        let root = canonicalize(&root).unwrap();
 
         // Create isolated config path for this test
         let test_config_path = temp_dir.path().join("test-config.toml");
@@ -255,6 +272,7 @@ impl TestRepo {
     ///
     /// This is useful for PTY tests and other cases where you need environment variables
     /// as a vector rather than setting them on a Command.
+    #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub fn test_env_vars(&self) -> Vec<(String, String)> {
         vec![
             ("CLICOLOR_FORCE".to_string(), "1".to_string()),
@@ -504,7 +522,7 @@ impl TestRepo {
         }
 
         // Canonicalize worktree path to match what git returns
-        let canonical_path = worktree_path.canonicalize().unwrap();
+        let canonical_path = canonicalize(&worktree_path).unwrap();
         // Use branch as key (consistent with path generation)
         self.worktrees
             .insert(branch.to_string(), canonical_path.clone());
@@ -601,7 +619,7 @@ impl TestRepo {
             .unwrap();
 
         // Canonicalize remote path
-        let remote_path = remote_path.canonicalize().unwrap();
+        let remote_path = canonicalize(&remote_path).unwrap();
 
         // Add as remote
         let mut cmd = Command::new("git");
@@ -781,27 +799,57 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // This must come before repo path filter to avoid partial matches
     let project_root = std::env::var("CARGO_MANIFEST_DIR")
         .ok()
-        .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
+        .and_then(|p| canonicalize(std::path::Path::new(&p)).ok());
     if let Some(root) = project_root {
         settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
     }
 
     // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
-    let root_canonical = repo
-        .root_path()
-        .canonicalize()
-        .unwrap_or_else(|_| repo.root_path().to_path_buf());
-    settings.add_filter(&regex::escape(root_canonical.to_str().unwrap()), "[REPO]");
+    let root_canonical =
+        canonicalize(repo.root_path()).unwrap_or_else(|_| repo.root_path().to_path_buf());
+    let root_str = root_canonical.to_str().unwrap();
+    // Add both backslash and forward-slash versions for Windows compatibility
+    // (output may have either format depending on when filters are applied)
+    settings.add_filter(&regex::escape(root_str), "[REPO]");
+    settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
+
+    // On Windows, format_path_for_display() converts paths under HOME to tilde-prefixed.
+    // Since temp directories (like C:\Users\runner\AppData\Local\Temp\.tmpXXX) are under HOME,
+    // the repo path becomes ~/AppData/Local/Temp/.tmpXXX/repo in output.
+    // Add filter for tilde-prefixed repo path.
+    // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
+    // (C:\Users\RUNNER~1) while dunce::canonicalize returns the long path (C:\Users\runneradmin).
+    if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
+        && let Ok(relative) = root_canonical.strip_prefix(&home)
+    {
+        let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+        settings.add_filter(&regex::escape(&tilde_path), "[REPO]");
+    }
+
     for (name, path) in &repo.worktrees {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        settings.add_filter(
-            &regex::escape(canonical.to_str().unwrap()),
-            format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_")),
-        );
+        let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
+        let path_str = canonical.to_str().unwrap();
+        let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
+        settings.add_filter(&regex::escape(path_str), &replacement);
+        settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
+
+        // Also add tilde-prefixed worktree path filter for Windows
+        if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
+            && let Ok(relative) = canonical.strip_prefix(&home)
+        {
+            let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+            settings.add_filter(&regex::escape(&tilde_path), &replacement);
+        }
     }
 
     // Normalize backslashes for Windows compatibility
     settings.add_filter(r"\\", "/");
+
+    // Windows fallback: use a regex pattern to catch tilde-prefixed Windows temp paths.
+    // This handles cases where path formats differ between home::home_dir() and the actual
+    // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
+    // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
+    settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "[REPO]");
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
@@ -829,6 +877,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
     settings.add_redaction(".env.HOME", "[TEST_HOME]");
+    // Windows: the `home` crate uses USERPROFILE for home_dir()
+    settings.add_redaction(".env.USERPROFILE", "[TEST_HOME]");
     settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
     settings.add_redaction(".env.PATH", "[PATH]");
 
@@ -860,10 +910,18 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // when capturing stderr from shell commands due to timing/buffering differences
     settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
 
-    // Normalize OS-specific error messages in gutter output
-    // Ubuntu may produce "Broken pipe (os error 32)" instead of the expected error
-    // when capturing stderr from shell commands due to timing/buffering differences
-    settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
+    // Filter out PowerShell lines on Windows - these appear only on Windows
+    // and would cause snapshot mismatches with Unix snapshots
+    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+
+    // Normalize Windows executable extension in help output
+    // On Windows, clap shows "wt.exe" instead of "wt"
+    settings.add_filter(r"wt\.exe", "wt");
+
+    // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
+    // Windows terminal strips these trailing resets that Unix includes
+    settings.add_filter(r"\x1b\[0m$", "");
+    settings.add_filter(r"\x1b\[0m\n", "\n");
 
     settings
 }
@@ -874,7 +932,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 /// Use this for tests that need both a TestRepo and a temporary home (for user config testing).
 pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -> insta::Settings {
     let mut settings = setup_snapshot_settings(repo);
-    settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    settings.add_filter(
+        &regex::escape(&temp_home.path().to_string_lossy()),
+        "[TEMP_HOME]",
+    );
     settings
 }
 
@@ -885,8 +946,16 @@ pub fn setup_snapshot_settings_with_home(repo: &TestRepo, temp_home: &TempDir) -
 pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    settings.add_filter(&temp_home.path().to_string_lossy(), "[TEMP_HOME]");
+    settings.add_filter(
+        &regex::escape(&temp_home.path().to_string_lossy()),
+        "[TEMP_HOME]",
+    );
     settings.add_filter(r"\\", "/");
+    // Filter out PowerShell lines on Windows - these appear only on Windows
+    // and would cause snapshot mismatches with Unix snapshots
+    settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
+    // Normalize Windows executable extension in help output
+    settings.add_filter(r"wt\.exe", "wt");
     settings
 }
 
@@ -901,6 +970,8 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     // Filter temp paths in output
     settings.add_filter(&regex::escape(temp_path.to_str().unwrap()), "[TEMP]");
     settings.add_filter(r"\\", "/");
+    // Normalize Windows executable extension in help output
+    settings.add_filter(r"wt\.exe", "wt");
 
     // Redact volatile metadata captured by insta-cmd
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
@@ -1031,6 +1102,7 @@ pub struct ExponentialBackoff {
     /// Maximum sleep duration in milliseconds
     pub max_ms: u64,
     /// Total timeout
+    #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
     pub timeout: std::time::Duration,
 }
 

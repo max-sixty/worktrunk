@@ -20,42 +20,42 @@ exit_code: 0
 ----- stderr -----
 wt config var - Get or set runtime variables (stored in git config)
 
-Usage: [1m[36mwt config var[0m [36m[OPTIONS][0m [36m<COMMAND>[0m
+Usage: [1m[36mwt config var[0m [36m[OPTIONS][0m [36m<COMMAND>
 
-[1m[32mCommands:[0m
+[1m[32mCommands:
   [1m[36mget[0m    Get a variable value
   [1m[36mset[0m    Set a variable value
   [1m[36mclear[0m  Clear a variable value
 
-[1m[32mOptions:[0m
-  [1m[36m-h[0m, [1m[36m--help[0m
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
-[1m[32mGlobal Options:[0m
-  [1m[36m-C[0m[36m [0m[36m<path>[0m
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
           Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>[0m
+      [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose[0m
+  [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
 Variables are runtime values stored in git config, separate from
 configuration files. Use [2mwt config show[0m to view file-based configuration.
 
-[32mAvailable variables[0m
+[32mAvailable variables
 
 - [1mdefault-branch[0m: The repository's default branch (read-only, cached)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
 
-[32mExamples[0m
+[32mExamples
 
 Get the default branch:
-  [2mwt config var get default-branch[0m
+  [2mwt config var get default-branch
 
 Set a marker for current branch:
-  [2mwt config var set marker "🚧 WIP"[0m
+  [2mwt config var set marker "🚧 WIP"
 
 Clear markers:
-  [2mwt config var clear marker --all[0m
+  [2mwt config var clear marker --all

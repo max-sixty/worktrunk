@@ -9,7 +9,7 @@ exit_code: 1
 🟡 [33m[1mrepo[22m needs approval to execute [1m1[22m command:[39m
 
 ⚪ pre-merge:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running pre-merge checks on {{ branch }}'[0m[2m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running pre-merge checks on {{ branch }}'[0m[2m
 ❌ [31mCannot prompt for approval in non-interactive environment[39m
 
 💡 [2mIn CI/CD, use [90m--force[39m to skip prompts. To pre-approve commands, use [90mwt hook approvals add[39m[22m

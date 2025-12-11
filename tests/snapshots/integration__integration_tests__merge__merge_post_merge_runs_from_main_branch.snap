@@ -26,5 +26,4 @@ exit_code: 0
 ⚪ Already up to date with [1mmain[22m (no new commits, no rebase needed)
 ⚪ Worktree preserved (main worktree)
 🔄 [36mRunning project post-merge:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran from main'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt[0m
-[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'post-merge ran from main'[0m[2m [0m[2m[36m>[0m[2m post-merge-ran.txt

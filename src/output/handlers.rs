@@ -679,7 +679,13 @@ pub(crate) fn execute_streaming(
     redirect_stdout_to_stderr: bool,
     stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    use nix::sys::signal::{Signal, kill};
+    #[cfg(unix)]
+    use nix::unistd::Pid;
     use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
     use worktrunk::git::WorktrunkError;
     use worktrunk::shell_exec::ShellConfig;
 
@@ -703,6 +709,12 @@ pub(crate) fn execute_streaming(
     };
 
     let mut cmd = shell.command(command);
+
+    // Put child in its own process group so we can forward SIGINT to the entire group.
+    // Uses posix_spawnattr_setpgroup when available; otherwise falls back to fork/exec.
+    #[cfg(unix)]
+    cmd.process_group(0);
+
     let mut child = cmd
         .current_dir(working_dir)
         .stdin(stdin_mode)
@@ -717,6 +729,31 @@ pub(crate) fn execute_streaming(
                 message: format!("Failed to execute command with {}: {}", shell.name, e),
             })
         })?;
+
+    // Child PID equals its PGID since it's the process group leader
+    #[cfg(unix)]
+    let child_pid = Pid::from_raw(child.id() as i32);
+
+    #[cfg(unix)]
+    let (signal_handle, signal_thread) = {
+        use signal_hook::consts::SIGINT;
+        use signal_hook::iterator::Signals;
+
+        let mut signals = Signals::new([SIGINT])
+            .map_err(|e| anyhow::anyhow!("Failed to install SIGINT handler: {e}"))?;
+        let handle = signals.handle();
+
+        let thread = std::thread::spawn(move || {
+            for sig in signals.forever() {
+                if sig == SIGINT {
+                    // Forward Ctrl-C to the entire child process group.
+                    let _ = kill(Pid::from_raw(-child_pid.as_raw()), Signal::SIGINT);
+                }
+            }
+        });
+
+        (handle, thread)
+    };
 
     // Write stdin content if provided (used for hook context JSON)
     // We ignore write errors here because:
@@ -737,6 +774,13 @@ pub(crate) fn execute_streaming(
             message: format!("Failed to wait for command: {}", e),
         })
     })?;
+
+    #[cfg(unix)]
+    {
+        // Stop listening for SIGINT and join the forwarding thread.
+        signal_handle.close();
+        let _ = signal_thread.join();
+    }
 
     // Check if child was killed by a signal (Unix only)
     // This handles Ctrl-C: when SIGINT is sent, the child receives it and terminates,

@@ -26,6 +26,6 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRemoving worktree for [1mfeature-hook[22m...[39m
 🔄 [36mRunning project pre-remove:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'About to remove worktree'[0m[2m[0m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'About to remove worktree'[0m[2m
 [0mAbout to remove worktree
 ✅ [32mRemoved [1mfeature-hook[22m worktree & branch (already in main)[39m
