@@ -648,8 +648,6 @@ fn test_merge_pre_merge_command_success(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_merge_command_failure(mut repo: TestRepo) {
     // Create project config with failing pre-merge command
@@ -728,8 +726,6 @@ fn test_merge_pre_merge_command_no_hooks(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_merge_command_named(mut repo: TestRepo) {
     // Create project config with named pre-merge commands
@@ -886,8 +882,6 @@ fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     // Create project config with failing post-merge command
@@ -1091,8 +1085,6 @@ fn test_merge_pre_commit_command_success(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_commit_command_failure(mut repo: TestRepo) {
     // Create project config with failing pre-commit command
@@ -1163,8 +1155,6 @@ fn test_merge_pre_squash_command_success(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_squash_command_failure(mut repo: TestRepo) {
     // Create project config with failing pre-commit command (used for both squash and no-squash)
