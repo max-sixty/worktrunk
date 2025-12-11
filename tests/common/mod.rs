@@ -1309,6 +1309,10 @@ exit /b 1
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
     /// so gh/glab commands are intercepted.
     ///
+    /// On Windows, this also removes directories containing real gh.exe/glab.exe from PATH.
+    /// This is necessary because Windows searches for .exe before .cmd in PATHEXT order,
+    /// so a real gh.exe would be found before our mock gh.cmd even with mock-bin first.
+    ///
     /// Metadata redactions keep PATH private in snapshots, so we can reuse the
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
@@ -1317,6 +1321,14 @@ exit /b 1
                 .as_deref()
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
+
+            // On Windows, remove directories containing real gh.exe or glab.exe
+            // to ensure our mock .cmd files are found instead
+            #[cfg(windows)]
+            {
+                paths.retain(|dir| !dir.join("gh.exe").exists() && !dir.join("glab.exe").exists());
+            }
+
             paths.insert(0, mock_bin.clone());
             let new_path = std::env::join_paths(paths).unwrap();
             cmd.env("PATH", new_path);
