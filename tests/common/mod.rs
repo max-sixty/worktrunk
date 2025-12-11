@@ -100,6 +100,16 @@ pub fn pty_safe() {
     ignore_tty_signals();
 }
 
+/// Returns a PTY system after ensuring SIGTTIN/SIGTTOU signals are blocked.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work in background process groups (e.g., Codex).
+#[cfg(unix)]
+pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    ignore_tty_signals();
+    portable_pty::native_pty_system()
+}
+
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
