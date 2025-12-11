@@ -609,8 +609,6 @@ fn test_merge_with_untracked_files(mut repo_with_main_worktree: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_merge_command_success(mut repo: TestRepo) {
     // Create project config with pre-merge command
