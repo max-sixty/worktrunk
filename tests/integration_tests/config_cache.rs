@@ -1,5 +1,6 @@
-use crate::common::{TEST_EPOCH, TestRepo, wt_command};
+use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
+use rstest::rstest;
 use std::process::Command;
 
 fn wt_config_cache_cmd(repo: &TestRepo, args: &[&str]) -> Command {
@@ -15,10 +16,8 @@ fn wt_config_cache_cmd(repo: &TestRepo, args: &[&str]) -> Command {
 // cache show
 // ============================================================================
 
-#[test]
-fn test_config_cache_show_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_show_empty(repo: TestRepo) {
     let output = wt_config_cache_cmd(&repo, &["show"]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
@@ -30,10 +29,8 @@ fn test_config_cache_show_empty() {
     ");
 }
 
-#[test]
-fn test_config_cache_show_with_default_branch() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_show_with_default_branch(repo: TestRepo) {
     // Set default branch cache manually
     repo.git_command(&["config", "worktrunk.defaultBranch", "main"])
         .status()
@@ -50,10 +47,8 @@ fn test_config_cache_show_with_default_branch() {
     ");
 }
 
-#[test]
-fn test_config_cache_show_with_ci_entries() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_show_with_ci_entries(repo: TestRepo) {
     // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
     repo.git_command(&[
         "config",
@@ -88,19 +83,15 @@ fn test_config_cache_show_with_ci_entries() {
 // cache clear
 // ============================================================================
 
-#[test]
-fn test_config_cache_clear_all_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_all_empty(repo: TestRepo) {
     let output = wt_config_cache_cmd(&repo, &["clear"]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No caches to clear");
 }
 
-#[test]
-fn test_config_cache_clear_all_with_data() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_all_with_data(repo: TestRepo) {
     // Set default branch cache
     repo.git_command(&["config", "worktrunk.defaultBranch", "main"])
         .status()
@@ -111,10 +102,8 @@ fn test_config_cache_clear_all_with_data() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared all caches[39m");
 }
 
-#[test]
-fn test_config_cache_clear_default_branch() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_default_branch(repo: TestRepo) {
     // Set default branch cache
     repo.git_command(&["config", "worktrunk.defaultBranch", "main"])
         .status()
@@ -127,10 +116,8 @@ fn test_config_cache_clear_default_branch() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared default branch cache[39m");
 }
 
-#[test]
-fn test_config_cache_clear_default_branch_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_default_branch_empty(repo: TestRepo) {
     let output = wt_config_cache_cmd(&repo, &["clear", "default-branch"])
         .output()
         .unwrap();
@@ -138,10 +125,8 @@ fn test_config_cache_clear_default_branch_empty() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No default branch cache to clear");
 }
 
-#[test]
-fn test_config_cache_clear_ci_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_ci_empty(repo: TestRepo) {
     let output = wt_config_cache_cmd(&repo, &["clear", "ci"])
         .output()
         .unwrap();
@@ -149,10 +134,8 @@ fn test_config_cache_clear_ci_empty() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No CI cache entries to clear");
 }
 
-#[test]
-fn test_config_cache_clear_unknown_type() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_unknown_type(repo: TestRepo) {
     let output = wt_config_cache_cmd(&repo, &["clear", "unknown"])
         .output()
         .unwrap();
@@ -165,10 +148,8 @@ fn test_config_cache_clear_unknown_type() {
     ");
 }
 
-#[test]
-fn test_config_cache_clear_logs_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_logs_empty(repo: TestRepo) {
     let output = wt_config_cache_cmd(&repo, &["clear", "logs"])
         .output()
         .unwrap();
@@ -176,10 +157,8 @@ fn test_config_cache_clear_logs_empty() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No logs to clear");
 }
 
-#[test]
-fn test_config_cache_clear_logs_with_files() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_logs_with_files(repo: TestRepo) {
     // Create wt-logs directory with some log files
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
@@ -197,10 +176,8 @@ fn test_config_cache_clear_logs_with_files() {
     assert!(!log_dir.exists());
 }
 
-#[test]
-fn test_config_cache_clear_logs_single_file() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_logs_single_file(repo: TestRepo) {
     // Create wt-logs directory with one log file
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");
@@ -214,10 +191,8 @@ fn test_config_cache_clear_logs_single_file() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared [1m1[22m log file[39m");
 }
 
-#[test]
-fn test_config_cache_clear_all_with_logs() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_config_cache_clear_all_with_logs(repo: TestRepo) {
     // Create wt-logs directory with a log file
     let git_dir = repo.root_path().join(".git");
     let log_dir = git_dir.join("wt-logs");

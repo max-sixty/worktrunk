@@ -4,13 +4,12 @@
 //! verifying that the table structure appears first and data fills in progressively.
 #![cfg(unix)]
 
-use crate::common::TestRepo;
 use crate::common::progressive_output::{ProgressiveCaptureOptions, capture_progressive_output};
+use crate::common::{TestRepo, repo};
+use rstest::rstest;
 
-#[test]
-fn test_list_progressive_rendering_basic() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_progressive_rendering_basic(mut repo: TestRepo) {
     // Create a few worktrees to have data to render
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
@@ -55,10 +54,8 @@ fn test_list_progressive_rendering_basic() {
     // No need for additional assertions - verify_progressive_filling already confirms progressive behavior
 }
 
-#[test]
-fn test_list_progressive_dots_decrease() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_progressive_dots_decrease(mut repo: TestRepo) {
     // Create multiple worktrees to ensure progressive rendering is observable
     for i in 1..=5 {
         repo.add_worktree(&format!("branch-{}", i));
@@ -75,9 +72,8 @@ fn test_list_progressive_dots_decrease() {
     output.verify_progressive_filling().unwrap();
 }
 
-#[test]
-fn test_list_progressive_timing() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_progressive_timing(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     let output = capture_progressive_output(
@@ -103,9 +99,8 @@ fn test_list_progressive_timing() {
     );
 }
 
-#[test]
-fn test_list_progressive_snapshot_at() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_list_progressive_snapshot_at(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     let output = capture_progressive_output(
@@ -132,10 +127,8 @@ fn test_list_progressive_snapshot_at() {
 }
 
 /// Test with a larger dataset to ensure progressive rendering is visible
-#[test]
-fn test_list_progressive_many_worktrees() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_list_progressive_many_worktrees(mut repo: TestRepo) {
     // Create many worktrees to ensure rendering takes time
     for i in 1..=10 {
         repo.add_worktree(&format!("branch-{:02}", i));
@@ -177,10 +170,8 @@ fn test_list_progressive_many_worktrees() {
 }
 
 /// Test that we can capture output even for fast commands
-#[test]
-fn test_list_progressive_fast_command() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_list_progressive_fast_command(repo: TestRepo) {
     // Run list without any worktrees (fast)
     let output = capture_progressive_output(
         &repo,

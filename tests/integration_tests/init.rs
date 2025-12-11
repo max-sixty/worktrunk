@@ -5,15 +5,13 @@
 //! are not the primary shell integration path on Windows (PowerShell is).
 #![cfg(not(windows))]
 
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, repo, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
 /// Helper to create snapshot for config shell init command
-fn snapshot_init(test_name: &str, shell: &str, extra_args: &[&str]) {
-    let repo = TestRepo::new();
-
+fn snapshot_init(test_name: &str, repo: &TestRepo, shell: &str, extra_args: &[&str]) {
     // Custom settings for init tests - these output shell scripts with intentional
     // backslashes (\cd, \n) so we can't use setup_snapshot_settings which has a
     // backslash normalization filter that would corrupt the output
@@ -43,14 +41,12 @@ fn snapshot_init(test_name: &str, shell: &str, extra_args: &[&str]) {
 #[case("bash")]
 #[case("fish")]
 #[case("zsh")]
-fn test_init(#[case] shell: &str) {
-    snapshot_init(&format!("init_{}", shell), shell, &[]);
+fn test_init(#[case] shell: &str, repo: TestRepo) {
+    snapshot_init(&format!("init_{}", shell), &repo, shell, &[]);
 }
 
-#[test]
-fn test_init_invalid_shell() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_init_invalid_shell(repo: TestRepo) {
     // Same custom settings as snapshot_init
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");

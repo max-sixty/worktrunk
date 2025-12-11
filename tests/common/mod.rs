@@ -134,6 +134,25 @@ pub fn repo() -> TestRepo {
     TestRepo::new()
 }
 
+/// Temporary directory for use as fake home directory in tests.
+///
+/// Use this for tests that need to manipulate shell config files (~/.zshrc, ~/.bashrc, etc.)
+/// or other home directory content. The directory is automatically cleaned up when dropped.
+///
+/// # Example
+/// ```ignore
+/// #[rstest]
+/// fn test_shell_config(repo: TestRepo, temp_home: TempDir) {
+///     let zshrc = temp_home.path().join(".zshrc");
+///     fs::write(&zshrc, "# config").unwrap();
+///     // test with temp_home as HOME
+/// }
+/// ```
+#[rstest::fixture]
+pub fn temp_home() -> TempDir {
+    TempDir::new().unwrap()
+}
+
 /// Repo with remote tracking set up.
 ///
 /// Builds on the `repo` fixture, adding a "remote" for the default branch.
@@ -1864,6 +1883,7 @@ fn is_leap_year(year: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn test_unix_to_iso8601() {
@@ -1879,10 +1899,9 @@ mod tests {
         assert_eq!(unix_to_iso8601(1709164800), "2024-02-29T00:00:00Z");
     }
 
-    #[test]
-    fn test_commit_with_age() {
+    #[rstest]
+    fn test_commit_with_age(repo: TestRepo) {
         // TestRepo::new() already includes one initial commit from fixture
-        let repo = TestRepo::new();
 
         // Create commits with specific ages
         repo.commit_with_age("One hour ago", HOUR);

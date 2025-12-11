@@ -1,6 +1,7 @@
-use crate::common::{TestRepo, list_snapshots, setup_snapshot_settings};
+use crate::common::{TestRepo, list_snapshots, repo, setup_snapshot_settings};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::process::Command;
 
 fn snapshot_list(test_name: &str, repo: &TestRepo) {
@@ -25,10 +26,8 @@ fn run_snapshot(settings: Settings, test_name: &str, mut cmd: Command) {
     });
 }
 
-#[test]
-fn test_short_branch_names_shorter_than_header() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_short_branch_names_shorter_than_header(mut repo: TestRepo) {
     // Create worktrees with very short branch names (shorter than "Branch" header)
     repo.add_worktree("a");
     repo.add_worktree("bb");
@@ -37,10 +36,8 @@ fn test_short_branch_names_shorter_than_header() {
     snapshot_list("short_branch_names", &repo);
 }
 
-#[test]
-fn test_long_branch_names_longer_than_header() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_long_branch_names_longer_than_header(mut repo: TestRepo) {
     // Create worktrees with very long branch names
     repo.add_worktree("very-long-feature-branch-name");
     repo.add_worktree("another-extremely-long-name-here");
@@ -49,10 +46,8 @@ fn test_long_branch_names_longer_than_header() {
     snapshot_list("long_branch_names", &repo);
 }
 
-#[test]
-fn test_unicode_branch_names_width_calculation() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_unicode_branch_names_width_calculation(mut repo: TestRepo) {
     // Create worktrees with unicode characters that have different visual widths
     // Note: Git may have restrictions on branch names, so use valid characters
     repo.add_worktree("cafe");
@@ -62,10 +57,8 @@ fn test_unicode_branch_names_width_calculation() {
     snapshot_list("unicode_branch_names", &repo);
 }
 
-#[test]
-fn test_mixed_length_branch_names() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_mixed_length_branch_names(mut repo: TestRepo) {
     // Mix of very short, medium, and very long branch names
     repo.add_worktree("x");
     repo.add_worktree("medium");
@@ -77,10 +70,8 @@ fn test_mixed_length_branch_names() {
 // Column alignment tests with varying diff sizes
 // (Merged from column_alignment.rs)
 
-#[test]
-fn test_column_alignment_varying_diff_widths() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_column_alignment_varying_diff_widths(mut repo: TestRepo) {
     // Create worktrees with varying diff sizes to test alignment
     repo.add_worktree("feature-small");
     repo.add_worktree("feature-medium");
@@ -106,10 +97,8 @@ fn test_column_alignment_varying_diff_widths() {
     snapshot_list_with_width("alignment_varying_diffs", &repo, 180);
 }
 
-#[test]
-fn test_column_alignment_with_empty_diffs() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_column_alignment_with_empty_diffs(mut repo: TestRepo) {
     // Mix of worktrees with and without diffs
     repo.add_worktree("no-changes");
 
@@ -123,10 +112,8 @@ fn test_column_alignment_with_empty_diffs() {
     snapshot_list_with_width("alignment_empty_diffs", &repo, 180);
 }
 
-#[test]
-fn test_column_alignment_extreme_diff_sizes() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_column_alignment_extreme_diff_sizes(mut repo: TestRepo) {
     // Create worktrees with extreme diff size differences
     repo.add_worktree("tiny");
     repo.add_worktree("huge");

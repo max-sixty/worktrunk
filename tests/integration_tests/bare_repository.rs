@@ -1,5 +1,6 @@
-use crate::common::{TestRepo, setup_temp_snapshot_settings, wait_for_file, wt_command};
+use crate::common::{TestRepo, repo, setup_temp_snapshot_settings, wait_for_file, wt_command};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -405,8 +406,8 @@ fn test_bare_repo_worktree_base_used_for_paths() {
     );
 }
 
-#[test]
-fn test_bare_repo_equivalent_to_normal_repo() {
+#[rstest]
+fn test_bare_repo_equivalent_to_normal_repo(repo: TestRepo) {
     // This test verifies that bare repos behave identically to normal repos
     // from the user's perspective
 
@@ -415,16 +416,15 @@ fn test_bare_repo_equivalent_to_normal_repo() {
     let bare_main = bare_test.create_worktree("main", "bare-repo.main");
     bare_test.commit_in_worktree(&bare_main, "Commit in bare repo");
 
-    // Set up normal repo
-    let normal_test = TestRepo::new();
-    normal_test.commit("Commit in normal repo");
+    // Set up normal repo (using fixture)
+    repo.commit("Commit in normal repo");
 
     // Configure both with same worktree path pattern
     let config = r#"
 worktree-path = "{{ branch }}"
 "#;
     fs::write(bare_test.config_path(), config).unwrap();
-    fs::write(normal_test.test_config_path(), config).unwrap();
+    fs::write(repo.test_config_path(), config).unwrap();
 
     // List worktrees in both - should show similar structure
     let mut bare_list = wt_command();
@@ -432,8 +432,8 @@ worktree-path = "{{ branch }}"
     bare_list.arg("list").current_dir(&bare_main);
 
     let mut normal_list = wt_command();
-    normal_test.clean_cli_env(&mut normal_list);
-    normal_list.arg("list").current_dir(normal_test.root_path());
+    repo.clean_cli_env(&mut normal_list);
+    normal_list.arg("list").current_dir(repo.root_path());
 
     let bare_output = bare_list.output().unwrap();
     let normal_output = normal_list.output().unwrap();

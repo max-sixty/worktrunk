@@ -12,10 +12,11 @@
 //! buffering of input/output interleaving. Consider normalizing extra blank lines to make
 //! snapshots more stable across different environments (local vs CI vs Claude Code web).
 
-use crate::common::TestRepo;
+use crate::common::{TestRepo, repo};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use portable_pty::{CommandBuilder, PtySize};
+use rstest::rstest;
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -139,9 +140,8 @@ fn normalize_output(output: &str) -> String {
     output_str
 }
 
-#[test]
-fn test_approval_prompt_accept() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_accept(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -159,9 +159,8 @@ fn test_approval_prompt_accept() {
     assert_snapshot!("approval_prompt_accept", normalized);
 }
 
-#[test]
-fn test_approval_prompt_decline() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_decline(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -179,9 +178,8 @@ fn test_approval_prompt_decline() {
     assert_snapshot!("approval_prompt_decline", normalized);
 }
 
-#[test]
-fn test_approval_prompt_multiple_commands() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_multiple_commands(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -207,9 +205,8 @@ third = "echo 'Third command'"
 
 /// TODO: Find a way to test permission errors without skipping when running as root.
 /// See test_permission_error_prevents_save in approval_save.rs for details.
-#[test]
-fn test_approval_prompt_permission_error() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_permission_error(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -268,9 +265,8 @@ fn test_approval_prompt_permission_error() {
     assert_snapshot!("approval_prompt_permission_error", normalized);
 }
 
-#[test]
-fn test_approval_prompt_named_commands() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_named_commands(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 install = "echo 'Installing dependencies...'"
@@ -306,9 +302,8 @@ test = "echo 'Running tests...'"
     assert_snapshot!("approval_prompt_named_commands", normalized);
 }
 
-#[test]
-fn test_approval_prompt_mixed_approved_unapproved_accept() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_mixed_approved_unapproved_accept(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -364,9 +359,8 @@ approved-commands = ["echo 'Second command'"]
     );
 }
 
-#[test]
-fn test_approval_prompt_mixed_approved_unapproved_decline() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_approval_prompt_mixed_approved_unapproved_decline(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"

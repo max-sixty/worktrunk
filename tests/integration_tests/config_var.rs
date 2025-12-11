@@ -1,5 +1,6 @@
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, repo, wt_command};
 use insta::assert_snapshot;
+use rstest::rstest;
 use std::process::Command;
 
 fn wt_var_set_cmd(repo: &TestRepo, args: &[&str]) -> Command {
@@ -29,10 +30,8 @@ fn wt_var_get_cmd(repo: &TestRepo, args: &[&str]) -> Command {
     cmd
 }
 
-#[test]
-fn test_var_set_marker_branch_default() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_set_marker_branch_default(repo: TestRepo) {
     let output = wt_var_set_cmd(&repo, &["marker", "🚧"]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet marker for [1mmain[22m to [1m🚧[22m[39m");
@@ -45,9 +44,8 @@ fn test_var_set_marker_branch_default() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "🚧");
 }
 
-#[test]
-fn test_var_set_marker_branch_specific() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_var_set_marker_branch_specific(repo: TestRepo) {
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
     let output = wt_var_set_cmd(&repo, &["marker", "🔧", "--branch", "feature"])
@@ -64,10 +62,8 @@ fn test_var_set_marker_branch_specific() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "🔧");
 }
 
-#[test]
-fn test_var_clear_marker_branch_default() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_clear_marker_branch_default(repo: TestRepo) {
     // Set a marker first
     repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
         .status()
@@ -85,10 +81,8 @@ fn test_var_clear_marker_branch_default() {
     assert!(!output.status.success());
 }
 
-#[test]
-fn test_var_clear_marker_branch_specific() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_clear_marker_branch_specific(repo: TestRepo) {
     // Set a marker first
     repo.git_command(&["config", "worktrunk.marker.feature", "🔧"])
         .status()
@@ -108,10 +102,8 @@ fn test_var_clear_marker_branch_specific() {
     assert!(!output.status.success());
 }
 
-#[test]
-fn test_var_clear_marker_all() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_clear_marker_all(repo: TestRepo) {
     // Set multiple markers
     repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
         .status()
@@ -137,10 +129,8 @@ fn test_var_clear_marker_all() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
 
-#[test]
-fn test_var_clear_marker_all_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_clear_marker_all_empty(repo: TestRepo) {
     let output = wt_var_clear_cmd(&repo, &["marker", "--all"])
         .output()
         .unwrap();
@@ -148,10 +138,8 @@ fn test_var_clear_marker_all_empty() {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No markers to clear");
 }
 
-#[test]
-fn test_var_get_marker() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_get_marker(repo: TestRepo) {
     // Set a marker first
     repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
         .status()
@@ -163,19 +151,16 @@ fn test_var_get_marker() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "🚧");
 }
 
-#[test]
-fn test_var_get_marker_empty() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_get_marker_empty(repo: TestRepo) {
     let output = wt_var_get_cmd(&repo, &["marker"]).output().unwrap();
     assert!(output.status.success());
     // Empty output when no marker is set
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
 }
 
-#[test]
-fn test_var_get_marker_specific_branch() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_var_get_marker_specific_branch(repo: TestRepo) {
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
     // Set a marker for feature branch
@@ -191,20 +176,16 @@ fn test_var_get_marker_specific_branch() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "🔧");
 }
 
-#[test]
-fn test_var_get_default_branch() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_get_default_branch(repo: TestRepo) {
     let output = wt_var_get_cmd(&repo, &["default-branch"]).output().unwrap();
     assert!(output.status.success());
     // data() writes to stdout for piping
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
 }
 
-#[test]
-fn test_var_get_default_branch_no_remote() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_get_default_branch_no_remote(repo: TestRepo) {
     // Without remote, should infer from local branches
     let output = wt_var_get_cmd(&repo, &["default-branch"]).output().unwrap();
     assert!(output.status.success());
@@ -212,19 +193,16 @@ fn test_var_get_default_branch_no_remote() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "main");
 }
 
-#[test]
-fn test_var_get_ci_status() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_get_ci_status(repo: TestRepo) {
     // Without any CI configured, should return "noci"
     let output = wt_var_get_cmd(&repo, &["ci-status"]).output().unwrap();
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "noci");
 }
 
-#[test]
-fn test_var_get_ci_status_specific_branch() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_var_get_ci_status_specific_branch(repo: TestRepo) {
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
     // Without any CI configured, should return "noci"
@@ -235,10 +213,8 @@ fn test_var_get_ci_status_specific_branch() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "noci");
 }
 
-#[test]
-fn test_var_get_ci_status_nonexistent_branch() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_var_get_ci_status_nonexistent_branch(repo: TestRepo) {
     // Should error for nonexistent branch
     let output = wt_var_get_cmd(&repo, &["ci-status", "--branch", "nonexistent"])
         .output()

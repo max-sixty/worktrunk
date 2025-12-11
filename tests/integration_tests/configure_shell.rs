@@ -1,4 +1,6 @@
-use crate::common::{TestRepo, repo, set_temp_home_env, setup_home_snapshot_settings, wt_command};
+use crate::common::{
+    TestRepo, repo, set_temp_home_env, setup_home_snapshot_settings, temp_home, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -6,9 +8,7 @@ use tempfile::TempDir;
 
 /// Test `wt config shell install` with --force flag (skips confirmation)
 #[rstest]
-fn test_configure_shell_with_yes(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(&zshrc_path, "# Existing config\n").unwrap();
@@ -51,9 +51,7 @@ fn test_configure_shell_with_yes(repo: TestRepo) {
 
 /// Test `wt config shell install` with specific shell
 #[rstest]
-fn test_configure_shell_specific_shell(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(&zshrc_path, "# Existing config\n").unwrap();
@@ -95,9 +93,7 @@ fn test_configure_shell_specific_shell(repo: TestRepo) {
 
 /// Test `wt config shell install` when line already exists
 #[rstest]
-fn test_configure_shell_already_exists(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with the line already present
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
@@ -138,9 +134,7 @@ fn test_configure_shell_already_exists(repo: TestRepo) {
 
 /// Test `wt config shell install` for Fish (creates new file in conf.d/)
 #[rstest]
-fn test_configure_shell_fish(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -183,9 +177,7 @@ fn test_configure_shell_fish(repo: TestRepo) {
 /// Test `wt config shell install` when fish extension already exists
 /// Fish completions are now inline in the init script, so no separate file is needed
 #[rstest]
-fn test_configure_shell_fish_extension_exists(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir) {
     // Create fish conf.d directory with wt.fish (extension exists)
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
@@ -239,9 +231,7 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo) {
 
 /// Test `wt config shell install` when no config files exist
 #[rstest]
-fn test_configure_shell_no_files(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -270,9 +260,7 @@ fn test_configure_shell_no_files(repo: TestRepo) {
 
 /// Test `wt config shell install` with multiple existing config files
 #[rstest]
-fn test_configure_shell_multiple_configs(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
     // Create multiple shell config files
     let bash_config_path = temp_home.path().join(".bashrc");
     let zshrc_path = temp_home.path().join(".zshrc");
@@ -326,9 +314,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo) {
 
 /// Test `wt config shell install` shows both shells needing updates and already configured shells
 #[rstest]
-fn test_configure_shell_mixed_states(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
     // Create bash config with wt already configured
     let bash_config_path = temp_home.path().join(".bashrc");
     fs::write(
@@ -390,9 +376,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo) {
 
 /// Test `wt config shell uninstall` removes shell integration
 #[rstest]
-fn test_uninstall_shell(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file with wt integration
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
@@ -443,9 +427,7 @@ fn test_uninstall_shell(repo: TestRepo) {
 
 /// Test `wt config shell uninstall` with multiple shells
 #[rstest]
-fn test_uninstall_shell_multiple(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
     // Create multiple shell configs with wt integration
     let bash_config_path = temp_home.path().join(".bashrc");
     let zshrc_path = temp_home.path().join(".zshrc");
@@ -504,9 +486,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo) {
 
 /// Test `wt config shell uninstall` when not installed
 #[rstest]
-fn test_uninstall_shell_not_found(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_uninstall_shell_not_found(repo: TestRepo, temp_home: TempDir) {
     // Create a fake .zshrc file without wt integration
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(&zshrc_path, "# Existing config\n").unwrap();
@@ -537,9 +517,7 @@ fn test_uninstall_shell_not_found(repo: TestRepo) {
 
 /// Test `wt config shell uninstall` for Fish (deletes file)
 #[rstest]
-fn test_uninstall_shell_fish(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_uninstall_shell_fish(repo: TestRepo, temp_home: TempDir) {
     // Create fish conf.d directory with wt.fish
     let conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&conf_d).unwrap();
@@ -582,9 +560,7 @@ fn test_uninstall_shell_fish(repo: TestRepo) {
 
 /// Test install and then uninstall roundtrip
 #[rstest]
-fn test_install_uninstall_roundtrip(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
     // Create initial config file
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
@@ -649,9 +625,7 @@ fn test_install_uninstall_roundtrip(repo: TestRepo) {
 
 /// Test that compinit warning does NOT show when .zshrc has compinit enabled
 #[rstest]
-fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_home: TempDir) {
     // Create a .zshrc that enables compinit - detection should find it
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
@@ -692,9 +666,7 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo) {
 /// Test that compinit warning does NOT show when $SHELL is bash (not a zsh user)
 /// Even when installing all shells, we don't warn bash users about zsh compinit
 #[rstest]
-fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: TempDir) {
     // Create config files for both shells (no compinit in zshrc)
     let zshrc_path = temp_home.path().join(".zshrc");
     let bashrc_path = temp_home.path().join(".bashrc");
@@ -733,9 +705,7 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo) {
 /// Test that compinit warning does NOT show when installing fish (even if SHELL=zsh)
 /// Only `install zsh` or `install` (all) should trigger zsh-specific warnings
 #[rstest]
-fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo, temp_home: TempDir) {
     // Create fish conf.d directory
     let fish_conf_d = temp_home.path().join(".config/fish/conf.d");
     fs::create_dir_all(&fish_conf_d).unwrap();
@@ -770,9 +740,7 @@ fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo) {
 
 /// Test that compinit warning does NOT show when zsh is already configured
 #[rstest]
-fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo, temp_home: TempDir) {
     // Create a .zshrc that ALREADY has wt integration (no compinit)
     let zshrc_path = temp_home.path().join(".zshrc");
     fs::write(
@@ -809,9 +777,7 @@ fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo) {
 
 /// Test that compinit warning does NOT show when $SHELL is unset
 #[rstest]
-fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo) {
-    let temp_home = TempDir::new().unwrap();
-
+fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: TempDir) {
     // Create zsh and bash config files (no compinit)
     let zshrc_path = temp_home.path().join(".zshrc");
     let bashrc_path = temp_home.path().join(".bashrc");

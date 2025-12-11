@@ -3,14 +3,13 @@
 //! These tests ensure that column headers align with their data,
 //! and that progressive rendering maintains consistent alignment.
 
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 
 /// Test that Status column data aligns with Status header
-#[test]
-fn test_status_column_alignment_with_header() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_status_column_alignment_with_header(mut repo: TestRepo) {
     // Create worktree with status symbols
     let wt = repo.add_worktree("test");
     std::fs::write(wt.join("file.txt"), "content").unwrap();
@@ -39,10 +38,8 @@ fn test_status_column_alignment_with_header() {
 }
 
 /// Test that Status column width is consistent across all rows
-#[test]
-fn test_status_column_width_consistency() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_status_column_width_consistency(mut repo: TestRepo) {
     // Create multiple worktrees with different status symbol combinations
     let wt1 = repo.add_worktree("simple");
     std::fs::write(wt1.join("file.txt"), "content").unwrap();

@@ -6,10 +6,11 @@
 //! 3. The --internal flag can be safely passed to all commands
 
 use crate::common::{
-    TestRepo, set_temp_home_env, setup_snapshot_settings, setup_snapshot_settings_with_home,
-    wt_command,
+    TestRepo, repo, set_temp_home_env, setup_snapshot_settings, setup_snapshot_settings_with_home,
+    temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
@@ -22,10 +23,8 @@ use tempfile::TempDir;
 /// Expected behavior:
 /// - stdout: empty (no directives emitted by list command)
 /// - stderr: complete table output with ANSI formatting
-#[test]
-fn test_list_with_internal_flag() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_list_with_internal_flag(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
@@ -42,12 +41,9 @@ fn test_list_with_internal_flag() {
 /// Test that `config show` command works with --internal flag
 ///
 /// Config show doesn't emit directives, but should work fine with --internal.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_with_internal_flag() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_with_internal_flag(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 

@@ -19,10 +19,11 @@
 //! - **Stabilization detection** waits for screen to stop changing
 //! - **Content expectations** wait for async preview content to load (e.g., "diff --git")
 
-use crate::common::TestRepo;
+use crate::common::{TestRepo, repo};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use portable_pty::{CommandBuilder, PtySize};
+use rstest::rstest;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::mpsc;
@@ -340,11 +341,8 @@ fn normalize_output(output: &str) -> String {
     }
 }
 
-#[test]
-
-fn test_select_abort_with_escape() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_select_abort_with_escape(repo: TestRepo) {
     let env_vars = repo.test_env_vars();
     let (raw_output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
@@ -361,10 +359,8 @@ fn test_select_abort_with_escape() {
     assert_snapshot!("select_abort_escape", normalized);
 }
 
-#[test]
-
-fn test_select_with_multiple_worktrees() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_select_with_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-one");
     repo.add_worktree("feature-two");
 
@@ -384,10 +380,8 @@ fn test_select_with_multiple_worktrees() {
     assert_snapshot!("select_multiple_worktrees", normalized);
 }
 
-#[test]
-
-fn test_select_with_branches() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_select_with_branches(mut repo: TestRepo) {
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
@@ -413,10 +407,8 @@ fn test_select_with_branches() {
 }
 
 /// Test preview panel 1: HEAD± shows uncommitted changes
-#[test]
-
-fn test_select_preview_panel_uncommitted() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     // First, create and commit a file so we have something to modify
@@ -468,10 +460,8 @@ fn test_select_preview_panel_uncommitted() {
 }
 
 /// Test preview panel 2: log shows recent commits
-#[test]
-
-fn test_select_preview_panel_log() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_select_preview_panel_log(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     // Make several commits in the feature worktree
@@ -522,10 +512,8 @@ fn test_select_preview_panel_log() {
 }
 
 /// Test preview panel 3: main…± shows diff vs main branch
-#[test]
-
-fn test_select_preview_panel_main_diff() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_select_preview_panel_main_diff(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     // Make commits in the feature worktree that differ from main

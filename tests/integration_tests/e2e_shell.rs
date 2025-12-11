@@ -2,7 +2,7 @@
 #![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::{
-    TestRepo,
+    TestRepo, repo,
     shell::{
         execute_shell_script, generate_init_code, path_export_syntax, shell_available, wt_bin_dir,
     },
@@ -24,9 +24,8 @@ macro_rules! skip_if_shell_unavailable {
 #[case("bash")]
 #[case("fish")]
 #[case("zsh")]
-fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
+fn test_shell_integration_switch_and_remove(#[case] shell: &str, repo: TestRepo) {
     skip_if_shell_unavailable!(shell);
-    let repo = TestRepo::new();
 
     let init_code = generate_init_code(&repo, shell);
     let bin_path = wt_bin_dir();
@@ -78,10 +77,9 @@ fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
     );
 }
 
-#[test]
-fn test_bash_shell_integration_error_handling() {
+#[rstest]
+fn test_bash_shell_integration_error_handling(repo: TestRepo) {
     skip_if_shell_unavailable!("bash");
-    let repo = TestRepo::new();
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
@@ -119,10 +117,9 @@ fn test_bash_shell_integration_error_handling() {
     );
 }
 
-#[test]
-fn test_bash_shell_integration_switch_existing_worktree() {
+#[rstest]
+fn test_bash_shell_integration_switch_existing_worktree(repo: TestRepo) {
     skip_if_shell_unavailable!("bash");
-    let repo = TestRepo::new();
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();

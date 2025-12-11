@@ -11,8 +11,9 @@
 //!
 //! The detailed verification logic here catches alignment bugs that would slip through snapshot review.
 
-use crate::common::{TestRepo, wt_command};
+use crate::common::{TestRepo, repo, wt_command};
 use ansi_str::AnsiStr;
+use rstest::rstest;
 use unicode_width::UnicodeWidthStr;
 
 /// Represents the start position of each column in a table row
@@ -308,10 +309,8 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
     }
 }
 
-#[test]
-fn test_alignment_verification_with_varying_content() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_alignment_verification_with_varying_content(mut repo: TestRepo) {
     // Create diverse worktrees to test alignment
     repo.add_worktree("main-feature");
     repo.add_worktree("short");
@@ -345,9 +344,8 @@ fn test_alignment_verification_with_varying_content() {
     }
 }
 
-#[test]
-fn test_alignment_with_unicode_content() {
-    let mut repo = TestRepo::new();
+#[rstest]
+fn test_alignment_with_unicode_content(mut repo: TestRepo) {
     repo.commit("Initial commit with émoji 🎉");
 
     // Create worktrees with unicode in names
@@ -374,10 +372,8 @@ fn test_alignment_with_unicode_content() {
     }
 }
 
-#[test]
-fn test_alignment_with_sparse_columns() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_alignment_with_sparse_columns(mut repo: TestRepo) {
     // Create mix of worktrees - some with diffs, some without
     repo.add_worktree("no-changes-1");
 
@@ -412,10 +408,8 @@ fn test_alignment_with_sparse_columns() {
     }
 }
 
-#[test]
-fn test_alignment_real_world_scenario() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_alignment_real_world_scenario(mut repo: TestRepo) {
     // Create feature branches with varying amounts of working tree changes
     // This simulates a real-world scenario with different diff sizes
     repo.add_worktree("feature-tiny");
@@ -462,10 +456,8 @@ fn test_alignment_real_world_scenario() {
     }
 }
 
-#[test]
-fn test_alignment_at_different_terminal_widths() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_alignment_at_different_terminal_widths(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 

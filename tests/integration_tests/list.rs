@@ -938,10 +938,8 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
 ///   - `+33` main…± — Doc skeleton with structure
 ///   - `⎇` branch without worktree
 ///
-/// Returns (repo, feature_api_path) for running commands from feature-api.
-fn setup_readme_example_repo() -> (TestRepo, std::path::PathBuf) {
-    let mut repo = TestRepo::new();
-
+/// Returns feature_api_path for running commands from feature-api.
+fn setup_readme_example_repo(repo: &mut TestRepo) -> std::path::PathBuf {
     // === Set up main branch with initial codebase ===
     // Main has a working API with security issues that fix-auth will harden
     std::fs::write(
@@ -975,15 +973,15 @@ pub mod handlers {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "api.rs"], repo.root_path());
+    run_git(repo, &["add", "api.rs"], repo.root_path());
     repo.commit_staged_with_age("Initial API implementation", DAY, repo.root_path());
     repo.setup_remote("main");
 
     // Make main behind its remote: push a teammate's commit, then reset local
     // Story: A teammate pushed a hotfix while we were working on features
     repo.commit_with_age("Fix production timeout issue", 2 * HOUR);
-    run_git(&repo, &["push", "origin", "main"], repo.root_path());
-    run_git(&repo, &["reset", "--hard", "HEAD~1"], repo.root_path());
+    run_git(repo, &["push", "origin", "main"], repo.root_path());
+    run_git(repo, &["reset", "--hard", "HEAD~1"], repo.root_path());
 
     // === Create fix-auth worktree ===
     // Story: Security audit found the token validation was too weak.
@@ -1028,7 +1026,7 @@ pub mod handlers {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "api.rs"], &fix_auth);
+    run_git(repo, &["add", "api.rs"], &fix_auth);
     repo.commit_staged_with_age("Harden token validation", 6 * HOUR, &fix_auth);
 
     // Second commit: Add secure token storage
@@ -1077,11 +1075,11 @@ pub mod handlers {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "api.rs"], &fix_auth);
+    run_git(repo, &["add", "api.rs"], &fix_auth);
     repo.commit_staged_with_age("Add secure token storage", 5 * HOUR, &fix_auth);
 
     // Push fix-auth and sync with remote
-    run_git(&repo, &["push", "-u", "origin", "fix-auth"], &fix_auth);
+    run_git(repo, &["push", "-u", "origin", "fix-auth"], &fix_auth);
 
     // === Create feature-api worktree ===
     // Story: Major API refactoring - replacing the legacy handlers with a proper
@@ -1210,13 +1208,9 @@ pub enum Method { Get, Post, Put, Delete }
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "api.rs", "routes.rs"], &feature_api);
+    run_git(repo, &["add", "api.rs", "routes.rs"], &feature_api);
     repo.commit_staged_with_age("Refactor API to REST modules", 4 * HOUR, &feature_api);
-    run_git(
-        &repo,
-        &["push", "-u", "origin", "feature-api"],
-        &feature_api,
-    );
+    run_git(repo, &["push", "-u", "origin", "feature-api"], &feature_api);
 
     // More commits (ahead of remote - unpushed local work)
     std::fs::write(
@@ -1331,7 +1325,7 @@ pub enum AuthError { MissingToken, InvalidToken }
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "middleware.rs"], &feature_api);
+    run_git(repo, &["add", "middleware.rs"], &feature_api);
     repo.commit_staged_with_age("Add request middleware", 3 * HOUR, &feature_api);
 
     std::fs::write(
@@ -1346,7 +1340,7 @@ pub fn validate(body: &[u8], headers: &Headers) -> Result<(), Error> {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "validation.rs"], &feature_api);
+    run_git(repo, &["add", "validation.rs"], &feature_api);
     repo.commit_staged_with_age("Add request validation", 2 * HOUR, &feature_api);
 
     std::fs::write(
@@ -1367,7 +1361,7 @@ mod tests {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "tests.rs"], &feature_api);
+    run_git(repo, &["add", "tests.rs"], &feature_api);
     repo.commit_staged_with_age("Add API tests", 30 * MINUTE, &feature_api);
 
     // Staged changes: new files + refactor existing (creates mixed +/- for HEAD±)
@@ -1445,7 +1439,7 @@ fn validate_headers(h: &Headers) -> Result<(), ValidationError> {
     )
     .unwrap();
     run_git(
-        &repo,
+        repo,
         &["add", "cache.rs", "rate_limit.rs", "validation.rs"],
         &feature_api,
     );
@@ -1458,7 +1452,7 @@ fn validate_headers(h: &Headers) -> Result<(), ValidationError> {
     // schema design and resolvers, but the team decided to stick with REST for now.
     let exp_wt = repo.root_path().parent().unwrap().join("temp-exp");
     run_git(
-        &repo,
+        repo,
         &["worktree", "add", "-b", "exp", exp_wt.to_str().unwrap()],
         repo.root_path(),
     );
@@ -1533,7 +1527,7 @@ pub struct PageInfo {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "graphql.rs"], &exp_wt);
+    run_git(repo, &["add", "graphql.rs"], &exp_wt);
     repo.commit_staged_with_age("Explore GraphQL schema design", 2 * DAY, &exp_wt);
 
     std::fs::write(
@@ -1613,12 +1607,12 @@ impl SubscriptionRoot {
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "resolvers.rs"], &exp_wt);
+    run_git(repo, &["add", "resolvers.rs"], &exp_wt);
     repo.commit_staged_with_age("Add GraphQL resolvers scaffold", 2 * DAY, &exp_wt);
 
     // Remove the worktree but keep the branch
     run_git(
-        &repo,
+        repo,
         &["worktree", "remove", exp_wt.to_str().unwrap()],
         repo.root_path(),
     );
@@ -1643,7 +1637,7 @@ impl SubscriptionRoot {
     // Create wip from the earlier commit (before main advanced)
     let wip_wt = repo.root_path().parent().unwrap().join("temp-wip");
     run_git(
-        &repo,
+        repo,
         &[
             "worktree",
             "add",
@@ -1693,12 +1687,12 @@ TODO: Add request/response examples for each endpoint
 "#,
     )
     .unwrap();
-    run_git(&repo, &["add", "API.md"], &wip_wt);
+    run_git(repo, &["add", "API.md"], &wip_wt);
     repo.commit_staged_with_age("Start API documentation", 3 * DAY, &wip_wt);
 
     // Remove the worktree but keep the branch
     run_git(
-        &repo,
+        repo,
         &["worktree", "remove", wip_wt.to_str().unwrap()],
         repo.root_path(),
     );
@@ -1706,12 +1700,12 @@ TODO: Add request/response examples for each endpoint
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(&repo, "main", "passed", "pullrequest", false);
-    mock_ci_status(&repo, "fix-auth", "passed", "pullrequest", false);
+    mock_ci_status(repo, "main", "passed", "pullrequest", false);
+    mock_ci_status(repo, "fix-auth", "passed", "pullrequest", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(&repo, "feature-api", "running", "pullrequest", true);
+    mock_ci_status(repo, "feature-api", "running", "pullrequest", true);
 
-    (repo, feature_api)
+    feature_api
 }
 
 /// Helper to run git commands
@@ -1779,8 +1773,8 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 /// Uses narrower width (100 cols) to fit in doc site code blocks.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list.snap
 #[rstest]
-fn test_readme_example_list() {
-    let (repo, feature_api) = setup_readme_example_repo();
+fn test_readme_example_list(mut repo: TestRepo) {
+    let feature_api = setup_readme_example_repo(&mut repo);
     snapshot_readme_list_from_dir("readme_example_list", &repo, &feature_api);
 }
 
@@ -1790,8 +1784,8 @@ fn test_readme_example_list() {
 /// Uses narrower width (100 cols) to fit in doc site code blocks.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_full.snap
 #[rstest]
-fn test_readme_example_list_full() {
-    let (repo, feature_api) = setup_readme_example_repo();
+fn test_readme_example_list_full(mut repo: TestRepo) {
+    let feature_api = setup_readme_example_repo(&mut repo);
     snapshot_readme_list_full_from_dir("readme_example_list_full", &repo, &feature_api);
 }
 
@@ -1801,8 +1795,8 @@ fn test_readme_example_list_full() {
 /// Uses narrower width (100 cols) to fit in doc site code blocks.
 /// Output: tests/snapshots/integration__integration_tests__list__readme_example_list_branches.snap
 #[rstest]
-fn test_readme_example_list_branches() {
-    let (repo, feature_api) = setup_readme_example_repo();
+fn test_readme_example_list_branches(mut repo: TestRepo) {
+    let feature_api = setup_readme_example_repo(&mut repo);
     snapshot_readme_list_branches_full_from_dir(
         "readme_example_list_branches",
         &repo,

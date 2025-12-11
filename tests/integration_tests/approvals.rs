@@ -1,7 +1,8 @@
 //! Integration tests for add-approvals and clear-approvals commands
 
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use worktrunk::config::WorktrunkConfig;
 
 /// Helper to snapshot add-approvals command
@@ -28,25 +29,21 @@ fn snapshot_clear_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
 // add-approvals tests
 // ============================================================================
 
-#[test]
-fn test_add_approvals_no_config() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_add_approvals_no_config(repo: TestRepo) {
     snapshot_add_approvals("add_approvals_no_config", &repo, &[]);
 }
 
-#[test]
-fn test_add_approvals_all_with_none_approved() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_add_approvals_all_with_none_approved(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
     snapshot_add_approvals("add_approvals_all_none_approved", &repo, &["--all"]);
 }
 
-#[test]
-fn test_add_approvals_empty_config() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_add_approvals_empty_config(repo: TestRepo) {
     repo.write_project_config("");
     repo.commit("Add empty config");
 
@@ -57,16 +54,13 @@ fn test_add_approvals_empty_config() {
 // clear-approvals tests
 // ============================================================================
 
-#[test]
-fn test_clear_approvals_no_approvals() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_clear_approvals_no_approvals(repo: TestRepo) {
     snapshot_clear_approvals("clear_approvals_no_approvals", &repo, &[]);
 }
 
-#[test]
-fn test_clear_approvals_with_approvals() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_clear_approvals_with_approvals(repo: TestRepo) {
     let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
@@ -86,16 +80,13 @@ fn test_clear_approvals_with_approvals() {
     snapshot_clear_approvals("clear_approvals_with_approvals", &repo, &[]);
 }
 
-#[test]
-fn test_clear_approvals_global_no_approvals() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_clear_approvals_global_no_approvals(repo: TestRepo) {
     snapshot_clear_approvals("clear_approvals_global_no_approvals", &repo, &["--global"]);
 }
 
-#[test]
-fn test_clear_approvals_global_with_approvals() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
@@ -119,9 +110,8 @@ fn test_clear_approvals_global_with_approvals() {
     );
 }
 
-#[test]
-fn test_clear_approvals_after_clear() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_clear_approvals_after_clear(repo: TestRepo) {
     let project_id = format!("{}/origin", repo.root_path().display());
     repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
@@ -146,9 +136,8 @@ fn test_clear_approvals_after_clear() {
     snapshot_clear_approvals("clear_approvals_after_clear", &repo, &[]);
 }
 
-#[test]
-fn test_clear_approvals_multiple_approvals() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_clear_approvals_multiple_approvals(repo: TestRepo) {
     repo.write_project_config(
         r#"
 post-create = "echo 'first'"

@@ -2,8 +2,9 @@
 //!
 //! Tests the statusline output for shell prompts and Claude Code integration.
 
-use crate::common::{TestRepo, wt_command};
+use crate::common::{repo, wt_command, TestRepo};
 use insta::assert_snapshot;
+use rstest::rstest;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -60,20 +61,14 @@ fn run_statusline(repo: &TestRepo, args: &[&str], stdin_json: Option<&str>) -> S
     run_statusline_from_dir(repo, args, stdin_json, repo.root_path())
 }
 
-// --- Test Fixtures ---
+// --- Test Setup Helpers ---
 
-fn setup_repo_with_changes() -> TestRepo {
-    let repo = TestRepo::new();
-
+fn add_uncommitted_changes(repo: &TestRepo) {
     // Create uncommitted changes
     std::fs::write(repo.root_path().join("modified.txt"), "modified content").unwrap();
-
-    repo
 }
 
-fn setup_repo_with_commits_ahead() -> TestRepo {
-    let mut repo = TestRepo::new();
-
+fn add_commits_ahead(repo: &mut TestRepo) {
     // Create feature branch with commits ahead
     let feature_path = repo.add_worktree("feature");
 
@@ -97,33 +92,30 @@ fn setup_repo_with_commits_ahead() -> TestRepo {
         .current_dir(&feature_path)
         .output()
         .unwrap();
-
-    repo
 }
 
 // --- Basic Tests ---
 
-#[test]
-fn test_statusline_basic() {
-    let repo = TestRepo::new();
+#[rstest]
+fn test_statusline_basic(repo: TestRepo) {
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"main  [2m^[22m");
+    assert_snapshot!(output, @"main  [2m^[22m");
 }
 
-#[test]
-fn test_statusline_with_changes() {
-    let repo = setup_repo_with_changes();
+#[rstest]
+fn test_statusline_with_changes(repo: TestRepo) {
+    add_uncommitted_changes(&repo);
     let output = run_statusline(&repo, &[], None);
-    assert_snapshot!(output, @"main  [36m?[39m[2m^[22m");
+    assert_snapshot!(output, @"main  [36m?[39m[2m^[22m");
 }
 
-#[test]
-fn test_statusline_commits_ahead() {
-    let repo = setup_repo_with_commits_ahead();
+#[rstest]
+fn test_statusline_commits_ahead(mut repo: TestRepo) {
+    add_commits_ahead(&mut repo);
     // Run from the feature worktree to see commits ahead
     let feature_path = repo.worktree_path("feature");
     let output = run_statusline_from_dir(&repo, &[], None, feature_path);
-    assert_snapshot!(output, @"feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
+    assert_snapshot!(output, @"feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
 }
 
 // --- Claude Code Mode Tests ---
@@ -151,10 +143,10 @@ fn escape_path_for_json(path: &std::path::Path) -> String {
 
 /// Skipped on Windows: stdin read has 10ms timeout, Windows process spawning is slower
 /// causing timing-sensitive race condition where model name is lost.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_statusline_claude_code_full_context() {
-    let repo = setup_repo_with_changes();
+fn test_statusline_claude_code_full_context(repo: TestRepo) {
+    add_uncommitted_changes(&repo);
 
     let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(
@@ -175,30 +167,26 @@ fn test_statusline_claude_code_full_context() {
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings(&repo).bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m  | Opus");
+        assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m  | Opus");
     });
 }
 
-#[test]
-fn test_statusline_claude_code_minimal() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_statusline_claude_code_minimal(repo: TestRepo) {
     let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#,);
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings(&repo).bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m");
     });
 }
 
 /// Skipped on Windows: stdin read has 10ms timeout, Windows process spawning is slower
 /// causing timing-sensitive race condition where model name is lost.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_statusline_claude_code_with_model() {
-    let repo = TestRepo::new();
-
+fn test_statusline_claude_code_with_model(repo: TestRepo) {
     let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(
         r#"{{
@@ -209,16 +197,16 @@ fn test_statusline_claude_code_with_model() {
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings(&repo).bind(|| {
-        assert_snapshot!(output, @"[PATH]  main  [2m^[22m  | Haiku");
+        assert_snapshot!(output, @"[PATH]  main  [2m^[22m  | Haiku");
     });
 }
 
 // --- Directive Mode Tests ---
 
-#[test]
-fn test_statusline_directive_mode() {
+#[rstest]
+fn test_statusline_directive_mode(repo: TestRepo) {
     // When called with --internal, output goes to stderr (stdout empty for shell eval)
-    let repo = setup_repo_with_changes();
+    add_uncommitted_changes(&repo);
 
     let mut cmd = wt_command();
     cmd.current_dir(repo.root_path());

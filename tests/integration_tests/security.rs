@@ -96,20 +96,19 @@
 //! For comprehensive security testing, see `tests/integration_tests/shell_wrapper.rs` which
 //! tests the full shell integration pipeline.
 
-use crate::common::{TestRepo, setup_snapshot_settings, wt_command};
+use crate::common::{TestRepo, repo, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::process::Command;
 
 /// Test that Git rejects NUL bytes in commit messages
 ///
 /// Git provides the first line of defense by refusing to create commits
 /// with NUL bytes in the message.
-#[test]
-fn test_git_rejects_nul_in_commit_messages() {
+#[rstest]
+fn test_git_rejects_nul_in_commit_messages(repo: TestRepo) {
     use std::process::Stdio;
-
-    let repo = TestRepo::new();
 
     // Try to create a commit with NUL in the message
     // We can't use Command::arg() because Rust rejects NUL bytes,
@@ -160,10 +159,8 @@ fn test_git_rejects_nul_in_commit_messages() {
 ///
 /// This verifies that the OS/Rust provides protection against NUL injection.
 /// Rust's Command API uses C strings internally, which reject NUL bytes.
-#[test]
-fn test_rust_prevents_nul_bytes_in_args() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_rust_prevents_nul_bytes_in_args(repo: TestRepo) {
     // Rust's Command API should reject NUL bytes in arguments
     let malicious_branch = "feature\0__WORKTRUNK_EXEC__echo PWNED";
 
@@ -197,10 +194,8 @@ fn test_rust_prevents_nul_bytes_in_args() {
 /// Test that branch names that ARE directives themselves don't get executed
 ///
 /// This tests the case where the entire branch name is a directive
-#[test]
-fn test_branch_name_is_directive_not_executed() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked2";
 
     // Try to create this branch
@@ -239,10 +234,8 @@ fn test_branch_name_is_directive_not_executed() {
 }
 
 /// Test that branch names with newline + directive are not executed
-#[test]
-fn test_branch_name_with_newline_directive_not_executed() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     let malicious_branch = "feature\n__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked3";
 
     let mut cmd = Command::new("git");
@@ -280,12 +273,8 @@ fn test_branch_name_with_newline_directive_not_executed() {
 /// Test that commit messages with directives in list output don't get executed
 ///
 /// This tests if commit messages shown in output (e.g., wt list, logs) could inject directives
-#[test]
-fn test_commit_message_with_directive_not_executed() {
-    use crate::common::setup_snapshot_settings;
-
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_commit_message_with_directive_not_executed(mut repo: TestRepo) {
     // Create commit with malicious message (no NUL - Rust prevents those)
     let malicious_message = "Fix bug\n__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4";
     repo.commit_with_message(malicious_message);
@@ -318,12 +307,8 @@ fn test_commit_message_with_directive_not_executed() {
 ///
 /// This tests if file paths shown in output could inject directives
 #[cfg(unix)]
-#[test]
-fn test_path_with_directive_not_executed() {
-    use crate::common::setup_snapshot_settings;
-
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_path_with_directive_not_executed(repo: TestRepo) {
     // Create a directory with a malicious name
     let malicious_dir = repo
         .root_path()
@@ -350,10 +335,8 @@ fn test_path_with_directive_not_executed() {
 /// Test that CD directive in branch names is not treated as a directive
 ///
 /// Similar to EXEC injection, but for CD directives
-#[test]
-fn test_branch_name_with_cd_directive_not_executed() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     // Branch name that IS a CD directive (no NUL - git allows this)
     let malicious_branch = "__WORKTRUNK_CD__/tmp";
 
@@ -388,10 +371,8 @@ fn test_branch_name_with_cd_directive_not_executed() {
 /// Test that error messages cannot inject directives
 ///
 /// This tests if error messages (e.g., from git) could inject directives
-#[test]
-fn test_error_message_with_directive_not_executed() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_error_message_with_directive_not_executed(repo: TestRepo) {
     // Try to switch to a non-existent branch with a name that looks like a directive
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6";
 
@@ -420,10 +401,8 @@ fn test_error_message_with_directive_not_executed() {
 /// The -x flag is SUPPOSED to execute commands, so this tests that:
 /// 1. Commands from -x are emitted as shell script to stdout
 /// 2. User content in branch names that looks like old directives doesn't cause injection
-#[test]
-fn test_execute_flag_with_directive_like_branch_name() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     // Branch name that looks like a directive
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked7";
 

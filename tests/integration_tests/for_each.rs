@@ -1,7 +1,8 @@
 //! Integration tests for `wt step for-each`
 
-use crate::common::{TestRepo, make_snapshot_cmd, setup_snapshot_settings};
+use crate::common::{make_snapshot_cmd, repo, setup_snapshot_settings, TestRepo};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 
 /// Helper to create snapshot for for-each command
 fn snapshot_for_each(test_name: &str, repo: &TestRepo, args: &[&str]) {
@@ -12,17 +13,10 @@ fn snapshot_for_each(test_name: &str, repo: &TestRepo, args: &[&str]) {
     });
 }
 
-/// Common setup for for-each tests - creates repo with initial commit
-fn setup_repo() -> TestRepo {
-    let repo = TestRepo::new();
-    repo.commit("Initial commit");
-    repo
-}
-
-#[test]
-fn test_for_each_single_worktree() {
-    let repo = setup_repo();
-
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
+#[rstest]
+fn test_for_each_single_worktree(repo: TestRepo) {
     // Only main worktree exists
     snapshot_for_each(
         "for_each_single_worktree",
@@ -31,10 +25,10 @@ fn test_for_each_single_worktree() {
     );
 }
 
-#[test]
-fn test_for_each_multiple_worktrees() {
-    let mut repo = setup_repo();
-
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
+#[rstest]
+fn test_for_each_multiple_worktrees(mut repo: TestRepo) {
     // Create additional worktrees
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
@@ -46,10 +40,10 @@ fn test_for_each_multiple_worktrees() {
     );
 }
 
-#[test]
-fn test_for_each_command_fails_in_one() {
-    let mut repo = setup_repo();
-
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
+#[rstest]
+fn test_for_each_command_fails_in_one(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     // Use a command that will fail: try to show a non-existent ref
@@ -60,18 +54,16 @@ fn test_for_each_command_fails_in_one() {
     );
 }
 
-#[test]
-fn test_for_each_no_args_error() {
-    let repo = setup_repo();
-
+#[rstest]
+fn test_for_each_no_args_error(repo: TestRepo) {
     // Missing arguments should show error
     snapshot_for_each("for_each_no_args", &repo, &["for-each"]);
 }
 
-#[test]
-fn test_for_each_with_detached_head() {
-    let mut repo = setup_repo();
-
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
+#[rstest]
+fn test_for_each_with_detached_head(mut repo: TestRepo) {
     // Create a worktree and detach its HEAD
     repo.add_worktree("detached-test");
     repo.detach_head_in_worktree("detached-test");
@@ -83,10 +75,10 @@ fn test_for_each_with_detached_head() {
     );
 }
 
-#[test]
-fn test_for_each_with_template() {
-    let repo = setup_repo();
-
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
+#[rstest]
+fn test_for_each_with_template(repo: TestRepo) {
     // Test template expansion with {{ branch }}
     snapshot_for_each(
         "for_each_with_template",

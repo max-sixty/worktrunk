@@ -1,5 +1,8 @@
-use crate::common::{TestRepo, set_temp_home_env, setup_snapshot_settings_with_home, wt_command};
+use crate::common::{
+    TestRepo, repo, set_temp_home_env, setup_snapshot_settings_with_home, temp_home, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
@@ -8,12 +11,9 @@ use tempfile::TempDir;
 // Fix needed: either use cmd.exe /c wrapper or create actual .exe shims.
 
 /// Test `wt config show` with both global and project configs present
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_with_project_config() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_with_project_config(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -56,12 +56,9 @@ server = "npm run dev"
 }
 
 /// Test `wt config show` when there is no project config
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_no_project_config() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -88,12 +85,10 @@ fn test_config_show_no_project_config() {
 }
 
 /// Test `wt config show` outside a git repository
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_outside_git_repo() {
-    let mut repo = TestRepo::new();
+fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let temp_home = TempDir::new().unwrap();
 
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
@@ -120,12 +115,9 @@ fn test_config_show_outside_git_repo() {
 }
 
 /// Test `wt config show` warns when zsh compinit is not enabled
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_zsh_compinit_warning() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -158,12 +150,9 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 }
 
 /// Test `wt config show` shows hint when some shells configured, some not
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_partial_shell_config_shows_hint() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_partial_shell_config_shows_hint(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -204,12 +193,9 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 }
 
 /// Test `wt config show` shows no warning when zsh compinit is enabled
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_zsh_compinit_correct_order() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_zsh_compinit_correct_order(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -244,12 +230,9 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 }
 
 /// Test `wt config show` warns about unknown/misspelled keys in project config
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_warns_unknown_project_keys() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -284,12 +267,9 @@ fn test_config_show_warns_unknown_project_keys() {
 }
 
 /// Test `wt config show` warns about unknown keys in user config
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_warns_unknown_user_keys() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -315,12 +295,9 @@ fn test_config_show_warns_unknown_user_keys() {
 }
 
 /// Test `wt config show --full` when commit generation is not configured
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_full_not_configured() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -352,12 +329,9 @@ fn test_config_show_full_not_configured() {
 }
 
 /// Test `wt config show --full` when commit generation command doesn't exist
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore = "mock gh/glab batch files not found on Windows")]
-fn test_config_show_full_command_not_found() {
-    let mut repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 

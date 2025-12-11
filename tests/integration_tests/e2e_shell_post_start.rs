@@ -2,7 +2,7 @@
 #![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::{
-    TestRepo, resolve_git_common_dir,
+    TestRepo, repo, resolve_git_common_dir,
     shell::{
         execute_shell_script, generate_init_code, path_export_syntax, shell_available, wt_bin_dir,
     },
@@ -27,9 +27,8 @@ macro_rules! skip_if_shell_unavailable {
 // Test with bash and fish
 #[case("bash")]
 #[case("fish")]
-fn test_shell_integration_post_start_background(#[case] shell: &str) {
+fn test_shell_integration_post_start_background(#[case] shell: &str, repo: TestRepo) {
     skip_if_shell_unavailable!(shell);
-    let repo = TestRepo::new();
 
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");
@@ -119,10 +118,8 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
 }
 
 /// Test that multiple post-start commands run in parallel with shell integration
-#[test]
-fn test_bash_shell_integration_post_start_parallel() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_bash_shell_integration_post_start_parallel(repo: TestRepo) {
     // Create project config with multiple background commands
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -191,10 +188,8 @@ approved-commands = [
 }
 
 /// Test that post-create commands block before shell returns
-#[test]
-fn test_bash_shell_integration_post_create_blocks() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_bash_shell_integration_post_create_blocks(repo: TestRepo) {
     // Create project config with blocking command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
@@ -262,10 +257,8 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
 
 /// Test fish shell specifically with background tasks
 #[cfg(unix)]
-#[test]
-fn test_fish_shell_integration_post_start_background() {
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_fish_shell_integration_post_start_background(repo: TestRepo) {
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();

@@ -1,16 +1,16 @@
 //! Integration tests for `wt hook show` command
 
-use crate::common::{TestRepo, set_temp_home_env, setup_snapshot_settings_with_home, wt_command};
+use crate::common::{
+    TestRepo, repo, set_temp_home_env, setup_snapshot_settings_with_home, temp_home, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
 /// Test `wt hook show` with both user and project hooks
-#[test]
-fn test_hook_show_with_both_configs() {
-    let repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+#[rstest]
+fn test_hook_show_with_both_configs(repo: TestRepo, temp_home: TempDir) {
     // Create user config with hooks
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -48,11 +48,8 @@ test = "cargo test"
 }
 
 /// Test `wt hook show` with no hooks configured
-#[test]
-fn test_hook_show_no_hooks() {
-    let repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+#[rstest]
+fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     // Create user config without hooks
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -75,11 +72,8 @@ fn test_hook_show_no_hooks() {
 }
 
 /// Test `wt hook show` filtering by hook type
-#[test]
-fn test_hook_show_filter_by_type() {
-    let repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+#[rstest]
+fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
     // Create user config without hooks
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -120,11 +114,8 @@ deploy = "scripts/deploy.sh"
 }
 
 /// Test `wt hook show` shows approval status for project hooks
-#[test]
-fn test_hook_show_approval_status() {
-    let repo = TestRepo::new();
-    let temp_home = TempDir::new().unwrap();
-
+#[rstest]
+fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     // Create user config at XDG path with one approved command
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
     fs::create_dir_all(&global_config_dir).unwrap();
@@ -162,10 +153,9 @@ test = "cargo test"
 }
 
 /// Test `wt hook show` outside git repo
-#[test]
-fn test_hook_show_outside_git_repo() {
+#[rstest]
+fn test_hook_show_outside_git_repo(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let temp_home = TempDir::new().unwrap();
 
     // Create user config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");

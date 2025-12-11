@@ -700,9 +700,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_handles_command_failure(#[case] shell: &str) {
+    fn test_wrapper_handles_command_failure(#[case] shell: &str, mut repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let mut repo = TestRepo::new();
 
         // Create a worktree that already exists
         repo.add_worktree("existing");
@@ -734,9 +733,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_switch_create(#[case] shell: &str) {
+    fn test_wrapper_switch_create(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let repo = TestRepo::new();
 
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "feature"]);
 
@@ -761,9 +759,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_remove(#[case] shell: &str) {
+    fn test_wrapper_remove(#[case] shell: &str, mut repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let mut repo = TestRepo::new();
 
         // Create a worktree to remove
         repo.add_worktree("to-remove");
@@ -784,9 +781,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_step_for_each(#[case] shell: &str) {
+    fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let mut repo = TestRepo::new();
         repo.commit("Initial commit");
 
         // Create additional worktrees
@@ -844,9 +840,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_merge(#[case] shell: &str) {
+    fn test_wrapper_merge(#[case] shell: &str, mut repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let mut repo = TestRepo::new();
 
         // Create a feature branch
         repo.add_worktree("feature");
@@ -867,9 +862,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_switch_with_execute(#[case] shell: &str) {
+    fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let repo = TestRepo::new();
 
         // Use --force to skip approval prompt in tests
         let output = exec_through_wrapper(
@@ -908,9 +902,8 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str) {
+    fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let repo = TestRepo::new();
 
         // Use --force to skip approval prompt in tests
         // wt should succeed (creates worktree), but the execute command should fail with exit 42
@@ -953,9 +946,8 @@ mod tests {
     // #[case("bash")] // TODO: Flaky PTY output ordering - command output appears before command display
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
-    fn test_wrapper_switch_with_hooks(#[case] shell: &str) {
+    fn test_wrapper_switch_with_hooks(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        let repo = TestRepo::new();
 
         // Create project config with both post-create and post-start hooks
         let config_dir = repo.root_path().join(".config");
@@ -1213,10 +1205,8 @@ approved-commands = [
     // Bash Shell Wrapper Tests
     // ========================================================================
 
-    #[test]
-    fn test_switch_with_post_start_command_no_directive_leak() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_switch_with_post_start_command_no_directive_leak(repo: TestRepo) {
         // Configure a post-start command in the project config (this is where the bug manifests)
         // The println! in handle_post_start_commands causes directive leaks
         let config_dir = repo.root_path().join(".config");
@@ -1256,10 +1246,8 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
-    #[test]
-    fn test_switch_with_execute_through_wrapper() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_switch_with_execute_through_wrapper(repo: TestRepo) {
         // Use --force to skip approval prompt in tests
         let output = exec_through_wrapper(
             "bash",
@@ -1290,10 +1278,8 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
-    #[test]
-    fn test_bash_shell_integration_hint_suppressed() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_bash_shell_integration_hint_suppressed(repo: TestRepo) {
         // When running through the shell wrapper, the "To enable automatic cd" hint
         // should NOT appear because the user already has shell integration
         let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "bash-test"]);
@@ -1314,10 +1300,8 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
-    #[test]
-    fn test_readme_example_simple_switch() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_readme_example_simple_switch(repo: TestRepo) {
         // Create worktree through shell wrapper (suppresses hint)
         let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "fix-auth"]);
 
@@ -1329,10 +1313,8 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
-    #[test]
-    fn test_readme_example_switch_back() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_readme_example_switch_back(repo: TestRepo) {
         // Create worktrees (fix-auth is where we are after step 2, feature-api exists from earlier)
         exec_through_wrapper("bash", &repo, "switch", &["--create", "fix-auth"]);
         // Create feature-api from main (simulating it already existed)
@@ -1351,10 +1333,8 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
-    #[test]
-    fn test_readme_example_remove() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_readme_example_remove(repo: TestRepo) {
         // Create worktrees
         exec_through_wrapper("bash", &repo, "switch", &["--create", "fix-auth"]);
         exec_through_wrapper("bash", &repo, "switch", &["--create", "feature-api"]);
@@ -1371,10 +1351,8 @@ approved-commands = ["echo 'test command executed'"]
         assert_snapshot!(output.normalized());
     }
 
-    #[test]
-    fn test_wrapper_preserves_progress_messages() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -1438,10 +1416,8 @@ approved-commands = ["echo 'background task'"]
     // a single string before eval (fish splits on newlines by default).
 
     #[cfg(unix)]
-    #[test]
-    fn test_fish_wrapper_preserves_progress_messages() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_fish_wrapper_preserves_progress_messages(repo: TestRepo) {
         // Configure a post-start background command that will trigger progress output
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -1489,10 +1465,8 @@ approved-commands = ["echo 'fish background task'"]
     }
 
     #[cfg(unix)]
-    #[test]
-    fn test_fish_multiline_command_execution() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_fish_multiline_command_execution(repo: TestRepo) {
         // Test that Fish wrapper handles multi-line commands correctly
         // This tests Fish's NUL-byte parsing with embedded newlines
         // Use actual newlines in the command string
@@ -1527,10 +1501,8 @@ approved-commands = ["echo 'fish background task'"]
     }
 
     #[cfg(unix)]
-    #[test]
-    fn test_fish_wrapper_handles_empty_chunks() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_fish_wrapper_handles_empty_chunks(repo: TestRepo) {
         // Test edge case: command that produces minimal output
         // This verifies Fish's `test -n "$chunk"` check works correctly
         let output = exec_through_wrapper("fish", &repo, "switch", &["--create", "fish-minimal"]);
@@ -1562,10 +1534,8 @@ approved-commands = ["echo 'fish background task'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_source_flag_forwards_errors(#[case] shell: &str) {
+    fn test_source_flag_forwards_errors(#[case] shell: &str, repo: TestRepo) {
         use std::env;
-
-        let repo = TestRepo::new();
 
         // Get the worktrunk source directory (where this test is running from)
         // This is the directory that contains Cargo.toml with the workspace
@@ -1672,10 +1642,8 @@ approved-commands = ["echo 'fish background task'"]
 
     /// Test that zsh doesn't show job control notifications inline
     /// The NO_MONITOR option should suppress [1] 12345 and [1] + done messages
-    #[test]
-    fn test_zsh_no_job_control_notifications() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_zsh_no_job_control_notifications(repo: TestRepo) {
         // Configure a post-start command that will trigger background job
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -1726,10 +1694,8 @@ approved-commands = ["echo 'background job'"]
     /// The shell wrapper suppresses these via two mechanisms (see posix_directives.sh):
     /// - START notifications (`[1] 12345`): stderr redirection around `&`
     /// - DONE notifications (`[1]+ Done`): `set +m` before backgrounding
-    #[test]
-    fn test_bash_job_control_suppression() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_bash_job_control_suppression(repo: TestRepo) {
         // Configure a post-start command that will trigger background job
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -1810,10 +1776,8 @@ approved-commands = ["echo 'bash background'"]
 
     /// Test that bash completions are properly registered
     /// Note: Completions are inline in the wrapper script (lazy loading)
-    #[test]
-    fn test_bash_completions_registered() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_bash_completions_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "bash");
 
@@ -1849,10 +1813,8 @@ approved-commands = ["echo 'bash background'"]
     }
 
     /// Test that fish completions are properly registered
-    #[test]
-    fn test_fish_completions_registered() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_fish_completions_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "fish");
         let completions_script = generate_completions(&repo, "fish");
@@ -1894,10 +1856,8 @@ approved-commands = ["echo 'bash background'"]
 
     /// Test that zsh wrapper function is properly defined
     /// Note: Completions are inline in the wrapper script (lazy loading via compdef)
-    #[test]
-    fn test_zsh_wrapper_function_registered() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_zsh_wrapper_function_registered(repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "zsh");
 
@@ -1947,9 +1907,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_branch_name_with_slashes(#[case] shell: &str) {
-        let repo = TestRepo::new();
-
+    fn test_branch_name_with_slashes(#[case] shell: &str, repo: TestRepo) {
         // Branch name with slashes (common git convention)
         let output =
             exec_through_wrapper(shell, &repo, "switch", &["--create", "feature/test-branch"]);
@@ -1969,9 +1927,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_branch_name_with_dashes_underscores(#[case] shell: &str) {
-        let repo = TestRepo::new();
-
+    fn test_branch_name_with_dashes_underscores(#[case] shell: &str, repo: TestRepo) {
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "fix-bug_123"]);
 
         assert_eq!(output.exit_code, 0, "{}: Command should succeed", shell);
@@ -1993,9 +1949,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_worktrunk_bin_fallback(#[case] shell: &str) {
-        let repo = TestRepo::new();
-
+    fn test_worktrunk_bin_fallback(#[case] shell: &str, repo: TestRepo) {
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, shell);
 
@@ -2104,9 +2058,7 @@ approved-commands = ["echo 'bash background'"]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_shell_completes_cleanly(#[case] shell: &str) {
-        let repo = TestRepo::new();
-
+    fn test_shell_completes_cleanly(#[case] shell: &str, repo: TestRepo) {
         // Configure a post-start command to exercise the background job code path
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -2426,10 +2378,8 @@ command = "{}"
     /// Uses shell wrapper to avoid "To enable automatic cd" hint.
     ///
     /// Source: tests/snapshots/shell_wrapper__tests__readme_example_hooks_post_create.snap
-    #[test]
-    fn test_readme_example_hooks_post_create() {
-        let repo = TestRepo::new();
-
+    #[rstest]
+    fn test_readme_example_hooks_post_create(repo: TestRepo) {
         // Create project config with post-create and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -2516,12 +2466,10 @@ fi
     /// Note: This uses direct PTY execution (not shell wrapper) because interactive prompts
     /// require direct stdin access. The shell wrapper approach detects non-interactive mode.
     /// The shell integration hint is truncated from the output.
-    #[test]
-    fn test_readme_example_approval_prompt() {
+    #[rstest]
+    fn test_readme_example_approval_prompt(repo: TestRepo) {
         use portable_pty::{CommandBuilder, PtySize};
         use std::io::{Read, Write};
-
-        let repo = TestRepo::new();
 
         // Create project config with named post-create commands
         repo.write_project_config(
@@ -2631,12 +2579,10 @@ test = "echo 'Running tests...'"
     /// - Completion not registered at all
     /// - Completion function not loading (lazy loading broken)
     /// - Completion output being executed as commands (the COMPLETE mode bug)
-    #[test]
-    fn test_bash_completion_produces_correct_output() {
+    #[rstest]
+    fn test_bash_completion_produces_correct_output(repo: TestRepo) {
         use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
-
-        let repo = TestRepo::new();
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
@@ -2795,12 +2741,10 @@ fi
     /// This test verifies completion works WITHOUT knowing internal function names.
     /// It checks that a completion is registered for 'wt' and that calling the
     /// wt command with COMPLETE=zsh produces completion candidates.
-    #[test]
-    fn test_zsh_completion_produces_correct_output() {
+    #[rstest]
+    fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
         use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
-
-        let repo = TestRepo::new();
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
@@ -3066,12 +3010,10 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str) {
+    fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
         use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
-
-        let repo = TestRepo::new();
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
@@ -3264,12 +3206,10 @@ echo "SCRIPT_COMPLETED"
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str) {
+    fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
         use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
-
-        let repo = TestRepo::new();
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
