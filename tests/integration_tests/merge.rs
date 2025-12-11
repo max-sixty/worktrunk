@@ -774,8 +774,6 @@ test = "exit 0"
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_post_merge_command_success(mut repo: TestRepo) {
     // Create project config with post-merge command that writes a marker file
