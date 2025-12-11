@@ -77,26 +77,12 @@ jobs:
     # This installs from crates.io, not from the PR code. Pre-merge hooks
     # run against the published version, testing the hook configuration.
     - name: Install wt
-      if: runner.os != 'Windows'
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
 
     - name: 🧪 Pre-merge hooks
-      if: runner.os != 'Windows'
       run: wt hook pre-merge --force
-
-    # Windows: Run tests directly (wt hook pre-merge uses bash syntax).
-    # Same test command as wt.toml pre-merge config.
-    - name: 🧪 Tests (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cargo insta test --dnd --check --features shell-integration-tests
-        cargo test --doc
-      env:
-        RUSTFLAGS: '-D warnings'
-        NEXTEST_STATUS_LEVEL: fail
-        NEXTEST_SUCCESS_OUTPUT: never
 
   check-links:
     runs-on: ubuntu-latest
