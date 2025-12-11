@@ -32,6 +32,7 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     });
 }
 
+#[rstest]
 fn test_user_post_create_hook_executes(repo: TestRepo) {
     // Write user config with post-create hook (no project config)
     repo.write_test_config(
@@ -59,6 +60,7 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
     );
 }
 
+#[rstest]
 fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
@@ -91,6 +93,7 @@ approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
     assert_eq!(lines[1], "PROJECT_HOOK", "Project hook should run second");
 }
 
+#[rstest]
 fn test_user_hooks_no_approval_required(repo: TestRepo) {
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
@@ -181,6 +184,7 @@ failing = "exit 1"
 // User Post-Start Hook Tests (Background)
 // ============================================================================
 
+#[rstest]
 fn test_user_post_start_hook_executes(repo: TestRepo) {
     // Write user config with post-start hook (background)
     repo.write_test_config(
@@ -246,6 +250,7 @@ fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&
     });
 }
 
+#[rstest]
 fn test_user_pre_merge_hook_executes(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt =
@@ -386,6 +391,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 // User Post-Merge Hook Tests
 // ============================================================================
 
+#[rstest]
 fn test_user_post_merge_hook_executes(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt =
@@ -527,6 +533,7 @@ block = "exit 1"
 // User Pre-Commit Hook Tests
 // ============================================================================
 
+#[rstest]
 fn test_user_pre_commit_hook_executes(mut repo: TestRepo) {
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
@@ -585,6 +592,7 @@ lint = "exit 1"
 // Template Variable Tests
 // ============================================================================
 
+#[rstest]
 fn test_user_hook_template_variables(repo: TestRepo) {
     // Write user config with hook using template variables
     repo.write_test_config(
@@ -619,6 +627,7 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 // Combined User and Project Hooks Tests
 // ============================================================================
 
+#[rstest]
 fn test_user_and_project_post_start_both_run(repo: TestRepo) {
     // Create project config with post-start hook
     repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
