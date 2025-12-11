@@ -105,7 +105,6 @@ approved-commands = ["echo 'Second command'"]
     );
 }
 
-#[rstest]
 fn test_force_flag_does_not_save_approvals(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command' > output.txt""#);
 
@@ -141,7 +140,6 @@ fn test_force_flag_does_not_save_approvals(repo: TestRepo) {
     );
 }
 
-#[rstest]
 fn test_already_approved_commands_skip_prompt(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'approved' > output.txt""#);
 
@@ -310,7 +308,6 @@ fn test_approval_fails_in_non_tty(repo: TestRepo) {
 /// Test that --force flag bypasses TTY requirement
 ///
 /// Even in non-TTY environments, --force should allow commands to execute.
-#[rstest]
 fn test_force_bypasses_tty_check(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
@@ -333,7 +330,6 @@ fn test_force_bypasses_tty_check(repo: TestRepo) {
 /// When `wt hook post-merge` runs standalone (not via `wt merge`), the `{{ target }}`
 /// variable should be the current branch, not always the default branch.
 /// This allows hooks to behave correctly when testing from feature worktrees.
-#[rstest]
 fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
     // Hook that writes {{ target }} to a file so we can verify its value
     repo.write_project_config(r#"post-merge = "echo '{{ target }}' > target-branch.txt""#);
@@ -370,7 +366,6 @@ fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
 }
 
 /// Test that `{{ target }}` is the current branch for pre-merge standalone
-#[rstest]
 fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
     // Hook that writes {{ target }} to a file so we can verify its value
     repo.write_project_config(r#"pre-merge = "echo '{{ target }}' > target-branch.txt""#);
@@ -407,7 +402,6 @@ fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
 }
 
 /// Test running a specific named hook command
-#[rstest]
 fn test_step_hook_run_named_command(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(
@@ -489,7 +483,6 @@ fn test_step_hook_name_filter_on_unnamed_command(repo: TestRepo) {
 }
 
 /// Test running all hooks (no name filter) still works
-#[rstest]
 fn test_step_hook_run_all_commands(repo: TestRepo) {
     // Config with multiple named commands
     repo.write_project_config(

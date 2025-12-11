@@ -7,8 +7,8 @@
 //! - Skipped together with project hooks via --no-verify
 
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, repo_with_feature_worktree, setup_snapshot_settings,
-    wait_for_file, wait_for_file_content,
+    TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings, wait_for_file,
+    wait_for_file_content,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -32,7 +32,6 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     });
 }
 
-#[rstest]
 fn test_user_post_create_hook_executes(repo: TestRepo) {
     // Write user config with post-create hook (no project config)
     repo.write_test_config(
@@ -60,7 +59,6 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
     );
 }
 
-#[rstest]
 fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
@@ -93,7 +91,6 @@ approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
     assert_eq!(lines[1], "PROJECT_HOOK", "Project hook should run second");
 }
 
-#[rstest]
 fn test_user_hooks_no_approval_required(repo: TestRepo) {
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
@@ -184,7 +181,6 @@ failing = "exit 1"
 // User Post-Start Hook Tests (Background)
 // ============================================================================
 
-#[rstest]
 fn test_user_post_start_hook_executes(repo: TestRepo) {
     // Write user config with post-start hook (background)
     repo.write_test_config(
@@ -250,9 +246,10 @@ fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&
     });
 }
 
-#[rstest]
-fn test_user_pre_merge_hook_executes(#[from(repo_with_feature_worktree)] repo: TestRepo) {
-    let feature_wt = repo.worktree_path("feature");
+fn test_user_pre_merge_hook_executes(mut repo: TestRepo) {
+    // Create feature worktree with a commit
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
 
     // Write user config with pre-merge hook
     repo.write_test_config(
@@ -267,7 +264,7 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
         "user_pre_merge_executes",
         &repo,
         &["main", "--force", "--no-remove"],
-        Some(feature_wt),
+        Some(&feature_wt),
     );
 
     // Verify user hook ran
@@ -276,10 +273,10 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
 }
 
 #[rstest]
-fn test_user_pre_merge_hook_failure_blocks_merge(
-    #[from(repo_with_feature_worktree)] repo: TestRepo,
-) {
-    let feature_wt = repo.worktree_path("feature");
+fn test_user_pre_merge_hook_failure_blocks_merge(mut repo: TestRepo) {
+    // Create feature worktree with a commit
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
 
     // Write user config with failing pre-merge hook
     repo.write_test_config(
@@ -295,13 +292,15 @@ check = "exit 1"
         "user_pre_merge_failure",
         &repo,
         &["main", "--force", "--no-remove"],
-        Some(feature_wt),
+        Some(&feature_wt),
     );
 }
 
 #[rstest]
-fn test_user_pre_merge_skipped_with_no_verify(#[from(repo_with_feature_worktree)] repo: TestRepo) {
-    let feature_wt = repo.worktree_path("feature");
+fn test_user_pre_merge_skipped_with_no_verify(mut repo: TestRepo) {
+    // Create feature worktree with a commit
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
 
     // Write user config with pre-merge hook that creates a marker
     repo.write_test_config(
@@ -316,7 +315,7 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
         "user_pre_merge_skipped_no_verify",
         &repo,
         &["main", "--force", "--no-remove", "--no-verify"],
-        Some(feature_wt),
+        Some(&feature_wt),
     );
 
     // User hook should NOT have run (--no-verify skips all hooks)
@@ -387,9 +386,10 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 // User Post-Merge Hook Tests
 // ============================================================================
 
-#[rstest]
-fn test_user_post_merge_hook_executes(#[from(repo_with_feature_worktree)] repo: TestRepo) {
-    let feature_wt = repo.worktree_path("feature");
+fn test_user_post_merge_hook_executes(mut repo: TestRepo) {
+    // Create feature worktree with a commit
+    let feature_wt =
+        repo.add_worktree_with_commit("feature", "feature.txt", "feature content", "Add feature");
 
     // Write user config with post-merge hook
     repo.write_test_config(
@@ -404,7 +404,7 @@ notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
         "user_post_merge_executes",
         &repo,
         &["main", "--force", "--no-remove"],
-        Some(feature_wt),
+        Some(&feature_wt),
     );
 
     // Post-merge runs in the destination (main) worktree
@@ -527,7 +527,6 @@ block = "exit 1"
 // User Pre-Commit Hook Tests
 // ============================================================================
 
-#[rstest]
 fn test_user_pre_commit_hook_executes(mut repo: TestRepo) {
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
@@ -586,7 +585,6 @@ lint = "exit 1"
 // Template Variable Tests
 // ============================================================================
 
-#[rstest]
 fn test_user_hook_template_variables(repo: TestRepo) {
     // Write user config with hook using template variables
     repo.write_test_config(
@@ -621,7 +619,6 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 // Combined User and Project Hooks Tests
 // ============================================================================
 
-#[rstest]
 fn test_user_and_project_post_start_both_run(repo: TestRepo) {
     // Create project config with post-start hook
     repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);
