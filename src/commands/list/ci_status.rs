@@ -406,12 +406,32 @@ fn disable_color_output(cmd: &mut Command) {
 }
 
 /// Check if a CLI tool is available
+///
+/// On Windows, this uses `cmd.exe /c` to properly resolve batch files (.cmd/.bat)
+/// that may be in PATH, since Rust's Command::new doesn't search PATHEXT.
 fn tool_available(tool: &str, args: &[&str]) -> bool {
-    Command::new(tool)
-        .args(args)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        // Build command string: "tool arg1 arg2..."
+        let mut cmd_str = tool.to_string();
+        for arg in args {
+            cmd_str.push(' ');
+            cmd_str.push_str(arg);
+        }
+        Command::new("cmd")
+            .args(["/c", &cmd_str])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new(tool)
+            .args(args)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Status of CI tools availability
