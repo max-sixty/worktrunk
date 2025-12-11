@@ -27,8 +27,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
-      "short_sha": "b834638",
+      "sha": "002eabd05071bde2c6e208e9a392e0943eee584d",
+      "short_sha": "002eabd",
       "message": "Initial commit",
       "timestamp": 0
     },
@@ -62,8 +62,8 @@ exit_code: 0
     "path": "[REPO].with-status",
     "kind": "worktree",
     "commit": {
-      "sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
-      "short_sha": "b834638",
+      "sha": "002eabd05071bde2c6e208e9a392e0943eee584d",
+      "short_sha": "002eabd",
       "message": "Initial commit",
       "timestamp": 0
     },
@@ -100,8 +100,8 @@ exit_code: 0
     "path": "[REPO].without-status",
     "kind": "worktree",
     "commit": {
-      "sha": "b834638e33dbc6b37002685ee0777f4b8f1af904",
-      "short_sha": "b834638",
+      "sha": "002eabd05071bde2c6e208e9a392e0943eee584d",
+      "short_sha": "002eabd",
       "message": "Initial commit",
       "timestamp": 0
     },

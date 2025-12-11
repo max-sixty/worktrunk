@@ -61,9 +61,9 @@ Create a worktree for a new task:
 
 <!-- ⚠️ AUTO-GENERATED from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_simple_switch.snap — edit source to update -->
 
-```console
+```bash
 $ wt switch --create fix-auth
-✅ Created worktree fix-auth based off main @ ../repo.fix-auth
+✅ Created new worktree for fix-auth from main at ../repo.fix-auth
 ```
 
 <!-- END AUTO-GENERATED -->
@@ -72,9 +72,9 @@ Switch to an existing worktree:
 
 <!-- ⚠️ AUTO-GENERATED from tests/integration_tests/snapshots/integration__integration_tests__shell_wrapper__tests__readme_example_switch_back.snap — edit source to update -->
 
-```console
+```bash
 $ wt switch feature-api
-✅ Switched to feature-api @ ../repo.feature-api
+✅ Switched to worktree for feature-api at ../repo.feature-api
 ```
 
 <!-- END AUTO-GENERATED -->
@@ -86,11 +86,11 @@ See all worktrees at a glance:
 ```console
 $ wt list
   Branch       Status        HEAD±    main↕  Path                Remote⇅  Commit    Age   Message
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  ./repo.feature-api   ⇡3      28d38c20  30m   Add API tests
-^ main             ^⇅                        ./repo               ⇡1  ⇣1  2e6b7a8f  4d    Merge fix-auth:…
-+ fix-auth         ↕|                ↑2  ↓1  ./repo.fix-auth        |     1d697d5b  5h    Add secure token…
+@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  ./repo.feature-api   ⇡3      d35485d7  30m   Add API tests
+^ main             ^⇅                        ./repo               ⇡1  ⇣1  e18e1b4d  4d    Merge fix-auth:…
++ fix-auth         ↕|                ↑2  ↓1  ./repo.fix-auth        |     2517d700  5h    Add secure token…
 
-⚪ Showing 3 worktrees; 1 with changes, 2 ahead
+⚪ Showing 3 worktrees, 1 with changes, 2 ahead
 ```
 
 <!-- END AUTO-GENERATED -->

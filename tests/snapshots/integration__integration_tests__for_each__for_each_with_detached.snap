@@ -28,6 +28,7 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mRunning in [1mmain[22m...[39m
+warning: untracked cache is disabled on this system or location
 🔄 [36mRunning in [1m(detached)[22m...[39m
 
 ✅ [32mCompleted in 2 worktrees[39m

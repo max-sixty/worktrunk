@@ -40,5 +40,5 @@ exit_code: 0
 ⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
 [36mBINARIES[39m
-🟡 [33m[1mgh[22m installed but not authenticated; run [1mgh auth login[22m[39m
-🟡 [33m[1mglab[22m installed but not authenticated; run [1mglab auth login[22m[39m
+🟡 [33m[1mgh[22m installed but not authenticated; run [90mgh auth login[39m[39m
+🟡 [33m[1mglab[22m installed but not authenticated; run [90mglab auth login[39m[39m

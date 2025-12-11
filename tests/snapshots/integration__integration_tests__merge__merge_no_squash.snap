@@ -24,9 +24,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mMerging 2 commits to [1mmain[22m @ [2mbf212d3[22m (no commit/squash/rebase needed)[39m
-[107m [0m  * [33mbf212d3[m feat: add file 2
-[107m [0m  * [33m123e46c[m feat: add file 1
+🔄 [36mMerging 2 commits to [1mmain[22m @ [2m1c5f30c[22m (no commit/squash/rebase needed)[39m
+[107m [0m  * [33m1c5f30c[m feat: add file 2
+[107m [0m  * [33mb795264[m feat: add file 1
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

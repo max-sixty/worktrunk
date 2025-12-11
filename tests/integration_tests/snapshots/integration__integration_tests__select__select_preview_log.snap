@@ -5,12 +5,12 @@ expression: normalized
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch   Status        HEAD±    main↕  Path            R│Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
 > + feature      ↑                 ↑5      ./repo.feature ..│
-                                                            │* b1549b6  1d (feature) Add file 5 with important changes
-                                                            │* 111f7e4  1d Add file 4 with important changes
-                                                            │* fe8881c  1d Add file 3 with important changes
-                                                            │* a0112c1  1d Add file 2 with important changes
-                                                            │* f3a13a7  1d Add file 1 with important changes
-                                                            │* b834638  1d Initial commit
+                                                            │* d2cf233  1d (feature) Add file 5 with important changes
+                                                            │* 996c924  1d Add file 4 with important changes
+                                                            │* a2eefed  1d Add file 3 with important changes
+                                                            │* 1c1106b  1d Add file 2 with important changes
+                                                            │* 0602185  1d Add file 1 with important changes
+                                                            │* 23e5a15  1d Initial commit
                                                             │
                                                             │
                                                             │

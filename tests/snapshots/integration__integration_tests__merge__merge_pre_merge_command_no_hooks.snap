@@ -24,8 +24,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mf2d96c5[22m (no commit/squash/rebase needed)[39m
-[107m [0m  * [33mf2d96c5[m Add feature file
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2m959ea18[22m (no commit/squash/rebase needed)[39m
+[107m [0m  * [33m959ea18[m Add feature file
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m

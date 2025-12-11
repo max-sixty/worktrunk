@@ -123,7 +123,6 @@ fn test_remove_internal_powershell_directive() {
 #[test]
 fn test_switch_internal_directive() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -156,7 +155,6 @@ fn test_switch_internal_directive() {
 #[test]
 fn test_switch_without_internal() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -185,7 +183,6 @@ fn test_switch_without_internal() {
 #[test]
 fn test_remove_internal_directive() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -215,7 +212,6 @@ fn test_remove_internal_directive() {
 #[test]
 fn test_remove_without_internal() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
@@ -240,7 +236,6 @@ fn test_remove_without_internal() {
 #[test]
 fn test_merge_internal_no_remove() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
@@ -291,7 +286,6 @@ fn test_merge_internal_no_remove() {
 #[test]
 fn test_merge_internal_remove() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a worktree for main
     let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");

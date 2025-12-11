@@ -8,6 +8,14 @@
 //! with deterministic timestamps and configuration. Each test gets a fresh repo
 //! that is automatically cleaned up when the test ends.
 //!
+//! ## Fixture-Based Initialization
+//!
+//! To improve test performance, `TestRepo::new()` copies from a pre-initialized
+//! template stored in `tests/fixtures/template-repo/`. The template contains a
+//! `_git` directory (renamed from `.git` so it can be committed) which gets
+//! copied and renamed to `.git` for each test. This avoids spawning `git init`
+//! for every test, saving ~10ms per test.
+//!
 //! ## Environment Isolation
 //!
 //! Git commands are run with isolated environments using `Command::env()` to ensure:
@@ -116,6 +124,44 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
+
+/// Path to the fixture template repo (relative to crate root).
+/// Contains `_git/` (renamed .git) and `gitconfig`.
+fn fixture_template_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/template-repo")
+}
+
+/// Copy the fixture template to create a new test repo.
+///
+/// The fixture contains a git repo with one initial commit (on `main` branch).
+/// Copies `_git/` to `.git/`, `file.txt`, and `gitconfig` to `test-gitconfig`.
+/// Uses `cp -r` which benchmarks faster than native Rust fs operations.
+fn copy_fixture_template(dest: &Path) {
+    let template = fixture_template_path();
+
+    // Create repo subdirectory
+    let repo_path = dest.join("repo");
+    std::fs::create_dir(&repo_path).unwrap();
+
+    // Copy _git to repo/.git (suppress stderr for socket file warnings)
+    let output = Command::new("cp")
+        .args(["-r", "--"])
+        .arg(template.join("_git"))
+        .arg(repo_path.join(".git"))
+        .stderr(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Failed to copy template _git directory"
+    );
+
+    // Copy file.txt (part of the initial commit)
+    std::fs::copy(template.join("file.txt"), repo_path.join("file.txt")).unwrap();
+
+    // Copy gitconfig
+    std::fs::copy(template.join("gitconfig"), dest.join("test-gitconfig")).unwrap();
+}
 
 /// Canonicalize a path without Windows verbatim prefix (`\\?\`).
 ///
@@ -246,21 +292,50 @@ pub struct TestRepo {
 }
 
 impl TestRepo {
-    /// Create a new test repository with isolated git environment
+    /// Create a new test repository with isolated git environment.
+    ///
+    /// The repo is initialized on `main` branch with one initial commit.
+    /// Uses a fixture template for fast initialization - copies a pre-initialized
+    /// git repo from `tests/fixtures/template-repo/` instead of running `git init`.
+    /// This saves ~10ms per test by avoiding process spawns.
     pub fn new() -> Self {
         let temp_dir = TempDir::new().unwrap();
-        // Create main repo as a subdirectory so worktrees can be siblings
-        let root = temp_dir.path().join("repo");
-        std::fs::create_dir(&root).unwrap();
+
+        // Copy from fixture template (includes initial commit)
+        copy_fixture_template(temp_dir.path());
+
         // Canonicalize to resolve symlinks (important on macOS where /var is symlink to /private/var)
-        let root = canonicalize(&root).unwrap();
+        let root = canonicalize(&temp_dir.path().join("repo")).unwrap();
 
         // Create isolated config path for this test
         let test_config_path = temp_dir.path().join("test-config.toml");
-
-        // Create git config file with test settings including user identity
-        // This eliminates the need for separate `git config user.name/email` commands
         let git_config_path = temp_dir.path().join("test-gitconfig");
+
+        Self {
+            temp_dir,
+            root,
+            worktrees: HashMap::new(),
+            remote: None,
+            test_config_path,
+            git_config_path,
+            mock_bin_path: None,
+        }
+    }
+
+    /// Create an empty test repository (no commits, no branches).
+    ///
+    /// Use this for tests that specifically need to test behavior in an
+    /// uninitialized repo. Most tests should use `new()` instead.
+    pub fn empty() -> Self {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let root = canonicalize(&root).unwrap();
+
+        let test_config_path = temp_dir.path().join("test-config.toml");
+        let git_config_path = temp_dir.path().join("test-gitconfig");
+
+        // Write gitconfig
         std::fs::write(
             &git_config_path,
             "[user]\n\tname = Test User\n\temail = test@example.com\n\
@@ -279,11 +354,13 @@ impl TestRepo {
             mock_bin_path: None,
         };
 
-        // Initialize git repo with isolated environment
-        // User config is already in the gitconfig file, no separate config commands needed
+        // Run git init (can't avoid this for empty repos)
         let mut cmd = Command::new("git");
         repo.configure_git_cmd(&mut cmd);
-        cmd.args(["init"]).current_dir(&repo.root).output().unwrap();
+        cmd.args(["init", "-q"])
+            .current_dir(&repo.root)
+            .output()
+            .unwrap();
 
         repo
     }
@@ -1438,8 +1515,8 @@ mod tests {
 
     #[test]
     fn test_commit_with_age() {
+        // TestRepo::new() already includes one initial commit from fixture
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create commits with specific ages
         repo.commit_with_age("One hour ago", HOUR);
@@ -1447,7 +1524,7 @@ mod tests {
         repo.commit_with_age("One week ago", WEEK);
         repo.commit_with_age("Ten minutes ago", 10 * MINUTE);
 
-        // Verify commits were created (git log shows 5 commits)
+        // Verify commits were created (1 from fixture + 4 = 5 commits)
         let output = repo.git_command(&["log", "--oneline"]).output().unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         assert_eq!(log.lines().count(), 5);

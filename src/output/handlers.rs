@@ -21,7 +21,7 @@ use worktrunk::styling::{
 /// Format a switch success message with a consistent location phrase
 ///
 /// Both interactive and directive modes now use the human-friendly
-/// `"Created worktree {branch} based off {base} @ {path}"` wording so
+/// `"Created new worktree for {branch} from {base} at {path}"` wording so
 /// users see the same message regardless of how worktrunk is invoked.
 fn format_switch_success_message(
     branch: &str,
@@ -33,20 +33,20 @@ fn format_switch_success_message(
     // Determine action and source based on how the worktree was created
     // Priority: explicit --create > DWIM from remote > existing local branch
     let (action, source) = if created_branch {
-        ("Created worktree", base_branch)
+        ("Created new worktree for", base_branch)
     } else if let Some(remote) = from_remote {
-        ("Created worktree", Some(remote))
+        ("Created worktree for", Some(remote))
     } else {
-        ("Switched to", None)
+        ("Switched to worktree for", None)
     };
 
     match source {
         Some(src) => cformat!(
-            "<green>{action} <bold>{branch}</> based off <bold>{src}</> @ <bold>{}</></>",
+            "<green>{action} <bold>{branch}</> from <bold>{src}</> at <bold>{}</></>",
             format_path_for_display(path)
         ),
         None => cformat!(
-            "<green>{action} <bold>{branch}</> @ <bold>{}</></>",
+            "<green>{action} <bold>{branch}</> at <bold>{}</></>",
             format_path_for_display(path)
         ),
     }
@@ -225,7 +225,7 @@ fn handle_branch_deletion_result(
                 "Branch <bold>{branch_name}</> retained; has unmerged changes"
             )))?;
             super::print(hint_message(cformat!(
-                "Use <bright-black>wt remove -D</> to delete unmerged branches"
+                "<bright-black>wt remove -D</> deletes unmerged branches"
             )))?;
             result
         }
@@ -357,7 +357,7 @@ pub fn handle_switch_output(
                 // Shell integration not configured - show warning and setup hint
                 let path_display = format_path_for_display(path);
                 super::print(warning_message(cformat!(
-                    "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cd unavailable (no shell integration)"
+                    "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)"
                 )))?;
                 super::shell_integration_hint(shell_integration_hint())?;
             }
@@ -649,7 +649,7 @@ fn handle_removed_worktree_output(
         // Show hint for unmerged branches (same as synchronous path)
         if !no_delete_branch && !should_delete_branch {
             super::print(hint_message(cformat!(
-                "Use <bright-black>wt remove -D</> to delete unmerged branches"
+                "<bright-black>wt remove -D</> deletes unmerged branches"
             )))?;
         }
 

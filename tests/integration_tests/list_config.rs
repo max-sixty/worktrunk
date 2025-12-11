@@ -9,7 +9,6 @@ use tempfile::TempDir;
 #[test]
 fn test_list_config_full_enabled() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     let temp_home = TempDir::new().unwrap();
 
     // Create user config with list.full = true
@@ -40,7 +39,6 @@ full = true
 #[test]
 fn test_list_config_branches_enabled() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a branch without a worktree
     let mut cmd = std::process::Command::new("git");
@@ -80,7 +78,6 @@ branches = true
 #[test]
 fn test_list_config_cli_override() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a branch without a worktree
     let mut cmd = std::process::Command::new("git");
@@ -123,7 +120,6 @@ branches = false
 #[test]
 fn test_list_config_full_and_branches() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a branch without a worktree
     let mut cmd = std::process::Command::new("git");
@@ -164,7 +160,6 @@ branches = true
 #[test]
 fn test_list_no_config() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a branch without a worktree
     let mut cmd = std::process::Command::new("git");

@@ -342,9 +342,9 @@ pub fn handle_switch(
 
     // Check if base flag was provided without create flag
     if resolved_base.is_some() && !create {
-        crate::output::print(warning_message(cformat!(
-            "<bold>--base</> is only used with <bold>--create</>; ignoring"
-        )))?;
+        crate::output::print(warning_message(
+            "--base flag is only used with --create, ignoring",
+        ))?;
     }
 
     // Compute expected worktree path for this branch

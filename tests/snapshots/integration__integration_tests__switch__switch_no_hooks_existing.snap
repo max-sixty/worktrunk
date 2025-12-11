@@ -29,6 +29,6 @@ exit_code: 0
 execute still runs
 
 ----- stderr -----
-✅ [32m[32mSwitched to [1mexisting-no-hooks[22m @ [1m[REPO].existing-no-hooks[39m[22m[39m
+✅ [32m[32mSwitched to worktree for [1mexisting-no-hooks[22m at [1m[REPO].existing-no-hooks[39m[22m[39m
 🔄 [36mExecuting (--execute):[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m

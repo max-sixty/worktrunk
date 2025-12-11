@@ -231,7 +231,6 @@ fn push_branch(repo: &TestRepo, branch_name: &str) {
 #[test]
 fn test_list_single_worktree() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     snapshot_list("single_worktree", &repo);
 }
@@ -239,7 +238,6 @@ fn test_list_single_worktree() {
 #[test]
 fn test_list_multiple_worktrees() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
@@ -253,7 +251,6 @@ fn test_list_multiple_worktrees() {
 #[test]
 fn test_list_previous_worktree_gutter() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("feature");
 
@@ -282,7 +279,6 @@ fn test_list_previous_worktree_gutter() {
 #[test]
 fn test_list_detached_head() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.detach_head();
 
@@ -294,7 +290,6 @@ fn test_list_detached_head_in_worktree() {
     // Non-main worktree in detached HEAD SHOULD show path mismatch flag
     // (detached HEAD = "not at home", not on any branch)
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("feature");
     repo.detach_head_in_worktree("feature");
@@ -305,7 +300,6 @@ fn test_list_detached_head_in_worktree() {
 #[test]
 fn test_list_locked_worktree() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("locked-feature");
     repo.lock_worktree("locked-feature", Some("Testing lock functionality"));
@@ -316,7 +310,6 @@ fn test_list_locked_worktree() {
 #[test]
 fn test_list_locked_no_reason() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("locked-no-reason");
     repo.lock_worktree("locked-no-reason", None);
@@ -357,7 +350,6 @@ fn test_list_unicode_commit_message() {
 #[test]
 fn test_list_many_worktrees_with_varied_stats() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create multiple worktrees with different characteristics
     repo.add_worktree("short");
@@ -378,7 +370,6 @@ fn test_list_many_worktrees_with_varied_stats() {
 #[test]
 fn test_list_json_with_metadata() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktree with detached head
     repo.add_worktree("feature-detached");
@@ -395,7 +386,6 @@ fn test_list_json_with_metadata() {
 #[test]
 fn test_list_json_tree_matches_main_after_merge() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature branch with a worktree
     let feature_path = repo.add_worktree("feature-merged");
@@ -446,7 +436,6 @@ fn test_list_json_tree_matches_main_after_merge() {
 #[test]
 fn test_list_with_branches_flag() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create some branches without worktrees
     create_branch(&repo, "feature-without-worktree");
@@ -462,7 +451,6 @@ fn test_list_with_branches_flag() {
 #[test]
 fn test_list_with_branches_flag_no_available() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // All branches have worktrees (only main exists and has worktree)
     repo.add_worktree("feature-a");
@@ -474,7 +462,6 @@ fn test_list_with_branches_flag_no_available() {
 #[test]
 fn test_list_with_branches_flag_only_branches() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create several branches without worktrees
     create_branch(&repo, "branch-alpha");
@@ -487,7 +474,6 @@ fn test_list_with_branches_flag_only_branches() {
 #[test]
 fn test_list_with_remotes_flag() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     // Setup remote creates origin and pushes main to it
     repo.setup_remote("main");
 
@@ -516,7 +502,6 @@ fn test_list_with_remotes_flag() {
 #[test]
 fn test_list_with_remotes_and_branches() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // Create local-only branches (not worktrees, not pushed)
@@ -547,7 +532,6 @@ fn test_list_with_remotes_and_branches() {
 #[test]
 fn test_list_with_remotes_filters_existing_worktrees() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // Create a worktree and push the branch
@@ -778,7 +762,6 @@ fn test_list_with_upstream_tracking() {
 #[test]
 fn test_list_primary_on_different_branch() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.switch_primary_to("develop");
     assert_eq!(repo.current_branch(), "develop");
@@ -948,7 +931,6 @@ fn test_list_json_with_git_operation() {
 fn test_list_branch_only_with_status() {
     // Test that branch-only entries (no worktree) can display branch-keyed status
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a branch-only entry (no worktree)
     let mut cmd = Command::new("git");
@@ -973,7 +955,6 @@ fn test_list_branch_only_with_status() {
 #[test]
 fn test_list_user_marker_with_special_characters() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Test with single emoji
     repo.add_worktree("emoji");
@@ -1911,7 +1892,6 @@ fn test_readme_example_list_branches() {
 #[test]
 fn test_list_progressive_flag() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 
@@ -1923,7 +1903,6 @@ fn test_list_progressive_flag() {
 #[test]
 fn test_list_no_progressive_flag() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.add_worktree("feature");
 
     // Explicitly force buffered mode
@@ -1933,7 +1912,6 @@ fn test_list_no_progressive_flag() {
 #[test]
 fn test_list_progressive_with_branches() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktrees
     repo.add_worktree("feature-a");
@@ -1954,7 +1932,6 @@ fn test_list_progressive_with_branches() {
 #[test]
 fn test_list_task_dag_single_worktree() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     snapshot_list_task_dag("task_dag_single_worktree", &repo);
 }
@@ -1962,7 +1939,6 @@ fn test_list_task_dag_single_worktree() {
 #[test]
 fn test_list_task_dag_multiple_worktrees() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
@@ -1974,7 +1950,6 @@ fn test_list_task_dag_multiple_worktrees() {
 #[test]
 fn test_list_task_dag_full_with_diffs() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktree with changes
     let feature_a = repo.add_worktree("feature-a");
@@ -2039,7 +2014,6 @@ fn test_list_task_dag_with_upstream() {
 #[test]
 fn test_list_task_dag_many_worktrees() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create 10 worktrees to test parallel processing
     for i in 1..=10 {
@@ -2052,7 +2026,6 @@ fn test_list_task_dag_many_worktrees() {
 #[test]
 fn test_list_task_dag_with_locked_worktree() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("normal");
     repo.add_worktree("locked");
@@ -2064,7 +2037,6 @@ fn test_list_task_dag_with_locked_worktree() {
 #[test]
 fn test_list_task_dag_detached_head() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.detach_head();
 
     snapshot_list_task_dag("task_dag_detached_head", &repo);
@@ -2098,7 +2070,6 @@ fn test_list_progressive_vs_buffered_identical_data() {
     // - The DATA must be identical, but table formatting may differ slightly
 
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create varied worktrees to test multiple data points
     repo.add_worktree("feature-a");
@@ -2148,7 +2119,6 @@ fn test_list_progressive_vs_buffered_identical_data() {
 #[test]
 fn test_list_with_c_flag() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create some worktrees
     repo.add_worktree("feature-a");
@@ -2170,7 +2140,6 @@ fn test_list_with_c_flag() {
 #[test]
 fn test_list_large_diffs_alignment() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Worktree with large uncommitted changes and ahead commits
     // Use a longer branch name similar to user's "wli-sequence" to trigger column width
@@ -2278,7 +2247,6 @@ fn test_list_large_diffs_alignment() {
 #[test]
 fn test_list_status_column_padding_with_emoji() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktree matching user's exact scenario: "wli-sequence"
     let wli_seq = repo.add_worktree("wli-sequence");
@@ -2385,7 +2353,6 @@ fn test_list_maximum_working_tree_symbols() {
     // ? (untracked), ! (modified), + (staged), » (renamed), ✘ (deleted)
     // This verifies the maximum width of the working_tree position (5 chars)
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let feature = repo.add_worktree("feature");
 
@@ -2729,7 +2696,6 @@ fn test_list_maximum_status_symbols() {
 #[test]
 fn test_list_warns_when_default_branch_missing_worktree() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     // Move primary worktree off the default branch so no worktree holds it
     repo.switch_primary_to("develop");
 

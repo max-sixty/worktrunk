@@ -207,7 +207,7 @@ fn test_complete_outside_git_repo() {
 
 #[test]
 fn test_complete_empty_repo() {
-    let repo = TestRepo::new();
+    let repo = TestRepo::empty();
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 

@@ -110,7 +110,6 @@ fn test_git_rejects_nul_in_commit_messages() {
     use std::process::Stdio;
 
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Try to create a commit with NUL in the message
     // We can't use Command::arg() because Rust rejects NUL bytes,
@@ -164,7 +163,6 @@ fn test_git_rejects_nul_in_commit_messages() {
 #[test]
 fn test_rust_prevents_nul_bytes_in_args() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Rust's Command API should reject NUL bytes in arguments
     let malicious_branch = "feature\0__WORKTRUNK_EXEC__echo PWNED";
@@ -202,7 +200,6 @@ fn test_rust_prevents_nul_bytes_in_args() {
 #[test]
 fn test_branch_name_is_directive_not_executed() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked2";
 
@@ -245,7 +242,6 @@ fn test_branch_name_is_directive_not_executed() {
 #[test]
 fn test_branch_name_with_newline_directive_not_executed() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let malicious_branch = "feature\n__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked3";
 
@@ -327,7 +323,6 @@ fn test_path_with_directive_not_executed() {
     use crate::common::setup_snapshot_settings;
 
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a directory with a malicious name
     let malicious_dir = repo
@@ -358,7 +353,6 @@ fn test_path_with_directive_not_executed() {
 #[test]
 fn test_branch_name_with_cd_directive_not_executed() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Branch name that IS a CD directive (no NUL - git allows this)
     let malicious_branch = "__WORKTRUNK_CD__/tmp";
@@ -397,7 +391,6 @@ fn test_branch_name_with_cd_directive_not_executed() {
 #[test]
 fn test_error_message_with_directive_not_executed() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Try to switch to a non-existent branch with a name that looks like a directive
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked6";
@@ -430,7 +423,6 @@ fn test_error_message_with_directive_not_executed() {
 #[test]
 fn test_execute_flag_with_directive_like_branch_name() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Branch name that looks like a directive
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked7";

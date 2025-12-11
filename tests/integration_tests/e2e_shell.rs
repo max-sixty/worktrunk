@@ -27,7 +27,6 @@ macro_rules! skip_if_shell_unavailable {
 fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
     skip_if_shell_unavailable!(shell);
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let init_code = generate_init_code(&repo, shell);
     let bin_path = wt_bin_dir();
@@ -83,7 +82,6 @@ fn test_shell_integration_switch_and_remove(#[case] shell: &str) {
 fn test_bash_shell_integration_error_handling() {
     skip_if_shell_unavailable!("bash");
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
@@ -125,7 +123,6 @@ fn test_bash_shell_integration_error_handling() {
 fn test_bash_shell_integration_switch_existing_worktree() {
     skip_if_shell_unavailable!("bash");
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();

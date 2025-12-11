@@ -36,7 +36,6 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 #[test]
 fn test_user_post_create_hook_executes() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Write user config with post-create hook (no project config)
     repo.write_test_config(
@@ -69,7 +68,6 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
 #[test]
 fn test_user_hooks_run_before_project_hooks() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' >> hook_order.txt""#);
@@ -107,7 +105,6 @@ approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
 #[test]
 fn test_user_hooks_no_approval_required() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
@@ -133,7 +130,6 @@ setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 #[test]
 fn test_no_verify_flag_skips_all_hooks() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with post-create hook
     repo.write_project_config(r#"post-create = "echo 'PROJECT_HOOK' > project_marker.txt""#);
@@ -180,7 +176,6 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 #[test]
 fn test_user_post_create_hook_failure() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Write user config with failing hook
     repo.write_test_config(
@@ -211,7 +206,6 @@ failing = "exit 1"
 #[test]
 fn test_user_post_start_hook_executes() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Write user config with post-start hook (background)
     repo.write_test_config(
@@ -239,7 +233,6 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 #[test]
 fn test_user_post_start_skipped_with_no_verify() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Write user config with post-start hook
     repo.write_test_config(
@@ -285,7 +278,6 @@ fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&
 #[test]
 fn test_user_pre_merge_hook_executes() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -331,7 +323,6 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
 #[test]
 fn test_user_pre_merge_hook_failure_blocks_merge() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -372,7 +363,6 @@ check = "exit 1"
 #[test]
 fn test_user_pre_merge_skipped_with_no_verify() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -483,7 +473,6 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 #[test]
 fn test_user_post_merge_hook_executes() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -546,7 +535,6 @@ fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<
 #[cfg_attr(windows, ignore)]
 fn test_user_pre_remove_hook_executes() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a worktree to remove
     let _feature_wt = repo.add_worktree("feature");
@@ -579,7 +567,6 @@ cleanup = "echo 'USER_PRE_REMOVE_RAN' > /tmp/user_preremove_marker.txt"
 #[test]
 fn test_user_pre_remove_failure_blocks_removal() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
@@ -612,7 +599,6 @@ block = "exit 1"
 #[test]
 fn test_user_pre_remove_skipped_with_no_verify() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
@@ -657,7 +643,6 @@ block = "exit 1"
 #[test]
 fn test_user_pre_commit_hook_executes() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
@@ -691,7 +676,6 @@ lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
 #[test]
 fn test_user_pre_commit_failure_blocks_commit() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
@@ -726,7 +710,6 @@ lint = "exit 1"
 #[test]
 fn test_user_hook_template_variables() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Write user config with hook using template variables
     repo.write_test_config(
@@ -766,7 +749,6 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 #[test]
 fn test_user_and_project_post_start_both_run() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with post-start hook
     repo.write_project_config(r#"post-start = "echo 'PROJECT_POST_START' > project_bg.txt""#);

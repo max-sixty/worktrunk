@@ -18,7 +18,6 @@ fn wt_config_cache_cmd(repo: &TestRepo, args: &[&str]) -> Command {
 #[test]
 fn test_config_cache_show_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_config_cache_cmd(&repo, &["show"]).output().unwrap();
     assert!(output.status.success());
@@ -34,7 +33,6 @@ fn test_config_cache_show_empty() {
 #[test]
 fn test_config_cache_show_with_default_branch() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set default branch cache manually
     repo.git_command(&["config", "worktrunk.defaultBranch", "main"])
@@ -55,7 +53,6 @@ fn test_config_cache_show_with_default_branch() {
 #[test]
 fn test_config_cache_show_with_ci_entries() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
     repo.git_command(&[
@@ -94,7 +91,6 @@ fn test_config_cache_show_with_ci_entries() {
 #[test]
 fn test_config_cache_clear_all_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_config_cache_cmd(&repo, &["clear"]).output().unwrap();
     assert!(output.status.success());
@@ -104,7 +100,6 @@ fn test_config_cache_clear_all_empty() {
 #[test]
 fn test_config_cache_clear_all_with_data() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set default branch cache
     repo.git_command(&["config", "worktrunk.defaultBranch", "main"])
@@ -119,7 +114,6 @@ fn test_config_cache_clear_all_with_data() {
 #[test]
 fn test_config_cache_clear_default_branch() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set default branch cache
     repo.git_command(&["config", "worktrunk.defaultBranch", "main"])
@@ -136,7 +130,6 @@ fn test_config_cache_clear_default_branch() {
 #[test]
 fn test_config_cache_clear_default_branch_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_config_cache_cmd(&repo, &["clear", "default-branch"])
         .output()
@@ -148,7 +141,6 @@ fn test_config_cache_clear_default_branch_empty() {
 #[test]
 fn test_config_cache_clear_ci_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_config_cache_cmd(&repo, &["clear", "ci"])
         .output()
@@ -160,7 +152,6 @@ fn test_config_cache_clear_ci_empty() {
 #[test]
 fn test_config_cache_clear_unknown_type() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_config_cache_cmd(&repo, &["clear", "unknown"])
         .output()
@@ -177,7 +168,6 @@ fn test_config_cache_clear_unknown_type() {
 #[test]
 fn test_config_cache_clear_logs_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_config_cache_cmd(&repo, &["clear", "logs"])
         .output()
@@ -189,7 +179,6 @@ fn test_config_cache_clear_logs_empty() {
 #[test]
 fn test_config_cache_clear_logs_with_files() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create wt-logs directory with some log files
     let git_dir = repo.root_path().join(".git");
@@ -211,7 +200,6 @@ fn test_config_cache_clear_logs_with_files() {
 #[test]
 fn test_config_cache_clear_logs_single_file() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create wt-logs directory with one log file
     let git_dir = repo.root_path().join(".git");
@@ -229,7 +217,6 @@ fn test_config_cache_clear_logs_single_file() {
 #[test]
 fn test_config_cache_clear_all_with_logs() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create wt-logs directory with a log file
     let git_dir = repo.root_path().join(".git");

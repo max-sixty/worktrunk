@@ -27,7 +27,7 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mSquashing 2 commits & tracked changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-💡 [2mBackup created @ ba1424b[22m
+💡 [2mBackup created @ b7407a4[22m
 🔄 [36mGenerating squash commit message...[39m
 [107m [0m  [1msquash: combined commits[22m
-✅ [32mSquashed @ [2m072b879[22m[39m
+✅ [32mSquashed @ [2md5e34f6[22m[39m

@@ -24,16 +24,16 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mSquashing 1 commit & working tree changes into a single commit [90m(1 file, [32m+1[39m[39m[90m)[39m...[39m
-💡 [2mBackup created @ b18c23e[22m
+💡 [2mBackup created @ 0b230e0[22m
 🔄 [36mGenerating squash commit message...[39m
 💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
 [107m [0m  [1mSquash commits from main[22m
 [107m [0m  
 [107m [0m  Combined commits:
 [107m [0m  - feat: initial feature
-✅ [32mSquashed @ [2md118927[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2md118927[22m (no rebase needed)[39m
-[107m [0m  * [33md118927[m Squash commits from main
+✅ [32mSquashed @ [2m760ba6d[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2m760ba6d[22m (no rebase needed)[39m
+[107m [0m  * [33m760ba6d[m Squash commits from main
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m

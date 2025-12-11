@@ -17,7 +17,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -25,5 +24,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mWorktree for [1mmain[22m at [1m[REPO][22m; cd unavailable (no shell integration)[39m
+🟡 [33mWorktree for [1mmain[22m at [1m[REPO][22m; cannot cd (no shell integration)[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

@@ -87,7 +87,7 @@ pub fn approve_command_batch(
             let _ = output::print(warning_message(format!(
                 "Failed to save command approval: {e}"
             )));
-            let _ = output::print(hint_message("Approval will be requested again next time"));
+            let _ = output::print(hint_message("Approval will be requested again next time."));
         }
     }
 

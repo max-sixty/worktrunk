@@ -24,12 +24,12 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mSquashing 2 commits & working tree changes into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-💡 [2mBackup created @ 330ccd6[22m
+💡 [2mBackup created @ e997a6b[22m
 🔄 [36mGenerating squash commit message...[39m
 [107m [0m  [1mfix: update file 1 content[22m
-✅ [32mSquashed @ [2mb54183b[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mb54183b[22m (no rebase needed)[39m
-[107m [0m  * [33mb54183b[m fix: update file 1 content
+✅ [32mSquashed @ [2m735173c[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2m735173c[22m (no rebase needed)[39m
+[107m [0m  * [33m735173c[m fix: update file 1 content
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)

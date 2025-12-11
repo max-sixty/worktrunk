@@ -26,7 +26,7 @@ exit_code: 1
 🔄 [36mRebasing onto [1mmain[22m...[39m
 ❌ [31mRebase onto [1mmain[22m incomplete[39m
 [107m [0m  Rebasing (1/1)
-[107m [0m  error: could not apply c661874... Update shared.txt in feature
-[107m [0m  Could not apply c661874... # Update shared.txt in feature
+[107m [0m  error: could not apply e1cf9a1... Update shared.txt in feature
+[107m [0m  Could not apply e1cf9a1... # Update shared.txt in feature
 [107m [0m  Auto-merging shared.txt
 [107m [0m  CONFLICT (content): Merge conflict in shared.txt

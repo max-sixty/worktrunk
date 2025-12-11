@@ -142,7 +142,6 @@ fn normalize_output(output: &str) -> String {
 #[test]
 fn test_approval_prompt_accept() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -163,7 +162,6 @@ fn test_approval_prompt_accept() {
 #[test]
 fn test_approval_prompt_decline() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -184,7 +182,6 @@ fn test_approval_prompt_decline() {
 #[test]
 fn test_approval_prompt_multiple_commands() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -213,7 +210,6 @@ third = "echo 'Third command'"
 #[test]
 fn test_approval_prompt_permission_error() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
@@ -275,7 +271,6 @@ fn test_approval_prompt_permission_error() {
 #[test]
 fn test_approval_prompt_named_commands() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(
         r#"[post-create]
 install = "echo 'Installing dependencies...'"
@@ -314,7 +309,6 @@ test = "echo 'Running tests...'"
 #[test]
 fn test_approval_prompt_mixed_approved_unapproved_accept() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -373,7 +367,6 @@ approved-commands = ["echo 'Second command'"]
 #[test]
 fn test_approval_prompt_mixed_approved_unapproved_decline() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(
         r#"[post-create]
 first = "echo 'First command'"
@@ -426,9 +419,7 @@ approved-commands = ["echo 'Second command'"]
         "Should NOT execute any commands when declined"
     );
     assert!(
-        normalized.contains("Created worktree")
-            && normalized.contains("based off")
-            && normalized.contains("@"),
+        normalized.contains("Created new worktree"),
         "Should still create worktree even when commands declined"
     );
     assert_snapshot!(

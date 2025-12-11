@@ -31,7 +31,6 @@ fn snapshot_clear_approvals(test_name: &str, repo: &TestRepo, args: &[&str]) {
 #[test]
 fn test_add_approvals_no_config() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     snapshot_add_approvals("add_approvals_no_config", &repo, &[]);
 }
@@ -39,7 +38,6 @@ fn test_add_approvals_no_config() {
 #[test]
 fn test_add_approvals_all_with_none_approved() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(r#"post-create = "echo 'test'""#);
     repo.commit("Add config");
 
@@ -49,7 +47,6 @@ fn test_add_approvals_all_with_none_approved() {
 #[test]
 fn test_add_approvals_empty_config() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config("");
     repo.commit("Add empty config");
 
@@ -63,7 +60,6 @@ fn test_add_approvals_empty_config() {
 #[test]
 fn test_clear_approvals_no_approvals() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     snapshot_clear_approvals("clear_approvals_no_approvals", &repo, &[]);
 }
@@ -93,7 +89,6 @@ fn test_clear_approvals_with_approvals() {
 #[test]
 fn test_clear_approvals_global_no_approvals() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     snapshot_clear_approvals("clear_approvals_global_no_approvals", &repo, &["--global"]);
 }
@@ -154,7 +149,6 @@ fn test_clear_approvals_after_clear() {
 #[test]
 fn test_clear_approvals_multiple_approvals() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.write_project_config(
         r#"
 post-create = "echo 'first'"

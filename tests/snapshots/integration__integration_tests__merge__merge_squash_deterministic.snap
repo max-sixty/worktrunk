@@ -32,9 +32,9 @@ exit_code: 0
 [107m [0m  - feat: add file 1
 [107m [0m  - fix: update logic
 [107m [0m  - docs: update readme
-✅ [32mSquashed @ [2m27eb169[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m27eb169[22m (no rebase needed)[39m
-[107m [0m  * [33m27eb169[m Squash commits from main
+✅ [32mSquashed @ [2mdd1e5fd[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mdd1e5fd[22m (no rebase needed)[39m
+[107m [0m  * [33mdd1e5fd[m Squash commits from main
 [107m [0m   file1.txt | 1 [32m+[m
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   file3.txt | 1 [32m+[m

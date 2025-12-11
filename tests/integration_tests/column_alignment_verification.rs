@@ -311,7 +311,6 @@ fn verify_table_alignment(output: &str) -> Result<(), String> {
 #[test]
 fn test_alignment_verification_with_varying_content() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create diverse worktrees to test alignment
     repo.add_worktree("main-feature");
@@ -378,7 +377,6 @@ fn test_alignment_with_unicode_content() {
 #[test]
 fn test_alignment_with_sparse_columns() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create mix of worktrees - some with diffs, some without
     repo.add_worktree("no-changes-1");
@@ -417,7 +415,6 @@ fn test_alignment_with_sparse_columns() {
 #[test]
 fn test_alignment_real_world_scenario() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature branches with varying amounts of working tree changes
     // This simulates a real-world scenario with different diff sizes
@@ -468,7 +465,6 @@ fn test_alignment_real_world_scenario() {
 #[test]
 fn test_alignment_at_different_terminal_widths() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");

@@ -10,7 +10,6 @@ use insta_cmd::assert_cmd_snapshot;
 #[test]
 fn test_status_column_alignment_with_header() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktree with status symbols
     let wt = repo.add_worktree("test");
@@ -43,7 +42,6 @@ fn test_status_column_alignment_with_header() {
 #[test]
 fn test_status_column_width_consistency() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create multiple worktrees with different status symbol combinations
     let wt1 = repo.add_worktree("simple");

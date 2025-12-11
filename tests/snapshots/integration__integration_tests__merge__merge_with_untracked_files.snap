@@ -29,12 +29,12 @@ exit_code: 0
 [107m [0m  untracked1.txt
 [107m [0m  untracked2.txt
 🔄 [36mSquashing 1 commit & working tree changes into a single commit [90m(3 files, [32m+3[39m[39m[90m)[39m...[39m
-💡 [2mBackup created @ 4967998[22m
+💡 [2mBackup created @ b8f4f9c[22m
 🔄 [36mGenerating squash commit message...[39m
 [107m [0m  [1mfix: commit changes[22m
-✅ [32mSquashed @ [2mffd7e7b[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mffd7e7b[22m (no rebase needed)[39m
-[107m [0m  * [33mffd7e7b[m fix: commit changes
+✅ [32mSquashed @ [2mc785ba8[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mc785ba8[22m (no rebase needed)[39m
+[107m [0m  * [33mc785ba8[m fix: commit changes
 [107m [0m   file1.txt      | 1 [32m+[m
 [107m [0m   untracked1.txt | 1 [32m+[m
 [107m [0m   untracked2.txt | 1 [32m+[m

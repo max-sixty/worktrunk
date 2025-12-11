@@ -284,58 +284,44 @@ impl SummaryMetrics {
         }
     }
 
-    /// Returns (primary_parts, status_parts, meta_parts) for structured joining.
-    /// Primary: worktree/branch counts
-    /// Status: dirty/ahead counts
-    /// Meta: hidden columns
     pub(super) fn summary_parts(
         &self,
         include_branches: bool,
         hidden_columns: usize,
-    ) -> (Vec<String>, Vec<String>, Vec<String>) {
-        let mut primary = Vec::new();
-        let mut status = Vec::new();
-        let mut meta = Vec::new();
+    ) -> Vec<String> {
+        let mut parts = Vec::new();
 
-        // Primary: item counts
-        let wt_plural = if self.worktrees == 1 { "" } else { "s" };
         if include_branches {
-            primary.push(format!("{} worktree{}", self.worktrees, wt_plural));
+            parts.push(format!("{} worktrees", self.worktrees));
             if self.local_branches > 0 {
-                let br_plural = if self.local_branches == 1 { "" } else { "es" };
-                primary.push(format!("{} branch{}", self.local_branches, br_plural));
+                parts.push(format!("{} branches", self.local_branches));
             }
             if self.remote_branches > 0 {
-                let rb_plural = if self.remote_branches == 1 { "" } else { "es" };
-                primary.push(format!(
-                    "{} remote branch{}",
-                    self.remote_branches, rb_plural
-                ));
+                parts.push(format!("{} remote branches", self.remote_branches));
             }
         } else {
-            primary.push(format!("{} worktree{}", self.worktrees, wt_plural));
+            let plural = if self.worktrees == 1 { "" } else { "s" };
+            parts.push(format!("{} worktree{}", self.worktrees, plural));
         }
 
-        // Status: state counts
         if self.dirty_worktrees > 0 {
-            status.push(format!("{} with changes", self.dirty_worktrees));
+            parts.push(format!("{} with changes", self.dirty_worktrees));
         }
 
         if self.ahead_items > 0 {
-            status.push(format!("{} ahead", self.ahead_items));
+            parts.push(format!("{} ahead", self.ahead_items));
         }
 
-        // Meta: UI state
         if hidden_columns > 0 {
             let plural = if hidden_columns == 1 {
                 "column"
             } else {
                 "columns"
             };
-            meta.push(format!("{} {} hidden", hidden_columns, plural));
+            parts.push(format!("{} {} hidden", hidden_columns, plural));
         }
 
-        (primary, status, meta)
+        parts
     }
 }
 
@@ -350,17 +336,8 @@ pub(crate) fn format_summary_message(
 
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
-    let (primary, status, meta) = metrics.summary_parts(show_branches, hidden_nonempty_count);
-
-    // Join groups with semicolons, items within groups with commas
-    let mut groups = vec![primary.join(", ")];
-    if !status.is_empty() {
-        groups.push(status.join(", "));
-    }
-    if !meta.is_empty() {
-        groups.push(meta.join(", "));
-    }
-    let summary = groups.join("; ");
-
+    let summary = metrics
+        .summary_parts(show_branches, hidden_nonempty_count)
+        .join(", ");
     format!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}")
 }

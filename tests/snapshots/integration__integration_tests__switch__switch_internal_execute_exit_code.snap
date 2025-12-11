@@ -31,6 +31,6 @@ cd '[REPO].exit-code-test'
 exit 42
 
 ----- stderr -----
-✅ [32m[32mCreated worktree [1mexit-code-test[22m based off [1mmain[22m @ [1m[REPO].exit-code-test[39m[22m[39m
+✅ [32m[32mCreated new worktree for [1mexit-code-test[22m from [1mmain[22m at [1m[REPO].exit-code-test[39m[22m[39m
 🔄 [36mExecuting (--execute):[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 42

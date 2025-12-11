@@ -1,0 +1,8 @@
+[user]
+	name = Test User
+	email = test@example.com
+[advice]
+	mergeConflict = false
+	resolveConflict = false
+[init]
+	defaultBranch = main

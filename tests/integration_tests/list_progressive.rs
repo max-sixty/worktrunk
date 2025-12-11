@@ -10,7 +10,6 @@ use crate::common::progressive_output::{ProgressiveCaptureOptions, capture_progr
 #[test]
 fn test_list_progressive_rendering_basic() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a few worktrees to have data to render
     repo.add_worktree("feature-a");
@@ -59,7 +58,6 @@ fn test_list_progressive_rendering_basic() {
 #[test]
 fn test_list_progressive_dots_decrease() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create multiple worktrees to ensure progressive rendering is observable
     for i in 1..=5 {
@@ -80,7 +78,6 @@ fn test_list_progressive_dots_decrease() {
 #[test]
 fn test_list_progressive_timing() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.add_worktree("feature");
 
     let output = capture_progressive_output(
@@ -109,7 +106,6 @@ fn test_list_progressive_timing() {
 #[test]
 fn test_list_progressive_snapshot_at() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.add_worktree("feature");
 
     let output = capture_progressive_output(
@@ -139,7 +135,6 @@ fn test_list_progressive_snapshot_at() {
 #[test]
 fn test_list_progressive_many_worktrees() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create many worktrees to ensure rendering takes time
     for i in 1..=10 {
@@ -185,7 +180,6 @@ fn test_list_progressive_many_worktrees() {
 #[test]
 fn test_list_progressive_fast_command() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Run list without any worktrees (fast)
     let output = capture_progressive_output(

@@ -27,8 +27,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "a27cd57d20a6211799da676e70edefa5152f99fe",
-      "short_sha": "a27cd57",
+      "sha": "2c97a38e97cba7ea1d95d6c8b948b0cf5199fc79",
+      "short_sha": "2c97a38",
       "message": "Main commit 2",
       "timestamp": 0
     },
@@ -62,8 +62,8 @@ exit_code: 0
     "path": "[REPO].feature-ahead",
     "kind": "worktree",
     "commit": {
-      "sha": "f16cd37915d5ee93903252f5cf877c76c54f3d50",
-      "short_sha": "f16cd37",
+      "sha": "13797c6a6136f965d1186fdb1f4fa2de2707df6d",
+      "short_sha": "13797c6",
       "message": "Feature commit 2",
       "timestamp": 0
     },
@@ -96,8 +96,8 @@ exit_code: 0
     "path": "[REPO].feature-behind",
     "kind": "worktree",
     "commit": {
-      "sha": "6c3da84215d400bf6e05a7f9cd1efcfbd825b9e9",
-      "short_sha": "6c3da84",
+      "sha": "98ef56c1ce6de2d5c942729c2be35461c4441a8a",
+      "short_sha": "98ef56c",
       "message": "Initial commit on main",
       "timestamp": 0
     },

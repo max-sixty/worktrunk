@@ -50,7 +50,7 @@ Create a worktree for a new task:
 
 {% terminal() %}
 <span class="prompt">$</span> <span class="cmd">wt switch --create fix-auth</span>
-✅ <span class=g>Created worktree <b>fix-auth</b> based off <b>main</b> @ <b>../repo.fix-auth</b></span>
+✅ <span class=g>Created new worktree for <b>fix-auth</b> from <b>main</b> at <b>../repo.fix-auth</b></span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
@@ -61,7 +61,7 @@ Switch to an existing worktree:
 
 {% terminal() %}
 <span class="prompt">$</span> <span class="cmd">wt switch feature-api</span>
-✅ <span class=g>Switched to <b>feature-api</b> @ <b>../repo.feature-api</b></span>
+✅ <span class=g>Switched to worktree for <b>feature-api</b> at <b>../repo.feature-api</b></span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
@@ -73,11 +73,11 @@ See all worktrees at a glance:
 {% terminal() %}
 <span class="prompt">$</span> <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
-@ <b>feature-api</b>  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <b>./repo.feature-api</b>   <span class=g>⇡3</span>      <span class=d>28d38c20</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
-^ main             <span class=d>^</span><span class=d>⇅</span>                        ./repo               <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>2e6b7a8f</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth:…</span>
-+ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  ./repo.fix-auth        <span class=d>|</span>     <span class=d>1d697d5b</span>  <span class=d>5h</span>    <span class=d>Add secure token…</span>
+@ <b>feature-api</b>  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>  <b>./repo.feature-api</b>   <span class=g>⇡3</span>      <span class=d>d35485d7</span>  <span class=d>30m</span>   <span class=d>Add API tests</span>
+^ main             <span class=d>^</span><span class=d>⇅</span>                        ./repo               <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>e18e1b4d</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth:…</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  ./repo.fix-auth        <span class=d>|</span>     <span class=d>2517d700</span>  <span class=d>5h</span>    <span class=d>Add secure token…</span>
 
-⚪ <span class=d>Showing 3 worktrees; 1 with changes, 2 ahead</span>
+⚪ <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->

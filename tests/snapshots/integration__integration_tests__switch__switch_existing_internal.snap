@@ -27,4 +27,4 @@ exit_code: 0
 cd '[REPO].existing-wt'
 
 ----- stderr -----
-✅ [32m[32mSwitched to [1mexisting-wt[22m @ [1m[REPO].existing-wt[39m[22m[39m
+✅ [32m[32mSwitched to worktree for [1mexisting-wt[22m at [1m[REPO].existing-wt[39m[22m[39m

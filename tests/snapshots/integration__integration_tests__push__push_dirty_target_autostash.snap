@@ -25,8 +25,8 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mStashing changes in [1m[REPO][22m...[39m
-🔄 [36mPushing 1 commit to [1mmain[22m @ [2m6551244[22m[39m
-[107m [0m  * [33m6551244[m Add feature file
+🔄 [36mPushing 1 commit to [1mmain[22m @ [2m3cf9bf5[22m[39m
+[107m [0m  * [33m3cf9bf5[m Add feature file
 [107m [0m   feature.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 🔄 [36mRestoring stashed changes in [1m[REPO][22m...[39m

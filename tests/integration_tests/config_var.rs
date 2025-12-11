@@ -32,7 +32,6 @@ fn wt_var_get_cmd(repo: &TestRepo, args: &[&str]) -> Command {
 #[test]
 fn test_var_set_marker_branch_default() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_var_set_cmd(&repo, &["marker", "🚧"]).output().unwrap();
     assert!(output.status.success());
@@ -49,7 +48,6 @@ fn test_var_set_marker_branch_default() {
 #[test]
 fn test_var_set_marker_branch_specific() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
     let output = wt_var_set_cmd(&repo, &["marker", "🔧", "--branch", "feature"])
@@ -69,7 +67,6 @@ fn test_var_set_marker_branch_specific() {
 #[test]
 fn test_var_clear_marker_branch_default() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set a marker first
     repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
@@ -91,7 +88,6 @@ fn test_var_clear_marker_branch_default() {
 #[test]
 fn test_var_clear_marker_branch_specific() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set a marker first
     repo.git_command(&["config", "worktrunk.marker.feature", "🔧"])
@@ -115,7 +111,6 @@ fn test_var_clear_marker_branch_specific() {
 #[test]
 fn test_var_clear_marker_all() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set multiple markers
     repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
@@ -145,7 +140,6 @@ fn test_var_clear_marker_all() {
 #[test]
 fn test_var_clear_marker_all_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_var_clear_cmd(&repo, &["marker", "--all"])
         .output()
@@ -157,7 +151,6 @@ fn test_var_clear_marker_all_empty() {
 #[test]
 fn test_var_get_marker() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Set a marker first
     repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
@@ -173,7 +166,6 @@ fn test_var_get_marker() {
 #[test]
 fn test_var_get_marker_empty() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_var_get_cmd(&repo, &["marker"]).output().unwrap();
     assert!(output.status.success());
@@ -184,7 +176,6 @@ fn test_var_get_marker_empty() {
 #[test]
 fn test_var_get_marker_specific_branch() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
     // Set a marker for feature branch
@@ -203,7 +194,6 @@ fn test_var_get_marker_specific_branch() {
 #[test]
 fn test_var_get_default_branch() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let output = wt_var_get_cmd(&repo, &["default-branch"]).output().unwrap();
     assert!(output.status.success());
@@ -214,7 +204,6 @@ fn test_var_get_default_branch() {
 #[test]
 fn test_var_get_default_branch_no_remote() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Without remote, should infer from local branches
     let output = wt_var_get_cmd(&repo, &["default-branch"]).output().unwrap();
@@ -226,7 +215,6 @@ fn test_var_get_default_branch_no_remote() {
 #[test]
 fn test_var_get_ci_status() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Without any CI configured, should return "noci"
     let output = wt_var_get_cmd(&repo, &["ci-status"]).output().unwrap();
@@ -237,7 +225,6 @@ fn test_var_get_ci_status() {
 #[test]
 fn test_var_get_ci_status_specific_branch() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
     // Without any CI configured, should return "noci"
@@ -251,7 +238,6 @@ fn test_var_get_ci_status_specific_branch() {
 #[test]
 fn test_var_get_ci_status_nonexistent_branch() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Should error for nonexistent branch
     let output = wt_var_get_cmd(&repo, &["ci-status", "--branch", "nonexistent"])

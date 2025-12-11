@@ -27,8 +27,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "133d1f05a73a1478707f3438625069c7ebd8eb27",
-      "short_sha": "133d1f0",
+      "sha": "ede2fd3bb9c1e19c7b803c11c0648d0b6d335ea2",
+      "short_sha": "ede2fd3",
       "message": "Same content on main",
       "timestamp": 0
     },
@@ -62,8 +62,8 @@ exit_code: 0
     "path": "[REPO].feature-merged",
     "kind": "worktree",
     "commit": {
-      "sha": "d78d130165cc11f6df39113ded5bbf1c16f8ebc3",
-      "short_sha": "d78d130",
+      "sha": "034aef5b37347d10e770bb86865c148124ff8546",
+      "short_sha": "034aef5",
       "message": "Merge main into feature",
       "timestamp": 0
     },

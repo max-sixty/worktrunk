@@ -28,9 +28,9 @@ exit_code: 0
 🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
 💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
 [107m [0m  [1mChanges to dirty.txt[22m
-✅ [32mCommitted changes @ [2mc1126ec[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mc1126ec[22m (no rebase needed)[39m
-[107m [0m  * [33mc1126ec[m Changes to dirty.txt
+✅ [32mCommitted changes @ [2ma73fb89[22m[39m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2ma73fb89[22m (no rebase needed)[39m
+[107m [0m  * [33ma73fb89[m Changes to dirty.txt
 [107m [0m   dirty.txt | 1 [32m+[m
 [107m [0m   1 file changed, 1 insertion(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m

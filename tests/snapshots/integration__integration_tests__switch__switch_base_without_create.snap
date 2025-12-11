@@ -19,7 +19,6 @@ info:
     LANG: C
     LC_ALL: C
     SOURCE_DATE_EPOCH: "1735776000"
-    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
 success: true
@@ -27,5 +26,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33m[1m--base[22m is only used with [1m--create[22m; ignoring[39m
+🟡 [33m--base flag is only used with --create, ignoring[39m
 ⚪ Already on worktree for [1mmain[22m at [1m[REPO][22m

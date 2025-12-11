@@ -25,4 +25,4 @@ exit_code: 0
 ----- stderr -----
 🟡 [33mNo worktree found for branch [1mfeature-unmerged[22m[39m
 ⚪ Branch [1mfeature-unmerged[22m retained; has unmerged changes
-💡 [2mUse [90mwt remove -D[39m to delete unmerged branches[22m
+💡 [2m[90mwt remove -D[39m deletes unmerged branches[22m

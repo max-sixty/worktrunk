@@ -12,7 +12,7 @@
 //!
 //! **stderr** (streams directly to terminal in real-time):
 //! ```text
-//! ✅ Created worktree my-branch based off main @ ~/worktrees/my-branch
+//! ✅ Created new worktree for my-branch at ~/worktrees/my-branch
 //! ```
 //!
 //! **stdout** (shell script emitted at the end):

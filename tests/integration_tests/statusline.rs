@@ -59,14 +59,11 @@ fn run_statusline(repo: &TestRepo, args: &[&str], stdin_json: Option<&str>) -> S
 // --- Test Fixtures ---
 
 fn setup_basic_repo() -> TestRepo {
-    let repo = TestRepo::new();
-    repo.commit("Initial commit");
-    repo
+    TestRepo::new()
 }
 
 fn setup_repo_with_changes() -> TestRepo {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create uncommitted changes
     std::fs::write(repo.root_path().join("modified.txt"), "modified content").unwrap();
@@ -76,7 +73,6 @@ fn setup_repo_with_changes() -> TestRepo {
 
 fn setup_repo_with_commits_ahead() -> TestRepo {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create feature branch with commits ahead
     let feature_path = repo.add_worktree("feature");

@@ -5,9 +5,7 @@ use tempfile::TempDir;
 
 /// Common setup for switch tests - creates repo with initial commit
 fn setup_switch_repo() -> TestRepo {
-    let repo = TestRepo::new();
-    repo.commit("Initial commit");
-    repo
+    TestRepo::new()
 }
 
 /// Helper to create snapshot with normalized paths and SHAs

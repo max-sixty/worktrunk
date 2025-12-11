@@ -28,7 +28,6 @@ fn run_snapshot(settings: Settings, test_name: &str, mut cmd: Command) {
 #[test]
 fn test_short_branch_names_shorter_than_header() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktrees with very short branch names (shorter than "Branch" header)
     repo.add_worktree("a");
@@ -41,7 +40,6 @@ fn test_short_branch_names_shorter_than_header() {
 #[test]
 fn test_long_branch_names_longer_than_header() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktrees with very long branch names
     repo.add_worktree("very-long-feature-branch-name");
@@ -54,7 +52,6 @@ fn test_long_branch_names_longer_than_header() {
 #[test]
 fn test_unicode_branch_names_width_calculation() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktrees with unicode characters that have different visual widths
     // Note: Git may have restrictions on branch names, so use valid characters
@@ -68,7 +65,6 @@ fn test_unicode_branch_names_width_calculation() {
 #[test]
 fn test_mixed_length_branch_names() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Mix of very short, medium, and very long branch names
     repo.add_worktree("x");
@@ -84,7 +80,6 @@ fn test_mixed_length_branch_names() {
 #[test]
 fn test_column_alignment_varying_diff_widths() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktrees with varying diff sizes to test alignment
     repo.add_worktree("feature-small");
@@ -114,7 +109,6 @@ fn test_column_alignment_varying_diff_widths() {
 #[test]
 fn test_column_alignment_with_empty_diffs() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Mix of worktrees with and without diffs
     repo.add_worktree("no-changes");
@@ -132,7 +126,6 @@ fn test_column_alignment_with_empty_diffs() {
 #[test]
 fn test_column_alignment_extreme_diff_sizes() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create worktrees with extreme diff size differences
     repo.add_worktree("tiny");

@@ -702,7 +702,6 @@ mod tests {
     fn test_wrapper_handles_command_failure(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create a worktree that already exists
         repo.add_worktree("existing");
@@ -737,7 +736,6 @@ mod tests {
     fn test_wrapper_switch_create(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "feature"]);
 
@@ -747,7 +745,7 @@ mod tests {
         output.assert_no_job_control_messages();
 
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "{}: Should show success message",
             shell
         );
@@ -765,7 +763,6 @@ mod tests {
     fn test_wrapper_remove(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create a worktree to remove
         repo.add_worktree("to-remove");
@@ -849,7 +846,6 @@ mod tests {
     fn test_wrapper_merge(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create a feature branch
         repo.add_worktree("feature");
@@ -873,7 +869,6 @@ mod tests {
     fn test_wrapper_switch_with_execute(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Use --force to skip approval prompt in tests
         let output = exec_through_wrapper(
@@ -915,7 +910,6 @@ mod tests {
     fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Use --force to skip approval prompt in tests
         // wt should succeed (creates worktree), but the execute command should fail with exit 42
@@ -942,7 +936,7 @@ mod tests {
 
         // Should still show wt's success message (worktree was created)
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "{}: Should show wt's success message even though execute command failed",
             shell
         );
@@ -961,7 +955,6 @@ mod tests {
     fn test_wrapper_switch_with_hooks(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create project config with both post-create and post-start hooks
         let config_dir = repo.root_path().join(".config");
@@ -1018,7 +1011,6 @@ approved-commands = [
     fn test_wrapper_merge_with_pre_merge_success(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create project config with pre-merge validation
         let config_dir = repo.root_path().join(".config");
@@ -1100,7 +1092,6 @@ approved-commands = [
     fn test_wrapper_merge_with_pre_merge_failure(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create project config with failing pre-merge validation
         let config_dir = repo.root_path().join(".config");
@@ -1180,7 +1171,6 @@ approved-commands = [
     fn test_wrapper_merge_with_mixed_stdout_stderr(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Copy the fixture script to the test repo to avoid path issues with special characters
         // (CARGO_MANIFEST_DIR may contain single quotes like worktrunk.'∅' which break shell parsing)
@@ -1282,7 +1272,6 @@ approved-commands = [
     #[test]
     fn test_switch_with_post_start_command_no_directive_leak() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Configure a post-start command in the project config (this is where the bug manifests)
         // The println! in handle_post_start_commands causes directive leaks
@@ -1326,7 +1315,6 @@ approved-commands = ["echo 'test command executed'"]
     #[test]
     fn test_switch_with_execute_through_wrapper() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Use --force to skip approval prompt in tests
         let output = exec_through_wrapper(
@@ -1361,7 +1349,6 @@ approved-commands = ["echo 'test command executed'"]
     #[test]
     fn test_bash_shell_integration_hint_suppressed() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // When running through the shell wrapper, the "To enable automatic cd" hint
         // should NOT appear because the user already has shell integration
@@ -1376,7 +1363,7 @@ approved-commands = ["echo 'test command executed'"]
 
         // Should still have the success message
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "Success message missing"
         );
 
@@ -1386,7 +1373,6 @@ approved-commands = ["echo 'test command executed'"]
     #[test]
     fn test_readme_example_simple_switch() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create worktree through shell wrapper (suppresses hint)
         let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "fix-auth"]);
@@ -1402,7 +1388,6 @@ approved-commands = ["echo 'test command executed'"]
     #[test]
     fn test_readme_example_switch_back() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create worktrees (fix-auth is where we are after step 2, feature-api exists from earlier)
         exec_through_wrapper("bash", &repo, "switch", &["--create", "fix-auth"]);
@@ -1425,7 +1410,6 @@ approved-commands = ["echo 'test command executed'"]
     #[test]
     fn test_readme_example_remove() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create worktrees
         exec_through_wrapper("bash", &repo, "switch", &["--create", "fix-auth"]);
@@ -1446,7 +1430,6 @@ approved-commands = ["echo 'test command executed'"]
     #[test]
     fn test_wrapper_preserves_progress_messages() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Configure a post-start background command that will trigger progress output
         let config_dir = repo.root_path().join(".config");
@@ -1514,7 +1497,6 @@ approved-commands = ["echo 'background task'"]
     #[test]
     fn test_fish_wrapper_preserves_progress_messages() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Configure a post-start background command that will trigger progress output
         let config_dir = repo.root_path().join(".config");
@@ -1566,7 +1548,6 @@ approved-commands = ["echo 'fish background task'"]
     #[test]
     fn test_fish_multiline_command_execution() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Test that Fish wrapper handles multi-line commands correctly
         // This tests Fish's NUL-byte parsing with embedded newlines
@@ -1605,7 +1586,6 @@ approved-commands = ["echo 'fish background task'"]
     #[test]
     fn test_fish_wrapper_handles_empty_chunks() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Test edge case: command that produces minimal output
         // This verifies Fish's `test -n "$chunk"` check works correctly
@@ -1618,7 +1598,7 @@ approved-commands = ["echo 'fish background task'"]
 
         // Should still show success message
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "Success message missing from minimal output"
         );
 
@@ -1642,7 +1622,6 @@ approved-commands = ["echo 'fish background task'"]
         use std::env;
 
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Get the worktrunk source directory (where this test is running from)
         // This is the directory that contains Cargo.toml with the workspace
@@ -1752,7 +1731,6 @@ approved-commands = ["echo 'fish background task'"]
     #[test]
     fn test_zsh_no_job_control_notifications() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Configure a post-start command that will trigger background job
         let config_dir = repo.root_path().join(".config");
@@ -1807,7 +1785,6 @@ approved-commands = ["echo 'background job'"]
     #[test]
     fn test_bash_job_control_suppression() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Configure a post-start command that will trigger background job
         let config_dir = repo.root_path().join(".config");
@@ -1867,7 +1844,7 @@ approved-commands = ["echo 'bash background'"]
 
         // Verify the command completed successfully
         assert!(
-            output.contains("Created worktree"),
+            output.contains("Created new worktree"),
             "Should show success message.\nOutput:\n{}",
             output
         );
@@ -1892,7 +1869,6 @@ approved-commands = ["echo 'bash background'"]
     #[test]
     fn test_bash_completions_registered() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "bash");
@@ -1932,7 +1908,6 @@ approved-commands = ["echo 'bash background'"]
     #[test]
     fn test_fish_completions_registered() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "fish");
@@ -1978,7 +1953,6 @@ approved-commands = ["echo 'bash background'"]
     #[test]
     fn test_zsh_wrapper_function_registered() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, "zsh");
@@ -2031,7 +2005,6 @@ approved-commands = ["echo 'bash background'"]
     #[case("fish")]
     fn test_branch_name_with_slashes(#[case] shell: &str) {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Branch name with slashes (common git convention)
         let output =
@@ -2041,7 +2014,7 @@ approved-commands = ["echo 'bash background'"]
         output.assert_no_directive_leaks();
 
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "{}: Should create worktree for branch with slashes",
             shell
         );
@@ -2054,7 +2027,6 @@ approved-commands = ["echo 'bash background'"]
     #[case("fish")]
     fn test_branch_name_with_dashes_underscores(#[case] shell: &str) {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "fix-bug_123"]);
 
@@ -2062,7 +2034,7 @@ approved-commands = ["echo 'bash background'"]
         output.assert_no_directive_leaks();
 
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "{}: Should create worktree for branch with dashes/underscores",
             shell
         );
@@ -2079,7 +2051,6 @@ approved-commands = ["echo 'bash background'"]
     #[case("fish")]
     fn test_worktrunk_bin_fallback(#[case] shell: &str) {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wrapper_script = generate_wrapper(&repo, shell);
@@ -2163,7 +2134,7 @@ approved-commands = ["echo 'bash background'"]
         output.assert_no_directive_leaks();
 
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "{}: Should create worktree using WORKTRUNK_BIN fallback.\nOutput:\n{}",
             shell,
             output.combined
@@ -2191,7 +2162,6 @@ approved-commands = ["echo 'bash background'"]
     #[case("fish")]
     fn test_shell_completes_cleanly(#[case] shell: &str) {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Configure a post-start command to exercise the background job code path
         let config_dir = repo.root_path().join(".config");
@@ -2229,7 +2199,7 @@ approved-commands = ["echo 'cleanup test'"]
         output.assert_no_directive_leaks();
 
         assert!(
-            output.combined.contains("Created worktree"),
+            output.combined.contains("Created new worktree"),
             "{}: Should complete successfully",
             shell
         );
@@ -2254,7 +2224,6 @@ approved-commands = ["echo 'cleanup test'"]
     #[test]
     fn test_readme_example_hooks_pre_merge() {
         let mut repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create project config with pre-merge hooks
         let config_dir = repo.root_path().join(".config");
@@ -2525,7 +2494,6 @@ command = "{}"
     #[test]
     fn test_readme_example_hooks_post_create() {
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create project config with post-create and post-start hooks
         let config_dir = repo.root_path().join(".config");
@@ -2619,7 +2587,6 @@ fi
         use std::io::{Read, Write};
 
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         // Create project config with named post-create commands
         repo.write_project_config(
@@ -2735,7 +2702,6 @@ test = "echo 'Running tests...'"
         use std::io::Read;
 
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
@@ -2900,7 +2866,6 @@ fi
         use std::io::Read;
 
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
@@ -3172,7 +3137,6 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
         use std::io::Read;
 
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();
@@ -3371,7 +3335,6 @@ echo "SCRIPT_COMPLETED"
         use std::io::Read;
 
         let repo = TestRepo::new();
-        repo.commit("Initial commit");
 
         let wt_bin = get_cargo_bin("wt");
         let wt_bin_dir = wt_bin.parent().unwrap();

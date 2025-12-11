@@ -1,5 +1,6 @@
 [default.extend-words]
 # Git commit hashes that typos flags as potential typos
 ba = "ba"  # Part of commit hashes like e28e0ba
+ede = "ede"  # Part of commit hashes like ede2fd3
 # ANSI escape codes in snapshots make is_main/is_current/is_previous look like "mis"
 mis = "mis"

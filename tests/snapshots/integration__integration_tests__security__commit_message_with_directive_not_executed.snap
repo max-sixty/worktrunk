@@ -23,7 +23,7 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m            [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ [1mmain[0m         [2m^[22m                         [1m./repo[0m                   [2mf9d58892[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
-+ [2mfeature[0m      [2m_[22m                         [2m./repo.feature[0m           [2mf9d58892[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
+@ [1mmain[0m         [2m^[22m                         [1m./repo[0m                   [2mecfb1c3a[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
++ [2mfeature[0m      [2m_[22m                         [2m./repo.feature[0m           [2mecfb1c3a[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
 
 ⚪ [2mShowing 2 worktrees

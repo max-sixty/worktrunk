@@ -25,7 +25,6 @@ use tempfile::TempDir;
 #[test]
 fn test_list_with_internal_flag() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     let settings = setup_snapshot_settings(&repo);
 
@@ -46,7 +45,6 @@ fn test_list_with_internal_flag() {
 #[test]
 fn test_config_show_with_internal_flag() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     let temp_home = TempDir::new().unwrap();
 
     // Setup mock gh/glab for deterministic BINARIES output

@@ -30,9 +30,7 @@ fn snapshot_remove_with_global_flags(
 
 /// Common setup for remove tests - creates repo with initial commit and remote
 fn setup_remove_repo() -> TestRepo {
-    let repo = TestRepo::new();
-    repo.commit("Initial commit");
-    repo
+    TestRepo::new()
 }
 
 #[test]
@@ -769,7 +767,6 @@ fn test_remove_squash_merged_then_main_advanced() {
 fn test_pre_remove_hook_executes() {
     // Use simple repo without remote for predictable project ID
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with pre-remove hook
     repo.write_project_config(r#"pre-remove = "echo 'About to remove worktree'""#);
@@ -803,7 +800,6 @@ approved-commands = ["echo 'About to remove worktree'"]
 fn test_pre_remove_hook_template_variables() {
     // Use simple repo without remote for predictable project ID
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with template variables
     repo.write_project_config(
@@ -849,7 +845,6 @@ fn test_pre_remove_hook_runs_in_background_mode() {
 
     // Use simple repo without remote for predictable project ID
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a marker file that the hook will create
     let marker_file = repo.root_path().join("hook-ran.txt");
@@ -899,7 +894,6 @@ approved-commands = ["echo 'hook ran' > {}"]
 fn test_pre_remove_hook_failure_aborts() {
     // Use simple repo without remote for predictable project ID
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with failing hook
     repo.write_project_config(r#"pre-remove = "exit 1""#);
@@ -937,7 +931,6 @@ approved-commands = ["exit 1"]
 fn test_pre_remove_hook_not_for_branch_only() {
     // Use simple repo without remote for predictable project ID
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a marker file that the hook would create
     let marker_file = repo.root_path().join("branch-only-hook.txt");
@@ -986,7 +979,6 @@ fn test_pre_remove_hook_skipped_with_no_verify() {
 
     // Use simple repo without remote for predictable project ID
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a marker file that the hook would create
     let marker_file = repo.root_path().join("should-not-exist.txt");
@@ -1045,7 +1037,6 @@ approved-commands = ["echo 'hook ran' > {}"]
 #[cfg_attr(windows, ignore)]
 fn test_pre_remove_hook_runs_for_detached_head() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create marker file path in the repo root
     // Use short filename to avoid terminal line-wrapping differences between platforms
@@ -1094,7 +1085,6 @@ approved-commands = ["touch {marker_path}"]
 #[test]
 fn test_pre_remove_hook_runs_for_detached_head_background() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create marker file path in the repo root
     let marker_file = repo.root_path().join("detached-bg-hook-marker.txt");
@@ -1144,7 +1134,6 @@ approved-commands = ["touch {marker_path}"]
 #[cfg_attr(windows, ignore)]
 fn test_pre_remove_hook_branch_expansion_detached_head() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a file where the hook will write the branch template expansion
     let branch_file = repo.root_path().join("branch-expansion.txt");

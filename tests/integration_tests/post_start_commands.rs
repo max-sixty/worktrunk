@@ -39,7 +39,6 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 #[test]
 fn test_post_create_no_config() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Switch without project config should work normally
     snapshot_switch("post_create_no_config", &repo, &["--create", "feature"]);
@@ -50,7 +49,6 @@ fn test_post_create_no_config() {
 #[test]
 fn test_post_create_single_command() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with a single command (string format)
     repo.write_project_config(r#"post-create = "echo 'Setup complete'""#);
@@ -79,7 +77,6 @@ approved-commands = ["echo 'Setup complete'"]
 #[test]
 fn test_post_create_named_commands() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with named commands (table format)
     repo.write_project_config(
@@ -116,7 +113,6 @@ approved-commands = [
 #[test]
 fn test_post_create_failing_command() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with a command that will fail
     repo.write_project_config(r#"post-create = "exit 1""#);
@@ -145,7 +141,6 @@ approved-commands = ["exit 1"]
 #[test]
 fn test_post_create_template_expansion() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with template variables
     repo.write_project_config(
@@ -214,7 +209,6 @@ approved-commands = [
 #[test]
 fn test_post_create_default_branch_template() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with default_branch template variable
     repo.write_project_config(
@@ -261,7 +255,6 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 #[test]
 fn test_post_create_git_variables_template() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // Set up an upstream tracking branch
@@ -339,7 +332,6 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
 #[test]
 fn test_post_create_upstream_template() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // Push main to set up tracking
@@ -386,7 +378,6 @@ fn test_post_create_json_stdin() {
     use crate::common::wt_command;
 
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with a command that reads JSON from stdin
     // Use cat to capture stdin to a file
@@ -472,7 +463,6 @@ fn test_post_create_script_reads_json() {
     use std::os::unix::fs::PermissionsExt;
 
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create a scripts directory and a Python script that reads JSON from stdin
     let scripts_dir = repo.root_path().join("scripts");
@@ -574,7 +564,6 @@ fn test_post_start_json_stdin() {
     use crate::common::wt_command;
 
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with a background command that reads JSON from stdin
     repo.write_project_config(r#"post-start = "cat > context.json""#);
@@ -638,7 +627,6 @@ approved-commands = ["cat > context.json"]
 #[test]
 fn test_post_start_single_background_command() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with a background command
     repo.write_project_config(
@@ -679,7 +667,6 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
 #[test]
 fn test_post_start_multiple_background_commands() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with multiple background commands (table format)
     repo.write_project_config(
@@ -727,7 +714,6 @@ approved-commands = [
 #[test]
 fn test_both_post_create_and_post_start() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with both command types
     repo.write_project_config(
@@ -772,7 +758,6 @@ approved-commands = [
 #[test]
 fn test_invalid_toml() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create invalid TOML
     repo.write_project_config("post-create = [invalid syntax\n");
@@ -792,7 +777,6 @@ fn test_invalid_toml() {
 #[test]
 fn test_post_start_log_file_captures_output() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create command that writes to both stdout and stderr
     repo.write_project_config(r#"post-start = "echo 'stdout output' && echo 'stderr output' >&2""#);
@@ -851,7 +835,6 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
 #[test]
 fn test_post_start_invalid_command_handling() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create command with syntax error (missing quote)
     repo.write_project_config(r#"post-start = "echo 'unclosed quote""#);
@@ -887,7 +870,6 @@ approved-commands = ["echo 'unclosed quote"]
 #[test]
 fn test_post_start_multiple_commands_separate_logs() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create multiple background commands with distinct output
     repo.write_project_config(
@@ -973,7 +955,6 @@ approved-commands = [
 #[test]
 fn test_execute_flag_with_post_start_commands() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create post-start command
     repo.write_project_config(r#"post-start = "echo 'Background task' > background.txt""#);
@@ -1021,7 +1002,6 @@ approved-commands = ["echo 'Background task' > background.txt"]
 #[test]
 fn test_post_start_complex_shell_commands() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create command with pipes and redirects
     repo.write_project_config(
@@ -1055,7 +1035,6 @@ approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 #[test]
 fn test_post_start_multiline_commands_with_newlines() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create command with actual newlines (using TOML triple-quoted string)
     repo.write_project_config(
@@ -1108,7 +1087,6 @@ approved-commands = ["""
 #[test]
 fn test_post_create_multiline_with_control_structures() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Test multiline command with if-else control structure
     repo.write_project_config(
@@ -1172,7 +1150,6 @@ approved-commands = ["""
 #[test]
 fn test_post_start_skipped_on_existing_worktree() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with post-start command
     repo.write_project_config(r#"post-start = "echo 'POST-START-RAN' > post_start_marker.txt""#);

@@ -4,7 +4,6 @@ use worktrunk::git::Repository;
 #[test]
 fn test_get_default_branch_with_origin_head() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // origin/HEAD should be set automatically by setup_remote
@@ -18,7 +17,6 @@ fn test_get_default_branch_with_origin_head() {
 #[test]
 fn test_get_default_branch_without_origin_head() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // Clear origin/HEAD to force remote query
@@ -36,7 +34,6 @@ fn test_get_default_branch_without_origin_head() {
 #[test]
 fn test_get_default_branch_caches_result() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_remote("main");
 
     // Clear origin/HEAD
@@ -55,7 +52,6 @@ fn test_get_default_branch_caches_result() {
 #[test]
 fn test_get_default_branch_no_remote() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // No remote configured, should infer from local branches
     // Since there's only one local branch, it should return that
@@ -74,7 +70,6 @@ fn test_get_default_branch_no_remote() {
 #[test]
 fn test_get_default_branch_with_custom_remote() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_custom_remote("upstream", "main");
 
     // Test that we can get the default branch from a custom remote
@@ -85,7 +80,6 @@ fn test_get_default_branch_with_custom_remote() {
 #[test]
 fn test_primary_remote_detects_custom_remote() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_custom_remote("upstream", "develop");
 
     // Test that primary_remote detects the custom remote name
@@ -96,7 +90,6 @@ fn test_primary_remote_detects_custom_remote() {
 #[test]
 fn test_branch_exists_with_custom_remote() {
     let mut repo = TestRepo::new();
-    repo.commit("Initial commit");
     repo.setup_custom_remote("upstream", "main");
 
     let git_repo = Repository::at(repo.root_path());
@@ -111,7 +104,6 @@ fn test_branch_exists_with_custom_remote() {
 #[test]
 fn test_get_default_branch_no_remote_common_names_fallback() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create additional branches (no remote configured)
     repo.git_command(&["branch", "feature"]).status().unwrap();
@@ -126,7 +118,6 @@ fn test_get_default_branch_no_remote_common_names_fallback() {
 #[test]
 fn test_get_default_branch_no_remote_master_fallback() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Rename main to master, then create other branches
     repo.git_command(&["branch", "-m", "main", "master"])
@@ -144,7 +135,6 @@ fn test_get_default_branch_no_remote_master_fallback() {
 #[test]
 fn test_get_default_branch_no_remote_init_default_branch_config() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Rename main to something non-standard, create the configured default
     repo.git_command(&["branch", "-m", "main", "primary"])
@@ -166,7 +156,6 @@ fn test_get_default_branch_no_remote_init_default_branch_config() {
 #[test]
 fn test_get_default_branch_no_remote_fails_when_no_match() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Rename main to something non-standard
     repo.git_command(&["branch", "-m", "main", "xyz"])

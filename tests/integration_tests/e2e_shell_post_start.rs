@@ -30,7 +30,6 @@ macro_rules! skip_if_shell_unavailable {
 fn test_shell_integration_post_start_background(#[case] shell: &str) {
     skip_if_shell_unavailable!(shell);
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");
@@ -123,7 +122,6 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
 #[test]
 fn test_bash_shell_integration_post_start_parallel() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with multiple background commands
     let config_dir = repo.root_path().join(".config");
@@ -196,7 +194,6 @@ approved-commands = [
 #[test]
 fn test_bash_shell_integration_post_create_blocks() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with blocking command
     let config_dir = repo.root_path().join(".config");
@@ -268,7 +265,6 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
 #[test]
 fn test_fish_shell_integration_post_start_background() {
     let repo = TestRepo::new();
-    repo.commit("Initial commit");
 
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");

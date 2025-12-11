@@ -27,8 +27,8 @@ exit_code: 0
     "path": "[REPO]",
     "kind": "worktree",
     "commit": {
-      "sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
-      "short_sha": "f4fa1ba",
+      "sha": "3109da74e45839c90409a6e4774cdf0bae50a284",
+      "short_sha": "3109da7",
       "message": "Main conflicting changes",
       "timestamp": 0
     },
@@ -62,8 +62,8 @@ exit_code: 0
     "path": "[REPO].feature",
     "kind": "worktree",
     "commit": {
-      "sha": "f4fa1ba1ca52a38a0036c3c9dd8b486a83ced1e5",
-      "short_sha": "f4fa1ba",
+      "sha": "3109da74e45839c90409a6e4774cdf0bae50a284",
+      "short_sha": "3109da7",
       "message": "Main conflicting changes",
       "timestamp": 0
     },
