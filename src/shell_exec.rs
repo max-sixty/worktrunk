@@ -126,47 +126,41 @@ fn detect_windows_shell() -> ShellConfig {
 
 /// Find Git Bash executable on Windows
 ///
-/// Checks:
-/// 1. MSYSTEM environment variable (indicates running in Git Bash/MSYS2)
-/// 2. `git.exe` in PATH to find Git installation directory
-/// 3. Standard Git for Windows and MSYS2 installation paths
+/// Detection order (designed to always return absolute paths and avoid WSL):
+/// 1. `git.exe` in PATH - derive bash.exe location from Git installation
+/// 2. Standard Git for Windows and MSYS2 installation paths
 ///
-/// Note: We avoid relying on `which bash` because on systems with WSL installed,
-/// `bash` in PATH might be WSL's bash shim, not Git Bash.
+/// We explicitly avoid `which bash` because on systems with WSL installed,
+/// `C:\Windows\System32\bash.exe` (WSL launcher) often comes before Git Bash
+/// in PATH, even when MSYSTEM is set.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
-    // If we're already in Git Bash/MSYS2 (MSYSTEM is set), bash should be in PATH
-    // IMPORTANT: Only use bare "bash" when we KNOW we're in a Git Bash environment
-    if std::env::var("MSYSTEM").is_ok()
-        && let Ok(bash_path) = which::which("bash")
-    {
-        // Verify this is actually Git Bash, not WSL bash
-        // Git Bash is typically in a path containing "Git"
-        let path_str = bash_path.to_string_lossy();
-        if path_str.contains("Git") || path_str.contains("msys") || path_str.contains("mingw") {
-            return Some(bash_path);
-        }
-    }
-
-    // Try to find Git installation via `git.exe` in PATH first
-    // This is the most reliable method on CI systems like GitHub Actions
-    // where Git might be installed in non-standard locations
+    // Primary method: Find Git installation via `git.exe` in PATH
+    // This is the most reliable method and always returns an absolute path.
+    // Works on CI systems like GitHub Actions where Git might be in non-standard locations.
     if let Ok(git_path) = which::which("git") {
         // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
-        // bash.exe is at Git/bin/bash.exe
+        // bash.exe is at Git/bin/bash.exe or Git/usr/bin/bash.exe
         if let Some(git_dir) = git_path.parent().and_then(|p| p.parent()) {
+            // Try bin/bash.exe first (most common)
             let bash_path = git_dir.join("bin").join("bash.exe");
+            if bash_path.exists() {
+                return Some(bash_path);
+            }
+            // Also try usr/bin/bash.exe (some Git for Windows layouts)
+            let bash_path = git_dir.join("usr").join("bin").join("bash.exe");
             if bash_path.exists() {
                 return Some(bash_path);
             }
         }
     }
 
-    // Check standard installation paths for bash.exe
+    // Fallback: Check standard installation paths for bash.exe
     // (Git for Windows and MSYS2 both provide POSIX-compatible bash)
     let bash_paths = [
         // Git for Windows
         r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
         r"C:\Git\bin\bash.exe",
         // MSYS2 standalone (popular alternative to Git Bash)
