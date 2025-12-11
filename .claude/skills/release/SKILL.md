@@ -8,14 +8,14 @@ description: Worktrunk release workflow. Use when user asks to "do a release", "
 ## Steps
 
 1. **Run tests**: `cargo run -- hook pre-merge --force`
-2. **Review CHANGELOG**: Check `## Unreleased` section covers notable changes since last release
-3. **Determine version**: Patch (bug fixes), minor (new features), or major (breaking changes)
-4. **Update CHANGELOG**: Change `## Unreleased` to `## X.Y.Z`
+2. **Check current version**: Read `version` in `Cargo.toml` to determine next version
+3. **Review CHANGELOG**: Check commits since last release cover notable changes
+4. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes
 5. **Bump version**: Update `version` in `Cargo.toml`, run `cargo check` to update `Cargo.lock`
 6. **Commit**: `git add -A && git commit -m "Release vX.Y.Z"`
-7. **Merge to main**: `wt merge --no-remove` (rebases onto main, keeps worktree for tagging)
+7. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
 8. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
-9. **Wait for release workflow**: Check GitHub Actions completes (builds binaries, publishes to crates.io)
+9. **Wait for release workflow**: `gh run watch <run-id> --exit-status`
 10. **Update Homebrew**: `./dev/update-homebrew.sh` (requires sibling `homebrew-worktrunk` checkout)
 
 The tag push triggers the release workflow which builds binaries and publishes to crates.io. The Homebrew script fetches SHA256 hashes from the release assets and updates the formula.
@@ -43,3 +43,18 @@ Skip: internal refactors, doc-only changes, test additions (unless user-facing l
 - **Major** (x.0.0 → y.0.0): Breaking changes (rare in early development)
 
 Current project status: early release, breaking changes acceptable, optimize for best solution over compatibility.
+
+## Troubleshooting
+
+### Release workflow fails after tag push
+
+If the workflow fails (e.g., cargo publish error), fix the issue, then recreate the tag:
+
+```bash
+gh release delete vX.Y.Z --yes           # Delete GitHub release
+git push origin :refs/tags/vX.Y.Z        # Delete remote tag
+git tag -d vX.Y.Z                        # Delete local tag
+git tag vX.Y.Z && git push origin vX.Y.Z # Recreate and push
+```
+
+The new tag will trigger a fresh workflow run with the fixed code.
