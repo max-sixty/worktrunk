@@ -1,42 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-
-/// Convert a path to POSIX format for Git Bash compatibility.
-///
-/// On Windows, Git Bash expects paths like `/d/foo/bar` instead of `D:\foo\bar`.
-/// Converting to POSIX format ensures paths don't contain characters (`:`, `\`)
-/// that would trigger shell escaping and cause snapshot test mismatches.
-///
-/// On Unix, returns the path unchanged.
-#[cfg(windows)]
-fn to_posix_path(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-
-    // Handle drive letter paths: D:\foo\bar -> /d/foo/bar
-    let chars: Vec<char> = path_str.chars().collect();
-    if chars.len() >= 3
-        && chars[0].is_ascii_alphabetic()
-        && chars[1] == ':'
-        && (chars[2] == '\\' || chars[2] == '/')
-    {
-        let drive = chars[0].to_ascii_lowercase();
-        let rest: String = chars[3..].iter().collect();
-        return format!("/{}/{}", drive, rest.replace('\\', "/"));
-    }
-
-    // Just convert backslashes to forward slashes
-    path_str.replace('\\', "/")
-}
-
-#[cfg(not(windows))]
-fn to_posix_path(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
-}
 use worktrunk::config::{
     Command, CommandConfig, WorktrunkConfig, expand_template, sanitize_branch_name,
 };
 use worktrunk::git::Repository;
+use worktrunk::path::to_posix_path;
 
 #[derive(Debug)]
 pub struct PreparedCommand {
@@ -97,7 +66,7 @@ pub fn build_hook_context(
 
     // Convert paths to POSIX format for Git Bash compatibility on Windows.
     // This avoids shell escaping of `:` and `\` characters in Windows paths.
-    let worktree = to_posix_path(ctx.worktree_path);
+    let worktree = to_posix_path(&ctx.worktree_path.to_string_lossy());
     let worktree_name = ctx
         .worktree_path
         .file_name()
@@ -110,7 +79,10 @@ pub fn build_hook_context(
     map.insert("branch".into(), sanitize_branch_name(ctx.branch_or_head()));
     map.insert("worktree".into(), worktree);
     map.insert("worktree_name".into(), worktree_name.into());
-    map.insert("repo_root".into(), to_posix_path(repo_root));
+    map.insert(
+        "repo_root".into(),
+        to_posix_path(&repo_root.to_string_lossy()),
+    );
 
     if let Ok(default_branch) = ctx.repo.default_branch() {
         map.insert("default_branch".into(), default_branch);
@@ -229,43 +201,4 @@ pub fn prepare_commands(
             context_json,
         })
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_to_posix_path_unix_style() {
-        // Unix-style paths should be unchanged
-        let path = PathBuf::from("/tmp/test/repo");
-        assert_eq!(to_posix_path(&path), "/tmp/test/repo");
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_to_posix_path_windows_drive() {
-        // Windows drive paths should be converted to POSIX format
-        let path = PathBuf::from(r"D:\a\worktrunk\repo");
-        assert_eq!(to_posix_path(&path), "/d/a/worktrunk/repo");
-
-        let path = PathBuf::from(r"C:\Users\test\project");
-        assert_eq!(to_posix_path(&path), "/c/Users/test/project");
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_to_posix_path_mixed_slashes() {
-        // Mixed slashes should be normalized
-        let path = PathBuf::from(r"D:\a/worktrunk\repo");
-        assert_eq!(to_posix_path(&path), "/d/a/worktrunk/repo");
-    }
-
-    #[test]
-    fn test_to_posix_path_relative() {
-        // Relative paths should just have backslashes converted
-        let path = PathBuf::from("relative/path/to/file");
-        assert_eq!(to_posix_path(&path), "relative/path/to/file");
-    }
 }

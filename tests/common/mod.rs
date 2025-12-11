@@ -112,32 +112,6 @@ pub fn pty_safe() {
     ignore_tty_signals();
 }
 
-/// Convert a path string to POSIX format for Git Bash compatibility.
-///
-/// On Windows, Git Bash expects paths like `/c/foo/bar` instead of `C:\foo\bar`.
-/// This is used to create snapshot filters that match paths output by hooks
-/// running in Git Bash on Windows.
-///
-/// Examples:
-/// - `C:\Users\test\repo` -> `/c/Users/test/repo`
-/// - `D:\a\worktrunk\worktrunk` -> `/d/a/worktrunk/worktrunk`
-/// - `/tmp/test/repo` -> `/tmp/test/repo` (unchanged on Unix)
-fn to_posix_path(path: &str) -> String {
-    let chars: Vec<char> = path.chars().collect();
-    // Check for Windows drive letter pattern: X:\ or X:/
-    if chars.len() >= 3
-        && chars[0].is_ascii_alphabetic()
-        && chars[1] == ':'
-        && (chars[2] == '\\' || chars[2] == '/')
-    {
-        let drive = chars[0].to_ascii_lowercase();
-        let rest: String = chars[3..].iter().collect();
-        return format!("/{}/{}", drive, rest.replace('\\', "/"));
-    }
-    // Just convert backslashes to forward slashes
-    path.replace('\\', "/")
-}
-
 /// Basic TestRepo fixture - creates a fresh git repository.
 ///
 /// Use with `#[rstest]` to inject a new repo into tests:
@@ -444,6 +418,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 use worktrunk::config::sanitize_branch_name;
+use worktrunk::path::to_posix_path;
 
 /// Path to the fixture template repo (relative to crate root).
 /// Contains `_git/` (renamed .git) and `gitconfig`.

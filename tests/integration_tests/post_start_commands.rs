@@ -520,8 +520,6 @@ approved-commands = ["./scripts/setup.py"]
 }
 
 /// Test that background hooks also receive JSON context on stdin
-///
-/// Skipped on Windows: Uses `cat` command which is not available natively on Windows.
 #[rstest]
 fn test_post_start_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
