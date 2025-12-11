@@ -387,8 +387,75 @@ pub fn capture_progressive_output(
     loop {
         let mut temp_buf = [0u8; 4096];
 
+        // Helper closure to run the drain logic - extracted to avoid duplication
+        // between the EOF case and the WouldBlock+child-exited case.
+        let drain_and_capture_final = |parser: &mut vt100::Parser,
+                                       reader: &mut Box<dyn std::io::Read + Send>,
+                                       snapshots: &mut Vec<OutputSnapshot>,
+                                       last_snapshot_text: &str,
+                                       total_bytes: &mut usize,
+                                       start_time: Instant| {
+            let backoff = ExponentialBackoff::default();
+            let mut attempt = 0u32;
+            let mut consecutive_no_data = 0u32;
+            let drain_start = Instant::now();
+
+            loop {
+                if drain_start.elapsed() > backoff.timeout {
+                    break;
+                }
+
+                let mut buf = [0u8; 4096];
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        consecutive_no_data += 1;
+                        let min_wait_elapsed =
+                            drain_start.elapsed() >= Duration::from_millis(MIN_DRAIN_WAIT_MS);
+                        if consecutive_no_data >= STABLE_READ_THRESHOLD && min_wait_elapsed {
+                            break;
+                        }
+                        backoff.sleep(attempt);
+                        attempt += 1;
+                    }
+                    Ok(n) => {
+                        consecutive_no_data = 0;
+                        attempt = 0;
+                        *total_bytes += n;
+                        parser.process(&buf[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        backoff.sleep(attempt);
+                        attempt += 1;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // Capture final snapshot
+            let screen = parser.screen();
+            let final_text = screen.contents();
+            if final_text != last_snapshot_text {
+                snapshots.push(OutputSnapshot {
+                    timestamp: start_time.elapsed(),
+                    visible_text: final_text,
+                });
+            }
+        };
+
         match reader.read(&mut temp_buf) {
-            Ok(0) => break, // EOF
+            Ok(0) => {
+                // EOF - on Linux PTYs may signal EOF before all buffered data is available.
+                // Run drain logic to capture everything before breaking.
+                drain_and_capture_final(
+                    &mut parser,
+                    &mut reader,
+                    &mut snapshots,
+                    &last_snapshot_text,
+                    &mut total_bytes,
+                    start_time,
+                );
+                break;
+            }
             Ok(n) => {
                 total_bytes += n;
 
@@ -435,61 +502,14 @@ pub fn capture_progressive_output(
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // Check if child exited
                 if let Ok(Some(_)) = child.try_wait() {
-                    // Drain remaining PTY data using exponential backoff.
-                    // Requires STABLE_READ_THRESHOLD consecutive EOFs before considering done.
-                    // Uses default backoff (500ms cap, 5s timeout) for reliability on slow CI.
-                    let backoff = ExponentialBackoff::default();
-                    let mut attempt = 0u32;
-                    let mut consecutive_no_data = 0u32;
-                    let drain_start = Instant::now();
-
-                    loop {
-                        // Universal timeout check - prevents infinite loop regardless of read result
-                        if drain_start.elapsed() > backoff.timeout {
-                            break;
-                        }
-
-                        match reader.read(&mut temp_buf) {
-                            Ok(0) => {
-                                // EOF - may be spurious on Linux, require consecutive confirmations
-                                // AND minimum wait time to allow kernel buffer flush
-                                consecutive_no_data += 1;
-                                let min_wait_elapsed = drain_start.elapsed()
-                                    >= Duration::from_millis(MIN_DRAIN_WAIT_MS);
-                                if consecutive_no_data >= STABLE_READ_THRESHOLD && min_wait_elapsed
-                                {
-                                    break;
-                                }
-                                backoff.sleep(attempt);
-                                attempt += 1;
-                            }
-                            Ok(n) => {
-                                // Got data - reset stability counter, process immediately
-                                consecutive_no_data = 0;
-                                attempt = 0; // Reset backoff when data flows
-                                total_bytes += n;
-                                parser.process(&temp_buf[..n]);
-                            }
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                // No data available yet - PTY buffer may still be flushing.
-                                // Don't count toward stability; only true EOF (Ok(0)) counts.
-                                backoff.sleep(attempt);
-                                attempt += 1;
-                            }
-                            Err(_) => break,
-                        }
-                    }
-
-                    // Capture final snapshot
-                    let screen = parser.screen();
-                    let final_text = screen.contents();
-                    if final_text != last_snapshot_text {
-                        snapshots.push(OutputSnapshot {
-                            timestamp: start_time.elapsed(),
-                            visible_text: final_text,
-                        });
-                    }
-
+                    drain_and_capture_final(
+                        &mut parser,
+                        &mut reader,
+                        &mut snapshots,
+                        &last_snapshot_text,
+                        &mut total_bytes,
+                        start_time,
+                    );
                     break;
                 }
 
