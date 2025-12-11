@@ -1013,6 +1013,8 @@ fn test_merge_with_untracked_files() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_merge_command_success() {
     let mut repo = TestRepo::new();
@@ -1061,6 +1063,8 @@ fn test_merge_pre_merge_command_success() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_merge_command_failure() {
     let mut repo = TestRepo::new();
@@ -1157,6 +1161,8 @@ fn test_merge_pre_merge_command_no_hooks() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_merge_command_named() {
     let mut repo = TestRepo::new();
@@ -1214,6 +1220,8 @@ test = "exit 0"
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_post_merge_command_success() {
     let mut repo = TestRepo::new();
@@ -1338,6 +1346,8 @@ fn test_merge_post_merge_command_skipped_with_no_verify() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_post_merge_command_failure() {
     let mut repo = TestRepo::new();
@@ -1386,6 +1396,8 @@ fn test_merge_post_merge_command_failure() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_post_merge_command_named() {
     let mut repo = TestRepo::new();
@@ -1454,6 +1466,8 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_post_merge_runs_with_nothing_to_merge() {
     // Verify post-merge hooks run even when there's nothing to merge
@@ -1499,6 +1513,8 @@ fn test_merge_post_merge_runs_with_nothing_to_merge() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_post_merge_runs_from_main_branch() {
     // Verify post-merge hooks run when merging from main to main (nothing to do)
@@ -1532,6 +1548,8 @@ fn test_merge_post_merge_runs_from_main_branch() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_commit_command_success() {
     let mut repo = TestRepo::new();
@@ -1570,6 +1588,8 @@ fn test_merge_pre_commit_command_success() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_commit_command_failure() {
     let mut repo = TestRepo::new();
@@ -1604,6 +1624,8 @@ fn test_merge_pre_commit_command_failure() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_squash_command_success() {
     let mut repo = TestRepo::new();
@@ -1656,6 +1678,8 @@ fn test_merge_pre_squash_command_success() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_merge_pre_squash_command_failure() {
     let mut repo = TestRepo::new();

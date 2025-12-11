@@ -45,6 +45,8 @@ fn test_post_create_no_config() {
     snapshot_switch("post_create_no_config", &repo, &["--create", "feature"]);
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_single_command() {
     let repo = TestRepo::new();
@@ -72,6 +74,8 @@ approved-commands = ["echo 'Setup complete'"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_named_commands() {
     let repo = TestRepo::new();
@@ -107,6 +111,8 @@ approved-commands = [
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_failing_command() {
     let repo = TestRepo::new();
@@ -134,6 +140,8 @@ approved-commands = ["exit 1"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_template_expansion() {
     let repo = TestRepo::new();
@@ -201,6 +209,8 @@ approved-commands = [
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_default_branch_template() {
     let repo = TestRepo::new();
@@ -246,6 +256,8 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_git_variables_template() {
     let mut repo = TestRepo::new();
@@ -322,6 +334,8 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_upstream_template() {
     let mut repo = TestRepo::new();
@@ -365,6 +379,8 @@ fn test_post_create_upstream_template() {
 }
 
 /// Test that hooks receive JSON context on stdin
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_json_stdin() {
     use crate::common::wt_command;
@@ -617,6 +633,8 @@ approved-commands = ["cat > context.json"]
 // Post-Start Command Tests (parallel, background)
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_single_background_command() {
     let repo = TestRepo::new();
@@ -656,6 +674,8 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     wait_for_file(output_file.as_path(), Duration::from_secs(5));
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_multiple_background_commands() {
     let repo = TestRepo::new();
@@ -702,6 +722,8 @@ approved-commands = [
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_both_post_create_and_post_start() {
     let repo = TestRepo::new();
@@ -765,6 +787,8 @@ fn test_invalid_toml() {
 // Additional Coverage Tests
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_log_file_captures_output() {
     let repo = TestRepo::new();
@@ -858,6 +882,8 @@ approved-commands = ["echo 'unclosed quote"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_multiple_commands_separate_logs() {
     let repo = TestRepo::new();
@@ -942,6 +968,8 @@ approved-commands = [
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_execute_flag_with_post_start_commands() {
     let repo = TestRepo::new();
@@ -988,6 +1016,8 @@ approved-commands = ["echo 'Background task' > background.txt"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_complex_shell_commands() {
     let repo = TestRepo::new();
@@ -1020,6 +1050,8 @@ approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
     assert_snapshot!(contents, @"line2");
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_multiline_commands_with_newlines() {
     let repo = TestRepo::new();
@@ -1071,6 +1103,8 @@ approved-commands = ["""
     ");
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_create_multiline_with_control_structures() {
     let repo = TestRepo::new();
@@ -1133,6 +1167,8 @@ approved-commands = ["""
 ///
 /// This is a regression test for a bug where post-start commands were running on ALL
 /// `wt switch` operations instead of only on `wt switch --create`.
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_post_start_skipped_on_existing_worktree() {
     let repo = TestRepo::new();

@@ -113,6 +113,8 @@ approved-commands = ["echo 'Second command'"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_force_flag_does_not_save_approvals() {
     let repo = TestRepo::new();
@@ -152,6 +154,8 @@ fn test_force_flag_does_not_save_approvals() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_already_approved_commands_skip_prompt() {
     let repo = TestRepo::new();
@@ -339,6 +343,8 @@ fn test_approval_fails_in_non_tty() {
 /// Test that --force flag bypasses TTY requirement
 ///
 /// Even in non-TTY environments, --force should allow commands to execute.
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_force_bypasses_tty_check() {
     let repo = TestRepo::new();
@@ -365,6 +371,8 @@ fn test_force_bypasses_tty_check() {
 /// When `wt hook post-merge` runs standalone (not via `wt merge`), the `{{ target }}`
 /// variable should be the current branch, not always the default branch.
 /// This allows hooks to behave correctly when testing from feature worktrees.
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_hook_post_merge_target_is_current_branch() {
     let repo = TestRepo::new();
@@ -405,6 +413,8 @@ fn test_hook_post_merge_target_is_current_branch() {
 }
 
 /// Test that `{{ target }}` is the current branch for pre-merge standalone
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_hook_pre_merge_target_is_current_branch() {
     let repo = TestRepo::new();
@@ -445,6 +455,8 @@ fn test_hook_pre_merge_target_is_current_branch() {
 }
 
 /// Test running a specific named hook command
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_step_hook_run_named_command() {
     let repo = TestRepo::new();
@@ -536,6 +548,8 @@ fn test_step_hook_name_filter_on_unnamed_command() {
 }
 
 /// Test running all hooks (no name filter) still works
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_step_hook_run_all_commands() {
     let repo = TestRepo::new();

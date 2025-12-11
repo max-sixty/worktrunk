@@ -31,6 +31,8 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     });
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_post_create_hook_executes() {
     let repo = TestRepo::new();
@@ -62,6 +64,8 @@ log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_hooks_run_before_project_hooks() {
     let repo = TestRepo::new();
@@ -98,6 +102,8 @@ approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
     assert_eq!(lines[1], "PROJECT_HOOK", "Project hook should run second");
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_hooks_no_approval_required() {
     let repo = TestRepo::new();
@@ -169,6 +175,8 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_post_create_hook_failure() {
     let repo = TestRepo::new();
@@ -198,6 +206,8 @@ failing = "exit 1"
 // User Post-Start Hook Tests (Background)
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_post_start_hook_executes() {
     let repo = TestRepo::new();
@@ -270,6 +280,8 @@ fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&
     });
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_pre_merge_hook_executes() {
     let mut repo = TestRepo::new();
@@ -314,6 +326,8 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
     assert!(marker_file.exists(), "User pre-merge hook should have run");
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_pre_merge_hook_failure_blocks_merge() {
     let mut repo = TestRepo::new();
@@ -464,6 +478,8 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 // User Post-Merge Hook Tests
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_post_merge_hook_executes() {
     let mut repo = TestRepo::new();
@@ -558,6 +574,8 @@ cleanup = "echo 'USER_PRE_REMOVE_RAN' > /tmp/user_preremove_marker.txt"
     let _ = fs::remove_file(marker_file);
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_pre_remove_failure_blocks_removal() {
     let mut repo = TestRepo::new();
@@ -589,6 +607,8 @@ block = "exit 1"
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_pre_remove_skipped_with_no_verify() {
     let mut repo = TestRepo::new();
@@ -632,6 +652,8 @@ block = "exit 1"
 // User Pre-Commit Hook Tests
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_pre_commit_hook_executes() {
     let mut repo = TestRepo::new();
@@ -664,6 +686,8 @@ lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
     assert!(marker_file.exists(), "User pre-commit hook should have run");
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_pre_commit_failure_blocks_commit() {
     let mut repo = TestRepo::new();
@@ -697,6 +721,8 @@ lint = "exit 1"
 // Template Variable Tests
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_hook_template_variables() {
     let repo = TestRepo::new();
@@ -735,6 +761,8 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 // Combined User and Project Hooks Tests
 // ============================================================================
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_user_and_project_post_start_both_run() {
     let repo = TestRepo::new();

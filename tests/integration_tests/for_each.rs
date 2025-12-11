@@ -19,6 +19,8 @@ fn setup_repo() -> TestRepo {
     repo
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_for_each_single_worktree() {
     let repo = setup_repo();
@@ -31,6 +33,8 @@ fn test_for_each_single_worktree() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_for_each_multiple_worktrees() {
     let mut repo = setup_repo();
@@ -46,6 +50,8 @@ fn test_for_each_multiple_worktrees() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_for_each_command_fails_in_one() {
     let mut repo = setup_repo();
@@ -68,6 +74,8 @@ fn test_for_each_no_args_error() {
     snapshot_for_each("for_each_no_args", &repo, &["for-each"]);
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_for_each_with_detached_head() {
     let mut repo = setup_repo();
@@ -83,6 +91,8 @@ fn test_for_each_with_detached_head() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_for_each_with_template() {
     let repo = setup_repo();

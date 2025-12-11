@@ -236,6 +236,8 @@ fn test_switch_error_missing_worktree_directory() {
     snapshot_switch("switch_error_missing_directory", &repo, &["missing-wt"]);
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_switch_execute_success() {
     let repo = setup_switch_repo();
@@ -247,6 +249,8 @@ fn test_switch_execute_success() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_switch_execute_creates_file() {
     let repo = setup_switch_repo();
@@ -273,6 +277,8 @@ fn test_switch_execute_failure() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_switch_execute_with_existing_worktree() {
     let mut repo = setup_switch_repo();
@@ -289,6 +295,8 @@ fn test_switch_execute_with_existing_worktree() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_switch_execute_multiline() {
     let repo = setup_switch_repo();
@@ -302,6 +310,8 @@ fn test_switch_execute_multiline() {
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_switch_no_config_commands_execute_still_runs() {
     let repo = setup_switch_repo();
@@ -367,6 +377,8 @@ approved-commands = ["{}"]
     );
 }
 
+/// Skipped on Windows: snapshot output differs due to shell/path differences.
+#[cfg_attr(windows, ignore)]
 #[test]
 fn test_switch_no_config_commands_with_existing_worktree() {
     let mut repo = setup_switch_repo();
