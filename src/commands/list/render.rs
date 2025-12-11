@@ -406,13 +406,16 @@ impl LayoutConfig {
                     cell.push_raw(symbol.to_string());
                 }
                 ColumnKind::Branch => {
-                    // Show actual branch name
-                    cell.push_styled(branch, position_style(is_current, dim));
+                    // Show actual branch name (no dim - start normal, gray out later if removable)
+                    cell.push_styled(branch, position_style(is_current, Style::default()));
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Path => {
-                    // Show actual path
-                    cell.push_styled(&shortened_path, position_style(is_current, dim));
+                    // Show actual path (no dim - start normal, gray out later if removable)
+                    cell.push_styled(
+                        &shortened_path,
+                        position_style(is_current, Style::default()),
+                    );
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Commit => {
