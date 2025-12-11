@@ -302,9 +302,7 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
     assert!(marker_file.exists(), "User pre-merge hook should have run");
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_user_pre_merge_hook_failure_blocks_merge(mut repo: TestRepo) {
     // Create feature worktree with a commit
     let feature_wt = repo.add_worktree("feature");
@@ -536,9 +534,7 @@ cleanup = "echo 'USER_PRE_REMOVE_RAN' > /tmp/user_preremove_marker.txt"
     let _ = fs::remove_file(marker_file);
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_user_pre_remove_failure_blocks_removal(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
@@ -566,9 +562,7 @@ block = "exit 1"
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_user_pre_remove_skipped_with_no_verify(mut repo: TestRepo) {
     // Create a worktree to remove
     let feature_wt = repo.add_worktree("feature");
@@ -639,9 +633,7 @@ lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
     assert!(marker_file.exists(), "User pre-commit hook should have run");
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_user_pre_commit_failure_blocks_commit(mut repo: TestRepo) {
     // Create feature worktree
     let feature_wt = repo.add_worktree("feature");
