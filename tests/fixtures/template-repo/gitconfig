@@ -6,3 +6,5 @@
 	resolveConflict = false
 [init]
 	defaultBranch = main
+[core]
+	autocrlf = false

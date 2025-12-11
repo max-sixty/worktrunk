@@ -31,10 +31,14 @@ fn run_statusline_from_dir(
     let mut child = cmd.spawn().expect("failed to spawn command");
 
     if let Some(json) = stdin_json {
-        let stdin = child.stdin.as_mut().expect("failed to get stdin");
+        // Take ownership of stdin so we can drop it after writing
+        let mut stdin = child.stdin.take().expect("failed to get stdin");
         stdin
             .write_all(json.as_bytes())
             .expect("failed to write stdin");
+        // Explicitly close stdin by dropping it - this signals EOF to the child process.
+        // On Windows, not closing stdin can cause the child to hang waiting for more input.
+        drop(stdin);
     }
 
     let output = child.wait_with_output().expect("failed to wait for output");
@@ -139,12 +143,20 @@ fn claude_code_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings
 }
 
-/// Skipped on Windows: JSON contains paths that need escaping on Windows.
+/// Escape a path for use in JSON strings.
+/// On Windows, backslashes must be escaped as double backslashes.
+fn escape_path_for_json(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "\\\\")
+}
+
+/// Skipped on Windows: stdin read has 10ms timeout, Windows process spawning is slower
+/// causing timing-sensitive race condition where model name is lost.
 #[test]
 #[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_full_context() {
     let repo = setup_repo_with_changes();
 
+    let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(
         r#"{{
             "hook_event_name": "Status",
@@ -154,13 +166,11 @@ fn test_statusline_claude_code_full_context() {
                 "display_name": "Opus"
             }},
             "workspace": {{
-                "current_dir": "{}",
-                "project_dir": "{}"
+                "current_dir": "{escaped_path}",
+                "project_dir": "{escaped_path}"
             }},
             "version": "1.0.80"
         }}"#,
-        repo.root_path().display(),
-        repo.root_path().display()
     );
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
@@ -169,16 +179,12 @@ fn test_statusline_claude_code_full_context() {
     });
 }
 
-/// Skipped on Windows: JSON contains paths that need escaping on Windows.
 #[test]
-#[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_minimal() {
     let repo = TestRepo::new();
 
-    let json = format!(
-        r#"{{"workspace": {{"current_dir": "{}"}}}}"#,
-        repo.root_path().display()
-    );
+    let escaped_path = escape_path_for_json(repo.root_path());
+    let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#,);
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
     claude_code_snapshot_settings(&repo).bind(|| {
@@ -186,18 +192,19 @@ fn test_statusline_claude_code_minimal() {
     });
 }
 
-/// Skipped on Windows: JSON contains paths that need escaping on Windows.
+/// Skipped on Windows: stdin read has 10ms timeout, Windows process spawning is slower
+/// causing timing-sensitive race condition where model name is lost.
 #[test]
 #[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_with_model() {
     let repo = TestRepo::new();
 
+    let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(
         r#"{{
-            "workspace": {{"current_dir": "{}"}},
+            "workspace": {{"current_dir": "{escaped_path}"}},
             "model": {{"display_name": "Haiku"}}
         }}"#,
-        repo.root_path().display()
     );
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));

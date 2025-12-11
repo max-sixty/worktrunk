@@ -5,6 +5,7 @@
 	logallrefupdates = true
 	ignorecase = true
 	precomposeunicode = true
+	autocrlf = false
 [user]
 	name = Test User
 	email = test@example.com
