@@ -1130,17 +1130,21 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(&regex::escape(root_str), "[REPO]");
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
 
-    // On Windows, format_path_for_display() converts paths under HOME to tilde-prefixed.
-    // Since temp directories (like C:\Users\runner\AppData\Local\Temp\.tmpXXX) are under HOME,
-    // the repo path becomes ~/AppData/Local/Temp/.tmpXXX/repo in output.
-    // Add filter for tilde-prefixed repo path.
+    // On CI and when temp directories are under HOME, format_path_for_display() converts
+    // paths to tilde-prefixed format (e.g., ~/repo, ~/repo.feature).
+    // Add filters for both the main repo and any worktree suffixes.
     // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
     // (C:\Users\RUNNER~1) while dunce::canonicalize returns the long path (C:\Users\runneradmin).
     if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
         && let Ok(relative) = root_canonical.strip_prefix(&home)
     {
         let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
+        // Match exact repo path
         settings.add_filter(&regex::escape(&tilde_path), "[REPO]");
+        // Match worktree paths like ~/repo.feature, ~/repo.main-wt
+        // Use regex pattern to catch any worktree suffix
+        let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
+        settings.add_filter(&tilde_worktree_pattern, "[REPO]$1");
     }
 
     for (name, path) in &repo.worktrees {
