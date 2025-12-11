@@ -104,9 +104,7 @@ approved-commands = [
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_post_create_failing_command(repo: TestRepo) {
     // Create project config with a command that will fail
     repo.write_project_config(r#"post-create = "exit 1""#);

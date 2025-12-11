@@ -826,8 +826,6 @@ approved-commands = ["echo 'hook ran' > {}"]
 }
 
 /// Test pre-remove hook failure aborts removal (FailFast strategy).
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook

@@ -247,9 +247,9 @@ fn test_switch_execute_creates_file(repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: Uses Unix shell command `exit 1`.
-#[rstest]
+/// Skipped on Windows: error message format differs (`exit status: 1` shown explicitly).
 #[cfg_attr(windows, ignore)]
+#[rstest]
 fn test_switch_execute_failure(repo: TestRepo) {
     snapshot_switch(
         "switch_execute_failure",

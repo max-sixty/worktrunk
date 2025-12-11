@@ -165,9 +165,7 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_user_post_create_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
