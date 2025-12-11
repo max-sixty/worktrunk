@@ -64,4 +64,8 @@ exclude = [
 # Exclude source files from link checking
 exclude_path = [
     ".claude-plugin/skills/worktrunk/reference/README.md",
+    # Files with root-relative asset paths that lychee can't resolve
+    # (assets are fetched at deploy time from worktrunk-assets repo)
+    "docs/content/select.md",
+    "docs/content/why-worktrunk.md",
 ]
