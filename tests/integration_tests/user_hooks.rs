@@ -11,7 +11,7 @@ use crate::common::{
 };
 use insta_cmd::assert_cmd_snapshot;
 use std::fs;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
@@ -408,6 +408,7 @@ fn test_pre_merge_hook_receives_sigint() {
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use std::io::Read;
+    use std::process::Stdio;
 
     let repo = TestRepo::new();
     repo.commit("Initial commit");
