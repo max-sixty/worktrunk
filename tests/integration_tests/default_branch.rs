@@ -1,11 +1,9 @@
-use crate::common::{TestRepo, repo};
+use crate::common::{TestRepo, repo, repo_with_remote};
 use rstest::rstest;
 use worktrunk::git::Repository;
 
 #[rstest]
-fn test_get_default_branch_with_origin_head(mut repo: TestRepo) {
-    repo.setup_remote("main");
-
+fn test_get_default_branch_with_origin_head(#[from(repo_with_remote)] repo: TestRepo) {
     // origin/HEAD should be set automatically by setup_remote
     assert!(repo.has_origin_head());
 
@@ -15,9 +13,7 @@ fn test_get_default_branch_with_origin_head(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_get_default_branch_without_origin_head(mut repo: TestRepo) {
-    repo.setup_remote("main");
-
+fn test_get_default_branch_without_origin_head(#[from(repo_with_remote)] repo: TestRepo) {
     // Clear origin/HEAD to force remote query
     repo.clear_origin_head();
     assert!(!repo.has_origin_head());
@@ -31,9 +27,7 @@ fn test_get_default_branch_without_origin_head(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_get_default_branch_caches_result(mut repo: TestRepo) {
-    repo.setup_remote("main");
-
+fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRepo) {
     // Clear origin/HEAD
     repo.clear_origin_head();
     assert!(!repo.has_origin_head());

@@ -1,4 +1,4 @@
-use crate::common::{TestRepo, repo, setup_snapshot_settings, wt_command};
+use crate::common::{TestRepo, repo, repo_with_remote, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -13,8 +13,7 @@ use rstest::rstest;
 
 /// Test that switch with --internal=powershell outputs PowerShell Set-Location syntax
 #[rstest]
-fn test_switch_internal_powershell_directive(mut repo: TestRepo) {
-    repo.setup_remote("main");
+fn test_switch_internal_powershell_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
 
     let mut settings = setup_snapshot_settings(&repo);
@@ -37,8 +36,7 @@ fn test_switch_internal_powershell_directive(mut repo: TestRepo) {
 
 /// Test merge with --internal=powershell (switch back to main after merge)
 #[rstest]
-fn test_merge_internal_powershell_directive(mut repo: TestRepo) {
-    repo.setup_remote("main");
+fn test_merge_internal_powershell_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     repo.add_main_worktree();
 
     // Create a feature worktree and make a commit
@@ -72,8 +70,7 @@ fn test_merge_internal_powershell_directive(mut repo: TestRepo) {
 /// on both platforms - this is purely a test snapshot compatibility issue.
 #[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_remove_internal_powershell_directive(mut repo: TestRepo) {
-    repo.setup_remote("main");
+fn test_remove_internal_powershell_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
     let mut settings = setup_snapshot_settings(&repo);

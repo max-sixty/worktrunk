@@ -1,6 +1,6 @@
 //! Integration tests for `wt step for-each`
 
-use crate::common::{make_snapshot_cmd, repo, setup_snapshot_settings, TestRepo};
+use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 

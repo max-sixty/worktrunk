@@ -1,7 +1,7 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, resolve_git_common_dir, setup_snapshot_settings,
-    wait_for_file, wait_for_file_content, wait_for_file_count, wait_for_file_lines,
-    wait_for_valid_json,
+    TestRepo, make_snapshot_cmd, repo, repo_with_remote, resolve_git_common_dir,
+    setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
+    wait_for_file_lines, wait_for_valid_json,
 };
 use insta::assert_snapshot;
 use insta_cmd::assert_cmd_snapshot;
@@ -243,9 +243,7 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
 #[rstest]
-fn test_post_create_git_variables_template(mut repo: TestRepo) {
-    repo.setup_remote("main");
-
+fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up an upstream tracking branch
     repo.git_command(&["push", "-u", "origin", "main"])
         .output()
@@ -319,9 +317,7 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
 #[rstest]
-fn test_post_create_upstream_template(mut repo: TestRepo) {
-    repo.setup_remote("main");
-
+fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Push main to set up tracking
     repo.git_command(&["push", "-u", "origin", "main"])
         .output()
