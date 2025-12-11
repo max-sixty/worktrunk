@@ -128,16 +128,24 @@ fn detect_windows_shell() -> ShellConfig {
 ///
 /// Checks:
 /// 1. MSYSTEM environment variable (indicates running in Git Bash/MSYS2)
-/// 2. Standard Git for Windows and MSYS2 installation paths
-/// 3. `git.exe` in PATH to find Git installation directory
+/// 2. `git.exe` in PATH to find Git installation directory
+/// 3. Standard Git for Windows and MSYS2 installation paths
 ///
 /// Note: We avoid relying on `which bash` because on systems with WSL installed,
 /// `bash` in PATH might be WSL's bash shim, not Git Bash.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
     // If we're already in Git Bash/MSYS2 (MSYSTEM is set), bash should be in PATH
-    if std::env::var("MSYSTEM").is_ok() && which::which("bash").is_ok() {
-        return Some(PathBuf::from("bash"));
+    // IMPORTANT: Only use bare "bash" when we KNOW we're in a Git Bash environment
+    if std::env::var("MSYSTEM").is_ok() {
+        if let Ok(bash_path) = which::which("bash") {
+            // Verify this is actually Git Bash, not WSL bash
+            // Git Bash is typically in a path containing "Git"
+            let path_str = bash_path.to_string_lossy();
+            if path_str.contains("Git") || path_str.contains("msys") || path_str.contains("mingw") {
+                return Some(bash_path);
+            }
+        }
     }
 
     // Try to find Git installation via `git.exe` in PATH first
