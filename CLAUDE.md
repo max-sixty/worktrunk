@@ -179,6 +179,12 @@ assert!(!marker_file.exists(), "Command should NOT have run");
 
 Use `--force` to skip interactive prompts in tests. Don't pipe input to stdin.
 
+## Coverage
+
+- Install once: `cargo install cargo-llvm-cov`.
+- Run: `./dev/coverage.sh` — runs tests once, then generates HTML (`target/llvm-cov/html/index.html`) and LCOV (`target/llvm-cov/lcov.info`). Set `COVERAGE_OPEN=0` to skip opening the HTML report.
+- Pass extra args to the test run (for example to filter tests): `./dev/coverage.sh -- --test test_name`.
+
 ## Benchmarks
 
 For detailed benchmark documentation, see `benches/CLAUDE.md`.

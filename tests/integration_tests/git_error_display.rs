@@ -1,6 +1,6 @@
 use insta::assert_snapshot;
 use std::path::PathBuf;
-use worktrunk::git::{GitError, HookType, WorktrunkError};
+use worktrunk::git::{GitError, HookType, WorktrunkError, add_hook_skip_hint};
 
 // ============================================================================
 // Worktree errors
@@ -288,6 +288,27 @@ fn display_hook_command_failed_without_name() {
     };
 
     assert_snapshot!("hook_command_failed_without_name", err.to_string());
+}
+
+/// Test error display for commands that support --no-verify (merge, commit, etc.)
+/// Shows the complete error with hint, as users would see it.
+#[test]
+fn display_hook_command_failed_with_skip_hint() {
+    let err: anyhow::Error = WorktrunkError::HookCommandFailed {
+        hook_type: HookType::PreMerge,
+        command_name: Some("test".into()),
+        error: "exit code 1".into(),
+        exit_code: Some(1),
+    }
+    .into();
+
+    // Wrap with hint (as done by commands supporting --no-verify)
+    let err_with_hint = add_hook_skip_hint(err);
+
+    assert_snapshot!(
+        "hook_command_failed_with_skip_hint",
+        err_with_hint.to_string()
+    );
 }
 
 // ============================================================================

@@ -1,7 +1,5 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mpost-create command failed: command not found[39m
-
-💡 [2mUse [90m--no-verify[39m to skip post-create commands[22m

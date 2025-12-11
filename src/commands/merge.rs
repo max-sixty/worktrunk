@@ -285,6 +285,7 @@ pub fn run_pre_merge_commands(
         HookFailureStrategy::FailFast,
         name_filter,
     )
+    .map_err(worktrunk::git::add_hook_skip_hint)
 }
 
 /// Execute post-merge commands sequentially in the main worktree (blocking)
@@ -308,6 +309,7 @@ pub fn execute_post_merge_commands(
         HookFailureStrategy::Warn,
         name_filter,
     )
+    .map_err(worktrunk::git::add_hook_skip_hint)
 }
 
 /// Execute pre-remove commands sequentially in the worktree (blocking)
@@ -330,4 +332,5 @@ pub fn execute_pre_remove_commands(
         HookFailureStrategy::FailFast,
         name_filter,
     )
+    .map_err(worktrunk::git::add_hook_skip_hint)
 }

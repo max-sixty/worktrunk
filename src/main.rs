@@ -1311,10 +1311,12 @@ fn main() {
     if let Err(e) = result {
         use worktrunk::styling::ERROR_EMOJI;
 
-        // GitError and WorktrunkError produce styled output via Display
+        // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
             let _ = output::print(err.to_string());
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::WorktrunkError>() {
+            let _ = output::print(err.to_string());
+        } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
             let _ = output::print(err.to_string());
         } else {
             // Anyhow error - format with emoji, multi-line root cause gets gutter

@@ -111,8 +111,9 @@ The CI column shows GitHub/GitLab pipeline status:
   [90m●[0m gray     No checks configured     
   (blank)    No upstream or no PR/MR  
 
-CI is only checked for branches that track a remote — local-only branches show blank. Any CI dot appears dimmed when there are unpushed local changes
-(stale status). CI indicators are clickable links to the PR page. Results are cached for 30-60 seconds; use [2mwt config cache[0m to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs
+are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60
+seconds; use [2mwt config cache[0m to view or clear.
 
 [32mStatus symbols
 

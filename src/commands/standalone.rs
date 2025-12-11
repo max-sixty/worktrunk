@@ -247,19 +247,23 @@ pub fn handle_squash(
     // Run user pre-commit hooks first (unless skipped)
     if !skip_pre_commit && let Some(user_config) = &ctx.config.pre_commit {
         use super::hooks::{HookFailureStrategy, HookSource};
-        pipeline.run_sequential(
-            user_config,
-            HookType::PreCommit,
-            HookSource::User,
-            &extra_vars,
-            HookFailureStrategy::FailFast,
-            None,
-        )?;
+        pipeline
+            .run_sequential(
+                user_config,
+                HookType::PreCommit,
+                HookSource::User,
+                &extra_vars,
+                HookFailureStrategy::FailFast,
+                None,
+            )
+            .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
 
     // Then run project pre-commit hooks (unless skipped)
     if !skip_pre_commit && let Some(ref config) = project_config {
-        pipeline.run_pre_commit(config, Some(&target_branch), None)?;
+        pipeline
+            .run_pre_commit(config, Some(&target_branch), None)
+            .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
 
     // Get merge base with target branch

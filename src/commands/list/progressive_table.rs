@@ -206,3 +206,51 @@ impl ProgressiveTable {
         self.is_tty
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_and_updates_rows_without_tty_side_effects() {
+        let header = "header".to_string();
+        let skeletons = vec!["row0".to_string(), "row1".to_string()];
+        let footer = "loading".to_string();
+
+        let mut table =
+            ProgressiveTable::new(header.clone(), skeletons.clone(), footer.clone(), 80)
+                .expect("table should build");
+
+        // Force non-TTY behavior to avoid cursor control in tests
+        table.is_tty = false;
+
+        // header + 2 rows + spacer + footer
+        assert_eq!(table.lines.len(), 5);
+        assert_eq!(table.lines[0], header);
+        assert_eq!(table.lines[1], skeletons[0]);
+        assert_eq!(table.lines[2], skeletons[1]);
+        assert!(table.lines[3].is_empty(), "spacer should be blank");
+        assert_eq!(table.lines[4], footer);
+
+        // No-op when index out of bounds
+        table.update_row(5, "ignored".into()).unwrap();
+
+        // Update row content and verify it changed
+        table.update_row(1, "row1-updated".into()).unwrap();
+        assert_eq!(table.lines[2], "row1-updated");
+
+        // Updating with identical content should be a no-op
+        let before = table.lines[2].clone();
+        table.update_row(1, before.clone()).unwrap();
+        assert_eq!(table.lines[2], before);
+
+        // Footer update
+        table.update_footer("done".into()).unwrap();
+        assert_eq!(table.lines.last().unwrap(), "done");
+
+        // Finalize non-tty path should just print without panicking
+        table
+            .finalize_non_tty(vec!["final header".into(), "final row".into()])
+            .unwrap();
+    }
+}

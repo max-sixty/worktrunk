@@ -514,7 +514,10 @@ pub enum CiStatus {
 
 /// Source of CI status
 ///
-/// Visual distinction: ● (filled) for PR, ◒ (lower half black) for branch CI.
+/// Visual distinction: Currently both PR and branch CI use ● (filled circle).
+/// The internal distinction (CiSource::PullRequest vs CiSource::Branch) is preserved
+/// for potential future visual differentiation. We tried ◒ (half circle) for branch CI
+/// but it renders narrower than ● in many terminal fonts, causing misalignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CiSource {
@@ -740,13 +743,15 @@ impl PrStatus {
     ///
     /// - Error: ⚠ (overrides source indicator)
     /// - PullRequest: ● (filled circle)
-    /// - Branch: ◒ (lower half black circle)
+    /// - Branch: ● (filled circle) — same as PR for now, see CiSource doc comment
     pub fn indicator(&self) -> &'static str {
         match self.ci_status {
             CiStatus::Error => "⚠",
             _ => match self.source {
                 CiSource::PullRequest => "●",
-                CiSource::Branch => "◒",
+                // Using same indicator as PR for now due to font rendering issues.
+                // See CiSource doc comment for details.
+                CiSource::Branch => "●",
             },
         }
     }

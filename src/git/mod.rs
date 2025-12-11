@@ -34,8 +34,10 @@ pub use error::{
     // Typed error enum (Display produces styled output)
     GitError,
     // Special-handling error enum (Display produces styled output)
+    HookErrorWithHint,
     WorktrunkError,
     // Error inspection functions
+    add_hook_skip_hint,
     exit_code,
     is_command_not_approved,
 };

@@ -47,7 +47,7 @@ impl DisplayFields {
             })
         });
 
-        // CI column shows only the indicator (●/◒), not text
+        // CI column shows only the indicator (●), not text
         // Let render.rs handle it via render_indicator()
         let ci_status_display = None;
 

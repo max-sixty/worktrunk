@@ -385,7 +385,7 @@ main {
 // Links
 .content a {
     color: var(--wt-color-link);
-    transition: all 150ms;
+    transition: color 150ms, text-decoration 150ms;
 
     &:hover {
         text-decoration: underline;
@@ -640,7 +640,7 @@ table {
         border-radius: 0.25rem;
         font-size: 0.8rem;
         color: var(--wt-color-text-muted);
-        transition: all 150ms;
+        transition: color 150ms, background 150ms;
 
         &:hover {
             background: var(--wt-color-bg-soft);
@@ -666,7 +666,7 @@ table {
         padding: 0.1rem 0.35rem;
         border-radius: 0.2rem;
         display: block;
-        transition: all 150ms;
+        transition: color 150ms, background 150ms;
 
         &:hover {
             color: var(--wt-color-text-muted);
@@ -699,7 +699,7 @@ table {
         font-weight: 500;
         padding: 0.5rem 1rem;
         border-radius: 0.5rem;
-        transition: all 150ms;
+        transition: color 150ms, background 150ms;
 
         &:hover {
             background: var(--wt-color-accent-soft);
@@ -860,7 +860,7 @@ footer {
     font-size: 1rem;
     border: none;
     cursor: pointer;
-    transition: all 150ms;
+    transition: background 150ms, box-shadow 150ms;
 
     &:hover {
         background: var(--wt-color-accent-strong);
@@ -1153,7 +1153,7 @@ body.mobile-menu-open {
 // Transitions & Accessibility
 // ============================================================================
 
-a, button, .toc-item a, .nav-item {
+button, .nav-item {
     transition: color 150ms, background 150ms, box-shadow 150ms;
 }
 

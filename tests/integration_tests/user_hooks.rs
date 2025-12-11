@@ -358,8 +358,9 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     let mut child = cmd.spawn().expect("failed to spawn wt hook pre-merge");
 
     // Wait until hook writes "start" to hook.log (verifies the hook is running)
+    // Use wait_for_file_content to ensure echo has finished writing, not just that the file exists
     let hook_log = repo.root_path().join("hook.log");
-    wait_for_file(&hook_log, Duration::from_secs(5));
+    wait_for_file_content(&hook_log, Duration::from_secs(5));
 
     // Send SIGINT to wt (simulates Ctrl-C)
     kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).expect("failed to send SIGINT");

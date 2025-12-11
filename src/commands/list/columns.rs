@@ -107,3 +107,62 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         11,
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn columns_are_ordered_and_unique() {
+        let kinds: Vec<ColumnKind> = COLUMN_SPECS.iter().map(|c| c.kind).collect();
+        let expected = vec![
+            ColumnKind::Gutter,
+            ColumnKind::Branch,
+            ColumnKind::Status,
+            ColumnKind::WorkingDiff,
+            ColumnKind::AheadBehind,
+            ColumnKind::BranchDiff,
+            ColumnKind::Path,
+            ColumnKind::Upstream,
+            ColumnKind::CiStatus,
+            ColumnKind::Commit,
+            ColumnKind::Time,
+            ColumnKind::Message,
+        ];
+        assert_eq!(kinds, expected, "column order should match display layout");
+
+        // display_index should match position to keep layout lookups O(1)
+        for (idx, spec) in COLUMN_SPECS.iter().enumerate() {
+            assert_eq!(
+                spec.display_index as usize, idx,
+                "display_index must be contiguous"
+            );
+        }
+    }
+
+    #[test]
+    fn columns_gate_on_required_tasks() {
+        let branch_diff = COLUMN_SPECS
+            .iter()
+            .find(|c| c.kind == ColumnKind::BranchDiff)
+            .unwrap();
+        assert_eq!(branch_diff.requires_task, Some(TaskKind::BranchDiff));
+
+        let ci_status = COLUMN_SPECS
+            .iter()
+            .find(|c| c.kind == ColumnKind::CiStatus)
+            .unwrap();
+        assert_eq!(ci_status.requires_task, Some(TaskKind::CiStatus));
+
+        // All other columns should not require a background task to render
+        for spec in COLUMN_SPECS {
+            if spec.kind != ColumnKind::BranchDiff && spec.kind != ColumnKind::CiStatus {
+                assert!(
+                    spec.requires_task.is_none(),
+                    "{:?} unexpectedly requires a task",
+                    spec.kind
+                );
+            }
+        }
+    }
+}

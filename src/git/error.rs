@@ -514,21 +514,22 @@ impl std::fmt::Display for WorktrunkError {
                 error,
                 ..
             } => {
-                let err_msg = if let Some(name) = command_name {
-                    error_message(cformat!(
-                        "{hook_type} command failed: <bold>{name}</>: {error}"
-                    ))
+                // Note: Callers that support --no-verify should add the hint themselves
+                if let Some(name) = command_name {
+                    write!(
+                        f,
+                        "{}",
+                        error_message(cformat!(
+                            "{hook_type} command failed: <bold>{name}</>: {error}"
+                        ))
+                    )
                 } else {
-                    error_message(format!("{hook_type} command failed: {error}"))
-                };
-                write!(
-                    f,
-                    "{}\n\n{}",
-                    err_msg,
-                    hint_message(cformat!(
-                        "Use <bright-black>--no-verify</> to skip {hook_type} commands"
-                    ))
-                )
+                    write!(
+                        f,
+                        "{}",
+                        error_message(format!("{hook_type} command failed: {error}"))
+                    )
+                }
             }
             WorktrunkError::CommandNotApproved => {
                 Ok(()) // on_skip callback handles the printing
@@ -544,6 +545,10 @@ impl std::error::Error for WorktrunkError {}
 
 /// Extract exit code from WorktrunkError, if applicable
 pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
+    // Check for wrapped HookErrorWithHint first
+    if let Some(wrapper) = err.downcast_ref::<HookErrorWithHint>() {
+        return exit_code(&wrapper.inner);
+    }
     err.downcast_ref::<WorktrunkError>().and_then(|e| match e {
         WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
         WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
@@ -556,6 +561,68 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
 pub fn is_command_not_approved(err: &anyhow::Error) -> bool {
     err.downcast_ref::<WorktrunkError>()
         .is_some_and(|e| matches!(e, WorktrunkError::CommandNotApproved))
+}
+
+/// If the error is a HookCommandFailed, wrap it to add a hint about using --no-verify.
+///
+/// ## When to use
+///
+/// Use this for commands where a hook runs as a side effect of the user's intent:
+/// - `wt merge` - user wants to merge, hooks run as part of that
+/// - `wt commit` - user wants to commit, pre-commit hooks run
+/// - `wt switch --create` - user wants a worktree, post-create hooks run
+///
+/// ## When NOT to use
+///
+/// Don't use for `wt hook <type>` - the user explicitly asked to run hooks,
+/// so suggesting `--no-verify` makes no sense.
+pub fn add_hook_skip_hint(err: anyhow::Error) -> anyhow::Error {
+    // Extract hook_type first (if applicable), then decide whether to wrap
+    let hook_type = err
+        .downcast_ref::<WorktrunkError>()
+        .and_then(|wt_err| match wt_err {
+            WorktrunkError::HookCommandFailed { hook_type, .. } => Some(*hook_type),
+            _ => None,
+        });
+
+    match hook_type {
+        Some(hook_type) => HookErrorWithHint {
+            inner: err,
+            hook_type,
+        }
+        .into(),
+        None => err,
+    }
+}
+
+/// Wrapper that displays a HookCommandFailed error with the --no-verify hint.
+/// Created by `add_hook_skip_hint()` for commands that support `--no-verify`.
+#[derive(Debug)]
+pub struct HookErrorWithHint {
+    inner: anyhow::Error,
+    hook_type: HookType,
+}
+
+impl std::fmt::Display for HookErrorWithHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Display the original error (always HookCommandFailed - validated by add_hook_skip_hint)
+        write!(f, "{}", self.inner)?;
+        // Add the hint
+        write!(
+            f,
+            "\n\n{}",
+            hint_message(cformat!(
+                "Use <bright-black>--no-verify</> to skip {} commands",
+                self.hook_type
+            ))
+        )
+    }
+}
+
+impl std::error::Error for HookErrorWithHint {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.inner.source()
+    }
 }
 
 /// Format an error with header and gutter content
