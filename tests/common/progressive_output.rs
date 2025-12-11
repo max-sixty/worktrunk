@@ -100,7 +100,7 @@
 
 use crate::common::{ExponentialBackoff, TestRepo};
 use insta_cmd::get_cargo_bin;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize};
 use std::io::Read;
 use std::time::{Duration, Instant};
 
@@ -331,8 +331,8 @@ pub fn capture_progressive_output(
 ) -> ProgressiveOutput {
     let start_time = Instant::now();
 
-    // Create PTY
-    let pty_system = native_pty_system();
+    // Create PTY (handles signal blocking for background process groups)
+    let pty_system = super::native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
             rows: options.terminal_size.0,

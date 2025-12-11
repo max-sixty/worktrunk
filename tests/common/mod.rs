@@ -34,6 +34,82 @@ pub mod progressive_output;
 #[cfg(all(unix, feature = "shell-integration-tests"))]
 pub mod shell;
 
+/// Block SIGTTIN and SIGTTOU signals to prevent test processes from being
+/// stopped when PTY operations interact with terminal control in background
+/// process groups.
+///
+/// This is needed when running tests in environments like Codex where the test
+/// process may be in the background process group of a controlling terminal.
+/// PTY operations (via `portable_pty`) can trigger these signals, causing the
+/// process to be stopped rather than continuing execution.
+///
+/// Signal masks are per-thread, so this must be called on each thread that
+/// performs PTY operations. It's idempotent within a thread (safe to call
+/// multiple times on the same thread).
+///
+/// **Preferred usage**: Use the `pty_safe` rstest fixture instead of calling directly:
+/// ```ignore
+/// use rstest::rstest;
+/// use crate::common::pty_safe;
+///
+/// #[rstest]
+/// fn test_something(_pty_safe: ()) {
+///     // PTY operations here won't cause SIGTTIN/SIGTTOU stops
+/// }
+/// ```
+#[cfg(unix)]
+pub fn ignore_tty_signals() {
+    use std::cell::Cell;
+    thread_local! {
+        static TTY_SIGNALS_BLOCKED: Cell<bool> = const { Cell::new(false) };
+    }
+    TTY_SIGNALS_BLOCKED.with(|blocked| {
+        if blocked.get() {
+            return;
+        }
+        use nix::sys::signal::{SigSet, SigmaskHow, Signal, pthread_sigmask};
+        let mut mask = SigSet::empty();
+        mask.add(Signal::SIGTTIN);
+        mask.add(Signal::SIGTTOU);
+        // Block these signals in the current thread's signal mask.
+        // Fail fast if this doesn't work - silent failure would cause flaky tests.
+        pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&mask), None)
+            .expect("failed to block SIGTTIN/SIGTTOU signals");
+        blocked.set(true);
+    });
+}
+
+/// Rstest fixture that blocks SIGTTIN/SIGTTOU signals before each test.
+///
+/// Use this for any test that performs PTY operations to prevent the test
+/// from being stopped when running in background process groups (e.g., Codex).
+///
+/// # Example
+/// ```ignore
+/// use rstest::rstest;
+/// use crate::common::pty_safe;
+///
+/// #[rstest]
+/// fn test_pty_interaction(_pty_safe: ()) {
+///     // PTY operations here are safe from SIGTTIN/SIGTTOU stops
+/// }
+/// ```
+#[cfg(unix)]
+#[rstest::fixture]
+pub fn pty_safe() {
+    ignore_tty_signals();
+}
+
+/// Returns a PTY system after ensuring SIGTTIN/SIGTTOU signals are blocked.
+///
+/// Use this instead of `portable_pty::native_pty_system()` directly to ensure
+/// PTY tests work in background process groups (e.g., Codex).
+#[cfg(unix)]
+pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
+    ignore_tty_signals();
+    portable_pty::native_pty_system()
+}
+
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

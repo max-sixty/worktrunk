@@ -22,7 +22,7 @@
 use crate::common::TestRepo;
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::mpsc;
@@ -99,7 +99,7 @@ fn exec_in_pty_with_input_expectations(
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
 ) -> (Vec<u8>, i32) {
-    let pty_system = native_pty_system();
+    let pty_system = crate::common::native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
             rows: TERM_ROWS,

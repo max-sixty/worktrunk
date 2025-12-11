@@ -74,21 +74,18 @@ jobs:
         # Skip lychee - the dedicated check-links job handles link checking
         SKIP: lychee
 
-    - name: 🧪 Pre-merge hooks
-      # Run via wt on Unix, but directly on Windows to avoid exe locking issues
-      run: cargo run --locked -- hook pre-merge --force
-      if: runner.os != 'Windows'
+    # TODO: Windows fails with exe locking - cargo can't rebuild wt.exe while it's running.
+    # Installing wt first avoids this, but baptiste0928/cargo-install doesn't support local paths.
+    # Options: (1) use --path via args, (2) cargo install --path . manually, (3) fix upstream action
+    - name: Install wt
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: worktrunk
+        git: https://github.com/${{ github.repository }}
+        commit: ${{ github.sha }}
 
-    - name: 🧪 Pre-merge hooks (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        $env:RUSTFLAGS='-D warnings'
-        $env:NEXTEST_STATUS_LEVEL='fail'
-        $env:NEXTEST_SUCCESS_OUTPUT='never'
-        cargo insta test --delete-unreferenced-snapshots --check --features shell-integration-tests
-        cargo test --doc
-        $env:RUSTDOCFLAGS='-Dwarnings'
-        cargo doc --no-deps
+    - name: 🧪 Pre-merge hooks
+      run: wt hook pre-merge --force
 
   check-links:
     runs-on: ubuntu-latest

@@ -15,7 +15,7 @@
 use crate::common::TestRepo;
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -29,7 +29,7 @@ fn exec_in_pty_with_input(
     env_vars: &[(String, String)],
     input: &str,
 ) -> (String, i32) {
-    let pty_system = native_pty_system();
+    let pty_system = crate::common::native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
             rows: 48,

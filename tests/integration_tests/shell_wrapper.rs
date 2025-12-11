@@ -350,10 +350,11 @@ fn exec_in_pty_interactive(
     env_vars: &[(&str, &str)],
     inputs: &[&str],
 ) -> (String, i32) {
-    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    use portable_pty::{CommandBuilder, PtySize};
     use std::io::{Read, Write};
 
-    let pty_system = native_pty_system();
+    // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+    let pty_system = crate::common::native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
             rows: 48,
@@ -448,7 +449,7 @@ fn exec_bash_truly_interactive(
     working_dir: &std::path::Path,
     env_vars: &[(&str, &str)],
 ) -> (String, i32) {
-    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    use portable_pty::{CommandBuilder, PtySize};
     use std::io::{Read, Write};
     use std::thread;
     use std::time::Duration;
@@ -458,7 +459,7 @@ fn exec_bash_truly_interactive(
     let script_path = tmp_dir.path().join("setup.sh");
     fs::write(&script_path, setup_script).unwrap();
 
-    let pty_system = native_pty_system();
+    let pty_system = crate::common::native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
             rows: 48,
@@ -2614,7 +2615,7 @@ fi
     /// The shell integration hint is truncated from the output.
     #[test]
     fn test_readme_example_approval_prompt() {
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use portable_pty::{CommandBuilder, PtySize};
         use std::io::{Read, Write};
 
         let repo = TestRepo::new();
@@ -2631,7 +2632,8 @@ test = "echo 'Running tests...'"
         repo.commit("Add config");
 
         // Direct PTY execution (not through shell wrapper) for interactive prompt
-        let pty_system = native_pty_system();
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        let pty_system = crate::common::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
                 rows: 48,
@@ -2729,7 +2731,7 @@ test = "echo 'Running tests...'"
     /// - Completion output being executed as commands (the COMPLETE mode bug)
     #[test]
     fn test_bash_completion_produces_correct_output() {
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
 
         let repo = TestRepo::new();
@@ -2810,7 +2812,8 @@ fi
         );
 
         // Execute in PTY
-        let pty_system = native_pty_system();
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        let pty_system = crate::common::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
                 rows: 48,
@@ -2893,7 +2896,7 @@ fi
     /// wt command with COMPLETE=zsh produces completion candidates.
     #[test]
     fn test_zsh_completion_produces_correct_output() {
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
 
         let repo = TestRepo::new();
@@ -2963,7 +2966,8 @@ fi
         );
 
         // Execute in PTY
-        let pty_system = native_pty_system();
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        let pty_system = crate::common::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
                 rows: 48,
@@ -3164,7 +3168,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[case("fish")]
     fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
 
         let repo = TestRepo::new();
@@ -3248,7 +3252,8 @@ echo "SCRIPT_COMPLETED"
         };
 
         // Execute in PTY
-        let pty_system = native_pty_system();
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        let pty_system = crate::common::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
                 rows: 48,
@@ -3362,7 +3367,7 @@ echo "SCRIPT_COMPLETED"
     #[case("fish")]
     fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
-        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+        use portable_pty::{CommandBuilder, PtySize};
         use std::io::Read;
 
         let repo = TestRepo::new();
@@ -3462,7 +3467,8 @@ echo "SCRIPT_COMPLETED"
         };
 
         // Execute in PTY (simulates interactive terminal)
-        let pty_system = native_pty_system();
+        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
+        let pty_system = crate::common::native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
                 rows: 48,
