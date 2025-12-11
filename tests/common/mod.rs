@@ -1239,9 +1239,15 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(&regex::escape(root_str), "[REPO]");
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
 
-    // On CI and when temp directories are under HOME, format_path_for_display() converts
-    // paths to tilde-prefixed format (e.g., ~/repo, ~/repo.feature).
-    // Add filters for both the main repo and any worktree suffixes.
+    // In tests, HOME is set to the temp directory containing the repo. Commands being tested
+    // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
+    // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
+    // IMPORTANT: Add worktree pattern FIRST so it matches before the plain ~/repo pattern.
+    // Filters are applied in order, so ~/repo.feature is replaced before ~/repo would match it.
+    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)", "[REPO]$1");
+    settings.add_filter(r"~/repo", "[REPO]");
+
+    // Also handle the case where the real home contains the temp directory (Windows/macOS)
     // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
     // (C:\Users\RUNNER~1) while dunce::canonicalize returns the long path (C:\Users\runneradmin).
     if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
@@ -1250,8 +1256,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
         // Match exact repo path
         settings.add_filter(&regex::escape(&tilde_path), "[REPO]");
-        // Match worktree paths like ~/repo.feature, ~/repo.main-wt
-        // Use regex pattern to catch any worktree suffix
+        // Match worktree paths
         let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
         settings.add_filter(&tilde_worktree_pattern, "[REPO]$1");
     }

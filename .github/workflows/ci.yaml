@@ -13,6 +13,18 @@ env:
   RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: 💰 Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: 🔍 Pre-commit hooks
+      uses: pre-commit/action@v3.0.1
+
   test:
     strategy:
       fail-fast: false
@@ -36,9 +48,6 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: v0-rust
-        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (bash, zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
@@ -60,19 +69,6 @@ jobs:
         # CI will test with bash only on Windows (tests skip unavailable shells)
         echo "Using Git Bash for Windows tests"
       shell: pwsh
-
-    - name: Setup Python for pre-commit
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: 🔍 Pre-commit hooks
-      run: |
-        pip install pre-commit
-        pre-commit run --all-files
-      env:
-        # Skip lychee on Windows/macOS - it requires bash and we only need to run it once
-        SKIP: ${{ runner.os != 'Linux' && 'lychee' || '' }}
 
     # On Linux/macOS: Install from crates.io (pre-merge hooks run against published version)
     # On Windows: Build from source (published version may not have Git Bash detection fixes)
@@ -119,9 +115,6 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: v0-msrv
-        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - uses: baptiste0928/cargo-install@v3
       with:
@@ -143,9 +136,6 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: v0-udeps
-        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - uses: baptiste0928/cargo-install@v3
       with:
@@ -166,9 +156,6 @@ jobs:
 
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
-      with:
-        prefix-key: v0-bench
-        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
       run: |
