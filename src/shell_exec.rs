@@ -130,11 +130,28 @@ fn detect_windows_shell() -> ShellConfig {
 /// 1. MSYSTEM environment variable (indicates running in Git Bash/MSYS2)
 /// 2. Standard Git for Windows and MSYS2 installation paths
 /// 3. `git.exe` in PATH to find Git installation directory
+///
+/// Note: We avoid relying on `which bash` because on systems with WSL installed,
+/// `bash` in PATH might be WSL's bash shim, not Git Bash.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
     // If we're already in Git Bash/MSYS2 (MSYSTEM is set), bash should be in PATH
     if std::env::var("MSYSTEM").is_ok() && which::which("bash").is_ok() {
         return Some(PathBuf::from("bash"));
+    }
+
+    // Try to find Git installation via `git.exe` in PATH first
+    // This is the most reliable method on CI systems like GitHub Actions
+    // where Git might be installed in non-standard locations
+    if let Ok(git_path) = which::which("git") {
+        // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
+        // bash.exe is at Git/bin/bash.exe
+        if let Some(git_dir) = git_path.parent().and_then(|p| p.parent()) {
+            let bash_path = git_dir.join("bin").join("bash.exe");
+            if bash_path.exists() {
+                return Some(bash_path);
+            }
+        }
     }
 
     // Check standard installation paths for bash.exe
@@ -153,18 +170,6 @@ fn find_git_bash() -> Option<PathBuf> {
         let path = PathBuf::from(path);
         if path.exists() {
             return Some(path);
-        }
-    }
-
-    // Try to find Git installation via `git.exe` in PATH
-    if let Ok(git_path) = which::which("git") {
-        // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
-        // bash.exe is at Git/bin/bash.exe
-        if let Some(git_dir) = git_path.parent().and_then(|p| p.parent()) {
-            let bash_path = git_dir.join("bin").join("bash.exe");
-            if bash_path.exists() {
-                return Some(bash_path);
-            }
         }
     }
 
