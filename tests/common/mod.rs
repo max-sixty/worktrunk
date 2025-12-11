@@ -72,6 +72,7 @@ pub fn ignore_tty_signals() {
 
 /// No-op on non-Unix platforms.
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub fn ignore_tty_signals() {}
 
 use insta_cmd::get_cargo_bin;
