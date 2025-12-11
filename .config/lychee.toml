@@ -68,4 +68,5 @@ exclude_path = [
     # (assets are fetched at deploy time from worktrunk-assets repo)
     "docs/content/select.md",
     "docs/content/why-worktrunk.md",
+    "docs/content/worktrunk.md",
 ]

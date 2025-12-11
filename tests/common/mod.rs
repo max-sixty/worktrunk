@@ -1,3 +1,7 @@
+// Many helper functions are conditionally used based on platform (#[cfg(not(windows))]).
+// Allow dead_code at the module level to avoid warnings for platform-specific helpers.
+#![allow(dead_code)]
+
 //! # Test Utilities for worktrunk
 //!
 //! This module provides test harnesses for testing the worktrunk CLI tool.

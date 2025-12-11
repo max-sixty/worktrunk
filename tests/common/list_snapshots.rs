@@ -1,3 +1,6 @@
+// Functions here are conditionally used based on platform (#[cfg(not(windows))]).
+#![allow(dead_code)]
+
 use super::{TestRepo, setup_snapshot_settings, wt_command};
 use insta::Settings;
 use std::path::Path;
