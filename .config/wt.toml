@@ -35,8 +35,8 @@ sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 # Note: This must come AFTER post-merge because [pre-merge] starts
 # a TOML table section, and everything after it would be inside that section
 [pre-merge]
-# Skip if pre-commit not installed (Windows CI) - lint job handles this on Ubuntu
-pre-commit = "if which pre-commit > /dev/null 2>&1; then pre-commit run --all-files; fi"
+# Skip lychee on Windows (MSYSTEM is set in Git Bash/MSYS2 environments)
+pre-commit = "if [ -n \"$MSYSTEM\" ]; then SKIP=lychee-system pre-commit run --all-files; else pre-commit run --all-files; fi"
 insta = "RUSTFLAGS='-D warnings' NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never cargo insta test --dnd --check --features shell-integration-tests"
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"

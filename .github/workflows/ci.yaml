@@ -68,15 +68,18 @@ jobs:
         echo "Using Git Bash for Windows tests"
       shell: pwsh
 
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
     - name: Install pre-commit
+      run: uv tool install pre-commit
+
+    # lychee-system hook requires lychee binary; skip on Windows via SKIP env var in wt.toml
+    - name: Install lychee
       if: runner.os != 'Windows'
-      run: |
-        if command -v uv &> /dev/null; then
-          uv tool install pre-commit
-        else
-          pip install pre-commit
-        fi
-      shell: bash
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: lychee
 
     # On Linux/macOS: Install from crates.io (pre-merge hooks run against published version)
     # On Windows: Build from source (published version may not have Git Bash detection fixes)
