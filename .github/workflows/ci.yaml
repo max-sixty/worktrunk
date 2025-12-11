@@ -52,14 +52,11 @@ jobs:
         brew install fish
         # bash and zsh are pre-installed on macOS
 
-    - name: Install shells - Windows
+    - name: Setup WSL - Windows
       if: runner.os == 'Windows'
-      run: |
-        # Git Bash is pre-installed on GitHub Actions Windows runners
-        # Fish and zsh are not commonly available on native Windows (require WSL/MSYS2)
-        # CI will test with bash only on Windows (tests skip unavailable shells)
-        echo "Using Git Bash for Windows tests"
-      shell: pwsh
+      uses: Vampire/setup-wsl@v5
+      with:
+        distribution: Ubuntu-24.04
 
     - name: Setup Python for pre-commit
       uses: actions/setup-python@v5
@@ -77,26 +74,12 @@ jobs:
     # This installs from crates.io, not from the PR code. Pre-merge hooks
     # run against the published version, testing the hook configuration.
     - name: Install wt
-      if: runner.os != 'Windows'
       uses: baptiste0928/cargo-install@v3
       with:
         crate: worktrunk
 
     - name: 🧪 Pre-merge hooks
-      if: runner.os != 'Windows'
       run: wt hook pre-merge --force
-
-    # Windows: Run tests directly (wt hook pre-merge uses bash syntax).
-    # Same test command as wt.toml pre-merge config.
-    - name: 🧪 Tests (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cargo insta test --dnd --check --features shell-integration-tests
-        cargo test --doc
-      env:
-        RUSTFLAGS: '-D warnings'
-        NEXTEST_STATUS_LEVEL: fail
-        NEXTEST_SUCCESS_OUTPUT: never
 
   check-links:
     runs-on: ubuntu-latest
