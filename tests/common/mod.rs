@@ -47,7 +47,16 @@ pub mod shell;
 /// performs PTY operations. It's idempotent within a thread (safe to call
 /// multiple times on the same thread).
 ///
-/// On non-Unix platforms, this is a no-op.
+/// **Preferred usage**: Use the `pty_safe` rstest fixture instead of calling directly:
+/// ```ignore
+/// use rstest::rstest;
+/// use crate::common::pty_safe;
+///
+/// #[rstest]
+/// fn test_something(_pty_safe: ()) {
+///     // PTY operations here won't cause SIGTTIN/SIGTTOU stops
+/// }
+/// ```
 #[cfg(unix)]
 pub fn ignore_tty_signals() {
     use std::cell::Cell;
@@ -70,10 +79,26 @@ pub fn ignore_tty_signals() {
     });
 }
 
-/// No-op on non-Unix platforms.
-#[cfg(not(unix))]
-#[allow(dead_code)]
-pub fn ignore_tty_signals() {}
+/// Rstest fixture that blocks SIGTTIN/SIGTTOU signals before each test.
+///
+/// Use this for any test that performs PTY operations to prevent the test
+/// from being stopped when running in background process groups (e.g., Codex).
+///
+/// # Example
+/// ```ignore
+/// use rstest::rstest;
+/// use crate::common::pty_safe;
+///
+/// #[rstest]
+/// fn test_pty_interaction(_pty_safe: ()) {
+///     // PTY operations here are safe from SIGTTIN/SIGTTOU stops
+/// }
+/// ```
+#[cfg(unix)]
+#[rstest::fixture]
+pub fn pty_safe() {
+    ignore_tty_signals();
+}
 
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
