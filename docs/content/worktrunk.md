@@ -1,5 +1,5 @@
 +++
-title = "Why Worktrunk?"
+title = "Worktrunk"
 weight = 1
 +++
 
@@ -14,7 +14,7 @@ Here's a quick demo:
 
 ## Git worktrees are a great primitive
 
-AI agents like Claude Code and Codex can increasingly handle longer tasks
+For context, AI agents like Claude Code and Codex can increasingly handle longer tasks
 without supervision, and it's very practical to run several in parallel. Git
 worktrees provide each agent with its own working directory, avoiding agents
 stepping on each other's changes.

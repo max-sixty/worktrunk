@@ -58,10 +58,6 @@ fn run_statusline(repo: &TestRepo, args: &[&str], stdin_json: Option<&str>) -> S
 
 // --- Test Fixtures ---
 
-fn setup_basic_repo() -> TestRepo {
-    TestRepo::new()
-}
-
 fn setup_repo_with_changes() -> TestRepo {
     let repo = TestRepo::new();
 
@@ -105,7 +101,7 @@ fn setup_repo_with_commits_ahead() -> TestRepo {
 
 #[test]
 fn test_statusline_basic() {
-    let repo = setup_basic_repo();
+    let repo = TestRepo::new();
     let output = run_statusline(&repo, &[], None);
     assert_snapshot!(output, @"main  [2m^[22m");
 }
@@ -177,7 +173,7 @@ fn test_statusline_claude_code_full_context() {
 #[test]
 #[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_minimal() {
-    let repo = setup_basic_repo();
+    let repo = TestRepo::new();
 
     let json = format!(
         r#"{{"workspace": {{"current_dir": "{}"}}}}"#,
@@ -194,7 +190,7 @@ fn test_statusline_claude_code_minimal() {
 #[test]
 #[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_with_model() {
-    let repo = setup_basic_repo();
+    let repo = TestRepo::new();
 
     let json = format!(
         r#"{{

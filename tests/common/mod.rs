@@ -108,6 +108,44 @@ pub fn pty_safe() {
     ignore_tty_signals();
 }
 
+/// Basic TestRepo fixture - creates a fresh git repository.
+///
+/// Use with `#[rstest]` to inject a new repo into tests:
+/// ```ignore
+/// use rstest::rstest;
+/// use crate::common::repo;
+///
+/// #[rstest]
+/// fn test_something(repo: TestRepo) {
+///     // repo is a fresh TestRepo
+/// }
+///
+/// #[rstest]
+/// fn test_mutating(mut repo: TestRepo) {
+///     repo.add_worktree("feature");
+/// }
+/// ```
+#[rstest::fixture]
+pub fn repo() -> TestRepo {
+    TestRepo::new()
+}
+
+/// Repo with remote tracking set up.
+///
+/// Builds on the `repo` fixture, adding a "remote" for the default branch.
+/// Use `#[from(repo_with_remote)]` in rstest:
+/// ```ignore
+/// #[rstest]
+/// fn test_push(#[from(repo_with_remote)] repo: TestRepo) {
+///     // repo has remote tracking configured
+/// }
+/// ```
+#[rstest::fixture]
+pub fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
+    repo.setup_remote("main");
+    repo
+}
+
 /// Returns a PTY system after ensuring SIGTTIN/SIGTTOU signals are blocked.
 ///
 /// Use this instead of `portable_pty::native_pty_system()` directly to ensure

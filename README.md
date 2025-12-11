@@ -21,11 +21,11 @@ Here's a quick demo:
 
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/why-worktrunk.md#git-worktrees-are-a-great-primitive..worktrunk-makes-git-worktrees-easy — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#git-worktrees-are-a-great-primitive..worktrunk-makes-git-worktrees-easy — edit source to update -->
 
 ## Git worktrees are a great primitive
 
-AI agents like Claude Code and Codex can increasingly handle longer tasks
+For context, AI agents like Claude Code and Codex can increasingly handle longer tasks
 without supervision, and it's very practical to run several in parallel. Git
 worktrees provide each agent with its own working directory, avoiding agents
 stepping on each other's changes.
@@ -106,7 +106,7 @@ $ wt remove
 
 <!-- END AUTO-GENERATED -->
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/why-worktrunk.md#install..further-reading — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#install..further-reading — edit source to update -->
 
 ## Install
 

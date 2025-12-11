@@ -3,10 +3,6 @@ use insta::Settings;
 use std::path::Path;
 use std::process::Command;
 
-pub fn standard_settings(repo: &TestRepo) -> Settings {
-    setup_snapshot_settings(repo)
-}
-
 pub fn json_settings(repo: &TestRepo) -> Settings {
     let mut settings = setup_snapshot_settings(repo);
     // JSON-specific filters for timestamps and escaped ANSI codes
@@ -96,27 +92,17 @@ pub fn command_progressive_branches(repo: &TestRepo) -> Command {
     cmd
 }
 
-pub fn command_task_dag(repo: &TestRepo) -> Command {
-    // Task DAG is now the default for progressive mode
-    command_progressive(repo)
-}
-
-pub fn command_task_dag_full(repo: &TestRepo) -> Command {
-    let mut cmd = command_task_dag(repo);
+pub fn command_progressive_full(repo: &TestRepo) -> Command {
+    let mut cmd = command_progressive(repo);
     cmd.arg("--full");
     cmd
 }
 
-pub fn command_task_dag_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
+pub fn command_progressive_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
     let mut cmd = wt_command();
     repo.clean_cli_env(&mut cmd);
     cmd.args(["list", "--progressive"]).current_dir(cwd);
     cmd
-}
-
-// README example commands - use narrower width for doc site code blocks
-pub fn command_readme_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
-    command_readme(repo, cwd)
 }
 
 pub fn command_readme_full_from_dir(repo: &TestRepo, cwd: &Path) -> Command {

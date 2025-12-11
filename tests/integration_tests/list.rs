@@ -8,7 +8,7 @@ use std::process::Command;
 
 fn snapshot_list(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command(repo, repo.root_path()),
     );
@@ -16,7 +16,7 @@ fn snapshot_list(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command(repo, cwd),
     );
@@ -32,7 +32,7 @@ fn snapshot_list_json(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_with_branches(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_branches(repo),
     );
@@ -40,7 +40,7 @@ fn snapshot_list_with_branches(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_with_remotes(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_remotes(repo),
     );
@@ -48,7 +48,7 @@ fn snapshot_list_with_remotes(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_with_branches_and_remotes(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_branches_and_remotes(repo),
     );
@@ -56,7 +56,7 @@ fn snapshot_list_with_branches_and_remotes(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_progressive(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_progressive(repo),
     );
@@ -64,7 +64,7 @@ fn snapshot_list_progressive(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_no_progressive(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_no_progressive(repo),
     );
@@ -72,40 +72,32 @@ fn snapshot_list_no_progressive(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_progressive_branches(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_progressive_branches(repo),
     );
 }
 
-fn snapshot_list_task_dag(test_name: &str, repo: &TestRepo) {
+fn snapshot_list_progressive_full(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
-        list_snapshots::command_task_dag(repo),
-    );
-}
-
-fn snapshot_list_task_dag_full(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        list_snapshots::standard_settings(repo),
-        test_name,
-        list_snapshots::command_task_dag_full(repo),
+        list_snapshots::command_progressive_full(repo),
     );
 }
 
 // README example snapshots - use narrower width for doc site code blocks
 fn snapshot_readme_list_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
-        list_snapshots::command_readme_from_dir(repo, cwd),
+        list_snapshots::command_readme(repo, cwd),
     );
 }
 
 fn snapshot_readme_list_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_readme_full_from_dir(repo, cwd),
     );
@@ -113,7 +105,7 @@ fn snapshot_readme_list_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Pa
 
 fn snapshot_readme_list_branches_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_readme_branches_full_from_dir(repo, cwd),
     );
@@ -1930,7 +1922,7 @@ fn test_list_progressive_with_branches() {
 fn test_list_task_dag_single_worktree() {
     let repo = TestRepo::new();
 
-    snapshot_list_task_dag("task_dag_single_worktree", &repo);
+    snapshot_list_progressive("task_dag_single_worktree", &repo);
 }
 
 #[test]
@@ -1941,7 +1933,7 @@ fn test_list_task_dag_multiple_worktrees() {
     repo.add_worktree("feature-b");
     repo.add_worktree("feature-c");
 
-    snapshot_list_task_dag("task_dag_multiple_worktrees", &repo);
+    snapshot_list_progressive("task_dag_multiple_worktrees", &repo);
 }
 
 #[test]
@@ -1968,7 +1960,7 @@ fn test_list_task_dag_full_with_diffs() {
         .output()
         .unwrap();
 
-    snapshot_list_task_dag_full("task_dag_full_with_diffs", &repo);
+    snapshot_list_progressive_full("task_dag_full_with_diffs", &repo);
 }
 
 #[test]
@@ -2005,7 +1997,7 @@ fn test_list_task_dag_with_upstream() {
         .output()
         .unwrap();
 
-    snapshot_list_task_dag_full("task_dag_with_upstream", &repo);
+    snapshot_list_progressive_full("task_dag_with_upstream", &repo);
 }
 
 #[test]
@@ -2017,7 +2009,7 @@ fn test_list_task_dag_many_worktrees() {
         repo.add_worktree(&format!("feature-{}", i));
     }
 
-    snapshot_list_task_dag("task_dag_many_worktrees", &repo);
+    snapshot_list_progressive("task_dag_many_worktrees", &repo);
 }
 
 #[test]
@@ -2028,7 +2020,7 @@ fn test_list_task_dag_with_locked_worktree() {
     repo.add_worktree("locked");
     repo.lock_worktree("locked", Some("Testing task DAG with locked worktree"));
 
-    snapshot_list_task_dag("task_dag_with_locked", &repo);
+    snapshot_list_progressive("task_dag_with_locked", &repo);
 }
 
 #[test]
@@ -2036,7 +2028,7 @@ fn test_list_task_dag_detached_head() {
     let repo = TestRepo::new();
     repo.detach_head();
 
-    snapshot_list_task_dag("task_dag_detached_head", &repo);
+    snapshot_list_progressive("task_dag_detached_head", &repo);
 }
 
 #[test]
@@ -2049,9 +2041,9 @@ fn test_list_task_dag_ordering_stability() {
     // Run from feature-current worktree
     // Expected order: main, feature-current, then by timestamp: feature-newest, feature-middle, feature-oldest
     run_snapshot(
-        list_snapshots::standard_settings(&repo),
+        setup_snapshot_settings(&repo),
         "task_dag_ordering_stability",
-        list_snapshots::command_task_dag_from_dir(&repo, &current_path),
+        list_snapshots::command_progressive_from_dir(&repo, &current_path),
     );
 }
 
@@ -2122,7 +2114,7 @@ fn test_list_with_c_flag() {
     repo.add_worktree("feature-b");
 
     // Run wt -C <repo_path> list from a completely different directory
-    let mut settings = list_snapshots::standard_settings(&repo);
+    let mut settings = setup_snapshot_settings(&repo);
     // Redact the -C path argument in metadata (try different selector formats)
     settings.add_redaction(".args[1]", "[REPO_PATH]");
     settings.bind(|| {
@@ -2516,7 +2508,7 @@ fn test_list_maximum_status_with_git_operation() {
 
     // Result should show: ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // Use --full to enable conflict detection
-    let settings = list_snapshots::standard_settings(&repo);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
@@ -2682,7 +2674,7 @@ fn test_list_maximum_status_symbols() {
         .unwrap();
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
-    let settings = list_snapshots::standard_settings(&repo);
+    let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");

@@ -22,7 +22,7 @@ rust_crate = "worktrunk"
 github_repo = "max-sixty/worktrunk"
 site_description = "CLI for Git worktree management, designed for parallel AI agent workflows."
 extra_menu = [
-    { title = "Why Worktrunk?", link = "/why-worktrunk" },
+    { title = "Worktrunk", link = "/worktrunk" },
     { title = "Tips", link = "/tips-patterns" },
     { title = "GitHub", link = "https://github.com/max-sixty/worktrunk" },
 ]

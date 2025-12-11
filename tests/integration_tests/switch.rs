@@ -1,20 +1,9 @@
-use crate::common::{TestRepo, make_snapshot_cmd_with_global_flags, setup_snapshot_settings};
+use crate::common::{
+    TestRepo, make_snapshot_cmd_with_global_flags, repo, repo_with_remote, setup_snapshot_settings,
+};
 use insta_cmd::assert_cmd_snapshot;
-use rstest::{fixture, rstest};
+use rstest::rstest;
 use std::path::Path;
-
-// Fixtures
-
-#[fixture]
-fn repo() -> TestRepo {
-    TestRepo::new()
-}
-
-#[fixture]
-fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
-    repo.setup_remote("main");
-    repo
-}
 
 // Snapshot helpers
 

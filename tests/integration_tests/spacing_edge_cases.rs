@@ -1,11 +1,11 @@
-use crate::common::{TestRepo, list_snapshots};
+use crate::common::{TestRepo, list_snapshots, setup_snapshot_settings};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use std::process::Command;
 
 fn snapshot_list(test_name: &str, repo: &TestRepo) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command(repo, repo.root_path()),
     );
@@ -13,7 +13,7 @@ fn snapshot_list(test_name: &str, repo: &TestRepo) {
 
 fn snapshot_list_with_width(test_name: &str, repo: &TestRepo, width: usize) {
     run_snapshot(
-        list_snapshots::standard_settings(repo),
+        setup_snapshot_settings(repo),
         test_name,
         list_snapshots::command_with_width(repo, width),
     );

@@ -4,14 +4,15 @@
 //!
 //! Use `cformat!` with HTML-like tags for all user-facing messages:
 //!
-//! ```rust,ignore
+//! ```
 //! use color_print::cformat;
 //!
 //! // Simple styling
-//! cformat!("<green>Success message</>")
+//! let msg = cformat!("<green>Success message</>");
 //!
 //! // Nested styles - bold inherits green
-//! cformat!("<green>Removed branch <bold>{branch}</> successfully</>")
+//! let branch = "feature";
+//! let msg = cformat!("<green>Removed branch <bold>{branch}</> successfully</>");
 //!
 //! // Semantic mapping:
 //! // - Errors: <red>...</>
@@ -91,8 +92,12 @@ use color_print::cformat;
 /// Format an error message with emoji and red styling
 ///
 /// Content can include inner styling like `<bold>`:
-/// ```ignore
-/// error_message(cformat!("Branch <bold>{name}</> not found"))
+/// ```
+/// use color_print::cformat;
+/// use worktrunk::styling::error_message;
+///
+/// let name = "feature";
+/// println!("{}", error_message(cformat!("Branch <bold>{name}</> not found")));
 /// ```
 pub fn error_message(content: impl AsRef<str>) -> String {
     cformat!("{ERROR_EMOJI} <red>{}</>", content.as_ref())

@@ -76,9 +76,9 @@
 {% endblock toc %}
 
 {% block content %}
-{# Display why-worktrunk content directly on homepage #}
+{# Display worktrunk content directly on homepage #}
 {% set docs_section = get_section(path="_index.md") %}
-{% set why_worktrunk = docs_section.pages | filter(attribute="slug", value="why-worktrunk") | first %}
-<div class="heading-text">{{ why_worktrunk.title }}</div>
-{{ why_worktrunk.content | safe }}
+{% set worktrunk = docs_section.pages | filter(attribute="slug", value="worktrunk") | first %}
+<div class="heading-text">{{ worktrunk.title }}</div>
+{{ worktrunk.content | safe }}
 {% endblock content %}

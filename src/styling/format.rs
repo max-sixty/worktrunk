@@ -103,9 +103,10 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
 /// This aligns with emoji messages where the emoji (2 columns) + space (1 column) also starts content at column 3.
 ///
 /// # Example
-/// ```ignore
-/// // All contexts use empty left margin and auto-detect width
-/// print!("{}", format_with_gutter(&config, "", None));
+/// ```
+/// use worktrunk::styling::format_with_gutter;
+///
+/// print!("{}", format_with_gutter("hello world", "", Some(80)));
 /// ```
 pub fn format_with_gutter(content: &str, left_margin: &str, max_width: Option<usize>) -> String {
     let gutter = super::GUTTER;
@@ -301,7 +302,9 @@ fn format_bash_with_gutter_impl(
 /// misinterpreting `}}` as a command when it appears at line start.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use worktrunk::styling::format_bash_with_gutter;
+///
 /// print!("{}", format_bash_with_gutter("npm install --frozen-lockfile", ""));
 /// ```
 #[cfg(feature = "syntax-highlighting")]

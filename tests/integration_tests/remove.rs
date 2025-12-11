@@ -1,8 +1,9 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd_with_global_flags, setup_snapshot_settings,
+    TestRepo, make_snapshot_cmd_with_global_flags, repo, repo_with_remote, setup_snapshot_settings,
     setup_temp_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
+use rstest::rstest;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -28,23 +29,14 @@ fn snapshot_remove_with_global_flags(
     });
 }
 
-/// Common setup for remove tests - creates repo with initial commit and remote
-fn setup_remove_repo() -> TestRepo {
-    TestRepo::new()
-}
-
-#[test]
-fn test_remove_already_on_default() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_already_on_default(repo: TestRepo) {
     // Already on main branch
     snapshot_remove("remove_already_on_default", &repo, &[], None);
 }
 
-#[test]
-fn test_remove_switch_to_default() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_switch_to_default(repo: TestRepo) {
     // Create and switch to a feature branch in the main repo
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
@@ -56,20 +48,16 @@ fn test_remove_switch_to_default() {
     snapshot_remove("remove_switch_to_default", &repo, &[], None);
 }
 
-#[test]
-fn test_remove_from_worktree() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_from_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-wt");
 
     // Run remove from within the worktree
     snapshot_remove("remove_from_worktree", &repo, &[], Some(&worktree_path));
 }
 
-#[test]
-fn test_remove_internal_mode() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");
 
     snapshot_remove_with_global_flags(
@@ -81,20 +69,16 @@ fn test_remove_internal_mode() {
     );
 }
 
-#[test]
-fn test_remove_dirty_working_tree() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_dirty_working_tree(repo: TestRepo) {
     // Create a dirty file
     std::fs::write(repo.root_path().join("dirty.txt"), "uncommitted changes").unwrap();
 
     snapshot_remove("remove_dirty_working_tree", &repo, &[], None);
 }
 
-#[test]
-fn test_remove_by_name_from_main() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_by_name_from_main(mut repo: TestRepo) {
     // Create a worktree
     let _worktree_path = repo.add_worktree("feature-a");
 
@@ -102,10 +86,8 @@ fn test_remove_by_name_from_main() {
     snapshot_remove("remove_by_name_from_main", &repo, &["feature-a"], None);
 }
 
-#[test]
-fn test_remove_by_name_from_other_worktree() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_by_name_from_other_worktree(mut repo: TestRepo) {
     // Create two worktrees
     let worktree_a = repo.add_worktree("feature-a");
     let _worktree_b = repo.add_worktree("feature-b");
@@ -119,10 +101,8 @@ fn test_remove_by_name_from_other_worktree() {
     );
 }
 
-#[test]
-fn test_remove_current_by_name() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_current_by_name(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-current");
 
     // Remove current worktree by specifying its name
@@ -134,19 +114,14 @@ fn test_remove_current_by_name() {
     );
 }
 
-#[test]
-fn test_remove_nonexistent_worktree() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_nonexistent_worktree(repo: TestRepo) {
     // Try to remove a worktree that doesn't exist
     snapshot_remove("remove_nonexistent_worktree", &repo, &["nonexistent"], None);
 }
 
-#[test]
-fn test_remove_remote_only_branch() {
-    let mut repo = setup_remove_repo();
-    repo.setup_remote("main"); // This test specifically needs a remote
-
+#[rstest]
+fn test_remove_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a remote-only branch by pushing a branch then deleting it locally
     Command::new("git")
         .args(["branch", "remote-feature"])
@@ -181,10 +156,8 @@ fn test_remove_remote_only_branch() {
     );
 }
 
-#[test]
-fn test_remove_by_name_dirty_target() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_by_name_dirty_target(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-dirty");
 
     // Create a dirty file in the target worktree
@@ -199,10 +172,8 @@ fn test_remove_by_name_dirty_target() {
     );
 }
 
-#[test]
-fn test_remove_multiple_worktrees() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_multiple_worktrees(mut repo: TestRepo) {
     // Create three worktrees
     let _worktree_a = repo.add_worktree("feature-a");
     let _worktree_b = repo.add_worktree("feature-b");
@@ -217,10 +188,8 @@ fn test_remove_multiple_worktrees() {
     );
 }
 
-#[test]
-fn test_remove_multiple_including_current() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_multiple_including_current(mut repo: TestRepo) {
     // Create three worktrees
     let worktree_a = repo.add_worktree("feature-a");
     let _worktree_b = repo.add_worktree("feature-b");
@@ -235,10 +204,8 @@ fn test_remove_multiple_including_current() {
     );
 }
 
-#[test]
-fn test_remove_branch_not_fully_merged() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_branch_not_fully_merged(mut repo: TestRepo) {
     // Create a worktree with an unmerged commit
     let worktree_path = repo.add_worktree("feature-unmerged");
 
@@ -263,10 +230,8 @@ fn test_remove_branch_not_fully_merged() {
     );
 }
 
-#[test]
-fn test_remove_foreground() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_foreground(mut repo: TestRepo) {
     // Create a worktree
     let _worktree_path = repo.add_worktree("feature-fg");
 
@@ -279,10 +244,8 @@ fn test_remove_foreground() {
     );
 }
 
-#[test]
-fn test_remove_no_delete_branch() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_no_delete_branch(mut repo: TestRepo) {
     // Create a worktree
     let _worktree_path = repo.add_worktree("feature-keep");
 
@@ -295,10 +258,8 @@ fn test_remove_no_delete_branch() {
     );
 }
 
-#[test]
-fn test_remove_branch_only_merged() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_branch_only_merged(repo: TestRepo) {
     // Create a branch from main without a worktree (already merged)
     repo.git_command(&["branch", "feature-merged"])
         .output()
@@ -313,10 +274,8 @@ fn test_remove_branch_only_merged() {
     );
 }
 
-#[test]
-fn test_remove_branch_only_unmerged() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_branch_only_unmerged(repo: TestRepo) {
     // Create a branch with a unique commit (not in main)
     repo.git_command(&["branch", "feature-unmerged"])
         .output()
@@ -343,10 +302,8 @@ fn test_remove_branch_only_unmerged() {
     );
 }
 
-#[test]
-fn test_remove_branch_only_force_delete() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_branch_only_force_delete(repo: TestRepo) {
     // Create a branch with a unique commit (not in main)
     repo.git_command(&["branch", "feature-force"])
         .output()
@@ -376,10 +333,8 @@ fn test_remove_branch_only_force_delete() {
 ///
 /// When in detached HEAD, we should still be able to remove the current worktree
 /// using path-based removal (no branch deletion).
-#[test]
-fn test_remove_from_detached_head_in_worktree() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_from_detached_head_in_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-detached");
 
     // Detach HEAD in the worktree
@@ -398,10 +353,8 @@ fn test_remove_from_detached_head_in_worktree() {
 ///
 /// This should behave identically to `wt remove` (no args) - path-based removal
 /// without branch deletion. The `@` symbol refers to the current worktree.
-#[test]
-fn test_remove_at_from_detached_head_in_worktree() {
-    let mut repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_at_from_detached_head_in_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-detached-at");
 
     // Detach HEAD in the worktree
@@ -423,10 +376,8 @@ fn test_remove_at_from_detached_head_in_worktree() {
 /// - Main is updated (e.g., via squash merge on GitHub) with the same content
 /// - Branch is NOT an ancestor of main, but tree SHAs match
 /// - Branch should be deleted because content is integrated
-#[test]
-fn test_remove_branch_matching_tree_content() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_branch_matching_tree_content(repo: TestRepo) {
     // Create a feature branch from main
     repo.git_command(&["branch", "feature-squashed"])
         .output()
@@ -497,11 +448,9 @@ fn test_remove_branch_matching_tree_content() {
 /// 3. This is true regardless of which branch is checked out in the main worktree
 ///
 /// Skipped on Windows: File locking prevents worktree removal during test execution.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_remove_main_worktree_vs_linked_worktree() {
-    let mut repo = setup_remove_repo();
-
+fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     // Create a linked worktree
     let linked_wt_path = repo.add_worktree("feature");
 
@@ -677,10 +626,8 @@ fn test_remove_default_branch_no_tautology() {
 ///
 /// This is detected via merge simulation: `git merge-tree --write-tree main feature`
 /// produces the same tree as main, meaning merging feature would add nothing.
-#[test]
-fn test_remove_squash_merged_then_main_advanced() {
-    let repo = setup_remove_repo();
-
+#[rstest]
+fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
     // Create feature branch
     repo.git_command(&["checkout", "-b", "feature-squash"])
         .output()
@@ -763,11 +710,8 @@ fn test_remove_squash_merged_then_main_advanced() {
 /// Test pre-remove hook executes before worktree removal.
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_pre_remove_hook_executes() {
-    // Use simple repo without remote for predictable project ID
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_pre_remove_hook_executes(mut repo: TestRepo) {
     // Create project config with pre-remove hook
     repo.write_project_config(r#"pre-remove = "echo 'About to remove worktree'""#);
     repo.commit("Add config");
@@ -796,11 +740,8 @@ approved-commands = ["echo 'About to remove worktree'"]
 /// Test pre-remove hook has access to template variables.
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_pre_remove_hook_template_variables() {
-    // Use simple repo without remote for predictable project ID
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_pre_remove_hook_template_variables(mut repo: TestRepo) {
     // Create project config with template variables
     repo.write_project_config(
         r#"[pre-remove]
@@ -839,12 +780,9 @@ approved-commands = [
 /// Test pre-remove hook runs even in background mode (before spawning background process).
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_pre_remove_hook_runs_in_background_mode() {
+#[rstest]
+fn test_pre_remove_hook_runs_in_background_mode(mut repo: TestRepo) {
     use crate::common::wait_for_file;
-
-    // Use simple repo without remote for predictable project ID
-    let mut repo = TestRepo::new();
 
     // Create a marker file that the hook will create
     let marker_file = repo.root_path().join("hook-ran.txt");
@@ -890,11 +828,8 @@ approved-commands = ["echo 'hook ran' > {}"]
 /// Test pre-remove hook failure aborts removal (FailFast strategy).
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_pre_remove_hook_failure_aborts() {
-    // Use simple repo without remote for predictable project ID
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook
     repo.write_project_config(r#"pre-remove = "exit 1""#);
     repo.commit("Add config");
@@ -927,11 +862,8 @@ approved-commands = ["exit 1"]
 }
 
 /// Test pre-remove hook does NOT run for branch-only removal (no worktree).
-#[test]
-fn test_pre_remove_hook_not_for_branch_only() {
-    // Use simple repo without remote for predictable project ID
-    let repo = TestRepo::new();
-
+#[rstest]
+fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
     // Create a marker file that the hook would create
     let marker_file = repo.root_path().join("branch-only-hook.txt");
 
@@ -973,12 +905,9 @@ approved-commands = ["echo 'hook ran' > {}"]
 }
 
 /// Test --no-verify flag skips pre-remove hooks.
-#[test]
-fn test_pre_remove_hook_skipped_with_no_verify() {
+#[rstest]
+fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
     use std::thread;
-
-    // Use simple repo without remote for predictable project ID
-    let mut repo = TestRepo::new();
 
     // Create a marker file that the hook would create
     let marker_file = repo.root_path().join("should-not-exist.txt");
@@ -1033,11 +962,9 @@ approved-commands = ["echo 'hook ran' > {}"]
 /// hook should still execute.
 ///
 /// Skipped on Windows: File locking prevents worktree removal during test execution.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_pre_remove_hook_runs_for_detached_head() {
-    let mut repo = TestRepo::new();
-
+fn test_pre_remove_hook_runs_for_detached_head(mut repo: TestRepo) {
     // Create marker file path in the repo root
     // Use short filename to avoid terminal line-wrapping differences between platforms
     // (macOS temp paths are ~60 chars vs Linux ~20 chars, affecting wrap points)
@@ -1082,10 +1009,8 @@ approved-commands = ["touch {marker_path}"]
 /// the hook also runs when removal happens in background (the default).
 /// Skipped on Windows: snapshot output differs due to shell/path differences.
 #[cfg_attr(windows, ignore)]
-#[test]
-fn test_pre_remove_hook_runs_for_detached_head_background() {
-    let mut repo = TestRepo::new();
-
+#[rstest]
+fn test_pre_remove_hook_runs_for_detached_head_background(mut repo: TestRepo) {
     // Create marker file path in the repo root
     let marker_file = repo.root_path().join("detached-bg-hook-marker.txt");
 
@@ -1130,11 +1055,9 @@ approved-commands = ["touch {marker_path}"]
 /// this test verifies the specific template expansion behavior.
 ///
 /// Skipped on Windows: File locking prevents worktree removal during test execution.
-#[test]
+#[rstest]
 #[cfg_attr(windows, ignore)]
-fn test_pre_remove_hook_branch_expansion_detached_head() {
-    let mut repo = TestRepo::new();
-
+fn test_pre_remove_hook_branch_expansion_detached_head(mut repo: TestRepo) {
     // Create a file where the hook will write the branch template expansion
     let branch_file = repo.root_path().join("branch-expansion.txt");
     let branch_path = branch_file.to_string_lossy().replace('\\', "/");

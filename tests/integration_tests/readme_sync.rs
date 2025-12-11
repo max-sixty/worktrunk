@@ -1043,10 +1043,7 @@ fn test_docs_quickstart_examples_are_in_sync() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     // Process all docs files with AUTO-GENERATED-HTML markers
-    let doc_files = [
-        "docs/content/why-worktrunk.md",
-        "docs/content/claude-code.md",
-    ];
+    let doc_files = ["docs/content/worktrunk.md", "docs/content/claude-code.md"];
 
     let mut all_errors = Vec::new();
     let mut total_updated = 0;
