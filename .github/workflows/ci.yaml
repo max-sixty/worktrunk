@@ -68,6 +68,16 @@ jobs:
         echo "Using Git Bash for Windows tests"
       shell: pwsh
 
+    - name: Install pre-commit
+      if: runner.os != 'Windows'
+      run: |
+        if command -v uv &> /dev/null; then
+          uv tool install pre-commit
+        else
+          pip install pre-commit
+        fi
+      shell: bash
+
     # On Linux/macOS: Install from crates.io (pre-merge hooks run against published version)
     # On Windows: Build from source (published version may not have Git Bash detection fixes)
     - name: Install wt (Linux/macOS)
