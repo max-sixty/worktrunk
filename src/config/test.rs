@@ -35,88 +35,53 @@ fn test_expand_template_branch_with_slashes() {
 // Tests with platform-specific shell escaping (Unix uses single quotes, Windows uses double quotes)
 #[test]
 #[cfg(unix)]
-fn test_expand_template_branch_with_spaces() {
-    // Branch names with spaces are shell-escaped
-    let branch = sanitize_branch_name("feature name");
-    let vars = vars_with_branch(&branch);
-    let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
+fn test_expand_template_branch_escaping() {
+    let expand = |input| {
+        let branch = sanitize_branch_name(input);
+        expand_template("echo {{ branch }}", &vars_with_branch(&branch), true).unwrap()
+    };
 
-    // Shell-escaped with single quotes
-    assert_eq!(result, "echo 'feature name'");
+    assert_eq!(expand("feature name"), "echo 'feature name'"); // spaces
+    assert_eq!(expand("feature$(whoami)"), "echo 'feature$(whoami)'"); // command sub
+    assert_eq!(expand("feature`id`"), "echo 'feature`id`'"); // backticks
 }
 
 #[test]
 #[cfg(unix)]
-fn test_expand_template_branch_with_special_shell_chars() {
-    // Special shell characters are escaped
-    let branch = sanitize_branch_name("feature$(whoami)");
-    let vars = vars_with_branch(&branch);
-    let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
-
-    // Shell-escaped, prevents command substitution
-    assert_eq!(result, "echo 'feature$(whoami)'");
-    // Shell executes: echo 'feature$(whoami)' (literal string, no command execution)
-}
-
-#[test]
-#[cfg(unix)]
-fn test_expand_template_branch_with_backticks() {
-    // Backticks are escaped
-    let branch = sanitize_branch_name("feature`id`");
-    let vars = vars_with_branch(&branch);
-    let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
-
-    assert_eq!(result, "echo 'feature`id`'");
-}
-
-#[test]
-#[cfg(unix)]
-fn test_expand_template_branch_with_quotes() {
-    // Quotes are shell-escaped to prevent injection
+fn snapshot_expand_template_branch_with_quotes() {
     let branch = sanitize_branch_name("feature'test");
     let vars = vars_with_branch(&branch);
     let result = expand_template("echo '{{ branch }}'", &vars, true).unwrap();
-
-    // Shell escapes single quotes as '\''
-    assert_eq!(result, "echo ''feature'\\''test''");
+    insta::assert_snapshot!(result, @"echo ''feature'\\''test''");
 }
 
 #[test]
 #[cfg(unix)]
-fn test_expand_template_extra_vars_with_spaces() {
-    // Extra variables with spaces are shell-escaped
-    let branch = sanitize_branch_name("main");
-    let mut vars = vars_with_branch(&branch);
-    vars.insert("worktree", "/path with spaces/to/worktree");
-    let result = expand_template("cd {{ worktree }}", &vars, true).unwrap();
+fn test_expand_template_extra_vars_path_escaping() {
+    let expand = |path| {
+        expand_template(
+            "cd {{ worktree }}",
+            &HashMap::from([("worktree", path)]),
+            true,
+        )
+        .unwrap()
+    };
 
-    assert_eq!(result, "cd '/path with spaces/to/worktree'");
+    assert_eq!(
+        expand("/path with spaces/to/wt"),
+        "cd '/path with spaces/to/wt'"
+    ); // spaces
+    assert_eq!(expand("/path/$USER/worktree"), "cd '/path/$USER/worktree'"); // dollar sign
 }
 
 #[test]
 #[cfg(unix)]
-fn test_expand_template_extra_vars_with_dollar_sign() {
-    // Dollar signs are shell-escaped to prevent variable expansion
-    let branch = sanitize_branch_name("main");
-    let mut vars = vars_with_branch(&branch);
-    vars.insert("worktree", "/path/$USER/worktree");
-    let result = expand_template("cd {{ worktree }}", &vars, true).unwrap();
+fn snapshot_expand_template_extra_vars_with_command_substitution() {
+    let mut extras = HashMap::new();
+    extras.insert("target", "main; rm -rf /");
+    let result = expand_template("git merge {{ target }}", &extras, true).unwrap();
 
-    assert_eq!(result, "cd '/path/$USER/worktree'");
-    // Shell-escaped, prevents $USER from being expanded
-}
-
-#[test]
-#[cfg(unix)]
-fn test_expand_template_extra_vars_with_command_substitution() {
-    // Special shell characters are shell-escaped to prevent injection
-    let branch = sanitize_branch_name("feature");
-    let mut vars = vars_with_branch(&branch);
-    vars.insert("target", "main; rm -rf /");
-    let result = expand_template("git merge {{ target }}", &vars, true).unwrap();
-
-    assert_eq!(result, "git merge 'main; rm -rf /'");
-    // Shell-escaped, prevents semicolon from being executed as command separator
+    insta::assert_snapshot!(result, @"git merge 'main; rm -rf /'");
 }
 
 #[test]

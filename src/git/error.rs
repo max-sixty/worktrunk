@@ -571,61 +571,49 @@ fn format_error_block(header: String, error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
 
     #[test]
-    fn test_git_error_display_contains_emoji() {
-        // Display produces styled output with emoji
+    fn snapshot_detached_head_display() {
         let err = GitError::DetachedHead { action: None };
-        let output = err.to_string();
-        assert!(output.contains("❌")); // ERROR_EMOJI
-        assert!(output.contains("detached HEAD"));
-        assert!(output.contains("💡")); // HINT_EMOJI
+        assert_snapshot!(err.to_string(), @r"
+        ❌ [31mNot on a branch (detached HEAD)[39m
+
+        💡 [2mSwitch to a branch first with [90mgit switch <branch>[39m[22m
+        ");
     }
 
     #[test]
-    fn test_git_error_display_includes_action() {
-        let err = GitError::DetachedHead {
-            action: Some("push".into()),
-        };
-        let output = err.to_string();
-        assert!(output.contains("Cannot push"));
-
+    fn snapshot_uncommitted_with_worktree_display() {
         let err = GitError::UncommittedChanges {
-            action: Some("remove worktree".into()),
-            worktree: None,
+            action: Some("merge".into()),
+            worktree: Some("wt".into()),
         };
-        let output = err.to_string();
-        assert!(output.contains("Cannot remove worktree"));
+        assert_snapshot!(err.to_string(), @r"
+        ❌ [31mCannot merge: [1mwt[22m has uncommitted changes[39m
 
-        // With worktree specified
-        let err = GitError::UncommittedChanges {
-            action: Some("remove worktree".into()),
-            worktree: Some("feature-branch".into()),
-        };
-        let output = err.to_string();
-        assert!(output.contains("Cannot remove worktree"));
-        assert!(output.contains("feature-branch"));
+        💡 [2mCommit or stash changes first[22m
+        ");
     }
 
     #[test]
-    fn test_into_preserves_type_for_display() {
+    fn snapshot_into_preserves_type_for_display() {
         // .into() preserves type so we can downcast and use Display
         let err: anyhow::Error = GitError::BranchAlreadyExists {
             branch: "main".into(),
         }
         .into();
 
-        // Can downcast and get styled output via Display
-        let git_err = err.downcast_ref::<GitError>().expect("Should downcast");
-        let output = git_err.to_string();
-        assert!(output.contains("❌")); // Should be styled
-        assert!(output.contains("main"));
-        assert!(output.contains("already exists"));
+        let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
+        assert_snapshot!(downcast.to_string(), @r"
+        ❌ [31mBranch [1mmain[22m already exists[39m
+
+        💡 [2mRemove [90m--create[39m flag to switch to the existing branch[22m
+        ");
     }
 
     #[test]
     fn test_pattern_matching_with_into() {
-        // .into() preserves type for pattern matching
         let err: anyhow::Error = GitError::BranchAlreadyExists {
             branch: "main".into(),
         }
@@ -639,11 +627,14 @@ mod tests {
     }
 
     #[test]
-    fn test_worktree_error_with_path() {
+    fn snapshot_worktree_error_with_path() {
         let err = GitError::WorktreePathExists {
             path: PathBuf::from("/some/path"),
         };
-        let output = err.to_string();
-        assert!(output.contains("Directory already exists"));
+        assert_snapshot!(err.to_string(), @r"
+        ❌ [31mDirectory already exists: [1m/some/path[22m[39m
+
+        💡 [2mRemove with [90mrm -rf /some/path[39m or use a different branch name[22m
+        ");
     }
 }

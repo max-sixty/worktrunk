@@ -4,102 +4,14 @@
 //! that are likely to reveal bugs in real-world usage.
 
 use super::{DefaultBranchName, LineDiff, Worktree};
+use insta::assert_debug_snapshot;
+use rstest::rstest;
 
-#[test]
-fn test_parse_worktree_list_empty_output() {
-    // Bug hypothesis: Empty output might not be handled correctly
-    let result = Worktree::parse_porcelain_list("");
-    assert!(result.is_ok(), "Empty output should parse successfully");
-    assert_eq!(result.unwrap().len(), 0, "Should return empty vector");
-}
-
-#[test]
-fn test_parse_worktree_list_missing_head() {
-    // Bug hypothesis: Worktree without HEAD field might have empty string for head
-    // This could cause issues when the head field is used later
-    let output = "worktree /path/to/repo\nbranch refs/heads/main\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok(), "Should parse even without HEAD field");
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-
-    // This is the key assertion - what happens when HEAD is missing?
-    // Current code initializes head as String::new() and only updates if HEAD line found
-    assert_eq!(
-        worktrees[0].head, "",
-        "Missing HEAD should result in empty string (current behavior)"
-    );
-}
-
-#[test]
-fn test_parse_worktree_list_locked_with_empty_reason() {
-    // Bug hypothesis: "locked" with no reason (just the key) might be handled incorrectly
-    // Current code: `locked = Some(value.unwrap_or_default().to_string())`
-    // This means locked with no value becomes Some("")
-    let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-
-    // What does locked become? Some("") or None?
-    match &worktrees[0].locked {
-        Some(reason) if reason.is_empty() => {
-            // This is what the current code does
-            println!("Locked is Some(\"\") - empty reason");
-        }
-        Some(reason) => {
-            panic!("Expected empty reason, got: {}", reason);
-        }
-        None => {
-            panic!("Expected Some(\"\"), got None");
-        }
-    }
-}
-
-#[test]
-fn test_parse_worktree_list_locked_with_reason() {
-    // Verify normal locked behavior works
-    let output =
-        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked working on it\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert_eq!(worktrees[0].locked, Some("working on it".to_string()));
-}
-
-#[test]
-fn test_parse_worktree_list_prunable_empty() {
-    // Same issue as locked - prunable with no value
-    let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-
-    // Should be Some("") based on current code
-    assert!(worktrees[0].prunable.is_some());
-    assert_eq!(worktrees[0].prunable.as_ref().unwrap(), "");
-}
-
-#[test]
-fn test_parse_worktree_list_fields_before_worktree() {
-    // Bug hypothesis: If we get HEAD/branch lines before a worktree line,
-    // they'll be silently ignored because current is None
-    let output = "HEAD abc123\nbranch refs/heads/main\nworktree /path/to/repo\nHEAD def456\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-
-    // The HEAD should be def456 (second one), not abc123 (first one that was ignored)
-    assert_eq!(worktrees[0].head, "def456");
+/// Helper to parse a single worktree from porcelain output
+fn parse_single(input: &str) -> Worktree {
+    let list = Worktree::parse_porcelain_list(input).expect("parse ok");
+    assert_eq!(list.len(), 1, "expected single worktree");
+    list.into_iter().next().unwrap()
 }
 
 #[test]
@@ -122,71 +34,6 @@ fn test_parse_worktree_list_no_trailing_blank_line() {
 }
 
 #[test]
-fn test_parse_worktree_list_bare_repository() {
-    let output = "worktree /path/to/repo\nbare\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert!(worktrees[0].bare, "Should parse bare flag");
-}
-
-#[test]
-fn test_parse_worktree_list_detached_head() {
-    let output = "worktree /path/to/repo\nHEAD abc123\ndetached\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert!(worktrees[0].detached, "Should parse detached flag");
-}
-
-#[test]
-fn test_parse_worktree_list_branch_with_refs_prefix() {
-    let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/feature/nested/branch\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-
-    // Should strip refs/heads/ prefix
-    assert_eq!(
-        worktrees[0].branch,
-        Some("feature/nested/branch".to_string()),
-        "Should strip refs/heads/ prefix and preserve slashes in branch name"
-    );
-}
-
-#[test]
-fn test_parse_worktree_list_branch_without_refs_prefix() {
-    // Bug hypothesis: What if git returns branch without refs/heads/ prefix?
-    let output = "worktree /path/to/repo\nHEAD abc123\nbranch main\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(result.is_ok());
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-    assert_eq!(worktrees[0].branch, Some("main".to_string()));
-}
-
-#[test]
-fn test_parse_worktree_list_unknown_attributes() {
-    // Forward compatibility - unknown attributes should be ignored
-    let output = "worktree /path/to/repo\nHEAD abc123\nfutureattr somevalue\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    assert!(
-        result.is_ok(),
-        "Unknown attributes should be ignored for forward compatibility"
-    );
-    let worktrees = result.unwrap();
-    assert_eq!(worktrees.len(), 1);
-}
-
-#[test]
 fn test_parse_worktree_list_multiple_worktrees() {
     let output = "worktree /path/to/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /path/to/feature\nHEAD def456\nbranch refs/heads/feature\ndetached\n\n";
     let result = Worktree::parse_porcelain_list(output);
@@ -202,132 +49,63 @@ fn test_parse_worktree_list_multiple_worktrees() {
     assert!(worktrees[1].detached);
 }
 
-#[test]
-fn test_parse_worktree_list_worktree_missing_path() {
-    // Bug hypothesis: "worktree" line with no path should error
-    let output = "worktree\nHEAD abc123\n\n";
-    let result = Worktree::parse_porcelain_list(output);
+#[rstest]
+#[case::missing_path("worktree\nHEAD abc123\n\n", "missing path")]
+#[case::head_missing_sha(
+    "worktree /path/to/repo\nHEAD\nbranch refs/heads/main\n\n",
+    "missing SHA"
+)]
+#[case::branch_missing_ref("worktree /path/to/repo\nHEAD abc123\nbranch\n\n", "missing ref")]
+fn test_parse_worktree_list_error_cases(#[case] input: &str, #[case] expected_message: &str) {
+    let result = Worktree::parse_porcelain_list(input);
 
-    // Current code: value.ok_or_else(|| GitError::ParseError("worktree line missing path"))
-    assert!(result.is_err(), "Worktree without path should error");
+    assert!(result.is_err(), "Parsing should fail");
     let err = result.unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("missing path"),
-        "Error should mention missing path, got: {msg}"
-    );
-}
-
-#[test]
-fn test_parse_worktree_list_head_missing_sha() {
-    // Bug hypothesis: "HEAD" line with no SHA should error
-    let output = "worktree /path/to/repo\nHEAD\nbranch refs/heads/main\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    // Current code: value.ok_or_else(|| GitError::ParseError("HEAD line missing SHA"))
-    assert!(result.is_err(), "HEAD without SHA should error");
-    let err = result.unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("missing SHA"),
-        "Error should mention missing SHA, got: {msg}"
-    );
-}
-
-#[test]
-fn test_parse_worktree_list_branch_missing_ref() {
-    // Bug hypothesis: "branch" line with no ref should error
-    let output = "worktree /path/to/repo\nHEAD abc123\nbranch\n\n";
-    let result = Worktree::parse_porcelain_list(output);
-
-    // Current code: value.ok_or_else(|| GitError::ParseError("branch line missing ref"))
-    assert!(result.is_err(), "Branch without ref should error");
-    let err = result.unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("missing ref"),
-        "Error should mention missing ref, got: {msg}"
+        msg.contains(expected_message),
+        "Error should mention {expected_message}, got: {msg}"
     );
 }
 
 // Tests for parse_remote_default_branch
 
-#[test]
-fn test_parse_remote_default_branch_normal() {
-    // Normal git ls-remote output for HEAD
-    let output = "ref: refs/heads/main\tHEAD\n";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
+#[rstest]
+#[case::normal("ref: refs/heads/main\tHEAD\n", Ok("main"))]
+#[case::feature_branch(
+    "ref: refs/heads/feature/nested/branch\tHEAD\n",
+    Ok("feature/nested/branch")
+)]
+#[case::empty_output("", Err(Some("symbolic ref")))]
+#[case::missing_prefix("refs/heads/main\tHEAD\n", Err(None))]
+#[case::missing_tab("ref: refs/heads/main", Err(None))]
+#[case::multiple_matches(
+    "ref: refs/heads/main\tHEAD\nref: refs/heads/develop\tHEAD\n",
+    Ok("main")
+)]
+#[case::missing_refs_heads_prefix("ref: main\tHEAD\n", Err(None))]
+fn test_parse_remote_default_branch(
+    #[case] input: &str,
+    #[case] expected: Result<&str, Option<&str>>,
+) {
+    let result = DefaultBranchName::from_remote(input).map(DefaultBranchName::into_string);
 
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "main");
-}
-
-#[test]
-fn test_parse_remote_default_branch_with_feature_branch() {
-    // Remote default is a feature branch with slashes
-    let output = "ref: refs/heads/feature/nested/branch\tHEAD\n";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "feature/nested/branch");
-}
-
-#[test]
-fn test_parse_remote_default_branch_empty_output() {
-    // Bug hypothesis: Empty output should error, not panic
-    let output = "";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
-
-    assert!(result.is_err(), "Empty output should return an error");
-    let err = result.unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("symbolic ref"),
-        "Error should mention symbolic ref, got: {msg}"
-    );
-}
-
-#[test]
-fn test_parse_remote_default_branch_no_ref_prefix() {
-    // Bug hypothesis: Line without "ref: " prefix should be ignored
-    let output = "refs/heads/main\tHEAD\n";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
-
-    // Should error because no line matches the pattern
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_parse_remote_default_branch_missing_tab() {
-    // Bug hypothesis: What if there's no tab separator?
-    // Looking at the code: line.split_once('\t') returns None, so line is ignored
-    let output = "ref: refs/heads/main";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
-
-    // Should error because split_once returns None
-    assert!(result.is_err(), "Missing tab should cause error");
-}
-
-#[test]
-fn test_parse_remote_default_branch_multiple_lines() {
-    // Bug hypothesis: Multiple matching lines - should use first match
-    let output = "ref: refs/heads/main\tHEAD\nref: refs/heads/develop\tHEAD\n";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
-
-    assert!(result.is_ok());
-    // find_map returns first match
-    assert_eq!(result.unwrap(), "main");
-}
-
-#[test]
-fn test_parse_remote_default_branch_missing_refs_heads_prefix() {
-    // Bug hypothesis: What if the ref doesn't have refs/heads/ prefix?
-    // Looking at the code: strip_prefix returns None, so line is ignored
-    let output = "ref: main\tHEAD\n";
-    let result = DefaultBranchName::from_remote(output).map(DefaultBranchName::into_string);
-
-    // Should error because strip_prefix fails
-    assert!(result.is_err());
+    match expected {
+        Ok(expected_branch) => {
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), expected_branch);
+        }
+        Err(expected_substr) => {
+            assert!(result.is_err());
+            if let Some(substr) = expected_substr {
+                let msg = result.unwrap_err().to_string();
+                assert!(
+                    msg.contains(substr),
+                    "Error should mention {substr}, got: {msg}"
+                );
+            }
+        }
+    }
 }
 
 // Tests for parse_local_default_branch
@@ -401,133 +179,218 @@ fn test_parse_local_default_branch_empty_remote() {
 
 // Tests for LineDiff::from_numstat
 
-#[test]
-fn test_line_diff_from_numstat_normal() {
-    let output = "10\t5\tfile1.rs\n3\t2\tfile2.rs\n";
-    let result = LineDiff::from_numstat(output);
+#[rstest]
+#[case::normal("10\t5\tfile1.rs\n3\t2\tfile2.rs\n", 13, 7)]
+#[case::empty("", 0, 0)]
+#[case::binary_files("10\t5\tfile1.rs\n-\t-\timage.png\n3\t2\tfile2.rs\n", 13, 7)]
+#[case::mixed_binary("10\t-\tfile1.rs\n-\t5\tfile2.rs\n", 0, 0)]
+#[case::empty_lines("10\t5\tfile1.rs\n\n3\t2\tfile2.rs\n\n", 13, 7)]
+#[case::missing_deleted("10\tfile.rs\n", 0, 0)]
+#[case::no_tabs("file.rs\n", 0, 0)]
+#[case::non_numeric_added("abc\t5\tfile.rs\n", 0, 0)]
+#[case::non_numeric_deleted("5\txyz\tfile.rs\n", 0, 0)]
+#[case::zero_values("0\t0\tfile.rs\n", 0, 0)]
+fn test_line_diff_from_numstat(
+    #[case] input: &str,
+    #[case] expected_added: usize,
+    #[case] expected_deleted: usize,
+) {
+    let result = LineDiff::from_numstat(input);
 
     assert!(result.is_ok());
     let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 13, "Should sum added lines");
-    assert_eq!(deleted, 7, "Should sum deleted lines");
+    assert_eq!(added, expected_added);
+    assert_eq!(deleted, expected_deleted);
 }
 
 #[test]
-fn test_line_diff_from_numstat_empty_output() {
-    // Bug hypothesis: Empty output should return (0, 0), not error
-    let result = LineDiff::from_numstat("");
-
-    assert!(result.is_ok());
-    let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 0);
-    assert_eq!(deleted, 0);
+fn snapshot_parse_worktree_list_empty_output() {
+    let result = Worktree::parse_porcelain_list("").expect("parse ok");
+    assert_debug_snapshot!(result, @"[]");
 }
 
 #[test]
-fn test_line_diff_from_numstat_binary_files() {
-    // Binary files show "-" for added/deleted
-    let output = "10\t5\tfile1.rs\n-\t-\timage.png\n3\t2\tfile2.rs\n";
-    let result = LineDiff::from_numstat(output);
-
-    assert!(result.is_ok());
-    let (added, deleted) = result.unwrap().into_tuple();
-    // Should skip the binary file line
-    assert_eq!(added, 13);
-    assert_eq!(deleted, 7);
+fn snapshot_parse_worktree_list_missing_head() {
+    let wt = parse_single("worktree /path/to/repo\nbranch refs/heads/main\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "",
+        branch: Some(
+            "main",
+        ),
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: None,
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_mixed_binary() {
-    // Bug hypothesis: What if only one side is "-"?
-    // Current code checks "if added_str == '-' || deleted_str == '-'"
-    // So it skips the line if EITHER is "-"
-    let output = "10\t-\tfile1.rs\n-\t5\tfile2.rs\n";
-    let result = LineDiff::from_numstat(output);
-
-    assert!(result.is_ok());
-    let (added, deleted) = result.unwrap().into_tuple();
-    // Both lines should be skipped
-    assert_eq!(added, 0);
-    assert_eq!(deleted, 0);
+fn snapshot_parse_worktree_list_locked_with_empty_reason() {
+    let wt =
+        parse_single("worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: Some(
+            "main",
+        ),
+        bare: false,
+        detached: false,
+        locked: Some(
+            "",
+        ),
+        prunable: None,
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_empty_lines() {
-    let output = "10\t5\tfile1.rs\n\n3\t2\tfile2.rs\n\n";
-    let result = LineDiff::from_numstat(output);
-
-    assert!(result.is_ok());
-    let (added, deleted) = result.unwrap().into_tuple();
-    // Empty lines should be skipped
-    assert_eq!(added, 13);
-    assert_eq!(deleted, 7);
+fn snapshot_parse_worktree_list_locked_with_reason() {
+    let wt = parse_single(
+        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked working on it\n\n",
+    );
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: Some(
+            "main",
+        ),
+        bare: false,
+        detached: false,
+        locked: Some(
+            "working on it",
+        ),
+        prunable: None,
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_malformed_missing_second_value() {
-    // BUG FIXED: Line with only one tab used to try to parse filename as number
-    // Input: "10\tfile.rs\n"
-    // parts.next() -> Some("10") ✓
-    // parts.next() -> Some("file.rs") ✓ (not None!)
-    // Old behavior: tried to parse "file.rs" as usize -> ERROR
-    // New behavior: skip malformed lines gracefully
-    //
-    // The real git numstat format is: <added>\t<deleted>\t<filename>
-    let output = "10\tfile.rs\n";
-    let result = LineDiff::from_numstat(output);
-
-    // Fixed: Malformed lines are now skipped instead of causing errors
-    assert!(result.is_ok(), "Malformed lines should be skipped");
-    let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 0, "Malformed line should be skipped");
-    assert_eq!(deleted, 0, "Malformed line should be skipped");
+fn snapshot_parse_worktree_list_prunable_empty() {
+    let wt =
+        parse_single("worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: Some(
+            "main",
+        ),
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: Some(
+            "",
+        ),
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_malformed_missing_first_value() {
-    // Bug hypothesis: Line with no tabs
-    // parts.next() returns the whole line, parts.next() again returns None
-    let output = "file.rs\n";
-    let result = LineDiff::from_numstat(output);
-
-    assert!(result.is_ok());
-    // Line should be skipped
-    let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 0);
-    assert_eq!(deleted, 0);
+fn snapshot_parse_worktree_list_fields_before_worktree() {
+    let wt = parse_single(
+        "HEAD abc123\nbranch refs/heads/main\nworktree /path/to/repo\nHEAD def456\n\n",
+    );
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "def456",
+        branch: None,
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: None,
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_non_numeric_values() {
-    // Non-numeric values should be skipped (after the fix)
-    let output = "abc\t5\tfile.rs\n";
-    let result = LineDiff::from_numstat(output);
-
-    assert!(result.is_ok(), "Malformed lines should be skipped");
-    let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 0, "Non-numeric line should be skipped");
-    assert_eq!(deleted, 0, "Non-numeric line should be skipped");
+fn snapshot_parse_worktree_list_bare_repository() {
+    let wt = parse_single("worktree /path/to/repo\nbare\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "",
+        branch: None,
+        bare: true,
+        detached: false,
+        locked: None,
+        prunable: None,
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_non_numeric_deleted() {
-    // Non-numeric deleted value should be skipped
-    let output = "5\txyz\tfile.rs\n";
-    let result = LineDiff::from_numstat(output);
-
-    assert!(result.is_ok(), "Malformed lines should be skipped");
-    let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 0, "Non-numeric line should be skipped");
-    assert_eq!(deleted, 0, "Non-numeric line should be skipped");
+fn snapshot_parse_worktree_list_detached_head() {
+    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\ndetached\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: None,
+        bare: false,
+        detached: true,
+        locked: None,
+        prunable: None,
+    }
+    "#);
 }
 
 #[test]
-fn test_line_diff_from_numstat_zero_values() {
-    let output = "0\t0\tfile.rs\n";
-    let result = LineDiff::from_numstat(output);
+fn snapshot_parse_worktree_list_branch_with_refs_prefix() {
+    let wt = parse_single(
+        "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/feature/nested/branch\n\n",
+    );
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: Some(
+            "feature/nested/branch",
+        ),
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: None,
+    }
+    "#);
+}
 
-    assert!(result.is_ok());
-    let (added, deleted) = result.unwrap().into_tuple();
-    assert_eq!(added, 0);
-    assert_eq!(deleted, 0);
+#[test]
+fn snapshot_parse_worktree_list_branch_without_refs_prefix() {
+    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\nbranch main\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: Some(
+            "main",
+        ),
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: None,
+    }
+    "#);
+}
+
+#[test]
+fn snapshot_parse_worktree_list_unknown_attributes() {
+    let wt = parse_single("worktree /path/to/repo\nHEAD abc123\nfutureattr somevalue\n\n");
+    assert_debug_snapshot!(wt, @r#"
+    Worktree {
+        path: "/path/to/repo",
+        head: "abc123",
+        branch: None,
+        bare: false,
+        detached: false,
+        locked: None,
+        prunable: None,
+    }
+    "#);
 }
