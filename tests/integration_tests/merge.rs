@@ -837,8 +837,6 @@ fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_post_merge_command_named(mut repo: TestRepo) {
     // Create project config with named post-merge commands
@@ -888,8 +886,6 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     // Verify post-merge hooks run even when there's nothing to merge
@@ -927,8 +923,6 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     // Verify post-merge hooks run when merging from main to main (nothing to do)
@@ -960,8 +954,6 @@ fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_commit_command_success(mut repo: TestRepo) {
     // Create project config with pre-commit command
@@ -1016,8 +1008,6 @@ fn test_merge_pre_commit_command_failure(mut repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: snapshot output differs due to shell/path differences.
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_merge_pre_squash_command_success(mut repo: TestRepo) {
     // Create project config with pre-commit command (used for both squash and no-squash)
