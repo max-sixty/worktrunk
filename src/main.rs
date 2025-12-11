@@ -32,7 +32,7 @@ use commands::{
     handle_init, handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_by_path,
     handle_remove_current, handle_show_theme, handle_squash, handle_switch,
     handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
-    resolve_worktree_path_first, run_hook, step_commit,
+    resolve_worktree_path_first, run_hook, step_commit, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -964,6 +964,7 @@ fn main() {
                     }
                 })
             }
+            StepCommand::ForEach { args } => step_for_each(args),
         },
         Commands::Hook { action } => match action {
             HookCommand::Show {

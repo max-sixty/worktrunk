@@ -498,6 +498,8 @@ pub enum WorktrunkError {
     },
     /// Command was not approved by user (silent error)
     CommandNotApproved,
+    /// Error already displayed, just exit with given code (silent error)
+    AlreadyDisplayed { exit_code: i32 },
 }
 
 impl std::fmt::Display for WorktrunkError {
@@ -531,6 +533,9 @@ impl std::fmt::Display for WorktrunkError {
             WorktrunkError::CommandNotApproved => {
                 Ok(()) // on_skip callback handles the printing
             }
+            WorktrunkError::AlreadyDisplayed { .. } => {
+                Ok(()) // error already shown via output functions
+            }
         }
     }
 }
@@ -543,6 +548,7 @@ pub fn exit_code(err: &anyhow::Error) -> Option<i32> {
         WorktrunkError::ChildProcessExited { code, .. } => Some(*code),
         WorktrunkError::HookCommandFailed { exit_code, .. } => *exit_code,
         WorktrunkError::CommandNotApproved => None,
+        WorktrunkError::AlreadyDisplayed { exit_code } => Some(*exit_code),
     })
 }
 

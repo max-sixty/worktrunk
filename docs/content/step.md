@@ -34,6 +34,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Push to target branch (default: main)
+- `for-each` — [experimental] Run a command in every worktree
 
 ## See also
 
@@ -50,10 +51,11 @@ wt step - Run individual workflow operations
 Usage: wt step [OPTIONS] <COMMAND>
 
 Commands:
-  commit  Commit changes with LLM commit message
-  squash  Squash commits down to target
-  push    Push changes to local target branch
-  rebase  Rebase onto target
+  commit    Commit changes with LLM commit message
+  squash    Squash commits down to target
+  push      Push changes to local target branch
+  rebase    Rebase onto target
+  for-each  [experimental] Run command in each worktree
 
 Options:
   -h, --help

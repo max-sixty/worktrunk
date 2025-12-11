@@ -4,6 +4,7 @@ pub mod commit;
 pub mod config;
 pub mod configure_shell;
 pub mod context;
+mod for_each;
 mod hooks;
 pub mod init;
 pub mod list;
@@ -25,6 +26,7 @@ pub use config::{
 pub use configure_shell::{
     ConfigAction, handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
 };
+pub use for_each::step_for_each;
 pub use init::handle_init;
 pub use list::handle_list;
 pub use merge::{execute_pre_remove_commands, handle_merge};

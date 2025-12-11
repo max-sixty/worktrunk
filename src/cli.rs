@@ -615,6 +615,60 @@ pub enum StepCommand {
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
     },
+
+    /// \[experimental\] Run command in each worktree
+    ///
+    /// Executes a command sequentially in every worktree with real-time output.
+    /// Continues on failure and shows a summary at the end.
+    ///
+    /// Context JSON is piped to stdin for scripts that need structured data.
+    ///
+    /// Supports template variables (all shell-escaped):
+    ///
+    /// - `{{ branch }}` — branch name (slashes replaced with dashes)
+    /// - `{{ worktree }}` — absolute path to the worktree
+    /// - `{{ worktree_name }}` — worktree directory name
+    /// - `{{ repo }}` — repository name
+    /// - `{{ repo_root }}` — absolute path to the main repository root
+    /// - `{{ commit }}` — current HEAD commit SHA (full)
+    /// - `{{ short_commit }}` — current HEAD commit SHA (7 chars)
+    /// - `{{ default_branch }}` — default branch name (e.g., "main")
+    /// - `{{ remote }}` — primary remote name (e.g., "origin")
+    /// - `{{ remote_url }}` — primary remote URL
+    /// - `{{ upstream }}` — upstream tracking branch, if configured
+    ///
+    /// Note: This command is experimental and may change in future versions.
+    ///
+    /// # Examples
+    ///
+    /// Check status across all worktrees:
+    ///
+    /// ```text
+    /// wt step for-each -- git status --short
+    /// ```
+    ///
+    /// Run npm install in all worktrees:
+    ///
+    /// ```text
+    /// wt step for-each -- npm install
+    /// ```
+    ///
+    /// Use branch name in command:
+    ///
+    /// ```text
+    /// wt step for-each -- "echo Branch: {{ branch }}"
+    /// ```
+    ///
+    /// Pull updates in worktrees with upstreams (skips others):
+    ///
+    /// ```text
+    /// wt step for-each -- '[ "$(git rev-parse @{u} 2>/dev/null)" ] || exit 0; git pull --autostash'
+    /// ```
+    ForEach {
+        /// Command template (see --help for all variables)
+        #[arg(required = true, last = true, num_args = 1..)]
+        args: Vec<String>,
+    },
 }
 
 /// Run hooks independently
@@ -1038,6 +1092,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Push to target branch (default: main)
+- `for-each` — [experimental] Run a command in every worktree
 
 ## See also
 

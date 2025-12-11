@@ -785,6 +785,66 @@ mod tests {
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
+    fn test_wrapper_step_for_each(#[case] shell: &str) {
+        skip_if_shell_unavailable!(shell);
+        let mut repo = TestRepo::new();
+        repo.commit("Initial commit");
+
+        // Create additional worktrees
+        repo.add_worktree("feature-a");
+        repo.add_worktree("feature-b");
+
+        // Run for-each with echo to test stdout handling
+        let output = exec_through_wrapper(
+            shell,
+            &repo,
+            "step",
+            &["for-each", "--", "echo", "Branch: {{ branch }}"],
+        );
+
+        // Shell-agnostic assertions
+        assert_eq!(output.exit_code, 0, "{}: Command should succeed", shell);
+        output.assert_no_directive_leaks();
+        output.assert_no_job_control_messages();
+
+        // Verify output contains branch names (stdout redirected to stderr)
+        assert!(
+            output.combined.contains("Branch: main"),
+            "{}: Should show main branch output.\nOutput:\n{}",
+            shell,
+            output.combined
+        );
+        assert!(
+            output.combined.contains("Branch: feature-a"),
+            "{}: Should show feature-a branch output.\nOutput:\n{}",
+            shell,
+            output.combined
+        );
+        assert!(
+            output.combined.contains("Branch: feature-b"),
+            "{}: Should show feature-b branch output.\nOutput:\n{}",
+            shell,
+            output.combined
+        );
+
+        // Verify summary message
+        assert!(
+            output.combined.contains("Completed in 3 worktrees"),
+            "{}: Should show completion summary.\nOutput:\n{}",
+            shell,
+            output.combined
+        );
+
+        // Consolidated snapshot - output should be identical across all shells
+        insta::allow_duplicates! {
+            assert_snapshot!("step_for_each", output.normalized());
+        }
+    }
+
+    #[rstest]
+    #[case("bash")]
+    #[case("zsh")]
+    #[case("fish")]
     fn test_wrapper_merge(#[case] shell: &str) {
         skip_if_shell_unavailable!(shell);
         let mut repo = TestRepo::new();
