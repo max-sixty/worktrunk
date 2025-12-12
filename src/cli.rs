@@ -723,9 +723,7 @@ wt config state logs get
 pub enum StepCommand {
     /// Commit changes with LLM commit message
     ///
-    /// Stages working tree changes based on `--stage` and commits them.
-    /// Generates the commit message using an LLM. Runs pre-commit hooks
-    /// unless `--no-verify` is passed.
+    /// Stages working tree changes and commits with an LLM-generated message.
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
@@ -742,10 +740,7 @@ pub enum StepCommand {
 
     /// Squash commits down to target
     ///
-    /// Combines all commits since diverging from the target branch into a single
-    /// commit. Stages and includes working tree changes based on `--stage`.
-    /// Generates the commit message using an LLM. Runs pre-commit hooks
-    /// unless `--no-verify` is passed.
+    /// Stages working tree changes, combines all commits since the target into a single commit, generates message with LLM.
     Squash {
         /// Target branch
         ///
@@ -768,8 +763,7 @@ pub enum StepCommand {
 
     /// Push changes to local target branch
     ///
-    /// Automatically stashes non-conflicting edits in the target worktree before
-    /// the push and restores them afterward so other agents' changes stay intact.
+    /// Fast-forwards the target branch to include current commits.
     Push {
         /// Target branch
         ///
@@ -856,8 +850,7 @@ Note: This command is experimental and may change in future versions.
 pub enum HookCommand {
     /// Show configured hooks
     ///
-    /// Lists all hooks from user config and project config with their commands.
-    /// Project hooks show approval status (❓ = needs approval).
+    /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
         #[arg(value_parser = ["post-create", "post-start", "pre-commit", "pre-merge", "post-merge", "pre-remove"])]
@@ -870,7 +863,7 @@ pub enum HookCommand {
 
     /// Run post-create hooks
     ///
-    /// Executes blocking commands after worktree creation.
+    /// Blocking — waits for completion before continuing.
     PostCreate {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
@@ -883,7 +876,7 @@ pub enum HookCommand {
 
     /// Run post-start hooks
     ///
-    /// Executes background commands after worktree creation.
+    /// Background — runs without blocking.
     PostStart {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
@@ -895,8 +888,6 @@ pub enum HookCommand {
     },
 
     /// Run pre-commit hooks
-    ///
-    /// Executes validation commands before committing.
     PreCommit {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
@@ -908,8 +899,6 @@ pub enum HookCommand {
     },
 
     /// Run pre-merge hooks
-    ///
-    /// Executes validation commands before merging.
     PreMerge {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
@@ -921,8 +910,6 @@ pub enum HookCommand {
     },
 
     /// Run post-merge hooks
-    ///
-    /// Executes commands after successful merge.
     PostMerge {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
@@ -934,8 +921,6 @@ pub enum HookCommand {
     },
 
     /// Run pre-remove hooks
-    ///
-    /// Executes cleanup commands before worktree removal.
     PreRemove {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
@@ -993,10 +978,8 @@ wt hook approvals clear --global
 pub enum ListSubcommand {
     /// Single-line status for shell prompts
     ///
-    /// Format: `branch  status  ±working  commits  upstream  ci`
-    ///
-    /// Designed for shell prompts, starship, or editor integrations.
-    /// Uses same collection infrastructure as `wt list`.
+    /// For shell prompts, starship, or editor integrations.
+    #[command(after_long_help = "Format: `branch  status  ±working  commits  upstream  ci`")]
     Statusline {
         /// Claude Code mode: read context from stdin, add directory and model
         ///
@@ -2040,10 +2023,10 @@ Arguments resolve by path first, then branch name. [Shortcuts](@/switch.md#short
     },
 
     /// Merge worktree into target branch
+    ///
+    /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
     #[command(
-        after_long_help = r#"Merge the current branch into the target branch and clean up. Handles the full workflow: commit uncommitted changes, squash commits, rebase, run hooks, push to target, and remove the worktree.
-
-When already on the target branch or in the main worktree, the worktree is preserved automatically.
+        after_long_help = r#"When already on the target branch or in the main worktree, the worktree is preserved automatically.
 
 ## Examples
 

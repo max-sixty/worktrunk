@@ -93,6 +93,59 @@ branch: Option<String>,
 
 **Pattern:** All branch arguments should use `branch_value_completer()` for consistency with commands like `wt merge`, `wt switch --base`, `wt rebase`.
 
+## CLI Help Text Placement
+
+Help text has three levels:
+
+1. **`about`** (single-line doc comment) → Short title after command name
+2. **`long_about`** (multi-line doc comment, 1-2 sentences) → Brief summary before options
+3. **`after_long_help`** → Examples and detailed docs after options
+
+**Pattern for complex commands:**
+
+```rust
+/// Merge worktree into target branch
+///
+/// Commits, squashes, rebases, runs hooks, merges to target, and removes the worktree.
+#[command(
+    after_long_help = r#"## Examples
+
+```console
+wt merge
+```
+"#
+)]
+Merge { ... }
+```
+
+This renders as:
+```
+wt merge - Merge worktree into target branch
+
+Commits, squashes, rebases, runs hooks, merges to target, and removes the worktree.
+
+Usage: wt merge [OPTIONS] [TARGET]
+
+Options:
+  ...
+
+## Examples
+...
+```
+
+**Pattern for simple commands:**
+
+```rust
+/// Rebase onto target
+Rebase { ... }
+```
+
+No `long_about` or `after_long_help` needed when the short description is self-explanatory.
+
+**When to use `long_about`:** Add a 1-2 sentence summary when the short description doesn't convey the full behavior (e.g., `wt merge` does more than just "merge").
+
+**Why:** Users see context before options for complex commands, but options stay near the top. Examples and detailed docs follow after.
+
 ## Command Documentation Guidelines
 
 When writing or updating command docs in `docs/content/`, follow this structure and these principles. Load the `documentation` skill for additional guidance.
