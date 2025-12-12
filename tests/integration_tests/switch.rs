@@ -243,8 +243,6 @@ fn test_switch_execute_creates_file(repo: TestRepo) {
     );
 }
 
-/// Skipped on Windows: error message format differs (`exit status: 1` shown explicitly).
-#[cfg_attr(windows, ignore)]
 #[rstest]
 fn test_switch_execute_failure(repo: TestRepo) {
     snapshot_switch(
@@ -584,10 +582,7 @@ fn test_switch_ping_pong_realistic(repo: TestRepo) {
 }
 
 /// Test that `wt switch` without arguments shows helpful hints about shortcuts.
-///
-/// Skipped on Windows: Hints display differently on Windows.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_switch_missing_argument_shows_hints(repo: TestRepo) {
     // Run switch with no arguments - should show clap error plus hints
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
