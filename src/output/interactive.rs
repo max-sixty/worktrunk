@@ -89,10 +89,22 @@ impl OutputHandler for InteractiveOutput {
 
     #[cfg(not(unix))]
     fn execute(&mut self, command: String) -> anyhow::Result<()> {
-        // On non-Unix platforms, fall back to spawn-and-wait
-        // This uses the shell abstraction (Git Bash if available)
+        use worktrunk::git::WorktrunkError;
+
+        // On non-Unix platforms, fall back to spawn-and-wait.
+        // This uses the shell abstraction (Git Bash if available).
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
-        execute_streaming(&command, exec_dir, false, None)?;
+        if let Err(err) = execute_streaming(&command, exec_dir, false, None) {
+            // If the command failed with an exit code, just exit with that code.
+            // This matches Unix behavior where exec() replaces the process and
+            // the shell's exit code becomes the process exit code (no error message).
+            if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
+                if let WorktrunkError::ChildProcessExited { code, .. } = wt_err {
+                    std::process::exit(*code);
+                }
+            }
+            return Err(err);
+        }
         Ok(())
     }
 

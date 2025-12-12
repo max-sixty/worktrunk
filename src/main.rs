@@ -474,7 +474,11 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
 
     // Enhance `wt switch` missing argument error with shortcut hints.
     // Safe in directive mode: hints go to stderr, only stdout is eval'd.
-    if err.kind() == ErrorKind::MissingRequiredArgument && format!("{err}").contains("wt switch") {
+    // Check for both "wt switch" and "wt.exe switch" (Windows)
+    let err_str = format!("{err}");
+    let is_switch_missing_arg = err.kind() == ErrorKind::MissingRequiredArgument
+        && (err_str.contains("wt switch") || err_str.contains("wt.exe switch"));
+    if is_switch_missing_arg {
         eprint!("{}", err.render().ansi());
         ceprintln!("<green,bold>Quick switches:</>");
         ceprintln!("  <cyan,bold>wt switch ^</>    default branch's worktree");
