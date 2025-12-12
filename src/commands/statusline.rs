@@ -70,8 +70,8 @@ impl ClaudeCodeContext {
             let _ = tx.send(input);
         });
 
-        // Wait up to 10ms for stdin
-        let input = rx.recv_timeout(Duration::from_millis(10)).ok()?;
+        // Wait up to 50ms for stdin (needs to be longer on Windows where process spawning is slower)
+        let input = rx.recv_timeout(Duration::from_millis(50)).ok()?;
 
         Self::parse(&input)
     }
