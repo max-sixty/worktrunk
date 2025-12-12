@@ -98,10 +98,10 @@ impl OutputHandler for InteractiveOutput {
             // If the command failed with an exit code, just exit with that code.
             // This matches Unix behavior where exec() replaces the process and
             // the shell's exit code becomes the process exit code (no error message).
-            if let Some(wt_err) = err.downcast_ref::<WorktrunkError>() {
-                if let WorktrunkError::ChildProcessExited { code, .. } = wt_err {
-                    std::process::exit(*code);
-                }
+            if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
+                err.downcast_ref::<WorktrunkError>()
+            {
+                std::process::exit(*code);
             }
             return Err(err);
         }
