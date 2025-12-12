@@ -45,7 +45,7 @@ This catches issues locally before pushing — like having CI run on your machin
 
 Custom emoji markers show agent state in `wt list`. The Claude Code plugin sets these automatically:
 
-```
+```text
 + feature-api      ↑  🤖              ↑1      ./repo.feature-api
 + review-ui      ? ↑  💬              ↑1      ./repo.review-ui
 ```
