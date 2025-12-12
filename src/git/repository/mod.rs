@@ -423,7 +423,7 @@ impl Repository {
         // Fallback: No remote or remote query failed, try to infer locally
         // TODO: Show message to user when using inference fallback:
         //   "No remote configured. Using inferred default branch: {branch}"
-        //   "To cache the default branch, set up a remote and run: wt config cache refresh"
+        //   "To cache the default branch, set up a remote and run: wt config state get default-branch --refresh"
         // Problem: git.rs is in lib crate, output module is in binary.
         // Options: (1) Return info about whether fallback was used, let callers show message
         //          (2) Add messages in specific commands (merge.rs, worktree.rs)
@@ -1259,6 +1259,26 @@ impl Repository {
         let branch = self.query_remote_default_branch(&remote)?;
         self.cache_default_branch(&remote, &branch)?;
         Ok(branch)
+    }
+
+    /// Set the default branch manually.
+    ///
+    /// This sets the local cache (`refs/remotes/<remote>/HEAD`) to point to the
+    /// specified branch. Use `--refresh` to re-query the remote and overwrite
+    /// this value.
+    pub fn set_default_branch(&self, branch: &str) -> anyhow::Result<()> {
+        let remote = self.primary_remote()?;
+        self.cache_default_branch(&remote, branch)
+    }
+
+    /// Clear the default branch cache.
+    ///
+    /// Removes `refs/remotes/<remote>/HEAD` so the next call to `default_branch()`
+    /// will re-query the remote.
+    pub fn clear_default_branch_cache(&self) -> anyhow::Result<()> {
+        let remote = self.primary_remote()?;
+        self.run_command(&["remote", "set-head", "-d", &remote])?;
+        Ok(())
     }
 
     /// Check if two refs have identical tree content (same files/directories).

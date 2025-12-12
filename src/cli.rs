@@ -388,168 +388,221 @@ commit messages."#
         full: bool,
     },
 
-    /// Manage caches (CI status, default branch)
-    #[command(after_long_help = r#"## Default branch detection
-
-Worktrunk determines the default branch using:
-
-1. **Local cache** — Check `refs/remotes/origin/HEAD`, a symbolic ref that git
-   uses to track the remote's default branch. This is created by `git clone`
-   or `git remote set-head`. Instant, no network required.
-
-2. **Remote query** — If the local cache doesn't exist, query the remote with
-   `git ls-remote --symref origin HEAD` to see what branch HEAD points to.
-   This requires network access (100ms–2s). The result is cached locally via
-   `git remote set-head origin <branch>`.
-
-3. **Local inference** — If no remote is configured: check git's
-   `init.defaultBranch` config, then look for branches named `main`, `master`,
-   `develop`, or `trunk`.
-
-Use `wt config cache refresh` when the remote's default branch has changed
-(e.g., renamed from `master` to `main`)."#)]
-    Cache {
-        #[command(subcommand)]
-        action: CacheCommand,
-    },
-
-    /// Get or set runtime variables (stored in git config)
+    /// Get, set, or clear runtime state (stored in git config)
     #[command(
-        after_long_help = r#"Variables are runtime values stored in git config, separate from
-configuration files. Use `wt config show` to view file-based configuration.
+        after_long_help = r#"Runtime state is stored in git config, separate from configuration files.
+Use `wt config show` to view file-based configuration.
 
-## Available variables
+## Keys
 
-- **default-branch**: The repository's default branch (read-only, cached)
+- **default-branch**: The repository's default branch (main, master, etc.)
+- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
+- **logs**: Background operation logs
 
 ## Examples
 
 Get the default branch:
 ```console
-wt config var get default-branch
+wt config state get default-branch
+```
+
+Set the default branch manually:
+```console
+wt config state set default-branch main
 ```
 
 Set a marker for current branch:
 ```console
-wt config var set marker "🚧 WIP"
+wt config state set marker "🚧 WIP"
 ```
 
-Clear markers:
+Clear all CI status cache:
 ```console
-wt config var clear marker --all
+wt config state clear ci-status --all
+```
+
+Show all cached state:
+```console
+wt config state show
 ```"#
     )]
-    Var {
+    State {
         #[command(subcommand)]
-        action: VarCommand,
+        action: StateCommand,
     },
 }
 
 #[derive(Subcommand)]
-pub enum CacheCommand {
-    /// Show cached data
-    #[command(after_long_help = r#"Shows all cached data including:
+pub enum StateCommand {
+    /// Manage default branch setting
+    #[command(name = "default-branch")]
+    DefaultBranch {
+        #[command(subcommand)]
+        action: DefaultBranchAction,
+    },
+
+    /// Manage CI status cache
+    #[command(name = "ci-status")]
+    CiStatus {
+        #[command(subcommand)]
+        action: CiStatusAction,
+    },
+
+    /// Manage branch markers
+    Marker {
+        #[command(subcommand)]
+        action: MarkerAction,
+    },
+
+    /// Manage background operation logs
+    Logs {
+        #[command(subcommand)]
+        action: LogsAction,
+    },
+
+    /// Show all cached state
+    #[command(after_long_help = r#"Shows all cached state including:
 
 - **Default branch**: Cached result of querying remote for default branch
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
     Show,
-
-    /// Clear cached data
-    Clear {
-        /// Cache type: 'ci', 'default-branch', or 'logs' (default: all)
-        #[arg(value_parser = ["ci", "default-branch", "logs"])]
-        cache_type: Option<String>,
-    },
-
-    /// Refresh default branch from remote
-    #[command(
-        after_long_help = r#"Queries the remote to determine the default branch and caches the result.
-
-Use when the remote default branch has changed. The cached value is used by
-`wt merge`, `wt list`, and other commands that reference the default branch."#
-    )]
-    Refresh,
 }
 
 #[derive(Subcommand)]
-pub enum VarCommand {
-    /// Get a variable value
-    #[command(after_long_help = r#"Variables:
-
-- **default-branch**: The repository's default branch (main, master, etc.)
-- **marker**: Custom status marker for a branch (shown in `wt list`)
-- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
-
-## Examples
+pub enum DefaultBranchAction {
+    /// Get the default branch
+    #[command(after_long_help = r#"## Examples
 
 Get the default branch:
 ```console
-wt config var get default-branch
+wt config state default-branch get
 ```
 
 Force refresh from remote:
 ```console
-wt config var get default-branch --refresh
-```
+wt config state default-branch get --refresh
+```"#)]
+    Get {
+        /// Force refresh from remote
+        #[arg(long)]
+        refresh: bool,
+    },
 
-Get marker for current branch:
-```console
-wt config var get marker
-```
+    /// Set the default branch
+    #[command(after_long_help = r#"## Examples
 
-Get marker for a specific branch:
+Set the default branch:
 ```console
-wt config var get marker --branch=feature
-```
+wt config state default-branch set main
+```"#)]
+    Set {
+        /// Branch name to set as default
+        #[arg(add = crate::completion::branch_value_completer())]
+        branch: String,
+    },
+
+    /// Clear the default branch cache
+    Clear,
+}
+
+#[derive(Subcommand)]
+pub enum CiStatusAction {
+    /// Get CI status for a branch
+    #[command(
+        after_long_help = r#"Returns: passed, running, failed, conflicts, noci, or error.
+
+## Examples
 
 Get CI status for current branch:
 ```console
-wt config var get ci-status
+wt config state ci-status get
 ```
 
-Force refresh CI status (bypass cache):
+Force refresh from GitHub/GitLab:
 ```console
-wt config var get ci-status --refresh
-```"#)]
-    Get {
-        /// Variable: 'default-branch', 'marker', or 'ci-status'
-        #[arg(value_parser = ["default-branch", "marker", "ci-status"])]
-        key: String,
+wt config state ci-status get --refresh
+```
 
-        /// Force refresh (for cached variables)
+Get CI status for a specific branch:
+```console
+wt config state ci-status get --branch=feature
+```"#
+    )]
+    Get {
+        /// Force refresh from GitHub/GitLab
         #[arg(long)]
         refresh: bool,
 
-        /// Target branch (for branch-scoped variables)
+        /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer())]
         branch: Option<String>,
     },
 
-    /// Set a variable value
-    #[command(after_long_help = r#"Variables:
+    /// Clear CI status cache
+    #[command(after_long_help = r#"## Examples
 
-- **marker**: Custom status marker displayed in `wt list` output
+Clear CI status for current branch:
+```console
+wt config state ci-status clear
+```
 
-## Examples
+Clear CI status for a specific branch:
+```console
+wt config state ci-status clear --branch=feature
+```
+
+Clear all CI status cache:
+```console
+wt config state ci-status clear --all
+```"#)]
+    Clear {
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
+        branch: Option<String>,
+
+        /// Clear all CI status cache
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MarkerAction {
+    /// Get marker for a branch
+    #[command(after_long_help = r#"## Examples
+
+Get marker for current branch:
+```console
+wt config state marker get
+```
+
+Get marker for a specific branch:
+```console
+wt config state marker get --branch=feature
+```"#)]
+    Get {
+        /// Target branch (defaults to current)
+        #[arg(long, add = crate::completion::branch_value_completer())]
+        branch: Option<String>,
+    },
+
+    /// Set marker for a branch
+    #[command(after_long_help = r#"## Examples
 
 Set marker for current branch:
 ```console
-wt config var set marker "🚧 WIP"
+wt config state marker set "🚧 WIP"
 ```
 
 Set marker for a specific branch:
 ```console
-wt config var set marker "✅ ready" --branch=feature
+wt config state marker set "✅ ready" --branch=feature
 ```"#)]
     Set {
-        /// Variable: 'marker'
-        #[arg(value_parser = ["marker"])]
-        key: String,
-
-        /// Value to set
+        /// Marker text (shown in `wt list` output)
         value: String,
 
         /// Target branch (defaults to current)
@@ -557,40 +610,51 @@ wt config var set marker "✅ ready" --branch=feature
         branch: Option<String>,
     },
 
-    /// Clear a variable value
-    #[command(after_long_help = r#"Variables:
-
-- **marker**: Custom status marker for a branch
-
-## Examples
+    /// Clear marker for a branch
+    #[command(after_long_help = r#"## Examples
 
 Clear marker for current branch:
 ```console
-wt config var clear marker
+wt config state marker clear
 ```
 
 Clear marker for a specific branch:
 ```console
-wt config var clear marker --branch=feature
+wt config state marker clear --branch=feature
 ```
 
 Clear all markers:
 ```console
-wt config var clear marker --all
+wt config state marker clear --all
 ```"#)]
     Clear {
-        /// Variable: 'marker'
-        #[arg(value_parser = ["marker"])]
-        key: String,
-
         /// Target branch (defaults to current)
         #[arg(long, add = crate::completion::branch_value_completer(), conflicts_with = "all")]
         branch: Option<String>,
 
-        /// Clear all values
+        /// Clear all markers
         #[arg(long)]
         all: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub enum LogsAction {
+    /// List background operation log files
+    #[command(
+        after_long_help = r#"Lists log files from background operations like post-start commands and worktree removal.
+
+## Examples
+
+List log files:
+```console
+wt config state logs get
+```"#
+    )]
+    Get,
+
+    /// Clear background operation logs
+    Clear,
 }
 
 /// Run individual workflow operations
@@ -1110,7 +1174,7 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 
 <!-- subdoc: create -->
 
-<!-- subdoc: var -->
+<!-- subdoc: state -->
 "#
     )]
     Config {
@@ -1613,7 +1677,7 @@ The CI column shows GitHub/GitLab pipeline status:
 | `●` gray | No checks configured |
 | (blank) | No upstream or no PR/MR |
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use `wt config cache` to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 seconds; use `wt config state` to view or clear.
 
 ## Status symbols
 

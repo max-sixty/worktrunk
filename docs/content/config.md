@@ -569,31 +569,43 @@ Global Options:
 ```
 
 
-## wt config var
+## wt config state
 
-Variables are runtime values stored in git config, separate from
-configuration files. Use `wt config show` to view file-based configuration.
+Runtime state is stored in git config, separate from configuration files.
+Use `wt config show` to view file-based configuration.
 
-### Available variables
+### Keys
 
-- **default-branch**: The repository's default branch (read-only, cached)
+- **default-branch**: The repository's default branch (main, master, etc.)
+- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
+- **logs**: Background operation logs
 
 ### Examples
 
 Get the default branch:
 ```bash
-wt config var get default-branch
+wt config state get default-branch
+```
+
+Set the default branch manually:
+```bash
+wt config state set default-branch main
 ```
 
 Set a marker for current branch:
 ```bash
-wt config var set marker "🚧 WIP"
+wt config state set marker "🚧 WIP"
 ```
 
-Clear markers:
+Clear all CI status cache:
 ```bash
-wt config var clear marker --all
+wt config state clear ci-status --all
+```
+
+Show all cached state:
+```bash
+wt config state show
 ```
 
 ---
@@ -601,14 +613,16 @@ wt config var clear marker --all
 ### Command reference
 
 ```
-wt config var - Get or set runtime variables (stored in git config)
+wt config state - Get, set, or clear runtime state (stored in git config)
 
-Usage: wt config var [OPTIONS] <COMMAND>
+Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  get    Get a variable value
-  set    Set a variable value
-  clear  Clear a variable value
+  default-branch  Manage default branch setting
+  ci-status       Manage CI status cache
+  marker          Manage branch markers
+  logs            Manage background operation logs
+  show            Show all cached state
 
 Options:
   -h, --help
@@ -638,8 +652,7 @@ Commands:
   shell   Shell integration setup
   create  Create configuration file
   show    Show configuration files & locations
-  cache   Manage caches (CI status, default branch)
-  var     Get or set runtime variables (stored in git config)
+  state   Get, set, or clear runtime state (stored in git config)
 
 Options:
   -h, --help

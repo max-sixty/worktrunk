@@ -51,10 +51,15 @@ fn snapshot_help(test_name: &str, args: &[&str]) {
 #[case("help_config_shell", "config shell --help")]
 #[case("help_config_create", "config create --help")]
 #[case("help_config_show", "config show --help")]
-#[case("help_config_var", "config var --help")]
-#[case("help_config_var_get", "config var get --help")]
-#[case("help_config_var_set", "config var set --help")]
-#[case("help_config_var_clear", "config var clear --help")]
+#[case("help_config_state", "config state --help")]
+#[case(
+    "help_config_state_default_branch",
+    "config state default-branch --help"
+)]
+#[case("help_config_state_ci_status", "config state ci-status --help")]
+#[case("help_config_state_marker", "config state marker --help")]
+#[case("help_config_state_logs", "config state logs --help")]
+#[case("help_config_state_show", "config state show --help")]
 #[case("help_hook_approvals", "hook approvals --help")]
 #[case("help_hook_approvals_add", "hook approvals add --help")]
 #[case("help_hook_approvals_clear", "hook approvals clear --help")]

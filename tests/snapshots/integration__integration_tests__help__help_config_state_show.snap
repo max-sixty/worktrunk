@@ -4,8 +4,8 @@ info:
   program: wt
   args:
     - config
-    - var
-    - clear
+    - state
+    - show
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -19,23 +19,11 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config var clear - Clear a variable value
+wt config state show - Show all cached state
 
-Usage: [1m[36mwt config var clear[0m [36m[OPTIONS][0m [36m<KEY>
-
-[1m[32mArguments:
-  [36m<KEY>
-          Variable: 'marker'
-          
-          [possible values: marker]
+Usage: [1m[36mwt config state show[0m [36m[OPTIONS]
 
 [1m[32mOptions:
-      [1m[36m--branch[0m[36m [0m[36m<BRANCH>
-          Target branch (defaults to current)
-
-      [1m[36m--all
-          Clear all values
-
   [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 
@@ -49,17 +37,9 @@ Usage: [1m[36mwt config var clear[0m [36m[OPTIONS][0m [36m<KEY>
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Variables:
+Shows all cached state including:
 
-- [1mmarker[0m: Custom status marker for a branch
+- [1mDefault branch[0m: Cached result of querying remote for default branch
+- [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
 
-[32mExamples
-
-Clear marker for current branch:
-  [2mwt config var clear marker
-
-Clear marker for a specific branch:
-  [2mwt config var clear marker --branch=feature
-
-Clear all markers:
-  [2mwt config var clear marker --all
+CI cache entries show status, age, and the commit SHA they were fetched for.

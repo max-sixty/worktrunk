@@ -15,6 +15,7 @@ use worktrunk::styling::{
 
 use super::configure_shell::{ConfigAction, scan_shell_configs};
 use super::list::ci_status::CachedCiStatus;
+use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
 use crate::output;
@@ -556,8 +557,35 @@ fn require_user_config_path() -> anyhow::Result<PathBuf> {
     })
 }
 
-/// Handle the var get command
-pub fn handle_var_get(key: &str, refresh: bool, branch: Option<String>) -> anyhow::Result<()> {
+/// Clear all log files from the wt-logs directory
+fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
+    let git_common_dir = repo.git_common_dir()?;
+    let log_dir = git_common_dir.join("wt-logs");
+
+    if !log_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut cleared = 0;
+    for entry in std::fs::read_dir(&log_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "log") {
+            std::fs::remove_file(&path)?;
+            cleared += 1;
+        }
+    }
+
+    // Remove the directory if empty
+    if std::fs::read_dir(&log_dir)?.next().is_none() {
+        let _ = std::fs::remove_dir(&log_dir);
+    }
+
+    Ok(cleared)
+}
+
+/// Handle the state get command
+pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> anyhow::Result<()> {
     use super::list::ci_status::PrStatus;
 
     let repo = Repository::current();
@@ -613,7 +641,6 @@ pub fn handle_var_get(key: &str, refresh: bool, branch: Option<String>) -> anyho
             let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();
             match PrStatus::detect(&branch_name, &head, &repo_root, has_upstream) {
                 Some(status) => {
-                    // Output the CI status as a simple string for piping
                     let status_str = match status.ci_status {
                         super::list::ci_status::CiStatus::Passed => "passed",
                         super::list::ci_status::CiStatus::Running => "running",
@@ -629,25 +656,82 @@ pub fn handle_var_get(key: &str, refresh: bool, branch: Option<String>) -> anyho
                 }
             }
         }
-        _ => anyhow::bail!(
-            "Unknown variable: {key}. Valid variables: default-branch, marker, ci-status"
-        ),
+        "logs" => {
+            let git_common_dir = repo.git_common_dir()?;
+            let log_dir = git_common_dir.join("wt-logs");
+
+            if !log_dir.exists() {
+                crate::output::print(info_message("No logs"))?;
+                return Ok(());
+            }
+
+            let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log")
+                })
+                .collect();
+
+            if entries.is_empty() {
+                crate::output::print(info_message("No logs"))?;
+                return Ok(());
+            }
+
+            // Sort by modification time (newest first)
+            entries.sort_by(|a, b| {
+                let a_time = a.metadata().and_then(|m| m.modified()).ok();
+                let b_time = b.metadata().and_then(|m| m.modified()).ok();
+                b_time.cmp(&a_time)
+            });
+
+            // Build table
+            let mut table = String::from("| File | Size | Modified |\n");
+            table.push_str("|------|------|----------|\n");
+
+            for entry in entries {
+                let path = entry.path();
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let meta = entry.metadata().ok();
+
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let size_str = if size < 1024 {
+                    format!("{size}B")
+                } else {
+                    format!("{}K", size / 1024)
+                };
+
+                let age = meta
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| format_relative_time_short(d.as_secs() as i64))
+                    .unwrap_or_else(|| "?".to_string());
+
+                table.push_str(&format!("| {name} | {size_str} | {age} |\n"));
+            }
+
+            let rendered = crate::md_help::render_markdown_table(&table);
+            crate::output::table(rendered.trim_end())?;
+        }
+        _ => {
+            anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, ci-status, marker, logs")
+        }
     }
 
     Ok(())
 }
 
-/// Handle the var set command
-pub fn handle_var_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
+/// Handle the state set command
+pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> anyhow::Result<()> {
     let repo = Repository::current();
 
     match key {
+        "default-branch" => {
+            repo.set_default_branch(&value)?;
+            crate::output::print(success_message(cformat!(
+                "Set default branch to <bold>{value}</>"
+            )))?;
+        }
         "marker" => {
-            // TODO: Worktree-specific marker (worktrunk.marker with --worktree flag) would allow
-            // different markers per worktree, but requires extensions.worktreeConfig which adds
-            // complexity. Our intended workflow is one branch per worktree, so branch-keyed marker
-            // is sufficient for now.
-
             let branch_name = match branch {
                 Some(b) => b,
                 None => repo.require_current_branch("set marker for current branch")?,
@@ -660,22 +744,58 @@ pub fn handle_var_set(key: &str, value: String, branch: Option<String>) -> anyho
                 "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
             )))?;
         }
-        _ => anyhow::bail!("Unknown variable: {key}. Valid variables: marker"),
+        _ => anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, marker"),
     }
 
     Ok(())
 }
 
-/// Handle the var clear command
-pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
+/// Handle the state clear command
+pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyhow::Result<()> {
     let repo = Repository::current();
 
     match key {
+        "default-branch" => {
+            repo.clear_default_branch_cache()?;
+            crate::output::print(success_message("Cleared default branch cache"))?;
+        }
+        "ci-status" => {
+            if all {
+                let cleared = CachedCiStatus::clear_all(&repo);
+                if cleared == 0 {
+                    crate::output::print(info_message("No CI cache entries to clear"))?;
+                } else {
+                    crate::output::print(success_message(cformat!(
+                        "Cleared <bold>{cleared}</> CI cache entr{}",
+                        if cleared == 1 { "y" } else { "ies" }
+                    )))?;
+                }
+            } else {
+                // Clear CI status for specific branch
+                let branch_name = match branch {
+                    Some(b) => b,
+                    None => repo.require_current_branch("clear ci-status for current branch")?,
+                };
+                let config_key = format!(
+                    "worktrunk.ci.{}",
+                    super::list::ci_status::CachedCiStatus::escape_branch(&branch_name)
+                );
+                if repo
+                    .run_command(&["config", "--unset", &config_key])
+                    .is_ok()
+                {
+                    crate::output::print(success_message(cformat!(
+                        "Cleared CI cache for <bold>{branch_name}</>"
+                    )))?;
+                } else {
+                    crate::output::print(info_message(cformat!(
+                        "No CI cache for <bold>{branch_name}</>"
+                    )))?;
+                }
+            }
+        }
         "marker" => {
             if all {
-                // Clear all branch-keyed markers
-                // Note: git config --get-regexp exits with code 1 when no matches found,
-                // so we treat errors the same as empty output (both mean "no markers")
                 let output = repo
                     .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
                     .unwrap_or_default();
@@ -697,7 +817,6 @@ pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow:
                     )))?;
                 }
             } else {
-                // Clear specific branch marker
                 let branch_name = match branch {
                     Some(b) => b,
                     None => repo.require_current_branch("clear marker for current branch")?,
@@ -712,18 +831,31 @@ pub fn handle_var_clear(key: &str, branch: Option<String>, all: bool) -> anyhow:
                 )))?;
             }
         }
-        _ => anyhow::bail!("Unknown variable: {key}. Valid variables: marker"),
+        "logs" => {
+            let cleared = clear_logs(&repo)?;
+            if cleared == 0 {
+                crate::output::print(info_message("No logs to clear"))?;
+            } else {
+                crate::output::print(success_message(cformat!(
+                    "Cleared <bold>{cleared}</> log file{}",
+                    if cleared == 1 { "" } else { "s" }
+                )))?;
+            }
+        }
+        _ => {
+            anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, ci-status, marker, logs")
+        }
     }
 
     Ok(())
 }
 
-/// Handle the cache show command
-pub fn handle_cache_show() -> anyhow::Result<()> {
+/// Handle the state show command
+pub fn handle_state_show() -> anyhow::Result<()> {
     let repo = Repository::current();
 
-    // Show default branch cache (value from git config, so use gutter)
-    crate::output::print(info_message("Default branch cache:"))?;
+    // Show default branch cache
+    crate::output::print(info_message("Default branch:"))?;
     match repo.default_branch() {
         Ok(branch) => crate::output::gutter(format_with_gutter(&branch, "", None))?,
         Err(_) => crate::output::gutter(format_with_gutter("(not cached)", "", None))?,
@@ -768,106 +900,6 @@ pub fn handle_cache_show() -> anyhow::Result<()> {
 
     let rendered = crate::md_help::render_markdown_table(&table);
     crate::output::table(rendered.trim_end())?;
-
-    Ok(())
-}
-
-/// Handle the cache clear command
-pub fn handle_cache_clear(cache_type: Option<String>) -> anyhow::Result<()> {
-    let repo = Repository::current();
-
-    match cache_type.as_deref() {
-        Some("ci") => {
-            let cleared = CachedCiStatus::clear_all(&repo);
-            if cleared == 0 {
-                crate::output::print(info_message("No CI cache entries to clear"))?;
-            } else {
-                crate::output::print(success_message(cformat!(
-                    "Cleared <bold>{cleared}</> CI cache entr{}",
-                    if cleared == 1 { "y" } else { "ies" }
-                )))?;
-            }
-        }
-        Some("default-branch") => {
-            if repo
-                .run_command(&["config", "--unset", "worktrunk.defaultBranch"])
-                .is_ok()
-            {
-                crate::output::print(success_message("Cleared default branch cache"))?;
-            } else {
-                crate::output::print(info_message("No default branch cache to clear"))?;
-            }
-        }
-        Some("logs") => {
-            let cleared = clear_logs(&repo)?;
-            if cleared == 0 {
-                crate::output::print(info_message("No logs to clear"))?;
-            } else {
-                crate::output::print(success_message(cformat!(
-                    "Cleared <bold>{cleared}</> log file{}",
-                    if cleared == 1 { "" } else { "s" }
-                )))?;
-            }
-        }
-        None => {
-            let cleared_default = repo
-                .run_command(&["config", "--unset", "worktrunk.defaultBranch"])
-                .is_ok();
-            let cleared_ci = CachedCiStatus::clear_all(&repo) > 0;
-            let cleared_logs = clear_logs(&repo)? > 0;
-
-            if cleared_default || cleared_ci || cleared_logs {
-                crate::output::print(success_message("Cleared all caches"))?;
-            } else {
-                crate::output::print(info_message("No caches to clear"))?;
-            }
-        }
-        Some(unknown) => {
-            anyhow::bail!("Unknown cache type: {unknown}. Valid types: ci, default-branch, logs");
-        }
-    }
-
-    Ok(())
-}
-
-/// Clear all log files from the wt-logs directory
-fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
-    let git_common_dir = repo.git_common_dir()?;
-    let log_dir = git_common_dir.join("wt-logs");
-
-    if !log_dir.exists() {
-        return Ok(0);
-    }
-
-    let mut cleared = 0;
-    for entry in std::fs::read_dir(&log_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "log") {
-            std::fs::remove_file(&path)?;
-            cleared += 1;
-        }
-    }
-
-    // Remove the directory if empty
-    if std::fs::read_dir(&log_dir)?.next().is_none() {
-        let _ = std::fs::remove_dir(&log_dir);
-    }
-
-    Ok(cleared)
-}
-
-/// Handle the cache refresh command (refreshes default branch)
-pub fn handle_cache_refresh() -> anyhow::Result<()> {
-    let repo = Repository::current();
-
-    crate::output::print(progress_message("Querying remote for default branch..."))?;
-
-    let branch = repo.refresh_default_branch()?;
-
-    crate::output::print(success_message(cformat!(
-        "Cache refreshed: <bold>{branch}</>"
-    )))?;
 
     Ok(())
 }

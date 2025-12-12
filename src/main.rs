@@ -27,18 +27,18 @@ use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     ConfigAction, RebaseResult, SquashResult, add_approvals, approve_hooks, clear_approvals,
-    compute_worktree_path, handle_cache_clear, handle_cache_refresh, handle_cache_show,
-    handle_config_create, handle_config_show, handle_configure_shell, handle_hook_show,
-    handle_init, handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_by_path,
-    handle_remove_current, handle_show_theme, handle_squash, handle_switch,
-    handle_unconfigure_shell, handle_var_clear, handle_var_get, handle_var_set,
-    resolve_worktree_path_first, run_hook, step_commit, step_for_each,
+    compute_worktree_path, handle_config_create, handle_config_show, handle_configure_shell,
+    handle_hook_show, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
+    handle_remove_by_path, handle_remove_current, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_get, handle_state_set, handle_state_show, handle_switch,
+    handle_unconfigure_shell, resolve_worktree_path_first, run_hook, step_commit, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{
-    ApprovalsCommand, CacheCommand, Cli, Commands, ConfigCommand, ConfigShellCommand, HookCommand,
-    ListSubcommand, StepCommand, VarCommand,
+    ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
+    DefaultBranchAction, HookCommand, ListSubcommand, LogsAction, MarkerAction, StateCommand,
+    StepCommand,
 };
 use worktrunk::HookType;
 
@@ -898,19 +898,38 @@ fn main() {
             }
             ConfigCommand::Create { project } => handle_config_create(project),
             ConfigCommand::Show { full } => handle_config_show(full),
-            ConfigCommand::Cache { action } => match action {
-                CacheCommand::Show => handle_cache_show(),
-                CacheCommand::Clear { cache_type } => handle_cache_clear(cache_type),
-                CacheCommand::Refresh => handle_cache_refresh(),
-            },
-            ConfigCommand::Var { action } => match action {
-                VarCommand::Get {
-                    key,
-                    refresh,
-                    branch,
-                } => handle_var_get(&key, refresh, branch),
-                VarCommand::Set { key, value, branch } => handle_var_set(&key, value, branch),
-                VarCommand::Clear { key, branch, all } => handle_var_clear(&key, branch, all),
+            ConfigCommand::State { action } => match action {
+                StateCommand::DefaultBranch { action } => match action {
+                    DefaultBranchAction::Get { refresh } => {
+                        handle_state_get("default-branch", refresh, None)
+                    }
+                    DefaultBranchAction::Set { branch } => {
+                        handle_state_set("default-branch", branch, None)
+                    }
+                    DefaultBranchAction::Clear => handle_state_clear("default-branch", None, false),
+                },
+                StateCommand::CiStatus { action } => match action {
+                    CiStatusAction::Get { refresh, branch } => {
+                        handle_state_get("ci-status", refresh, branch)
+                    }
+                    CiStatusAction::Clear { branch, all } => {
+                        handle_state_clear("ci-status", branch, all)
+                    }
+                },
+                StateCommand::Marker { action } => match action {
+                    MarkerAction::Get { branch } => handle_state_get("marker", false, branch),
+                    MarkerAction::Set { value, branch } => {
+                        handle_state_set("marker", value, branch)
+                    }
+                    MarkerAction::Clear { branch, all } => {
+                        handle_state_clear("marker", branch, all)
+                    }
+                },
+                StateCommand::Logs { action } => match action {
+                    LogsAction::Get => handle_state_get("logs", false, None),
+                    LogsAction::Clear => handle_state_clear("logs", None, false),
+                },
+                StateCommand::Show => handle_state_show(),
             },
         },
         Commands::Step { action } => match action {

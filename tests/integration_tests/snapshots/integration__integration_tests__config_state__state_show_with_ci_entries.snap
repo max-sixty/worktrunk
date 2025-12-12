@@ -1,8 +1,8 @@
 ---
-source: tests/integration_tests/config_cache.rs
+source: tests/integration_tests/config_state.rs
 expression: "String::from_utf8_lossy(&output.stderr)"
 ---
-⚪ Default branch cache:
+⚪ Default branch:
 [107m [0m  main
 
 ⚪ CI status cache:
