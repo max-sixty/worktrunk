@@ -60,12 +60,7 @@ fn test_merge_internal_powershell_directive(mut repo_with_remote_and_feature: Te
 }
 
 /// Test that remove with --internal=powershell outputs PowerShell Set-Location syntax
-///
-/// Note: Skipped on Windows due to platform differences in ANSI escape code handling
-/// (Unix doubles ESC[36m, Windows doesn't). The Set-Location syntax itself works correctly
-/// on both platforms - this is purely a test snapshot compatibility issue.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_remove_internal_powershell_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
