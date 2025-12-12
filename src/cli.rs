@@ -465,10 +465,17 @@ pub enum StateCommand {
     #[command(after_long_help = r#"Shows all cached state including:
 
 - **Default branch**: Cached result of querying remote for default branch
+- **Switch history**: Previous branch for `wt switch -`
+- **Branch markers**: User-defined branch notes
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **Log files**: Background operation logs
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
-    Show,
+    Show {
+        /// Output format (table, json)
+        #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Subcommand)]
