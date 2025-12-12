@@ -447,7 +447,9 @@ fn test_remove_branch_matching_tree_content(repo: TestRepo) {
 /// 2. The main worktree cannot be removed under any circumstances
 /// 3. This is true regardless of which branch is checked out in the main worktree
 ///
-/// Skipped on Windows: File locking prevents worktree removal during test execution.
+/// Skipped on Windows: Tests run as subprocesses which can't change directory via shell
+/// integration. Real users are fine - shell integration cds to main before removing.
+/// But subprocess tests stay in the worktree, causing Windows file locking errors.
 #[rstest]
 #[cfg_attr(windows, ignore)]
 fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
@@ -953,7 +955,9 @@ approved-commands = ["echo 'hook ran' > {}"]
 /// Even when a worktree is in detached HEAD state (no branch), the pre-remove
 /// hook should still execute.
 ///
-/// Skipped on Windows: File locking prevents worktree removal during test execution.
+/// Skipped on Windows: Tests run as subprocesses which can't change directory via shell
+/// integration. Real users are fine - shell integration cds to main before removing.
+/// But subprocess tests stay in the worktree, causing Windows file locking errors.
 #[rstest]
 #[cfg_attr(windows, ignore)]
 fn test_pre_remove_hook_runs_for_detached_head(mut repo: TestRepo) {
@@ -1044,7 +1048,9 @@ approved-commands = ["touch {marker_path}"]
 /// of this test (`test_pre_remove_hook_runs_for_detached_head`) verifies the hook runs;
 /// this test verifies the specific template expansion behavior.
 ///
-/// Skipped on Windows: File locking prevents worktree removal during test execution.
+/// Skipped on Windows: Tests run as subprocesses which can't change directory via shell
+/// integration. Real users are fine - shell integration cds to main before removing.
+/// But subprocess tests stay in the worktree, causing Windows file locking errors.
 #[rstest]
 #[cfg_attr(windows, ignore)]
 fn test_pre_remove_hook_branch_expansion_detached_head(mut repo: TestRepo) {

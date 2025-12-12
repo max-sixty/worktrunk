@@ -981,4 +981,69 @@ mod tests {
         assert!(!pager_needs_paging_disabled("/path/to/delta-preview"));
         assert!(pager_needs_paging_disabled("batcat")); // Debian's bat package name
     }
+
+    #[test]
+    fn test_shell_escape_simple() {
+        // Simple strings pass through unchanged
+        assert_eq!(shell_escape("hello"), "hello");
+        assert_eq!(shell_escape("foo-bar"), "foo-bar");
+        assert_eq!(shell_escape("path/to/file"), "path/to/file");
+    }
+
+    #[test]
+    fn test_shell_escape_with_spaces() {
+        // Strings with spaces get quoted
+        assert_eq!(shell_escape("hello world"), "'hello world'");
+        assert_eq!(shell_escape("path/to/my file"), "'path/to/my file'");
+    }
+
+    #[test]
+    fn test_shell_escape_with_special_chars() {
+        // Special shell characters get quoted
+        assert_eq!(shell_escape("foo$bar"), "'foo$bar'");
+        assert_eq!(shell_escape("foo`bar"), "'foo`bar'");
+        assert_eq!(shell_escape("foo;bar"), "'foo;bar'");
+        assert_eq!(shell_escape("foo|bar"), "'foo|bar'");
+        assert_eq!(shell_escape("foo&bar"), "'foo&bar'");
+        assert_eq!(shell_escape("foo*bar"), "'foo*bar'");
+        assert_eq!(shell_escape("foo?bar"), "'foo?bar'");
+    }
+
+    #[test]
+    fn test_shell_escape_with_quotes() {
+        // Single quotes get escaped specially
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+        assert_eq!(shell_escape("don't"), "'don'\\''t'");
+        // Double quotes trigger quoting but don't need internal escaping
+        assert_eq!(shell_escape("say \"hi\""), "'say \"hi\"'");
+    }
+
+    #[test]
+    fn test_render_preview_tabs_working_tree_mode() {
+        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
+        // Tab 1 should be bold (active), tabs 2 and 3 dimmed
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("Enter: switch"));
+        // Verify structure: tabs on first line, controls on second
+        assert!(output.contains(" | "));
+        assert!(output.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn test_render_preview_tabs_log_mode() {
+        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::Log);
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+    }
+
+    #[test]
+    fn test_render_preview_tabs_branch_diff_mode() {
+        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::BranchDiff);
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+    }
 }

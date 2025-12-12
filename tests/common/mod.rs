@@ -564,6 +564,19 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
     cmd.env("COLUMNS", "150");
+
+    // Pass through LLVM coverage profiling environment for subprocess coverage collection.
+    // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
+    // their coverage data. Without this, integration test coverage isn't captured.
+    for key in [
+        "LLVM_PROFILE_FILE",
+        "CARGO_LLVM_COV",
+        "CARGO_LLVM_COV_TARGET_DIR",
+    ] {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
 }
 
 /// Set home environment variables for commands that rely on isolated temp homes.

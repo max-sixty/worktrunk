@@ -871,3 +871,45 @@ pub fn handle_cache_refresh() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comment_out_config_basic() {
+        let input = "key = \"value\"\n";
+        let expected = "# key = \"value\"\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_preserves_existing_comments() {
+        let input = "# This is a comment\nkey = \"value\"\n";
+        let expected = "# This is a comment\n# key = \"value\"\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_preserves_empty_lines() {
+        let input = "key1 = \"value\"\n\nkey2 = \"value\"\n";
+        let expected = "# key1 = \"value\"\n\n# key2 = \"value\"\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_preserves_trailing_newline() {
+        let with_newline = "key = \"value\"\n";
+        let without_newline = "key = \"value\"";
+
+        assert!(comment_out_config(with_newline).ends_with('\n'));
+        assert!(!comment_out_config(without_newline).ends_with('\n'));
+    }
+
+    #[test]
+    fn test_comment_out_config_section_headers() {
+        let input = "[hooks]\ncommand = \"npm test\"\n";
+        let expected = "# [hooks]\n# command = \"npm test\"\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+}

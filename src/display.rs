@@ -221,4 +221,115 @@ mod tests {
         assert!(result.width() <= 20, "Width should be <= 20");
         assert!(result.ends_with('…'), "Should end with ellipsis");
     }
+
+    #[test]
+    fn test_format_relative_time_short() {
+        let now: i64 = 1700000000; // Fixed timestamp for testing
+
+        // Just now (< 1 minute)
+        assert_eq!(format_relative_time_impl(now - 30, now, true), "now");
+        assert_eq!(format_relative_time_impl(now - 59, now, true), "now");
+
+        // Minutes
+        assert_eq!(format_relative_time_impl(now - 60, now, true), "1m");
+        assert_eq!(format_relative_time_impl(now - 120, now, true), "2m");
+        assert_eq!(format_relative_time_impl(now - 3599, now, true), "59m");
+
+        // Hours
+        assert_eq!(format_relative_time_impl(now - 3600, now, true), "1h");
+        assert_eq!(format_relative_time_impl(now - 7200, now, true), "2h");
+
+        // Days
+        assert_eq!(format_relative_time_impl(now - 86400, now, true), "1d");
+        assert_eq!(format_relative_time_impl(now - 172800, now, true), "2d");
+
+        // Weeks
+        assert_eq!(format_relative_time_impl(now - 604800, now, true), "1w");
+
+        // Months
+        assert_eq!(format_relative_time_impl(now - 2592000, now, true), "1mo");
+
+        // Years
+        assert_eq!(format_relative_time_impl(now - 31536000, now, true), "1y");
+
+        // Future timestamp
+        assert_eq!(format_relative_time_impl(now + 1000, now, true), "future");
+    }
+
+    #[test]
+    fn test_format_relative_time_long() {
+        let now: i64 = 1700000000;
+
+        assert_eq!(format_relative_time_impl(now - 30, now, false), "just now");
+        assert_eq!(
+            format_relative_time_impl(now - 60, now, false),
+            "1 minute ago"
+        );
+        assert_eq!(
+            format_relative_time_impl(now - 120, now, false),
+            "2 minutes ago"
+        );
+        assert_eq!(
+            format_relative_time_impl(now - 3600, now, false),
+            "1 hour ago"
+        );
+        assert_eq!(
+            format_relative_time_impl(now - 86400, now, false),
+            "1 day ago"
+        );
+        assert_eq!(
+            format_relative_time_impl(now + 1000, now, false),
+            "in the future"
+        );
+    }
+
+    #[test]
+    fn test_find_common_prefix() {
+        // Empty input
+        let empty: Vec<PathBuf> = vec![];
+        assert_eq!(find_common_prefix(&empty), PathBuf::new());
+
+        // Single path
+        let single = vec![PathBuf::from("/home/user/projects")];
+        assert_eq!(
+            find_common_prefix(&single),
+            PathBuf::from("/home/user/projects")
+        );
+
+        // Common prefix exists
+        let paths = vec![
+            PathBuf::from("/home/user/projects/foo"),
+            PathBuf::from("/home/user/projects/bar"),
+            PathBuf::from("/home/user/projects/baz"),
+        ];
+        assert_eq!(
+            find_common_prefix(&paths),
+            PathBuf::from("/home/user/projects")
+        );
+
+        // No common prefix beyond root
+        let paths = vec![
+            PathBuf::from("/home/user/projects"),
+            PathBuf::from("/var/log"),
+        ];
+        assert_eq!(find_common_prefix(&paths), PathBuf::from("/"));
+    }
+
+    #[test]
+    fn test_shorten_path() {
+        let prefix = PathBuf::from("/home/user/projects");
+
+        // Path within prefix
+        let path = PathBuf::from("/home/user/projects/foo/bar");
+        assert_eq!(shorten_path(&path, &prefix), "./foo/bar");
+
+        // Path equals prefix
+        assert_eq!(shorten_path(&prefix, &prefix), ".");
+
+        // Path outside prefix (falls back to full path)
+        let other = PathBuf::from("/var/log/syslog");
+        // The result includes tilde expansion, so just check it doesn't start with "./"
+        let result = shorten_path(&other, &prefix);
+        assert!(!result.starts_with("./"));
+    }
 }

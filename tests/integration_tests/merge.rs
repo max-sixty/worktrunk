@@ -1012,9 +1012,7 @@ fn test_merge_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
 /// Merge output: tests/snapshots/integration__integration_tests__merge__readme_example_simple.snap
 /// Switch output: tests/snapshots/integration__integration_tests__merge__readme_example_simple_switch.snap
 ///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_simple(repo: TestRepo) {
     // Snapshot the switch --create command (runs from bare repo)
     snapshot_switch(

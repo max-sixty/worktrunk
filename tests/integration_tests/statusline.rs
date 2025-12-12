@@ -141,10 +141,7 @@ fn escape_path_for_json(path: &std::path::Path) -> String {
     path.display().to_string().replace('\\', "\\\\")
 }
 
-/// Skipped on Windows: stdin read has 10ms timeout, Windows process spawning is slower
-/// causing timing-sensitive race condition where model name is lost.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_full_context(repo: TestRepo) {
     add_uncommitted_changes(&repo);
 
@@ -182,10 +179,7 @@ fn test_statusline_claude_code_minimal(repo: TestRepo) {
     });
 }
 
-/// Skipped on Windows: stdin read has 10ms timeout, Windows process spawning is slower
-/// causing timing-sensitive race condition where model name is lost.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_statusline_claude_code_with_model(repo: TestRepo) {
     let escaped_path = escape_path_for_json(repo.root_path());
     let json = format!(

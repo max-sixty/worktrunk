@@ -324,6 +324,78 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_is_retriable_error() {
+        // Rate limit errors
+        assert!(is_retriable_error("API rate limit exceeded"));
+        assert!(is_retriable_error("rate limit exceeded for requests"));
+        assert!(is_retriable_error("Error 403: forbidden"));
+        assert!(is_retriable_error("HTTP 429 Too Many Requests"));
+
+        // Network errors
+        assert!(is_retriable_error("connection timed out"));
+        assert!(is_retriable_error("network error"));
+        assert!(is_retriable_error("timeout waiting for response"));
+
+        // Case insensitivity
+        assert!(is_retriable_error("RATE LIMIT"));
+        assert!(is_retriable_error("Connection Reset"));
+
+        // Non-retriable errors
+        assert!(!is_retriable_error("branch not found"));
+        assert!(!is_retriable_error("invalid credentials"));
+        assert!(!is_retriable_error("permission denied"));
+        assert!(!is_retriable_error(""));
+    }
+
+    #[test]
+    fn test_ci_status_color() {
+        use anstyle::AnsiColor;
+
+        assert_eq!(CiStatus::Passed.color(), AnsiColor::Green);
+        assert_eq!(CiStatus::Running.color(), AnsiColor::Blue);
+        assert_eq!(CiStatus::Failed.color(), AnsiColor::Red);
+        assert_eq!(CiStatus::Conflicts.color(), AnsiColor::Yellow);
+        assert_eq!(CiStatus::Error.color(), AnsiColor::Yellow);
+        assert_eq!(CiStatus::NoCI.color(), AnsiColor::BrightBlack);
+    }
+
+    #[test]
+    fn test_pr_status_indicator() {
+        let pr_passed = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+        };
+        assert_eq!(pr_passed.indicator(), "●");
+
+        let branch_running = PrStatus {
+            ci_status: CiStatus::Running,
+            source: CiSource::Branch,
+            is_stale: false,
+            url: None,
+        };
+        assert_eq!(branch_running.indicator(), "●");
+
+        let error_status = PrStatus {
+            ci_status: CiStatus::Error,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+        };
+        assert_eq!(error_status.indicator(), "⚠");
+    }
+
+    #[test]
+    fn test_pr_status_error_constructor() {
+        let error = PrStatus::error();
+        assert_eq!(error.ci_status, CiStatus::Error);
+        assert_eq!(error.source, CiSource::Branch);
+        assert!(!error.is_stale);
+        assert!(error.url.is_none());
+    }
 }
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.

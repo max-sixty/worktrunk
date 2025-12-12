@@ -352,17 +352,20 @@ pub fn handle_switch_output(
             )))?;
         }
         SwitchResult::Existing(path) => {
-            // Check if we can cd or if shell integration is at least configured
-            let is_configured = Shell::is_integration_configured().ok().flatten().is_some();
+            let path_display = format_path_for_display(path);
 
-            if is_directive_mode || has_execute_command || is_configured {
-                // Shell integration active, --execute provided, or configured - show success
+            if is_directive_mode || has_execute_command {
+                // Shell integration active or --execute provided - show success
                 super::print(success_message(format_switch_success_message(
                     branch, path, false, None, None,
                 )))?;
+            } else if Shell::is_integration_configured().ok().flatten().is_some() {
+                // Shell configured but not active (ran binary directly, e.g. `command wt`)
+                super::print(warning_message(cformat!(
+                    "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (binary invoked directly)"
+                )))?;
             } else {
                 // Shell integration not configured - show warning and setup hint
-                let path_display = format_path_for_display(path);
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> at <bold>{path_display}</>; cannot cd (no shell integration)"
                 )))?;

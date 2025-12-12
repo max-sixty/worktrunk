@@ -332,3 +332,82 @@ pub(crate) fn format_bash_with_gutter_at_width(
 pub fn format_bash_with_gutter(content: &str, left_margin: &str) -> String {
     format_with_gutter(content, left_margin, None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wrap_text_at_width_no_wrap_needed() {
+        let result = wrap_text_at_width("short text", 20);
+        assert_eq!(result, vec!["short text"]);
+    }
+
+    #[test]
+    fn test_wrap_text_at_width_basic_wrap() {
+        let result = wrap_text_at_width("hello world foo bar", 10);
+        // Words wrap at boundaries, each line fits within max_width
+        assert_eq!(result, vec!["hello", "world foo", "bar"]);
+    }
+
+    #[test]
+    fn test_wrap_text_at_width_zero_width() {
+        let result = wrap_text_at_width("hello world", 0);
+        assert_eq!(result, vec!["hello world"]);
+    }
+
+    #[test]
+    fn test_wrap_text_at_width_empty_input() {
+        let result = wrap_text_at_width("", 20);
+        assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn test_wrap_text_at_width_single_long_word() {
+        // Single word longer than max_width should still be included
+        let result = wrap_text_at_width("superlongword", 5);
+        assert_eq!(result, vec!["superlongword"]);
+    }
+
+    #[test]
+    fn test_wrap_styled_text_no_wrap_needed() {
+        let result = wrap_styled_text("short text", 20);
+        assert_eq!(result, vec!["short text"]);
+    }
+
+    #[test]
+    fn test_wrap_styled_text_zero_width() {
+        let result = wrap_styled_text("hello world", 0);
+        assert_eq!(result, vec!["hello world"]);
+    }
+
+    #[test]
+    fn test_wrap_styled_text_empty_input() {
+        let result = wrap_styled_text("", 20);
+        assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn test_format_with_gutter_basic() {
+        let result = format_with_gutter("hello", "", Some(80));
+        // Should have gutter formatting
+        assert!(result.contains("hello"));
+        assert!(result.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_format_with_gutter_multiline() {
+        let result = format_with_gutter("line1\nline2", "", Some(80));
+        // Each line should be formatted separately
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+        // Should have 2 newlines (one per line)
+        assert_eq!(result.matches('\n').count(), 2);
+    }
+
+    #[test]
+    fn test_gutter_overhead_constant() {
+        // Verify the overhead matches documented value
+        assert_eq!(GUTTER_OVERHEAD, 3);
+    }
+}

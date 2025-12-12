@@ -103,8 +103,9 @@ fn test_switch_existing_branch(mut repo: TestRepo) {
 /// Test switching to existing worktree when shell integration is configured but not active.
 ///
 /// When shell integration is configured in user's rc files (e.g., .zshrc) but the user
-/// runs `wt switch` directly (not through the shell wrapper), we should show success
-/// with a hint to use `wt switch` for cd, not a warning about missing shell integration.
+/// runs `wt` binary directly (not through the shell wrapper), show a warning that explains
+/// the actual situation: shell IS configured, but cd can't happen because we're not
+/// running through the shell function.
 #[rstest]
 fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
     use std::fs;
@@ -121,8 +122,8 @@ fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
     )
     .unwrap();
 
-    // Switch to existing worktree - should show success + "cd with: wt switch" hint
-    // NOT the warning about "cannot cd (no shell integration)"
+    // Switch to existing worktree - should show warning about binary invoked directly
+    // (different from "no shell integration" warning when shell is not configured at all)
     snapshot_switch(
         "switch_existing_with_shell_configured",
         &repo,
