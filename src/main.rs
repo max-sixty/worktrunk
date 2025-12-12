@@ -929,7 +929,7 @@ fn main() {
                     LogsAction::Get => handle_state_get("logs", false, None),
                     LogsAction::Clear => handle_state_clear("logs", None, false),
                 },
-                StateCommand::Show => handle_state_show(),
+                StateCommand::Show { format } => handle_state_show(format),
             },
         },
         Commands::Step { action } => match action {

@@ -685,8 +685,8 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             });
 
             // Build table
-            let mut table = String::from("| File | Size | Modified |\n");
-            table.push_str("|------|------|----------|\n");
+            let mut table = String::from("| File | Size | Age |\n");
+            table.push_str("|------|------|-----|\n");
 
             for entry in entries {
                 let path = entry.path();
@@ -737,8 +737,18 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
                 None => repo.require_current_branch("set marker for current branch")?,
             };
 
+            // Store as JSON with timestamp
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before Unix epoch")
+                .as_secs();
+            let json = serde_json::json!({
+                "marker": value,
+                "set_at": now
+            });
+
             let config_key = format!("worktrunk.marker.{}", branch_name);
-            repo.run_command(&["config", &config_key, &value])?;
+            repo.run_command(&["config", &config_key, &json.to_string()])?;
 
             crate::output::print(success_message(cformat!(
                 "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
@@ -851,57 +861,305 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
 }
 
 /// Handle the state show command
-pub fn handle_state_show() -> anyhow::Result<()> {
+pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()> {
+    use crate::cli::OutputFormat;
+
     let repo = Repository::current();
 
-    // Show default branch cache
-    crate::output::print(info_message("Default branch:"))?;
-    match repo.default_branch() {
-        Ok(branch) => crate::output::gutter(format_with_gutter(&branch, "", None))?,
-        Err(_) => crate::output::gutter(format_with_gutter("(not cached)", "", None))?,
+    match format {
+        OutputFormat::Json => handle_state_show_json(&repo),
+        OutputFormat::Table => handle_state_show_table(&repo),
     }
-    crate::output::blank()?;
+}
 
-    // Show CI status cache
-    crate::output::print(info_message("CI status cache:"))?;
+/// Output state as JSON
+fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
+    // Get default branch
+    let default_branch = repo.default_branch().ok();
 
-    let entries = CachedCiStatus::list_all(&repo);
-    if entries.is_empty() {
-        crate::output::gutter(format_with_gutter("(empty)", "", None))?;
-        return Ok(());
-    }
+    // Get switch history
+    let switch_previous = repo.get_switch_previous();
 
-    // Respect SOURCE_DATE_EPOCH for reproducible test output
-    let now_secs = std::env::var("SOURCE_DATE_EPOCH")
-        .ok()
-        .and_then(|val| val.parse::<u64>().ok())
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
+    // Get markers
+    let markers: Vec<serde_json::Value> = get_all_markers(repo)
+        .into_iter()
+        .map(|m| {
+            serde_json::json!({
+                "branch": m.branch,
+                "marker": m.marker,
+                "set_at": if m.set_at > 0 { Some(m.set_at) } else { None }
+            })
+        })
+        .collect();
+
+    // Get CI status cache
+    let mut ci_entries = CachedCiStatus::list_all(repo);
+    ci_entries.sort_by(|a, b| {
+        b.1.checked_at
+            .cmp(&a.1.checked_at)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let ci_status: Vec<serde_json::Value> = ci_entries
+        .into_iter()
+        .map(|(branch, cached)| {
+            let status = cached.status.as_ref().map(|s| {
+                serde_json::to_string(&s.ci_status)
+                    .map(|s| s.trim_matches('"').to_string())
+                    .unwrap_or_else(|_| "unknown".to_string())
+            });
+            serde_json::json!({
+                "branch": branch,
+                "status": status,
+                "checked_at": cached.checked_at,
+                "head": cached.head
+            })
+        })
+        .collect();
+
+    // Get log files
+    let git_common_dir = repo.git_common_dir()?;
+    let log_dir = git_common_dir.join("wt-logs");
+    let logs: Vec<serde_json::Value> = if log_dir.exists() {
+        let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
+            .collect();
+
+        entries.sort_by(|a, b| {
+            let a_time = a.metadata().and_then(|m| m.modified()).ok();
+            let b_time = b.metadata().and_then(|m| m.modified()).ok();
+            b_time.cmp(&a_time)
         });
 
-    // Build markdown table
-    let mut table = String::from("| Branch | Status | Age | Head |\n");
-    table.push_str("|--------|--------|-----|------|\n");
-    for (branch, cached) in entries {
-        let status = match &cached.status {
-            Some(pr_status) => serde_json::to_string(&pr_status.ci_status)
-                .map(|s| s.trim_matches('"').to_string())
-                .unwrap_or_else(|_| "unknown".to_string()),
-            None => "none".to_string(),
-        };
-        let age = now_secs.saturating_sub(cached.checked_at);
-        let head: String = cached.head.chars().take(8).collect();
+        entries
+            .into_iter()
+            .map(|entry| {
+                let path = entry.path();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let meta = entry.metadata().ok();
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let modified = meta
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
 
-        table.push_str(&format!("| {branch} | {status} | {age}s | {head} |\n"));
+                serde_json::json!({
+                    "file": name,
+                    "size": size,
+                    "modified_at": modified
+                })
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    let output = serde_json::json!({
+        "default_branch": default_branch,
+        "switch_previous": switch_previous,
+        "markers": markers,
+        "ci_status": ci_status,
+        "logs": logs
+    });
+
+    crate::output::data(serde_json::to_string_pretty(&output)?)?;
+    Ok(())
+}
+
+/// Output state as human-readable table
+fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
+    // Build complete output as a string
+    let mut out = String::new();
+
+    // Show default branch cache
+    writeln!(out, "{}", cformat!("<cyan>DEFAULT BRANCH</>"))?;
+    match repo.default_branch() {
+        Ok(branch) => write!(out, "{}", format_with_gutter(&branch, "", None))?,
+        Err(_) => write!(out, "{}", format_with_gutter("(not cached)", "", None))?,
+    }
+    writeln!(out)?;
+
+    // Show switch history (for `wt switch -`)
+    writeln!(out, "{}", cformat!("<cyan>SWITCH HISTORY</>"))?;
+    match repo.get_switch_previous() {
+        Some(prev) => write!(out, "{}", format_with_gutter(&prev, "", None))?,
+        None => write!(out, "{}", format_with_gutter("(none)", "", None))?,
+    }
+    writeln!(out)?;
+
+    // Show branch markers
+    writeln!(out, "{}", cformat!("<cyan>BRANCH MARKERS</>"))?;
+    let markers = get_all_markers(repo);
+    if markers.is_empty() {
+        write!(out, "{}", format_with_gutter("(none)", "", None))?;
+    } else {
+        let mut table = String::from("| Branch | Marker | Age |\n");
+        table.push_str("|--------|--------|-----|\n");
+        for entry in markers {
+            let age = if entry.set_at == 0 {
+                "?".to_string() // Legacy marker without timestamp
+            } else {
+                format_relative_time_short(entry.set_at as i64)
+            };
+            table.push_str(&format!(
+                "| {} | {} | {} |\n",
+                entry.branch, entry.marker, age
+            ));
+        }
+        let rendered = crate::md_help::render_markdown_table(&table);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show CI status cache
+    writeln!(out, "{}", cformat!("<cyan>CI STATUS CACHE</>"))?;
+    let mut entries = CachedCiStatus::list_all(repo);
+    // Sort by age (most recent first), then by branch name for ties
+    entries.sort_by(|a, b| {
+        b.1.checked_at
+            .cmp(&a.1.checked_at)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    if entries.is_empty() {
+        write!(out, "{}", format_with_gutter("(none)", "", None))?;
+    } else {
+        // Build markdown table
+        let mut table = String::from("| Branch | Status | Age | Head |\n");
+        table.push_str("|--------|--------|-----|------|\n");
+        for (branch, cached) in entries {
+            let status = match &cached.status {
+                Some(pr_status) => serde_json::to_string(&pr_status.ci_status)
+                    .map(|s| s.trim_matches('"').to_string())
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                None => "none".to_string(),
+            };
+            let age = format_relative_time_short(cached.checked_at as i64);
+            let head: String = cached.head.chars().take(8).collect();
+
+            table.push_str(&format!("| {branch} | {status} | {age} | {head} |\n"));
+        }
+
+        let rendered = crate::md_help::render_markdown_table(&table);
+        writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show log files
+    let git_common_dir = repo.git_common_dir()?;
+    let log_dir = git_common_dir.join("wt-logs");
+    writeln!(out, "{}", cformat!("<cyan>LOG FILES</>  @ .git/wt-logs"))?;
+
+    if !log_dir.exists() {
+        write!(out, "{}", format_with_gutter("(none)", "", None))?;
+    } else {
+        let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
+            .collect();
+
+        if entries.is_empty() {
+            write!(out, "{}", format_with_gutter("(none)", "", None))?;
+        } else {
+            // Sort by modification time (newest first)
+            entries.sort_by(|a, b| {
+                let a_time = a.metadata().and_then(|m| m.modified()).ok();
+                let b_time = b.metadata().and_then(|m| m.modified()).ok();
+                b_time.cmp(&a_time)
+            });
+
+            // Build table
+            let mut table = String::from("| File | Size | Age |\n");
+            table.push_str("|------|------|-----|\n");
+
+            for entry in entries {
+                let path = entry.path();
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let meta = entry.metadata().ok();
+
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let size_str = if size < 1024 {
+                    format!("{size}B")
+                } else {
+                    format!("{}K", size / 1024)
+                };
+
+                let age = meta
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| format_relative_time_short(d.as_secs() as i64))
+                    .unwrap_or_else(|| "?".to_string());
+
+                table.push_str(&format!("| {name} | {size_str} | {age} |\n"));
+            }
+
+            let rendered = crate::md_help::render_markdown_table(&table);
+            write!(out, "{}", rendered.trim_end())?;
+        }
     }
 
-    let rendered = crate::md_help::render_markdown_table(&table);
-    crate::output::table(rendered.trim_end())?;
+    // Display through pager (fall back to stderr if pager unavailable)
+    if let Err(e) = show_help_in_pager(&out) {
+        log::debug!("Pager invocation failed: {}", e);
+        // Fall back to direct output via eprintln (matches help behavior)
+        worktrunk::styling::eprintln!("{}", out);
+    }
 
     Ok(())
+}
+
+/// Marker entry with branch, text, and timestamp
+struct MarkerEntry {
+    branch: String,
+    marker: String,
+    set_at: u64,
+}
+
+/// Get all branch markers from git config with timestamps
+fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
+    let output = repo
+        .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+        .unwrap_or_default();
+
+    let mut markers = Vec::new();
+    for line in output.lines() {
+        // Format: "worktrunk.marker.branch_name json_or_plain_value"
+        if let Some((key, value)) = line.split_once(' ')
+            && let Some(branch) = key.strip_prefix("worktrunk.marker.")
+        {
+            // Try to parse as JSON, fall back to legacy plain-text
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
+                // Skip if "marker" field is missing (corrupted data)
+                let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
+                markers.push(MarkerEntry {
+                    branch: branch.to_string(),
+                    marker: marker.to_string(),
+                    set_at,
+                });
+            } else {
+                // Legacy plain-text marker (no timestamp)
+                markers.push(MarkerEntry {
+                    branch: branch.to_string(),
+                    marker: value.to_string(),
+                    set_at: 0, // Unknown age
+                });
+            }
+        }
+    }
+
+    // Sort by age (most recent first), then by branch name for ties
+    markers.sort_by(|a, b| {
+        b.set_at
+            .cmp(&a.set_at)
+            .then_with(|| a.branch.cmp(&b.branch))
+    });
+    markers
 }
 
 #[cfg(test)]

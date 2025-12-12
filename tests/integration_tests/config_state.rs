@@ -21,6 +21,14 @@ fn wt_state_show_cmd(repo: &TestRepo) -> Command {
     cmd
 }
 
+fn wt_state_show_json_cmd(repo: &TestRepo) -> Command {
+    let mut cmd = wt_command();
+    repo.clean_cli_env(&mut cmd);
+    cmd.args(["config", "state", "show", "--format=json"]);
+    cmd.current_dir(repo.root_path());
+    cmd
+}
+
 // ============================================================================
 // default-branch
 // ============================================================================
@@ -219,11 +227,8 @@ fn test_state_set_marker_branch_default(repo: TestRepo) {
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet marker for [1mmain[22m to [1m🚧[22m[39m");
 
-    // Verify it was set
-    let output = repo
-        .git_command(&["config", "--get", "worktrunk.marker.main"])
-        .output()
-        .unwrap();
+    // Verify it was set (use wt command to parse JSON storage)
+    let output = wt_state_cmd(&repo, "marker", "get", &[]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "🚧");
 }
 
@@ -237,9 +242,8 @@ fn test_state_set_marker_branch_specific(repo: TestRepo) {
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet marker for [1mfeature[22m to [1m🔧[22m[39m");
 
-    // Verify it was set
-    let output = repo
-        .git_command(&["config", "--get", "worktrunk.marker.feature"])
+    // Verify it was set (use wt command to parse JSON storage)
+    let output = wt_state_cmd(&repo, "marker", "get", &["--branch", "feature"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "🔧");
@@ -380,11 +384,20 @@ fn test_state_show_empty(repo: TestRepo) {
     let output = wt_state_show_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
-    ⚪ Default branch:
+    [36mDEFAULT BRANCH[39m
     [107m [0m  main
 
-    ⚪ CI status cache:
-    [107m [0m  (empty)
+    [36mSWITCH HISTORY[39m
+    [107m [0m  (none)
+
+    [36mBRANCH MARKERS[39m
+    [107m [0m  (none)
+
+    [36mCI STATUS CACHE[39m
+    [107m [0m  (none)
+
+    [36mLOG FILES[39m  @ .git/wt-logs
+    [107m [0m  (none)
     ");
 }
 
@@ -418,4 +431,113 @@ fn test_state_show_with_ci_entries(repo: TestRepo) {
     let output = wt_state_show_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+}
+
+#[rstest]
+fn test_state_show_comprehensive(repo: TestRepo) {
+    // Set up switch history
+    repo.git_command(&["config", "worktrunk.history", "feature"])
+        .status()
+        .unwrap();
+
+    // Set up branch markers (JSON format with timestamps for deterministic age)
+    repo.git_command(&[
+        "config",
+        "worktrunk.marker.feature",
+        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+    ])
+    .status()
+    .unwrap();
+    repo.git_command(&[
+        "config",
+        "worktrunk.marker.bugfix",
+        &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    // Set up CI cache
+    repo.git_command(&[
+        "config",
+        "worktrunk.ci.feature",
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    // Create log files
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
+    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+
+    let output = wt_state_show_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+}
+
+#[rstest]
+fn test_state_show_json_empty(repo: TestRepo) {
+    let output = wt_state_show_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    // JSON output goes to stdout
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+    assert_eq!(json["default_branch"], "main");
+    assert_eq!(json["switch_previous"], serde_json::Value::Null);
+    assert_eq!(json["markers"], serde_json::json!([]));
+    assert_eq!(json["ci_status"], serde_json::json!([]));
+    assert_eq!(json["logs"], serde_json::json!([]));
+}
+
+#[rstest]
+fn test_state_show_json_comprehensive(repo: TestRepo) {
+    // Set up switch history
+    repo.git_command(&["config", "worktrunk.history", "feature"])
+        .status()
+        .unwrap();
+
+    // Set up branch markers (JSON format with timestamps)
+    repo.git_command(&[
+        "config",
+        "worktrunk.marker.feature",
+        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    // Set up CI cache
+    repo.git_command(&[
+        "config",
+        "worktrunk.ci.feature",
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    let output = wt_state_show_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    // JSON output goes to stdout
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+    assert_eq!(json["default_branch"], "main");
+    assert_eq!(json["switch_previous"], "feature");
+
+    // Check markers
+    let markers = json["markers"].as_array().unwrap();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0]["branch"], "feature");
+    assert_eq!(markers[0]["marker"], "🚧 WIP");
+    assert_eq!(markers[0]["set_at"], TEST_EPOCH);
+
+    // Check CI status
+    let ci_status = json["ci_status"].as_array().unwrap();
+    assert_eq!(ci_status.len(), 1);
+    assert_eq!(ci_status[0]["branch"], "feature");
+    assert_eq!(ci_status[0]["status"], "passed");
+    assert_eq!(ci_status[0]["checked_at"], TEST_EPOCH);
+    assert_eq!(ci_status[0]["head"], "abc12345def67890");
 }

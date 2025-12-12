@@ -1,0 +1,26 @@
+---
+source: tests/integration_tests/config_state.rs
+expression: "String::from_utf8_lossy(&output.stderr)"
+---
+[36mDEFAULT BRANCH[39m
+[107m [0m  main
+
+[36mSWITCH HISTORY[39m
+[107m [0m  feature
+
+[36mBRANCH MARKERS[39m
+Branch   Marker        Age
+───────  ────────────  ───
+bugfix   🐛 debugging  now
+feature  🚧 WIP        now
+
+[36mCI STATUS CACHE[39m
+Branch   Status  Age  Head    
+───────  ──────  ───  ────────
+feature  passed  now  abc12345
+
+[36mLOG FILES[39m  @ .git/wt-logs
+File                        Size  Age   
+──────────────────────────  ────  ──────
+bugfix-remove.log           13B   future
+feature-post-start-npm.log  10B   future
