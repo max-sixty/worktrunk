@@ -42,7 +42,7 @@ use cli::{
 };
 use worktrunk::HookType;
 
-/// Get the binary name from argv[0], falling back to "wt".
+/// Get the binary name from `argv[0]`, falling back to "wt".
 ///
 /// Used as the default for `--cmd` in shell integration commands.
 /// When invoked as `git-wt`, returns "git-wt"; when invoked as `wt`, returns "wt".
