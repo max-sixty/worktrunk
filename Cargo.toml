@@ -49,7 +49,7 @@ path = "src/main.rs"
 # Install with: cargo install worktrunk --features git-wt
 [[bin]]
 name = "git-wt"
-path = "src/main.rs"
+path = "src/git_wt.rs"
 required-features = ["git-wt"]
 
 
