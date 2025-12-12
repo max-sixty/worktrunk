@@ -571,7 +571,7 @@ Global Options:
 
 ## wt config state
 
-State is stored in git config, separate from configuration files.
+State is stored in `.git/` (config entries and log files), separate from configuration files.
 Use `wt config show` to view file-based configuration.
 
 ### Keys
@@ -586,7 +586,7 @@ Use `wt config show` to view file-based configuration.
 
 Get the default branch:
 ```bash
-wt config state default-branch get
+wt config state default-branch
 ```
 
 Set the default branch manually:
@@ -619,16 +619,16 @@ wt config state clear
 ### Command reference
 
 ```
-wt config state - Get, set, or clear stored state (git config)
+wt config state - Get, set, or clear stored state
 
 Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  default-branch   Manage default branch setting
-  previous-branch  Manage previous branch (for wt switch -)
-  ci-status        Manage CI status cache
-  marker           Manage branch markers
-  logs             Manage background operation logs
+  default-branch   Default branch setting
+  previous-branch  Previous branch (for wt switch -)
+  ci-status        CI status cache
+  marker           Branch markers
+  logs             Background operation logs
   get              Get all stored state
   clear            Clear all stored state
 
@@ -660,7 +660,7 @@ Commands:
   shell   Shell integration setup
   create  Create configuration file
   show    Show configuration files & locations
-  state   Get, set, or clear stored state (git config)
+  state   Get, set, or clear stored state
 
 Options:
   -h, --help

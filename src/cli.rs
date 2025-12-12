@@ -388,9 +388,9 @@ commit messages."#
         full: bool,
     },
 
-    /// Get, set, or clear stored state (git config)
+    /// Get, set, or clear stored state
     #[command(
-        after_long_help = r#"State is stored in git config, separate from configuration files.
+        after_long_help = r#"State is stored in `.git/` (config entries and log files), separate from configuration files.
 Use `wt config show` to view file-based configuration.
 
 ## Keys
@@ -405,7 +405,7 @@ Use `wt config show` to view file-based configuration.
 
 Get the default branch:
 ```console
-wt config state default-branch get
+wt config state default-branch
 ```
 
 Set the default branch manually:
@@ -441,37 +441,46 @@ wt config state clear
 
 #[derive(Subcommand)]
 pub enum StateCommand {
-    /// Manage default branch setting
-    #[command(name = "default-branch")]
+    /// Default branch setting
+    #[command(
+        name = "default-branch",
+        after_long_help = "Without a subcommand, runs `get`. For `--refresh`, use `get --refresh`."
+    )]
     DefaultBranch {
         #[command(subcommand)]
-        action: DefaultBranchAction,
+        action: Option<DefaultBranchAction>,
     },
 
-    /// Manage previous branch (for `wt switch -`)
+    /// Previous branch (for `wt switch -`)
     #[command(name = "previous-branch")]
     PreviousBranch {
         #[command(subcommand)]
-        action: PreviousBranchAction,
+        action: Option<PreviousBranchAction>,
     },
 
-    /// Manage CI status cache
-    #[command(name = "ci-status")]
+    /// CI status cache
+    #[command(
+        name = "ci-status",
+        after_long_help = "Without a subcommand, runs `get` for the current branch. For `--branch` or `--refresh`, use `get --branch=NAME`."
+    )]
     CiStatus {
         #[command(subcommand)]
-        action: CiStatusAction,
+        action: Option<CiStatusAction>,
     },
 
-    /// Manage branch markers
+    /// Branch markers
+    #[command(
+        after_long_help = "Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."
+    )]
     Marker {
         #[command(subcommand)]
-        action: MarkerAction,
+        action: Option<MarkerAction>,
     },
 
-    /// Manage background operation logs
+    /// Background operation logs
     Logs {
         #[command(subcommand)]
-        action: LogsAction,
+        action: Option<LogsAction>,
     },
 
     /// Get all stored state
@@ -511,7 +520,7 @@ pub enum DefaultBranchAction {
 
 Get the default branch:
 ```console
-wt config state default-branch get
+wt config state default-branch
 ```
 
 Force refresh from remote:
@@ -548,7 +557,7 @@ pub enum PreviousBranchAction {
 
 Get the previous branch (used by `wt switch -`):
 ```console
-wt config state previous-branch get
+wt config state previous-branch
 ```"#)]
     Get,
 
@@ -579,7 +588,7 @@ pub enum CiStatusAction {
 
 Get CI status for current branch:
 ```console
-wt config state ci-status get
+wt config state ci-status
 ```
 
 Force refresh from GitHub/GitLab:
@@ -637,7 +646,7 @@ pub enum MarkerAction {
 
 Get marker for current branch:
 ```console
-wt config state marker get
+wt config state marker
 ```
 
 Get marker for a specific branch:
@@ -709,7 +718,7 @@ pub enum LogsAction {
 
 List log files:
 ```console
-wt config state logs get
+wt config state logs
 ```"#
     )]
     Get,

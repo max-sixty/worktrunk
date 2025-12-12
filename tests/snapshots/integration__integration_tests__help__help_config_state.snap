@@ -18,16 +18,16 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state - Get, set, or clear stored state (git config)
+wt config state - Get, set, or clear stored state
 
 Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36mdefault-branch[0m   Manage default branch setting
-  [1m[36mprevious-branch[0m  Manage previous branch (for [1mwt switch -[0m)
-  [1m[36mci-status[0m        Manage CI status cache
-  [1m[36mmarker[0m           Manage branch markers
-  [1m[36mlogs[0m             Manage background operation logs
+  [1m[36mdefault-branch[0m   Default branch setting
+  [1m[36mprevious-branch[0m  Previous branch (for [1mwt switch -[0m)
+  [1m[36mci-status[0m        CI status cache
+  [1m[36mmarker[0m           Branch markers
+  [1m[36mlogs[0m             Background operation logs
   [1m[36mget[0m              Get all stored state
   [1m[36mclear[0m            Clear all stored state
 
@@ -45,7 +45,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-State is stored in git config, separate from configuration files.
+State is stored in [2m.git/[0m (config entries and log files), separate from configuration files.
 Use [2mwt config show[0m to view file-based configuration.
 
 [32mKeys
@@ -59,7 +59,7 @@ Use [2mwt config show[0m to view file-based configuration.
 [32mExamples
 
 Get the default branch:
-  [2mwt config state default-branch get
+  [2mwt config state default-branch
 
 Set the default branch manually:
   [2mwt config state default-branch set main

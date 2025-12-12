@@ -19,9 +19,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state previous-branch - Manage previous branch (for [1mwt switch -[0m)
+wt config state previous-branch - Previous branch (for [1mwt switch -[0m)
 
-Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
   [1m[36mget[0m    Get the previous branch

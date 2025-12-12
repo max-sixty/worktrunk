@@ -19,18 +19,26 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state ci-status - Manage CI status cache
+wt config state ci-status - CI status cache
 
-Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
   [1m[36mget[0m    Get CI status for a branch
   [1m[36mclear[0m  Clear CI status cache
 
 [1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help[0m  Print help
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
 
 [1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>[0m            Working directory for this command
-      [1m[36m--config[0m[36m [0m[36m<path>[0m  User config file path
-  [1m[36m-v[0m, [1m[36m--verbose[0m        Show commands and debug info
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose
+          Show commands and debug info
+
+Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m or [2m--refresh[0m, use [2mget --branch=NAME[0m.

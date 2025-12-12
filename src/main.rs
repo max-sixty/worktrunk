@@ -901,43 +901,50 @@ fn main() {
             ConfigCommand::Show { full } => handle_config_show(full),
             ConfigCommand::State { action } => match action {
                 StateCommand::DefaultBranch { action } => match action {
-                    DefaultBranchAction::Get { refresh } => {
+                    Some(DefaultBranchAction::Get { refresh }) => {
                         handle_state_get("default-branch", refresh, None)
                     }
-                    DefaultBranchAction::Set { branch } => {
+                    None => handle_state_get("default-branch", false, None),
+                    Some(DefaultBranchAction::Set { branch }) => {
                         handle_state_set("default-branch", branch, None)
                     }
-                    DefaultBranchAction::Clear => handle_state_clear("default-branch", None, false),
+                    Some(DefaultBranchAction::Clear) => {
+                        handle_state_clear("default-branch", None, false)
+                    }
                 },
                 StateCommand::PreviousBranch { action } => match action {
-                    PreviousBranchAction::Get => handle_state_get("previous-branch", false, None),
-                    PreviousBranchAction::Set { branch } => {
+                    Some(PreviousBranchAction::Get) | None => {
+                        handle_state_get("previous-branch", false, None)
+                    }
+                    Some(PreviousBranchAction::Set { branch }) => {
                         handle_state_set("previous-branch", branch, None)
                     }
-                    PreviousBranchAction::Clear => {
+                    Some(PreviousBranchAction::Clear) => {
                         handle_state_clear("previous-branch", None, false)
                     }
                 },
                 StateCommand::CiStatus { action } => match action {
-                    CiStatusAction::Get { refresh, branch } => {
+                    Some(CiStatusAction::Get { refresh, branch }) => {
                         handle_state_get("ci-status", refresh, branch)
                     }
-                    CiStatusAction::Clear { branch, all } => {
+                    None => handle_state_get("ci-status", false, None),
+                    Some(CiStatusAction::Clear { branch, all }) => {
                         handle_state_clear("ci-status", branch, all)
                     }
                 },
                 StateCommand::Marker { action } => match action {
-                    MarkerAction::Get { branch } => handle_state_get("marker", false, branch),
-                    MarkerAction::Set { value, branch } => {
+                    Some(MarkerAction::Get { branch }) => handle_state_get("marker", false, branch),
+                    None => handle_state_get("marker", false, None),
+                    Some(MarkerAction::Set { value, branch }) => {
                         handle_state_set("marker", value, branch)
                     }
-                    MarkerAction::Clear { branch, all } => {
+                    Some(MarkerAction::Clear { branch, all }) => {
                         handle_state_clear("marker", branch, all)
                     }
                 },
                 StateCommand::Logs { action } => match action {
-                    LogsAction::Get => handle_state_get("logs", false, None),
-                    LogsAction::Clear => handle_state_clear("logs", None, false),
+                    Some(LogsAction::Get) | None => handle_state_get("logs", false, None),
+                    Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
                 },
                 StateCommand::Get { format } => handle_state_show(format),
                 StateCommand::Clear => handle_state_clear_all(),

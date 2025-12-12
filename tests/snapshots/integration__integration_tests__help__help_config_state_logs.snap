@@ -19,9 +19,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state logs - Manage background operation logs
+wt config state logs - Background operation logs
 
-Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m<COMMAND>
+Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
   [1m[36mget[0m    List background operation log files
