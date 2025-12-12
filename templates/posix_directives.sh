@@ -2,7 +2,7 @@
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 wt_exec() {
     local script exit_code=0
-    script="$(command "${WORKTRUNK_BIN:-{{ cmd_prefix }}}" "$@")" || exit_code=$?
+    script="$(command "${WORKTRUNK_BIN:-{{ cmd }}}" "$@")" || exit_code=$?
 
     if [[ -n "$script" ]]; then
         eval "$script"

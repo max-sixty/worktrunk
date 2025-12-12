@@ -6,16 +6,16 @@
 # For full hook compatibility on Windows, install Git for Windows and use bash integration.
 
 # Only initialize if wt is available
-if (Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) {
+if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
 
     # wt wrapper function - captures stdout and executes as PowerShell
-    function {{ cmd_prefix }} {
+    function {{ cmd }} {
         param(
             [Parameter(ValueFromRemainingArguments = $true)]
             [string[]]$Arguments
         )
 
-        $wtBin = (Get-Command {{ cmd_prefix }} -CommandType Application).Source
+        $wtBin = (Get-Command {{ cmd }} -CommandType Application).Source
 
         # Run wt with --internal=powershell
         # stdout is captured for Invoke-Expression (contains Set-Location directives)
@@ -42,7 +42,7 @@ if (Get-Command {{ cmd_prefix }} -ErrorAction SilentlyContinue) {
     # This registers Register-ArgumentCompleter with proper handling
     $env:COMPLETE = "powershell"
     try {
-        & (Get-Command {{ cmd_prefix }} -CommandType Application) | Out-String | Invoke-Expression
+        & (Get-Command {{ cmd }} -CommandType Application) | Out-String | Invoke-Expression
     }
     finally {
         Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue

@@ -1522,6 +1522,22 @@ exit /b 1
     }
 }
 
+/// Add standard env var redactions to insta settings
+///
+/// These redact volatile metadata captured by insta-cmd in the `info` block.
+/// Called by all snapshot settings helpers for consistency.
+pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
+    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    settings.add_redaction(".env.HOME", "[TEST_HOME]");
+    // Windows: the `home` crate uses USERPROFILE for home_dir()
+    settings.add_redaction(".env.USERPROFILE", "[TEST_HOME]");
+    settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
+    // Windows: etcetera uses APPDATA for config_dir()
+    settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
+    settings.add_redaction(".env.PATH", "[PATH]");
+}
+
 /// Create configured insta Settings for snapshot tests
 ///
 /// This extracts the common settings configuration while allowing the
@@ -1627,16 +1643,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     //   Windows: HOME: C:\Users\...\Temp\.tmpXXX (after backslash normalization)
     settings.add_filter(r"HOME: .*/\.tmp[^/\s]+", "HOME: [TEST_HOME]");
 
-    // Redact volatile metadata captured by insta-cmd (applies to the `info` block)
-    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
-    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
-    settings.add_redaction(".env.HOME", "[TEST_HOME]");
-    // Windows: the `home` crate uses USERPROFILE for home_dir()
-    settings.add_redaction(".env.USERPROFILE", "[TEST_HOME]");
-    settings.add_redaction(".env.XDG_CONFIG_HOME", "[TEST_CONFIG_HOME]");
-    // Windows: etcetera uses APPDATA for config_dir()
-    settings.add_redaction(".env.APPDATA", "[TEST_CONFIG_HOME]");
-    settings.add_redaction(".env.PATH", "[PATH]");
+    add_standard_env_redactions(&mut settings);
 
     // Normalize timestamps in log filenames (format: YYYYMMDD-HHMMSS)
     // Match: post-start-NAME-SHA-HHMMSS.log
@@ -1712,6 +1719,9 @@ pub fn setup_home_snapshot_settings(temp_home: &TempDir) -> insta::Settings {
     settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
+
+    add_standard_env_redactions(&mut settings);
+
     settings
 }
 
@@ -1729,9 +1739,7 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
     // Normalize Windows executable extension in help output
     settings.add_filter(r"wt\.exe", "wt");
 
-    // Redact volatile metadata captured by insta-cmd
-    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
-    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    add_standard_env_redactions(&mut settings);
 
     settings
 }

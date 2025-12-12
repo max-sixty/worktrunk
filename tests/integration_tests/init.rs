@@ -5,7 +5,7 @@
 //! are not the primary shell integration path on Windows (PowerShell is).
 #![cfg(not(windows))]
 
-use crate::common::{TestRepo, repo, wt_command};
+use crate::common::{TestRepo, add_standard_env_redactions, repo, wt_command};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -17,9 +17,7 @@ fn snapshot_init(test_name: &str, repo: &TestRepo, shell: &str, extra_args: &[&s
     // backslash normalization filter that would corrupt the output
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    // Redact volatile env vars in metadata
-    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
-    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    add_standard_env_redactions(&mut settings);
 
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -50,8 +48,7 @@ fn test_init_invalid_shell(repo: TestRepo) {
     // Same custom settings as snapshot_init
     let mut settings = Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
-    settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
-    settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    add_standard_env_redactions(&mut settings);
 
     settings.bind(|| {
         let mut cmd = wt_command();

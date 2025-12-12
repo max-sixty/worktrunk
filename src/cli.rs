@@ -186,6 +186,14 @@ Use `wt config shell install` to add to the shell config automatically."#)]
         /// Shell to generate code for
         #[arg(value_enum)]
         shell: Shell,
+
+        /// Command name for shell integration (defaults to binary name)
+        ///
+        /// Use this to create shell integration for an alternate command name.
+        /// For example, `--cmd=git-wt` creates a `git-wt` shell function
+        /// instead of `wt`, useful on Windows where `wt` conflicts with Windows Terminal.
+        #[arg(long)]
+        cmd: Option<String>,
     },
 
     /// Write shell integration to config files
@@ -211,6 +219,14 @@ Use --force to skip confirmation."#)]
         /// Skip confirmation prompt
         #[arg(short, long)]
         force: bool,
+
+        /// Command name for shell integration (defaults to binary name)
+        ///
+        /// Use this to create shell integration for an alternate command name.
+        /// For example, `--cmd=git-wt` creates a `git-wt` shell function
+        /// instead of `wt`, useful on Windows where `wt` conflicts with Windows Terminal.
+        #[arg(long)]
+        cmd: Option<String>,
     },
 
     /// Remove shell integration from config files

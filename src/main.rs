@@ -42,6 +42,22 @@ use cli::{
 };
 use worktrunk::HookType;
 
+/// Get the binary name from argv[0], falling back to "wt".
+///
+/// Used as the default for `--cmd` in shell integration commands.
+/// When invoked as `git-wt`, returns "git-wt"; when invoked as `wt`, returns "wt".
+fn binary_name() -> String {
+    std::env::args()
+        .next()
+        .and_then(|arg0| {
+            std::path::Path::new(&arg0)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "wt".to_string())
+}
+
 /// Custom help handling for pager support and markdown rendering.
 ///
 /// We intercept help requests to provide:
@@ -598,13 +614,15 @@ fn main() {
         Commands::Config { action } => match action {
             ConfigCommand::Shell { action } => {
                 match action {
-                    ConfigShellCommand::Init { shell } => {
+                    ConfigShellCommand::Init { shell, cmd } => {
                         // Generate shell code to stdout
-                        handle_init(shell).map_err(|e| anyhow::anyhow!("{}", e))
+                        let cmd = cmd.unwrap_or_else(binary_name);
+                        handle_init(shell, cmd).map_err(|e| anyhow::anyhow!("{}", e))
                     }
-                    ConfigShellCommand::Install { shell, force } => {
+                    ConfigShellCommand::Install { shell, force, cmd } => {
                         // Auto-write to shell config files and completions
-                        handle_configure_shell(shell, force)
+                        let cmd = cmd.unwrap_or_else(binary_name);
+                        handle_configure_shell(shell, force, cmd)
                         .map_err(|e| anyhow::anyhow!("{}", e))
                         .and_then(|scan_result| {
 

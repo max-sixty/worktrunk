@@ -1,7 +1,8 @@
 //! Integration tests for `wt hook show` command
 
 use crate::common::{
-    TestRepo, repo, set_temp_home_env, setup_snapshot_settings_with_home, temp_home, wt_command,
+    TestRepo, repo, set_temp_home_env, setup_home_snapshot_settings,
+    setup_snapshot_settings_with_home, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -170,8 +171,8 @@ lint = "pre-commit run"
     )
     .unwrap();
 
-    let mut settings = insta::Settings::clone_current();
-    // Replace temp home path with ~ for stable snapshots
+    let mut settings = setup_home_snapshot_settings(&temp_home);
+    // Replace temp home path with ~ for stable snapshots (override the [TEMP_HOME] filter)
     settings.add_filter(&regex::escape(&temp_home.path().to_string_lossy()), "~");
     settings.bind(|| {
         let mut cmd = wt_command();

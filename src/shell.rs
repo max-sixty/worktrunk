@@ -63,6 +63,11 @@ impl Shell {
     ///
     /// Returns paths in order of preference. The first existing file should be used.
     pub fn config_paths(&self) -> Result<Vec<PathBuf>, std::io::Error> {
+        self.config_paths_with_prefix("wt")
+    }
+
+    /// Returns config paths with custom prefix (affects fish conf.d filename)
+    pub fn config_paths_with_prefix(&self, cmd: &str) -> Result<Vec<PathBuf>, std::io::Error> {
         let home = home_dir_required()?;
 
         Ok(match self {
@@ -78,11 +83,12 @@ impl Shell {
             }
             Self::Fish => {
                 // For fish, we write to conf.d/ which is auto-sourced
+                // Filename includes prefix to avoid conflicts (e.g., wt.fish, git-wt.fish)
                 vec![
                     home.join(".config")
                         .join("fish")
                         .join("conf.d")
-                        .join("wt.fish"),
+                        .join(format!("{}.fish", cmd)),
                 ]
             }
             Self::PowerShell => powershell_profile_paths(&home),
@@ -96,6 +102,11 @@ impl Shell {
     /// (installed by `wt config shell install`) that uses $WORKTRUNK_BIN to bypass
     /// the shell function wrapper.
     pub fn completion_path(&self) -> Result<PathBuf, std::io::Error> {
+        self.completion_path_with_prefix("wt")
+    }
+
+    /// Returns completion path with custom prefix (affects fish completion filename)
+    pub fn completion_path_with_prefix(&self, cmd: &str) -> Result<PathBuf, std::io::Error> {
         let home = home_dir_required()?;
 
         // Use etcetera for XDG-compliant paths when available
@@ -111,22 +122,25 @@ impl Shell {
                 data_home
                     .join("bash-completion")
                     .join("completions")
-                    .join("wt")
+                    .join(cmd)
             }
-            Self::Zsh => home.join(".zfunc").join("_wt"),
+            Self::Zsh => home.join(".zfunc").join(format!("_{}", cmd)),
             Self::Fish => {
                 // XDG_CONFIG_HOME defaults to ~/.config
                 let config_home = strategy
                     .as_ref()
                     .map(|s| s.config_dir())
                     .unwrap_or_else(|| home.join(".config"));
-                config_home.join("fish").join("completions").join("wt.fish")
+                config_home
+                    .join("fish")
+                    .join("completions")
+                    .join(format!("{}.fish", cmd))
             }
             Self::PowerShell => {
                 // PowerShell doesn't use a separate completion file - completions are
                 // registered inline in the profile using Register-ArgumentCompleter
                 // Return a dummy path that won't be used
-                home.join(".wt-powershell-completions")
+                home.join(format!(".{}-powershell-completions", cmd))
             }
         })
     }
@@ -135,22 +149,35 @@ impl Shell {
     ///
     /// All shells use a conditional wrapper to avoid errors when the command doesn't exist.
     pub fn config_line(&self) -> String {
+        self.config_line_with_prefix("wt")
+    }
+
+    /// Returns the line to add to the config file for shell integration with custom prefix
+    pub fn config_line_with_prefix(&self, cmd: &str) -> String {
+        // For non-default prefixes, include --cmd in the init command
+        let prefix_arg = if cmd == "wt" {
+            String::new()
+        } else {
+            format!(" --cmd={}", cmd)
+        };
+
         match self {
             Self::Bash | Self::Zsh => {
                 format!(
-                    "if command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init {})\"; fi",
+                    "if command -v {cmd} >/dev/null 2>&1; then eval \"$(command {cmd} config shell init {}{prefix_arg})\"; fi",
                     self
                 )
             }
             Self::Fish => {
                 format!(
-                    "if type -q wt; command wt config shell init {} | source; end",
+                    "if type -q {cmd}; command {cmd} config shell init {}{prefix_arg} | source; end",
                     self
                 )
             }
             Self::PowerShell => {
-                // PowerShell: Check if wt is available, then invoke and execute the output
-                "if (Get-Command wt -ErrorAction SilentlyContinue) { Invoke-Expression (& wt config shell init powershell) }".to_string()
+                format!(
+                    "if (Get-Command {cmd} -ErrorAction SilentlyContinue) {{ Invoke-Expression (& {cmd} config shell init powershell{prefix_arg}) }}",
+                )
             }
         }
     }
@@ -161,7 +188,7 @@ impl Shell {
     /// This helps detect the "configured but not restarted shell" state.
     ///
     /// This function is prefix-agnostic - it detects integration patterns regardless
-    /// of what cmd_prefix was used during configuration (wt, worktree, etc).
+    /// of what cmd was used during configuration (wt, worktree, etc).
     pub fn is_integration_configured() -> Result<Option<PathBuf>, std::io::Error> {
         use std::fs;
         use std::io::{BufRead, BufReader};
@@ -252,44 +279,54 @@ impl Shell {
     pub fn integration_summary(&self) -> String {
         self.config_line()
     }
+
+    /// Returns a summary with custom prefix for display in confirmation
+    pub fn integration_summary_with_prefix(&self, cmd: &str) -> String {
+        self.config_line_with_prefix(cmd)
+    }
 }
 
 /// Shell integration configuration
 pub struct ShellInit {
     pub shell: Shell,
+    pub cmd: String,
 }
 
 impl ShellInit {
     pub fn new(shell: Shell) -> Self {
-        Self { shell }
+        Self::with_prefix(shell, "wt".to_string())
+    }
+
+    pub fn with_prefix(shell: Shell, cmd: String) -> Self {
+        Self { shell, cmd }
     }
 
     /// Generate shell integration code
     pub fn generate(&self) -> Result<String, askama::Error> {
         match self.shell {
             Shell::Bash => {
-                let posix_shim = PosixDirectivesTemplate { cmd_prefix: "wt" }.render()?;
+                let posix_shim = PosixDirectivesTemplate { cmd: &self.cmd }.render()?;
                 let template = BashTemplate {
                     shell_name: self.shell.to_string(),
-                    cmd_prefix: "wt",
+                    cmd: &self.cmd,
                     posix_shim: &posix_shim,
                 };
                 template.render()
             }
             Shell::Zsh => {
-                let posix_shim = PosixDirectivesTemplate { cmd_prefix: "wt" }.render()?;
+                let posix_shim = PosixDirectivesTemplate { cmd: &self.cmd }.render()?;
                 let template = ZshTemplate {
-                    cmd_prefix: "wt",
+                    cmd: &self.cmd,
                     posix_shim: &posix_shim,
                 };
                 template.render()
             }
             Shell::Fish => {
-                let template = FishTemplate { cmd_prefix: "wt" };
+                let template = FishTemplate { cmd: &self.cmd };
                 template.render()
             }
             Shell::PowerShell => {
-                let template = PowerShellTemplate { cmd_prefix: "wt" };
+                let template = PowerShellTemplate { cmd: &self.cmd };
                 template.render()
             }
         }
@@ -300,7 +337,7 @@ impl ShellInit {
 #[derive(Template)]
 #[template(path = "posix_directives.sh", escape = "none")]
 struct PosixDirectivesTemplate<'a> {
-    cmd_prefix: &'a str,
+    cmd: &'a str,
 }
 
 /// Bash shell template
@@ -308,7 +345,7 @@ struct PosixDirectivesTemplate<'a> {
 #[template(path = "bash.sh", escape = "none")]
 struct BashTemplate<'a> {
     shell_name: String,
-    cmd_prefix: &'a str,
+    cmd: &'a str,
     posix_shim: &'a str,
 }
 
@@ -316,7 +353,7 @@ struct BashTemplate<'a> {
 #[derive(Template)]
 #[template(path = "zsh.zsh", escape = "none")]
 struct ZshTemplate<'a> {
-    cmd_prefix: &'a str,
+    cmd: &'a str,
     posix_shim: &'a str,
 }
 
@@ -324,14 +361,14 @@ struct ZshTemplate<'a> {
 #[derive(Template)]
 #[template(path = "fish.fish", escape = "none")]
 struct FishTemplate<'a> {
-    cmd_prefix: &'a str,
+    cmd: &'a str,
 }
 
 /// PowerShell template
 #[derive(Template)]
 #[template(path = "powershell.ps1", escape = "none")]
 struct PowerShellTemplate<'a> {
-    cmd_prefix: &'a str,
+    cmd: &'a str,
 }
 
 /// Detect if user's zsh has compinit enabled by probing for the compdef function.
@@ -433,5 +470,46 @@ mod tests {
             Ok(Shell::PowerShell)
         ));
         assert!("invalid".parse::<Shell>().is_err());
+    }
+
+    #[test]
+    fn test_config_line_uses_custom_prefix() {
+        // When using a custom prefix, the generated shell config line must use that prefix
+        // throughout - both in the command check AND the command invocation.
+        // This prevents the bug where we check for `git-wt` but then call `wt`.
+        let prefix = "git-wt";
+
+        // Bash/Zsh
+        let bash_line = Shell::Bash.config_line_with_prefix(prefix);
+        assert!(
+            bash_line.contains("command -v git-wt"),
+            "bash should check for git-wt"
+        );
+        assert!(
+            bash_line.contains("command git-wt config shell init"),
+            "bash should call git-wt, not wt"
+        );
+
+        // Fish
+        let fish_line = Shell::Fish.config_line_with_prefix(prefix);
+        assert!(
+            fish_line.contains("type -q git-wt"),
+            "fish should check for git-wt"
+        );
+        assert!(
+            fish_line.contains("command git-wt config shell init"),
+            "fish should call git-wt, not wt"
+        );
+
+        // PowerShell
+        let ps_line = Shell::PowerShell.config_line_with_prefix(prefix);
+        assert!(
+            ps_line.contains("Get-Command git-wt"),
+            "powershell should check for git-wt"
+        );
+        assert!(
+            ps_line.contains("& git-wt config shell init"),
+            "powershell should call git-wt, not wt"
+        );
     }
 }

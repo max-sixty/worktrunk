@@ -312,7 +312,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", cformat!("<cyan>SHELL INTEGRATION</>"))?;
 
     // Use the same detection logic as `wt config shell install`
-    let scan_result = match scan_shell_configs(None, true) {
+    let scan_result = match scan_shell_configs(None, true, "wt") {
         Ok(r) => r,
         Err(e) => {
             writeln!(

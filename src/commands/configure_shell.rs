@@ -104,13 +104,14 @@ impl ConfigAction {
 pub fn handle_configure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    cmd: String,
 ) -> Result<ScanResult, String> {
     // First, do a dry-run to see what would be changed
-    let preview = scan_shell_configs(shell_filter, true)?;
+    let preview = scan_shell_configs(shell_filter, true, &cmd)?;
 
     // Preview completions that would be written
     let shells: Vec<_> = preview.configured.iter().map(|r| r.shell).collect();
-    let completion_preview = process_shell_completions(&shells, true)?;
+    let completion_preview = process_shell_completions(&shells, true, &cmd)?;
 
     // If nothing to do, return early
     if preview.configured.is_empty() {
@@ -140,13 +141,15 @@ pub fn handle_configure_shell(
     }
 
     // Show what will be done and ask for confirmation (unless --force flag is used)
-    if !skip_confirmation && !prompt_for_confirmation(&preview.configured, &completion_preview)? {
+    if !skip_confirmation
+        && !prompt_for_confirmation(&preview.configured, &completion_preview, &cmd)?
+    {
         return Err("Cancelled by user".to_string());
     }
 
     // User confirmed (or --force flag was used), now actually apply the changes
-    let result = scan_shell_configs(shell_filter, false)?;
-    let completion_results = process_shell_completions(&shells, false)?;
+    let result = scan_shell_configs(shell_filter, false, &cmd)?;
+    let completion_results = process_shell_completions(&shells, false, &cmd)?;
 
     // Zsh completions require compinit to be enabled. Unlike bash/fish, zsh doesn't
     // enable its completion system by default - users must explicitly call compinit.
@@ -213,6 +216,7 @@ pub fn handle_configure_shell(
 pub fn scan_shell_configs(
     shell_filter: Option<Shell>,
     dry_run: bool,
+    cmd: &str,
 ) -> Result<ScanResult, String> {
     #[cfg(windows)]
     let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
@@ -226,7 +230,7 @@ pub fn scan_shell_configs(
 
     for shell in shells {
         let paths = shell
-            .config_paths()
+            .config_paths_with_prefix(cmd)
             .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
 
         // Find the first existing config file
@@ -251,7 +255,7 @@ pub fn scan_shell_configs(
         if should_configure {
             let path = target_path.or_else(|| paths.first());
             if let Some(path) = path {
-                match configure_shell_file(shell, path, dry_run, shell_filter.is_some()) {
+                match configure_shell_file(shell, path, dry_run, shell_filter.is_some(), cmd) {
                     Ok(Some(result)) => results.push(result),
                     Ok(None) => {} // No action needed
                     Err(e) => {
@@ -295,12 +299,13 @@ fn configure_shell_file(
     path: &Path,
     dry_run: bool,
     explicit_shell: bool,
+    cmd: &str,
 ) -> Result<Option<ConfigureResult>, String> {
     // Get a summary of the shell integration for display
-    let integration_summary = shell.integration_summary();
+    let integration_summary = shell.integration_summary_with_prefix(cmd);
 
     // The actual line we write to the config file
-    let config_content = shell.config_line();
+    let config_content = shell.config_line_with_prefix(cmd);
 
     // For Fish, we write to a separate conf.d/ file
     if matches!(shell, Shell::Fish) {
@@ -427,7 +432,7 @@ fn configure_fish_file(
     explicit_shell: bool,
     integration_summary: &str,
 ) -> Result<Option<ConfigureResult>, String> {
-    // For Fish, we write to conf.d/{cmd_prefix}.fish (separate file)
+    // For Fish, we write to conf.d/{cmd}.fish (separate file)
 
     // Check if it already exists and has our integration
     if path.exists() {
@@ -495,6 +500,7 @@ fn configure_fish_file(
 fn prompt_for_confirmation(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
+    cmd: &str,
 ) -> Result<bool, String> {
     use anstyle::Style;
     use worktrunk::styling::{eprint, eprintln};
@@ -549,7 +555,8 @@ fn prompt_for_confirmation(
         );
 
         // Show the completion content that will be written
-        eprint!("{}", format_bash_with_gutter(FISH_COMPLETION.trim(), ""));
+        let fish_completion = fish_completion_content(cmd);
+        eprint!("{}", format_bash_with_gutter(fish_completion.trim(), ""));
         eprintln!(); // Blank line after
     }
 
@@ -577,21 +584,27 @@ fn prompt_yes_no() -> Result<bool, String> {
     Ok(response == "y" || response == "yes")
 }
 
-/// Fish completion content - finds wt in PATH, with WORKTRUNK_BIN as optional override
-const FISH_COMPLETION: &str = r#"# worktrunk completions for fish
-complete --keep-order --exclusive --command wt --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P wt); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
-"#;
+/// Fish completion content - finds command in PATH, with WORKTRUNK_BIN as optional override
+fn fish_completion_content(cmd: &str) -> String {
+    format!(
+        r#"# worktrunk completions for fish
+complete --keep-order --exclusive --command {cmd} --arguments "(test -n \"\$WORKTRUNK_BIN\"; or set -l WORKTRUNK_BIN (type -P {cmd}); COMPLETE=fish \$WORKTRUNK_BIN -- (commandline --current-process --tokenize --cut-at-cursor) (commandline --current-token))"
+"#
+    )
+}
 
 /// Process shell completions - either preview or write based on dry_run flag
 ///
 /// Note: Bash and Zsh use inline lazy completions in the init script.
-/// Fish uses a separate completion file at ~/.config/fish/completions/wt.fish
-/// that finds wt in PATH (with WORKTRUNK_BIN as optional override) to bypass the shell wrapper.
+/// Fish uses a separate completion file at ~/.config/fish/completions/{cmd}.fish
+/// that finds the command in PATH (with WORKTRUNK_BIN as optional override) to bypass the shell wrapper.
 pub fn process_shell_completions(
     shells: &[Shell],
     dry_run: bool,
+    cmd: &str,
 ) -> Result<Vec<CompletionResult>, String> {
     let mut results = Vec::new();
+    let fish_completion = fish_completion_content(cmd);
 
     for &shell in shells {
         // Only fish has a separate completion file
@@ -600,14 +613,14 @@ pub fn process_shell_completions(
         }
 
         let completion_path = shell
-            .completion_path()
+            .completion_path_with_prefix(cmd)
             .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
 
         // Check if completions already exist with correct content
         if completion_path.exists() {
             let existing = fs::read_to_string(&completion_path)
                 .map_err(|e| format!("Failed to read {}: {}", completion_path.display(), e))?;
-            if existing == FISH_COMPLETION {
+            if existing == fish_completion {
                 results.push(CompletionResult {
                     shell,
                     path: completion_path,
@@ -638,7 +651,7 @@ pub fn process_shell_completions(
         }
 
         // Write the completion file
-        fs::write(&completion_path, FISH_COMPLETION)
+        fs::write(&completion_path, &fish_completion)
             .map_err(|e| format!("Failed to write {}: {}", completion_path.display(), e))?;
 
         results.push(CompletionResult {
