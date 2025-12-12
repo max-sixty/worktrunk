@@ -51,7 +51,7 @@ fn binary_name() -> String {
         .next()
         .and_then(|arg0| {
             std::path::Path::new(&arg0)
-                .file_name()
+                .file_stem() // Use file_stem to strip .exe on Windows
                 .and_then(|name| name.to_str())
                 .map(String::from)
         })
