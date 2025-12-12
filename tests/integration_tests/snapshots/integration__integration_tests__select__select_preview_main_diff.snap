@@ -8,8 +8,6 @@ expression: normalized
                                                             │ feature_code.rs | 6 ++++++
                                                             │ tests.rs        | 4 ++++
                                                             │ 2 files changed, 10 insertions(+)
-                                                            │
-                                                            │
                                                             │diff --git a/feature_code.rs b/feature_code.rs
                                                             │new file mode 100644
                                                             │index 0000000..b8bd34c
@@ -29,3 +27,5 @@ expression: normalized
                                                             │+++ b/tests.rs
                                                             │@@ -0,0 +1,4 @@
                                                             │+#[test]
+                                                            │+fn test_new_feature() {
+                                                            │+    assert_eq!(42 * 2, 84);

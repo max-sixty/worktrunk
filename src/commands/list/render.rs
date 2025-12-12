@@ -36,6 +36,7 @@ impl DiffDisplayConfig {
     /// * `positive` - The positive (added) value
     /// * `negative` - The negative (deleted) value
     /// * `digits` - Number of digits to allocate for each column (e.g., 3 for values up to 999)
+    #[cfg(unix)] // Only used by select command which is unix-only
     pub fn format_aligned(&self, positive: usize, negative: usize, digits: usize) -> String {
         use super::layout::DiffColumnConfig;
 
@@ -742,6 +743,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_produces_fixed_width_output() {
         use super::super::columns::DiffVariant;
 
@@ -787,6 +789,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // format_aligned is unix-only
     fn test_format_aligned_handles_single_side() {
         use super::super::columns::DiffVariant;
 
