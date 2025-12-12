@@ -1065,9 +1065,7 @@ pub fn refresh(refresh_token: &str) -> String {
 /// Output is used in README.md "Advanced Features" or "Project Automation" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap
 ///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_complex(mut repo: TestRepo) {
     // Create project config with multiple hooks
     let config_dir = repo.root_path().join(".config");
@@ -1295,9 +1293,7 @@ command = "{}"
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap
 ///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_post_create(repo: TestRepo) {
     // Create project config with post-create and post-start hooks
     let config_dir = repo.root_path().join(".config");
@@ -1380,9 +1376,7 @@ fi
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap
 ///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
     // Create project config with pre-merge hooks
     let config_dir = repo.root_path().join(".config");
