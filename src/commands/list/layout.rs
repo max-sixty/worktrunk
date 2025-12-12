@@ -165,7 +165,10 @@ use unicode_width::UnicodeWidthStr;
 use worktrunk::styling::{ADDITION, DELETION};
 
 use super::collect::TaskKind;
-use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, DiffVariant};
+use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec};
+
+// Re-export DiffVariant for external use (e.g., select command)
+pub use super::columns::DiffVariant;
 
 /// Width of short commit hash display (first 8 hex characters)
 const COMMIT_HASH_WIDTH: usize = 8;
