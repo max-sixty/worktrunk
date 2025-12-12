@@ -1289,10 +1289,16 @@ impl Repository {
     ///
     /// Removes `refs/remotes/<remote>/HEAD` so the next call to `default_branch()`
     /// will re-query the remote.
-    pub fn clear_default_branch_cache(&self) -> anyhow::Result<()> {
+    ///
+    /// Returns `true` if cache was cleared, `false` if no cache existed.
+    pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
         let remote = self.primary_remote()?;
-        self.run_command(&["remote", "set-head", "-d", &remote])?;
-        Ok(())
+        if self.get_local_default_branch(&remote).is_ok() {
+            self.run_command(&["remote", "set-head", "-d", &remote])?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Check if two refs have identical tree content (same files/directories).

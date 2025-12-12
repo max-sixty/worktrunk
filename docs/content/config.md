@@ -571,12 +571,13 @@ Global Options:
 
 ## wt config state
 
-Runtime state is stored in git config, separate from configuration files.
+State is stored in git config, separate from configuration files.
 Use `wt config show` to view file-based configuration.
 
 ### Keys
 
 - **default-branch**: The repository's default branch (main, master, etc.)
+- **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
 - **logs**: Background operation logs
@@ -585,27 +586,32 @@ Use `wt config show` to view file-based configuration.
 
 Get the default branch:
 ```bash
-wt config state get default-branch
+wt config state default-branch get
 ```
 
 Set the default branch manually:
 ```bash
-wt config state set default-branch main
+wt config state default-branch set main
 ```
 
 Set a marker for current branch:
 ```bash
-wt config state set marker "🚧 WIP"
+wt config state marker set "🚧 WIP"
 ```
 
 Clear all CI status cache:
 ```bash
-wt config state clear ci-status --all
+wt config state ci-status clear --all
 ```
 
-Show all cached state:
+Show all stored state:
 ```bash
-wt config state show
+wt config state get
+```
+
+Clear all stored state:
+```bash
+wt config state clear
 ```
 
 ---
@@ -613,16 +619,18 @@ wt config state show
 ### Command reference
 
 ```
-wt config state - Get, set, or clear runtime state (stored in git config)
+wt config state - Get, set, or clear stored state (git config)
 
 Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  default-branch  Manage default branch setting
-  ci-status       Manage CI status cache
-  marker          Manage branch markers
-  logs            Manage background operation logs
-  show            Show all cached state
+  default-branch   Manage default branch setting
+  previous-branch  Manage previous branch (for wt switch -)
+  ci-status        Manage CI status cache
+  marker           Manage branch markers
+  logs             Manage background operation logs
+  get              Get all stored state
+  clear            Clear all stored state
 
 Options:
   -h, --help
@@ -652,7 +660,7 @@ Commands:
   shell   Shell integration setup
   create  Create configuration file
   show    Show configuration files & locations
-  state   Get, set, or clear runtime state (stored in git config)
+  state   Get, set, or clear stored state (git config)
 
 Options:
   -h, --help

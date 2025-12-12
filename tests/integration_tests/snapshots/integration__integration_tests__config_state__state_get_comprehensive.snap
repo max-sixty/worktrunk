@@ -5,7 +5,7 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [36mDEFAULT BRANCH[39m
 [107m [0m  main
 
-[36mSWITCH HISTORY[39m
+[36mPREVIOUS BRANCH[39m
 [107m [0m  feature
 
 [36mBRANCH MARKERS[39m

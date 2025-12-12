@@ -30,15 +30,16 @@ use commands::{
     compute_worktree_path, handle_config_create, handle_config_show, handle_configure_shell,
     handle_hook_show, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
     handle_remove_by_path, handle_remove_current, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_get, handle_state_set, handle_state_show, handle_switch,
-    handle_unconfigure_shell, resolve_worktree_path_first, run_hook, step_commit, step_for_each,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_path_first,
+    run_hook, step_commit, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
-    DefaultBranchAction, HookCommand, ListSubcommand, LogsAction, MarkerAction, StateCommand,
-    StepCommand,
+    DefaultBranchAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
+    PreviousBranchAction, StateCommand, StepCommand,
 };
 use worktrunk::HookType;
 
@@ -908,6 +909,15 @@ fn main() {
                     }
                     DefaultBranchAction::Clear => handle_state_clear("default-branch", None, false),
                 },
+                StateCommand::PreviousBranch { action } => match action {
+                    PreviousBranchAction::Get => handle_state_get("previous-branch", false, None),
+                    PreviousBranchAction::Set { branch } => {
+                        handle_state_set("previous-branch", branch, None)
+                    }
+                    PreviousBranchAction::Clear => {
+                        handle_state_clear("previous-branch", None, false)
+                    }
+                },
                 StateCommand::CiStatus { action } => match action {
                     CiStatusAction::Get { refresh, branch } => {
                         handle_state_get("ci-status", refresh, branch)
@@ -929,7 +939,8 @@ fn main() {
                     LogsAction::Get => handle_state_get("logs", false, None),
                     LogsAction::Clear => handle_state_clear("logs", None, false),
                 },
-                StateCommand::Show { format } => handle_state_show(format),
+                StateCommand::Get { format } => handle_state_show(format),
+                StateCommand::Clear => handle_state_clear_all(),
             },
         },
         Commands::Step { action } => match action {

@@ -18,16 +18,18 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state - Get, set, or clear runtime state (stored in git config)
+wt config state - Get, set, or clear stored state (git config)
 
 Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36mdefault-branch[0m  Manage default branch setting
-  [1m[36mci-status[0m       Manage CI status cache
-  [1m[36mmarker[0m          Manage branch markers
-  [1m[36mlogs[0m            Manage background operation logs
-  [1m[36mshow[0m            Show all cached state
+  [1m[36mdefault-branch[0m   Manage default branch setting
+  [1m[36mprevious-branch[0m  Manage previous branch (for [1mwt switch -[0m)
+  [1m[36mci-status[0m        Manage CI status cache
+  [1m[36mmarker[0m           Manage branch markers
+  [1m[36mlogs[0m             Manage background operation logs
+  [1m[36mget[0m              Get all stored state
+  [1m[36mclear[0m            Clear all stored state
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help
@@ -43,12 +45,13 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Runtime state is stored in git config, separate from configuration files.
+State is stored in git config, separate from configuration files.
 Use [2mwt config show[0m to view file-based configuration.
 
 [32mKeys
 
 - [1mdefault-branch[0m: The repository's default branch (main, master, etc.)
+- [1mprevious-branch[0m: Previous branch for [2mwt switch -
 - [1mci-status[0m: CI/PR status for a branch (passed, running, failed, conflicts, noci)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
 - [1mlogs[0m: Background operation logs
@@ -56,16 +59,19 @@ Use [2mwt config show[0m to view file-based configuration.
 [32mExamples
 
 Get the default branch:
-  [2mwt config state get default-branch
+  [2mwt config state default-branch get
 
 Set the default branch manually:
-  [2mwt config state set default-branch main
+  [2mwt config state default-branch set main
 
 Set a marker for current branch:
-  [2mwt config state set marker "🚧 WIP"
+  [2mwt config state marker set "🚧 WIP"
 
 Clear all CI status cache:
-  [2mwt config state clear ci-status --all
+  [2mwt config state ci-status clear --all
 
-Show all cached state:
-  [2mwt config state show
+Show all stored state:
+  [2mwt config state get
+
+Clear all stored state:
+  [2mwt config state clear

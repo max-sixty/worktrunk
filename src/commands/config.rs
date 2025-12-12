@@ -600,6 +600,10 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             };
             crate::output::data(branch_name)?;
         }
+        "previous-branch" => match repo.get_switch_previous() {
+            Some(prev) => crate::output::data(prev)?,
+            None => crate::output::data("")?,
+        },
         "marker" => {
             let branch_name = match branch {
                 Some(b) => b,
@@ -713,7 +717,9 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             crate::output::table(rendered.trim_end())?;
         }
         _ => {
-            anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, ci-status, marker, logs")
+            anyhow::bail!(
+                "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"
+            )
         }
     }
 
@@ -729,6 +735,12 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             repo.set_default_branch(&value)?;
             crate::output::print(success_message(cformat!(
                 "Set default branch to <bold>{value}</>"
+            )))?;
+        }
+        "previous-branch" => {
+            repo.record_switch_previous(Some(&value))?;
+            crate::output::print(success_message(cformat!(
+                "Set previous branch to <bold>{value}</>"
             )))?;
         }
         "marker" => {
@@ -754,7 +766,9 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
                 "Set marker for <bold>{branch_name}</> to <bold>{value}</>"
             )))?;
         }
-        _ => anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, marker"),
+        _ => {
+            anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, previous-branch, marker")
+        }
     }
 
     Ok(())
@@ -766,8 +780,21 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
 
     match key {
         "default-branch" => {
-            repo.clear_default_branch_cache()?;
-            crate::output::print(success_message("Cleared default branch cache"))?;
+            if repo.clear_default_branch_cache()? {
+                crate::output::print(success_message("Cleared default branch cache"))?;
+            } else {
+                crate::output::print(info_message("No default branch cache to clear"))?;
+            }
+        }
+        "previous-branch" => {
+            if repo
+                .run_command(&["config", "--unset", "worktrunk.history"])
+                .is_ok()
+            {
+                crate::output::print(success_message("Cleared previous branch"))?;
+            } else {
+                crate::output::print(info_message("No previous branch to clear"))?;
+            }
         }
         "ci-status" => {
             if all {
@@ -833,12 +860,18 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 };
 
                 let config_key = format!("worktrunk.marker.{}", branch_name);
-                repo.run_command(&["config", "--unset", &config_key])
-                    .context("Failed to clear marker (may not be set)")?;
-
-                crate::output::print(success_message(cformat!(
-                    "Cleared marker for <bold>{branch_name}</>"
-                )))?;
+                if repo
+                    .run_command(&["config", "--unset", &config_key])
+                    .is_ok()
+                {
+                    crate::output::print(success_message(cformat!(
+                        "Cleared marker for <bold>{branch_name}</>"
+                    )))?;
+                } else {
+                    crate::output::print(info_message(cformat!(
+                        "No marker set for <bold>{branch_name}</>"
+                    )))?;
+                }
             }
         }
         "logs" => {
@@ -853,14 +886,66 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
             }
         }
         _ => {
-            anyhow::bail!("Unknown key: {key}. Valid keys: default-branch, ci-status, marker, logs")
+            anyhow::bail!(
+                "Unknown key: {key}. Valid keys: default-branch, previous-branch, ci-status, marker, logs"
+            )
         }
     }
 
     Ok(())
 }
 
-/// Handle the state show command
+/// Handle the state clear all command
+pub fn handle_state_clear_all() -> anyhow::Result<()> {
+    let repo = Repository::current();
+    let mut cleared_any = false;
+
+    // Clear default branch cache
+    if matches!(repo.clear_default_branch_cache(), Ok(true)) {
+        cleared_any = true;
+    }
+
+    // Clear previous branch
+    if repo
+        .run_command(&["config", "--unset", "worktrunk.history"])
+        .is_ok()
+    {
+        cleared_any = true;
+    }
+
+    // Clear all markers
+    let markers_output = repo
+        .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+        .unwrap_or_default();
+    for line in markers_output.lines() {
+        if let Some(config_key) = line.split_whitespace().next() {
+            let _ = repo.run_command(&["config", "--unset", config_key]);
+            cleared_any = true;
+        }
+    }
+
+    // Clear all CI status cache
+    let ci_cleared = CachedCiStatus::clear_all(&repo);
+    if ci_cleared > 0 {
+        cleared_any = true;
+    }
+
+    // Clear all logs
+    let logs_cleared = clear_logs(&repo)?;
+    if logs_cleared > 0 {
+        cleared_any = true;
+    }
+
+    if cleared_any {
+        crate::output::print(success_message("Cleared all stored state"))?;
+    } else {
+        crate::output::print(info_message("No stored state to clear"))?;
+    }
+
+    Ok(())
+}
+
+/// Handle the state get command (shows all state)
 pub fn handle_state_show(format: crate::cli::OutputFormat) -> anyhow::Result<()> {
     use crate::cli::OutputFormat;
 
@@ -877,8 +962,8 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     // Get default branch
     let default_branch = repo.default_branch().ok();
 
-    // Get switch history
-    let switch_previous = repo.get_switch_previous();
+    // Get previous branch
+    let previous_branch = repo.get_switch_previous();
 
     // Get markers
     let markers: Vec<serde_json::Value> = get_all_markers(repo)
@@ -960,7 +1045,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
 
     let output = serde_json::json!({
         "default_branch": default_branch,
-        "switch_previous": switch_previous,
+        "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
         "logs": logs
@@ -983,8 +1068,8 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     }
     writeln!(out)?;
 
-    // Show switch history (for `wt switch -`)
-    writeln!(out, "{}", cformat!("<cyan>SWITCH HISTORY</>"))?;
+    // Show previous branch (for `wt switch -`)
+    writeln!(out, "{}", cformat!("<cyan>PREVIOUS BRANCH</>"))?;
     match repo.get_switch_previous() {
         Some(prev) => write!(out, "{}", format_with_gutter(&prev, "", None))?,
         None => write!(out, "{}", format_with_gutter("(none)", "", None))?,

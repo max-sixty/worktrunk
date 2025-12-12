@@ -388,14 +388,15 @@ commit messages."#
         full: bool,
     },
 
-    /// Get, set, or clear runtime state (stored in git config)
+    /// Get, set, or clear stored state (git config)
     #[command(
-        after_long_help = r#"Runtime state is stored in git config, separate from configuration files.
+        after_long_help = r#"State is stored in git config, separate from configuration files.
 Use `wt config show` to view file-based configuration.
 
 ## Keys
 
 - **default-branch**: The repository's default branch (main, master, etc.)
+- **previous-branch**: Previous branch for `wt switch -`
 - **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
 - **logs**: Background operation logs
@@ -404,27 +405,32 @@ Use `wt config show` to view file-based configuration.
 
 Get the default branch:
 ```console
-wt config state get default-branch
+wt config state default-branch get
 ```
 
 Set the default branch manually:
 ```console
-wt config state set default-branch main
+wt config state default-branch set main
 ```
 
 Set a marker for current branch:
 ```console
-wt config state set marker "🚧 WIP"
+wt config state marker set "🚧 WIP"
 ```
 
 Clear all CI status cache:
 ```console
-wt config state clear ci-status --all
+wt config state ci-status clear --all
 ```
 
-Show all cached state:
+Show all stored state:
 ```console
-wt config state show
+wt config state get
+```
+
+Clear all stored state:
+```console
+wt config state clear
 ```"#
     )]
     State {
@@ -440,6 +446,13 @@ pub enum StateCommand {
     DefaultBranch {
         #[command(subcommand)]
         action: DefaultBranchAction,
+    },
+
+    /// Manage previous branch (for `wt switch -`)
+    #[command(name = "previous-branch")]
+    PreviousBranch {
+        #[command(subcommand)]
+        action: PreviousBranchAction,
     },
 
     /// Manage CI status cache
@@ -461,21 +474,34 @@ pub enum StateCommand {
         action: LogsAction,
     },
 
-    /// Show all cached state
-    #[command(after_long_help = r#"Shows all cached state including:
+    /// Get all stored state
+    #[command(after_long_help = r#"Shows all stored state including:
 
 - **Default branch**: Cached result of querying remote for default branch
-- **Switch history**: Previous branch for `wt switch -`
+- **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
 - **Log files**: Background operation logs
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
-    Show {
+    Get {
         /// Output format (table, json)
         #[arg(long, value_enum, default_value = "table", hide_possible_values = true)]
         format: OutputFormat,
     },
+
+    /// Clear all stored state
+    #[command(after_long_help = r#"Clears all stored state:
+
+- Default branch cache
+- Previous branch
+- All branch markers
+- All CI status cache
+- All log files
+
+Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
+to clear specific state."#)]
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -512,6 +538,34 @@ wt config state default-branch set main
     },
 
     /// Clear the default branch cache
+    Clear,
+}
+
+#[derive(Subcommand)]
+pub enum PreviousBranchAction {
+    /// Get the previous branch
+    #[command(after_long_help = r#"## Examples
+
+Get the previous branch (used by `wt switch -`):
+```console
+wt config state previous-branch get
+```"#)]
+    Get,
+
+    /// Set the previous branch
+    #[command(after_long_help = r#"## Examples
+
+Set the previous branch:
+```console
+wt config state previous-branch set feature
+```"#)]
+    Set {
+        /// Branch name to set as previous
+        #[arg(add = crate::completion::branch_value_completer())]
+        branch: String,
+    },
+
+    /// Clear the previous branch
     Clear,
 }
 

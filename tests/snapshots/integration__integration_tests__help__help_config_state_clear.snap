@@ -1,0 +1,49 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - config
+    - state
+    - clear
+    - "--help"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+wt config state clear - Clear all stored state
+
+Usage: [1m[36mwt config state clear[0m [36m[OPTIONS]
+
+[1m[32mOptions:
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
+
+[1m[32mGlobal Options:
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
+
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
+
+  [1m[36m-v[0m, [1m[36m--verbose
+          Show commands and debug info
+
+Clears all stored state:
+
+- Default branch cache
+- Previous branch
+- All branch markers
+- All CI status cache
+- All log files
+
+Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)
+to clear specific state.

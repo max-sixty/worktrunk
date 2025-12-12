@@ -13,18 +13,18 @@ fn wt_state_cmd(repo: &TestRepo, key: &str, action: &str, args: &[&str]) -> Comm
     cmd
 }
 
-fn wt_state_show_cmd(repo: &TestRepo) -> Command {
+fn wt_state_get_cmd(repo: &TestRepo) -> Command {
     let mut cmd = wt_command();
     repo.clean_cli_env(&mut cmd);
-    cmd.args(["config", "state", "show"]);
+    cmd.args(["config", "state", "get"]);
     cmd.current_dir(repo.root_path());
     cmd
 }
 
-fn wt_state_show_json_cmd(repo: &TestRepo) -> Command {
+fn wt_state_get_json_cmd(repo: &TestRepo) -> Command {
     let mut cmd = wt_command();
     repo.clean_cli_env(&mut cmd);
-    cmd.args(["config", "state", "show", "--format=json"]);
+    cmd.args(["config", "state", "get", "--format=json"]);
     cmd.current_dir(repo.root_path());
     cmd
 }
@@ -102,6 +102,81 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(!output.status.success());
+}
+
+#[rstest]
+fn test_state_clear_default_branch_empty(repo: TestRepo) {
+    // Set up remote but don't set default branch cache
+    repo.git_command(&["remote", "add", "origin", "https://example.com/repo.git"])
+        .output()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "default-branch", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No default branch cache to clear");
+}
+
+// ============================================================================
+// previous-branch
+// ============================================================================
+
+#[rstest]
+fn test_state_get_previous_branch(repo: TestRepo) {
+    // Without any previous branch set, should return empty
+    let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_state_set_previous_branch(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "previous-branch", "set", &["feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet previous branch to [1mfeature[22m[39m");
+
+    // Verify it was set
+    let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "feature");
+}
+
+#[rstest]
+fn test_state_clear_previous_branch(repo: TestRepo) {
+    // Set a previous branch first
+    wt_state_cmd(&repo, "previous-branch", "set", &["feature"])
+        .output()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "previous-branch", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared previous branch[39m");
+
+    // Verify it was cleared
+    let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+}
+
+#[rstest]
+fn test_state_clear_previous_branch_empty(repo: TestRepo) {
+    // Clear without any previous branch set
+    let output = wt_state_cmd(&repo, "previous-branch", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No previous branch to clear");
 }
 
 // ============================================================================
@@ -376,18 +451,109 @@ fn test_state_clear_logs_single_file(repo: TestRepo) {
 }
 
 // ============================================================================
-// state show
+// state clear (all)
+// ============================================================================
+
+fn wt_state_clear_all_cmd(repo: &TestRepo) -> std::process::Command {
+    let mut cmd = wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("CLICOLOR_FORCE", "1");
+    cmd.args(["config", "state", "clear"]);
+    cmd
+}
+
+#[rstest]
+fn test_state_clear_all_empty(repo: TestRepo) {
+    // Clear when no state exists
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No stored state to clear");
+}
+
+#[rstest]
+fn test_state_clear_all_comprehensive(repo: TestRepo) {
+    // Set up various state
+    // Previous branch
+    repo.git_command(&["config", "worktrunk.history", "feature"])
+        .status()
+        .unwrap();
+
+    // Marker
+    repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
+        .status()
+        .unwrap();
+
+    // CI cache
+    repo.git_command(&[
+        "config",
+        "worktrunk.ci.feature",
+        r#"{"checked_at":1704067200,"head":"abc123"}"#,
+    ])
+    .status()
+    .unwrap();
+
+    // Logs
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("feature-remove.log"), "output").unwrap();
+
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared all stored state[39m");
+
+    // Verify everything was cleared
+    assert!(
+        repo.git_command(&["config", "--get", "worktrunk.history"])
+            .output()
+            .unwrap()
+            .status
+            .code()
+            == Some(1)
+    ); // Not found
+    assert!(
+        repo.git_command(&["config", "--get", "worktrunk.marker.main"])
+            .output()
+            .unwrap()
+            .status
+            .code()
+            == Some(1)
+    );
+    assert!(
+        repo.git_command(&["config", "--get", "worktrunk.ci.feature"])
+            .output()
+            .unwrap()
+            .status
+            .code()
+            == Some(1)
+    );
+    assert!(!log_dir.exists());
+}
+
+#[rstest]
+fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
+    // First clear to ensure nothing exists
+    wt_state_clear_all_cmd(&repo).output().unwrap();
+
+    // Clear again when nothing exists
+    let output = wt_state_clear_all_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No stored state to clear");
+}
+
+// ============================================================================
+// state get
 // ============================================================================
 
 #[rstest]
-fn test_state_show_empty(repo: TestRepo) {
-    let output = wt_state_show_cmd(&repo).output().unwrap();
+fn test_state_get_empty(repo: TestRepo) {
+    let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
     [36mDEFAULT BRANCH[39m
     [107m [0m  main
 
-    [36mSWITCH HISTORY[39m
+    [36mPREVIOUS BRANCH[39m
     [107m [0m  (none)
 
     [36mBRANCH MARKERS[39m
@@ -402,7 +568,7 @@ fn test_state_show_empty(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_state_show_with_ci_entries(repo: TestRepo) {
+fn test_state_get_with_ci_entries(repo: TestRepo) {
     // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
     repo.git_command(&[
         "config",
@@ -428,14 +594,14 @@ fn test_state_show_with_ci_entries(repo: TestRepo) {
     .status()
     .unwrap();
 
-    let output = wt_state_show_cmd(&repo).output().unwrap();
+    let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr));
 }
 
 #[rstest]
-fn test_state_show_comprehensive(repo: TestRepo) {
-    // Set up switch history
+fn test_state_get_comprehensive(repo: TestRepo) {
+    // Set up previous branch
     repo.git_command(&["config", "worktrunk.history", "feature"])
         .status()
         .unwrap();
@@ -472,29 +638,29 @@ fn test_state_show_comprehensive(repo: TestRepo) {
     std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
     std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
 
-    let output = wt_state_show_cmd(&repo).output().unwrap();
+    let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr));
 }
 
 #[rstest]
-fn test_state_show_json_empty(repo: TestRepo) {
-    let output = wt_state_show_json_cmd(&repo).output().unwrap();
+fn test_state_get_json_empty(repo: TestRepo) {
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     // JSON output goes to stdout
     let json_str = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
     assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["switch_previous"], serde_json::Value::Null);
+    assert_eq!(json["previous_branch"], serde_json::Value::Null);
     assert_eq!(json["markers"], serde_json::json!([]));
     assert_eq!(json["ci_status"], serde_json::json!([]));
     assert_eq!(json["logs"], serde_json::json!([]));
 }
 
 #[rstest]
-fn test_state_show_json_comprehensive(repo: TestRepo) {
-    // Set up switch history
+fn test_state_get_json_comprehensive(repo: TestRepo) {
+    // Set up previous branch
     repo.git_command(&["config", "worktrunk.history", "feature"])
         .status()
         .unwrap();
@@ -517,14 +683,14 @@ fn test_state_show_json_comprehensive(repo: TestRepo) {
     .status()
     .unwrap();
 
-    let output = wt_state_show_json_cmd(&repo).output().unwrap();
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());
     // JSON output goes to stdout
     let json_str = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
     assert_eq!(json["default_branch"], "main");
-    assert_eq!(json["switch_previous"], "feature");
+    assert_eq!(json["previous_branch"], "feature");
 
     // Check markers
     let markers = json["markers"].as_array().unwrap();

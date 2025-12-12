@@ -5,7 +5,7 @@ info:
   args:
     - config
     - state
-    - show
+    - get
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
@@ -19,9 +19,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt config state show - Show all cached state
+wt config state get - Get all stored state
 
-Usage: [1m[36mwt config state show[0m [36m[OPTIONS]
+Usage: [1m[36mwt config state get[0m [36m[OPTIONS]
 
 [1m[32mOptions:
       [1m[36m--format[0m[36m [0m[36m<FORMAT>
@@ -42,10 +42,10 @@ Usage: [1m[36mwt config state show[0m [36m[OPTIONS]
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Shows all cached state including:
+Shows all stored state including:
 
 - [1mDefault branch[0m: Cached result of querying remote for default branch
-- [1mSwitch history[0m: Previous branch for [2mwt switch -
+- [1mPrevious branch[0m: Previous branch for [2mwt switch -
 - [1mBranch markers[0m: User-defined branch notes
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
 - [1mLog files[0m: Background operation logs
