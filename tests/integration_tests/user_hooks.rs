@@ -436,19 +436,18 @@ fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<
     });
 }
 
-/// Skipped on Windows: Uses /tmp path and file locking prevents worktree removal.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_user_pre_remove_hook_executes(mut repo: TestRepo) {
     // Create a worktree to remove
     let _feature_wt = repo.add_worktree("feature");
 
     // Write user config with pre-remove hook
+    // Hook writes to parent dir (temp dir) since the worktree itself gets removed
     repo.write_test_config(
         r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
 
 [pre-remove]
-cleanup = "echo 'USER_PRE_REMOVE_RAN' > /tmp/user_preremove_marker.txt"
+cleanup = "echo 'USER_PRE_REMOVE_RAN' > ../user_preremove_marker.txt"
 "#,
     );
 
@@ -459,11 +458,13 @@ cleanup = "echo 'USER_PRE_REMOVE_RAN' > /tmp/user_preremove_marker.txt"
         Some(repo.root_path()),
     );
 
-    // Verify user hook ran (writes to /tmp since worktree is being removed)
-    let marker_file = std::path::Path::new("/tmp/user_preremove_marker.txt");
+    // Verify user hook ran (writes to parent dir since worktree is being removed)
+    let marker_file = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("user_preremove_marker.txt");
     assert!(marker_file.exists(), "User pre-remove hook should have run");
-    // Clean up
-    let _ = fs::remove_file(marker_file);
 }
 
 #[rstest]
