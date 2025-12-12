@@ -27,7 +27,38 @@ fn position_style(is_current: bool, default: Style) -> Style {
 }
 
 impl DiffDisplayConfig {
-    fn format_plain(&self, positive: usize, negative: usize) -> Option<String> {
+    /// Format diff values with fixed-width alignment for tabular display.
+    ///
+    /// Numbers are right-aligned within their allocated digit width.
+    /// Returns empty spaces if both values are zero (unless `always_show_zeros` is set).
+    ///
+    /// # Arguments
+    /// * `positive` - The positive (added) value
+    /// * `negative` - The negative (deleted) value
+    /// * `digits` - Number of digits to allocate for each column (e.g., 3 for values up to 999)
+    #[cfg(unix)] // Only used by select command which is unix-only
+    pub fn format_aligned(&self, positive: usize, negative: usize, digits: usize) -> String {
+        use super::layout::DiffColumnConfig;
+
+        let positive_width = 1 + digits; // symbol + digits
+        let negative_width = 1 + digits;
+        let total_width = positive_width + 1 + negative_width; // with separator
+
+        let config = DiffColumnConfig {
+            positive_digits: digits,
+            negative_digits: digits,
+            total_width,
+            display: *self,
+        };
+
+        config.render_segment(positive, negative).render()
+    }
+
+    /// Format diff values as plain text with ANSI colors (no fixed-width alignment).
+    ///
+    /// Returns `None` if both values are zero (unless `always_show_zeros` is set).
+    /// Format: `+N -M` with appropriate colors for each component.
+    pub fn format_plain(&self, positive: usize, negative: usize) -> Option<String> {
         if !self.always_show_zeros && positive == 0 && negative == 0 {
             return None;
         }
@@ -213,7 +244,11 @@ impl DiffColumnConfig {
         }
     }
 
-    fn render_segment(&self, positive: usize, negative: usize) -> StyledLine {
+    /// Render diff values as a StyledLine with fixed-width alignment.
+    ///
+    /// Numbers are right-aligned within their allocated digit width.
+    /// Use this for tabular display where columns must align vertically.
+    pub fn render_segment(&self, positive: usize, negative: usize) -> StyledLine {
         let symbols = self.display.variant.symbols();
         let mut segment = StyledLine::new();
 
@@ -705,6 +740,90 @@ mod tests {
         config: DiffColumnConfig,
     ) -> StyledLine {
         config.render_segment(positive, negative)
+    }
+
+    #[test]
+    #[cfg(unix)] // format_aligned is unix-only
+    fn test_format_aligned_produces_fixed_width_output() {
+        use super::super::columns::DiffVariant;
+
+        let config = DiffDisplayConfig {
+            variant: DiffVariant::Signs,
+            positive_style: ADDITION,
+            negative_style: DELETION,
+            always_show_zeros: false,
+        };
+
+        // Test various values with 3-digit columns
+        let result1 = config.format_aligned(310, 112, 3);
+        let result2 = config.format_aligned(54, 63, 3);
+        let result3 = config.format_aligned(9, 3, 3);
+
+        // All should have the same width (3 + 1 + 3 + 1 + 3 = 9 chars for "+NNN -NNN")
+        let clean1 = result1.ansi_strip().into_owned();
+        let clean2 = result2.ansi_strip().into_owned();
+        let clean3 = result3.ansi_strip().into_owned();
+
+        assert_eq!(
+            clean1.len(),
+            clean2.len(),
+            "All aligned outputs should have same width"
+        );
+        assert_eq!(
+            clean2.len(),
+            clean3.len(),
+            "All aligned outputs should have same width"
+        );
+
+        // Verify right-alignment: smaller numbers have leading spaces
+        assert!(
+            clean2.starts_with(' '),
+            "54 should have leading space: '{}'",
+            clean2
+        );
+        assert!(
+            clean3.starts_with(' '),
+            "9 should have leading spaces: '{}'",
+            clean3
+        );
+    }
+
+    #[test]
+    #[cfg(unix)] // format_aligned is unix-only
+    fn test_format_aligned_handles_single_side() {
+        use super::super::columns::DiffVariant;
+
+        let config = DiffDisplayConfig {
+            variant: DiffVariant::Signs,
+            positive_style: ADDITION,
+            negative_style: DELETION,
+            always_show_zeros: false,
+        };
+
+        // Insertions only
+        let ins_only = config.format_aligned(447, 0, 3);
+        let clean_ins = ins_only.ansi_strip().into_owned();
+        assert!(
+            clean_ins.contains("+447"),
+            "Should contain +447: '{}'",
+            clean_ins
+        );
+
+        // Deletions only
+        let del_only = config.format_aligned(0, 5, 3);
+        let clean_del = del_only.ansi_strip().into_owned();
+        assert!(
+            clean_del.contains("-5"),
+            "Should contain -5: '{}'",
+            clean_del
+        );
+
+        // Both should have same total width
+        assert_eq!(
+            clean_ins.len(),
+            clean_del.len(),
+            "Single-side outputs should match width"
+        );
     }
 
     #[test]

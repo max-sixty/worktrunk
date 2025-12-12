@@ -482,7 +482,7 @@ fn test_select_preview_panel_log(mut repo: TestRepo) {
                 feature_path.to_str().unwrap(),
                 "commit",
                 "-m",
-                &format!("Add file {i} with important changes"),
+                &format!("Add file {i} with content"),
             ])
             .output()
             .unwrap();

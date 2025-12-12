@@ -7,8 +7,6 @@ expression: normalized
 > + feature   !  ↑       +3   -1   ↑1      ./repo.feature ..│
                                                             │ tracked.txt | 4 +++-
                                                             │ 1 file changed, 3 insertions(+), 1 deletion(-)
-                                                            │
-                                                            │
                                                             │diff --git a/tracked.txt b/tracked.txt
                                                             │index 9415d49..1142e4d 100644
                                                             │--- a/tracked.txt
@@ -18,6 +16,8 @@ expression: normalized
                                                             │+Modified content
                                                             │+New line added
                                                             │+Another line
+                                                            │
+                                                            │
                                                             │
                                                             │
                                                             │
