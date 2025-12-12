@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.21
+
+### Fixed
+
+- **Windows path handling in shell templates**: Fixed path quoting in hook templates on Windows by using `cygpath` to convert native Windows paths to POSIX format for Git Bash compatibility. Template variables like `{{ worktree }}` and `{{ repo_root }}` now work correctly. ([#161](https://github.com/max-sixty/worktrunk/pull/161))
+- **Hook errors show `--no-verify` hint**: When hooks fail during `wt merge`, `wt commit`, or `wt squash`, the error message now includes a hint about using `--no-verify` to skip hooks. ([4a89748](https://github.com/max-sixty/worktrunk/commit/4a89748f))
+
 ## 0.1.20
 
 ### Changed
