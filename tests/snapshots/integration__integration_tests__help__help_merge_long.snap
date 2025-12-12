@@ -19,6 +19,8 @@ exit_code: 0
 ----- stderr -----
 wt merge - Merge worktree into target branch
 
+Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
+
 Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
 
 [1m[32mArguments:
@@ -63,9 +65,6 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
 
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
-
-Merge the current branch into the target branch and clean up. Handles the full workflow: commit uncommitted changes, squash commits, rebase, run
-hooks, push to target, and remove the worktree.
 
 When already on the target branch or in the main worktree, the worktree is preserved automatically.
 

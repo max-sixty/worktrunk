@@ -8,8 +8,6 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
-Merge the current branch into the target branch and clean up. Handles the full workflow: commit uncommitted changes, squash commits, rebase, run hooks, push to target, and remove the worktree.
-
 When already on the target branch or in the main worktree, the worktree is preserved automatically.
 
 ## Examples
@@ -70,6 +68,9 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
 
 ```
 wt merge - Merge worktree into target branch
+
+Squashes commits, rebases, runs hooks, merges to target, and removes the
+worktree.
 
 Usage: wt merge [OPTIONS] [TARGET]
 
