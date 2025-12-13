@@ -578,6 +578,17 @@ table {
         white-space: nowrap;
     }
 
+    // But allow multiline code blocks in tables to wrap
+    td pre code {
+        white-space: pre;
+    }
+
+    // Plain multiline code without block styling
+    td code.multiline {
+        white-space: pre;
+        display: block;
+    }
+
     td:first-child {
         font-weight: 550;
         color: var(--wt-color-text);
