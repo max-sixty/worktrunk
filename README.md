@@ -52,7 +52,7 @@ Start with the core commands; add workflow automation as needed.
     <tr>
       <td>Switch worktrees</td>
       <td><code>wt switch feature</code></td>
-      <td><code>cd ../repo.feature</code></td>
+      <td><pre>cd ../repo.feature</pre></td>
     </tr>
     <tr>
       <td>Create + start Claude</td>
@@ -71,7 +71,7 @@ git branch -d feature</pre></td>
     <tr>
       <td>List with status</td>
       <td><code>wt list</code></td>
-      <td><code>git worktree list</code> (paths only)</td>
+      <td><pre>git worktree list</pre> (paths only)</td>
     </tr>
   </tbody>
 </table>
