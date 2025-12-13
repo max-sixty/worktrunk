@@ -40,12 +40,41 @@ Start with the core commands; add workflow automation as needed.
 
 **Core commands:**
 
-| Task                  | Worktrunk                        | Plain git                                                                     |
-| --------------------- | -------------------------------- | ----------------------------------------------------------------------------- |
-| Switch worktrees      | `wt switch feature`              | `cd ../repo.feature`                                                          |
-| Create + start Claude | `wt switch -c -x claude feature` | `git worktree add -b feature ../repo.feature && cd ../repo.feature && claude` |
-| Clean up              | `wt remove`                      | `cd ../repo && git worktree remove ../repo.feature && git branch -d feature`  |
-| List with status      | `wt list`                        | `git worktree list` (paths only)                                              |
+<table>
+  <thead>
+    <tr>
+      <th>Task</th>
+      <th>Worktrunk</th>
+      <th>Plain git</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Switch worktrees</td>
+      <td><code>wt switch feature</code></td>
+      <td><code>cd ../repo.feature</code></td>
+    </tr>
+    <tr>
+      <td>Create + start Claude</td>
+      <td><code>wt switch -c -x claude feature</code></td>
+      <td><pre>git worktree add -b feature ../repo.feature && \
+cd ../repo.feature && \
+claude</pre></td>
+    </tr>
+    <tr>
+      <td>Clean up</td>
+      <td><code>wt remove</code></td>
+      <td><pre>cd ../repo && \
+git worktree remove ../repo.feature && \
+git branch -d feature</pre></td>
+    </tr>
+    <tr>
+      <td>List with status</td>
+      <td><code>wt list</code></td>
+      <td><code>git worktree list</code> (paths only)</td>
+    </tr>
+  </tbody>
+</table>
 
 **Workflow automation:**
 
