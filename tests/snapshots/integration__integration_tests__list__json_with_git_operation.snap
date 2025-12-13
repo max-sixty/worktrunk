@@ -87,7 +87,7 @@ exit_code: 0
         "deleted": 0
       }
     },
-    "main_state": "same_commit",
+    "main_state": "empty",
     "operation_state": "conflicts",
     "main": {
       "ahead": 0,

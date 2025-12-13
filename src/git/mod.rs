@@ -47,8 +47,9 @@ pub use repository::{Repository, ResolvedWorktree, set_base_path};
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).
 /// Each variant corresponds to a specific integration check. In `wt list`,
-/// two symbols represent these checks:
-/// - `_` for [`SameCommit`](Self::SameCommit) (identical commit)
+/// three symbols represent these checks:
+/// - `_` for [`SameCommit`](Self::SameCommit) with clean working tree (empty)
+/// - `–` for [`SameCommit`](Self::SameCommit) with dirty working tree
 /// - `⊂` for all others (content integrated via different history)
 ///
 /// The checks are ordered by cost (cheapest first):
@@ -64,7 +65,8 @@ pub enum IntegrationReason {
     /// Branch HEAD is literally the same commit as target.
     ///
     /// Used by `wt remove` to determine if branch is safely deletable.
-    /// In `wt list`, same-commit state is shown via `MainState::SameCommit` (symbol `_`).
+    /// In `wt list`, same-commit state is shown via `MainState::Empty` (`_`) or
+    /// `MainState::SameCommit` (`–`) depending on working tree cleanliness.
     SameCommit,
 
     /// Branch HEAD is an ancestor of target (target has moved past this branch).

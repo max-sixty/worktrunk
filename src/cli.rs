@@ -1752,7 +1752,8 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊞` | Locked worktree |
 | Main | `^` | Is the main branch |
 | | `✗` | Would conflict if merged to main |
-| | `_` | Same commit as main |
+| | `_` | Same commit as main, clean |
+| | `–` | Same commit as main, uncommitted changes |
 | | `⊂` | [Content integrated](@/remove.md#branch-cleanup) |
 | | `↕` | Diverged from main |
 | | `↑` | Ahead of main |
@@ -1762,7 +1763,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⇡` | Ahead of remote |
 | | `⇣` | Behind remote |
 
-Rows are dimmed when the branch [content is already in main](@/remove.md#branch-cleanup) (`_` same commit or `⊂` content integrated).
+Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same commit with clean working tree or `⊂` content integrated).
 
 ## JSON output
 
@@ -1782,7 +1783,7 @@ wt list --format=json | jq '.[] | select(.is_current)'
 wt list --format=json | jq '.[] | select(.main.ahead > 0)'
 
 # Integrated branches (ready to clean up)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "same_commit")'
+wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
 ```
 
 **Fields:**
@@ -1794,7 +1795,7 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `kind` | `"worktree"` or `"branch"` |
 | `commit` | `{sha, short_sha, message, timestamp}` |
 | `working_tree` | `{staged, modified, untracked, renamed, deleted, diff, diff_vs_main}` |
-| `main_state` | `"is_main"` `"would_conflict"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"` |
+| `main_state` | `"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"` |
 | `integration_reason` | `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` (when `main_state == "integrated"`) |
 | `operation_state` | `"conflicts"` `"rebase"` `"merge"` (absent when no operation in progress) |
 | `main` | `{ahead, behind, diff}` (absent when `is_main`) |

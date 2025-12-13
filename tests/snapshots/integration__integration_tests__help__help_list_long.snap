@@ -119,31 +119,32 @@ seconds; use [2mwt config state[0m to view or clear.
 
 The Status column has multiple subcolumns. Within each, only the first matching symbol is shown (listed in priority order):
 
-  Subcolumn         Symbol  Meaning                         
-  ────────────────  ──────  ────────────────────────────────
-  Working tree (1)  [36m+[0m       Staged files                    
-  Working tree (2)  [36m![0m       Modified files (unstaged)       
-  Working tree (3)  [36m?[0m       Untracked files                 
-  Worktree          [31m✘[0m       Merge conflicts                 
-                    [33m⤴[0m       Rebase in progress              
-                    [33m⤵[0m       Merge in progress               
-                    [2m/[0m       Branch without worktree         
-                    [31m⚑[0m       Path doesn't match template     
-                    [33m⊟[0m       Prunable (directory missing)    
-                    [33m⊞[0m       Locked worktree                 
-  Main              [2m^[0m       Is the main branch              
-                    [33m✗[0m       Would conflict if merged to main
-                    [2m_[0m       Same commit as main             
-                    [2m⊂[0m       Content integrated              
-                    [2m↕[0m       Diverged from main              
-                    [2m↑[0m       Ahead of main                   
-                    [2m↓[0m       Behind main                     
-  Remote            [2m|[0m       In sync with remote             
-                    [2m⇅[0m       Diverged from remote            
-                    [2m⇡[0m       Ahead of remote                 
-                    [2m⇣[0m       Behind remote                   
+  Subcolumn         Symbol  Meaning                                 
+  ────────────────  ──────  ────────────────────────────────────────
+  Working tree (1)  [36m+[0m       Staged files                            
+  Working tree (2)  [36m![0m       Modified files (unstaged)               
+  Working tree (3)  [36m?[0m       Untracked files                         
+  Worktree          [31m✘[0m       Merge conflicts                         
+                    [33m⤴[0m       Rebase in progress                      
+                    [33m⤵[0m       Merge in progress                       
+                    [2m/[0m       Branch without worktree                 
+                    [31m⚑[0m       Path doesn't match template             
+                    [33m⊟[0m       Prunable (directory missing)            
+                    [33m⊞[0m       Locked worktree                         
+  Main              [2m^[0m       Is the main branch                      
+                    [33m✗[0m       Would conflict if merged to main        
+                    [2m_[0m       Same commit as main, clean              
+                    [2m–[0m       Same commit as main, uncommitted changes
+                    [2m⊂[0m       Content integrated                      
+                    [2m↕[0m       Diverged from main                      
+                    [2m↑[0m       Ahead of main                           
+                    [2m↓[0m       Behind main                             
+  Remote            [2m|[0m       In sync with remote                     
+                    [2m⇅[0m       Diverged from remote                    
+                    [2m⇡[0m       Ahead of remote                         
+                    [2m⇣[0m       Behind remote                           
 
-Rows are dimmed when the branch content is already in main ([2m_[0m same commit or [2m⊂[0m content integrated).
+Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
 
 [32mJSON output
 
@@ -162,7 +163,7 @@ Query structured data with [2m--format=json[0m:
   [2mwt list --format=json | jq '.[] | select(.main.ahead > 0)'
   [2m
   [2m# Integrated branches (ready to clean up)
-  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "same_commit")'
+  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
 
 [1mFields:
 
@@ -173,7 +174,7 @@ Query structured data with [2m--format=json[0m:
   [2mkind[0m                [2m"worktree"[0m or [2m"branch"[0m                                                                            
   [2mcommit[0m              [2m{sha, short_sha, message, timestamp}[0m                                                              
   [2mworking_tree[0m        [2m{staged, modified, untracked, renamed, deleted, diff, diff_vs_main}[0m                               
-  [2mmain_state[0m          [2m"is_main"[0m [2m"would_conflict"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"[0m [2m"behind"[0m                 
+  [2mmain_state[0m          [2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"[0m [2m"behind"[0m         
   [2mintegration_reason[0m  [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"[0m (when [2mmain_state == "integrated"[0m)
   [2moperation_state[0m     [2m"conflicts"[0m [2m"rebase"[0m [2m"merge"[0m (absent when no operation in progress)                               
   [2mmain[0m                [2m{ahead, behind, diff}[0m (absent when [2mis_main[0m)                                                       

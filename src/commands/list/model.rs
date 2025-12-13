@@ -335,9 +335,10 @@ impl ListItem {
     pub(crate) fn is_potentially_removable(&self) -> Option<bool> {
         // Use already-computed status_symbols if available
         let main_state = self.status_symbols.as_ref()?.main_state;
+        // SameCommit excluded: has uncommitted work that would be lost
         Some(matches!(
             main_state,
-            MainState::SameCommit | MainState::Integrated(_)
+            MainState::Empty | MainState::Integrated(_)
         ))
     }
 
@@ -484,8 +485,8 @@ impl ListItem {
                     OperationState::None
                 };
 
-                // Determine integration state (for non-main worktrees)
-                let integration = determine_integration_state(
+                // Check if content is integrated into main (safe to delete)
+                let integration = check_integration_state(
                     data.is_main,
                     default_branch,
                     self.is_ancestor,
@@ -497,11 +498,21 @@ impl ListItem {
                     &data.working_tree_diff_with_main,
                 );
 
+                // Separately detect SameCommit: same commit as main but with uncommitted work
+                // This is NOT an integration state (has work that would be lost on delete)
+                let is_same_commit_dirty = self.is_ancestor == Some(true)
+                    && self.counts.as_ref().is_some_and(|c| c.behind == 0)
+                    && data
+                        .working_tree_diff
+                        .as_ref()
+                        .is_some_and(|d| !d.is_empty());
+
                 // Compute main state: combines is_main, would_conflict, integration, and divergence
                 let main_state = MainState::from_integration_and_counts(
                     data.is_main,
                     has_merge_tree_conflicts,
                     integration,
+                    is_same_commit_dirty,
                     counts.ahead,
                     counts.behind,
                 );
@@ -521,7 +532,7 @@ impl ListItem {
 
                 // Branches don't have working trees, so pass empty diff as "inherently clean"
                 let empty_diff = LineDiff::default();
-                let integration = determine_integration_state(
+                let integration = check_integration_state(
                     false, // branches are never main worktree
                     default_branch,
                     self.is_ancestor,
@@ -534,10 +545,12 @@ impl ListItem {
                 );
 
                 // Compute main state
+                // Branches can't have is_same_commit_dirty (no working tree)
                 let main_state = MainState::from_integration_and_counts(
                     false, // not main
                     has_merge_tree_conflicts,
                     integration,
+                    false, // branches have no working tree, can't be dirty
                     counts.ahead,
                     counts.behind,
                 );
@@ -555,11 +568,16 @@ impl ListItem {
     }
 }
 
-/// Determine integration state for a worktree or branch.
+/// Check if branch content is integrated into main (safe to delete).
 ///
-/// Returns `Some(MainState)` if integrated (SameCommit or Integrated), `None` otherwise.
+/// Returns `Some(MainState)` only for truly integrated states:
+/// - `Empty` = same commit as main with clean working tree
+/// - `Integrated(...)` = content in main via different history
+///
+/// Does NOT detect `SameCommit` (same commit with dirty working tree) -
+/// that's handled separately in the caller since it's not an integration state.
 #[allow(clippy::too_many_arguments)]
-fn determine_integration_state(
+fn check_integration_state(
     is_main: bool,
     default_branch: Option<&str>,
     is_ancestor: Option<bool>,
@@ -578,9 +596,9 @@ fn determine_integration_state(
     // to avoid premature integration state (which would cause UI flash during progressive loading).
     let is_clean = working_tree_diff.is_some_and(|d| d.is_empty());
 
-    // Priority 1: Branch is exactly the same commit as main (ancestor with 0 behind)
+    // Priority 1: Same commit as main + clean working tree = Empty (safe to delete)
     if is_ancestor == Some(true) && behind_main == Some(0) && is_clean {
-        return Some(MainState::SameCommit);
+        return Some(MainState::Empty);
     }
 
     // Priority 2: Branch is ancestor of main but main has moved past (already merged)
@@ -738,11 +756,12 @@ impl serde::Serialize for WorktreeState {
 /// Priority order determines which symbol is shown:
 /// 1. IsMain (^) - this IS the main branch
 /// 2. WouldConflict (✗) - merge-tree simulation shows conflicts
-/// 3. SameCommit (_) - branch HEAD is exactly the same commit as main
-/// 4. Integrated (⊂) - content is in main via different history
-/// 5. Diverged (↕) - both ahead and behind main
-/// 6. Ahead (↑) - has commits main doesn't have
-/// 7. Behind (↓) - missing commits from main
+/// 3. Empty (_) - same commit as main AND clean working tree (safe to delete)
+/// 4. SameCommit (–) - same commit as main with uncommitted changes
+/// 5. Integrated (⊂) - content is in main via different history
+/// 6. Diverged (↕) - both ahead and behind main
+/// 7. Ahead (↑) - has commits main doesn't have
+/// 8. Behind (↓) - missing commits from main
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
 /// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
@@ -755,7 +774,9 @@ pub enum MainState {
     IsMain,
     /// Merge-tree conflicts with main (simulated via git merge-tree)
     WouldConflict,
-    /// Branch HEAD is exactly the same commit as main
+    /// Branch HEAD is same commit as main AND working tree is clean (safe to delete)
+    Empty,
+    /// Branch HEAD is same commit as main but has uncommitted changes
     SameCommit,
     /// Content is integrated into main via different history
     Integrated(IntegrationReason),
@@ -774,7 +795,8 @@ impl std::fmt::Display for MainState {
             Self::None => Ok(()),
             Self::IsMain => write!(f, "^"),
             Self::WouldConflict => write!(f, "✗"),
-            Self::SameCommit => write!(f, "_"),
+            Self::Empty => write!(f, "_"),
+            Self::SameCommit => write!(f, "–"), // en-dash U+2013
             Self::Integrated(_) => write!(f, "⊂"),
             Self::Diverged => write!(f, "↕"),
             Self::Ahead => write!(f, "↑"),
@@ -812,6 +834,7 @@ impl MainState {
             Self::None => None,
             Self::IsMain => Some("is_main"),
             Self::WouldConflict => Some("would_conflict"),
+            Self::Empty => Some("empty"),
             Self::SameCommit => Some("same_commit"),
             Self::Integrated(_) => Some("integrated"),
             Self::Diverged => Some("diverged"),
@@ -820,13 +843,14 @@ impl MainState {
         }
     }
 
-    /// Compute from divergence counts and integration state.
+    /// Compute from divergence counts, integration state, and same-commit-dirty flag.
     ///
-    /// Priority: WouldConflict > integration > Diverged > Ahead > Behind
+    /// Priority: IsMain > WouldConflict > integration > SameCommit > Diverged > Ahead > Behind
     pub fn from_integration_and_counts(
         is_main: bool,
         would_conflict: bool,
         integration: Option<MainState>,
+        is_same_commit_dirty: bool,
         ahead: usize,
         behind: usize,
     ) -> Self {
@@ -836,6 +860,8 @@ impl MainState {
             Self::WouldConflict
         } else if let Some(state) = integration {
             state
+        } else if is_same_commit_dirty {
+            Self::SameCommit
         } else {
             match (ahead, behind) {
                 (0, 0) => Self::None,
@@ -973,7 +999,7 @@ impl PositionMask {
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
             1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > path_mismatch > prunable > locked > branch)
-            1, // MAIN_STATE: ^✗_⊂↕↑↓ (1 char, priority: is_main > would_conflict > same_commit > integrated > diverged > ahead > behind)
+            1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > would_conflict > empty > same_commit > integrated > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
         ],
@@ -1008,10 +1034,11 @@ impl PositionMask {
 /// - /: Branch without worktree
 ///
 /// **Main state (single position with priority):**
-/// Priority: ^ > ✗ > _ > ⊂ > ↕ > ↑ > ↓
+/// Priority: ^ > ✗ > _ > – > ⊂ > ↕ > ↑ > ↓
 /// - ^: This IS the main branch
 /// - ✗: Would conflict if merged to main
-/// - _: Same commit as main (removable)
+/// - _: Same commit as main, clean working tree (removable)
+/// - –: Same commit as main, uncommitted changes (NOT removable)
 /// - ⊂: Content integrated (removable)
 /// - ↕: Diverged from main
 /// - ↑: Ahead of main
@@ -1028,7 +1055,7 @@ impl PositionMask {
 #[derive(Debug, Clone, Default)]
 pub struct StatusSymbols {
     /// Main branch relationship state (single position, horizontal arrows)
-    /// Priority: IsMain (^) > WouldConflict (✗) > SameCommit (_) > Integrated (⊂) > Diverged (↕) > Ahead (↑) > Behind (↓)
+    /// Priority: IsMain (^) > WouldConflict (✗) > Empty (_) > SameCommit (–) > Integrated (⊂) > Diverged (↕) > Ahead (↑) > Behind (↓)
     pub(crate) main_state: MainState,
 
     /// Worktree operation and location state (single position)
@@ -1322,6 +1349,7 @@ mod tests {
             MainState::WouldConflict.as_json_str(),
             Some("would_conflict")
         );
+        assert_eq!(MainState::Empty.as_json_str(), Some("empty"));
         assert_eq!(MainState::SameCommit.as_json_str(), Some("same_commit"));
         assert_eq!(
             MainState::Integrated(IntegrationReason::TreesMatch).as_json_str(),
@@ -1352,6 +1380,7 @@ mod tests {
         assert_eq!(MainState::None.integration_reason(), None);
         assert_eq!(MainState::IsMain.integration_reason(), None);
         assert_eq!(MainState::WouldConflict.integration_reason(), None);
+        assert_eq!(MainState::Empty.integration_reason(), None);
         assert_eq!(MainState::SameCommit.integration_reason(), None);
         assert_eq!(MainState::Diverged.integration_reason(), None);
         assert_eq!(MainState::Ahead.integration_reason(), None);
@@ -1380,20 +1409,27 @@ mod tests {
     fn test_main_state_from_integration_and_counts() {
         // IsMain takes priority
         assert!(matches!(
-            MainState::from_integration_and_counts(true, false, None, 5, 3),
+            MainState::from_integration_and_counts(true, false, None, false, 5, 3),
             MainState::IsMain
         ));
 
         // WouldConflict next
         assert!(matches!(
-            MainState::from_integration_and_counts(false, true, None, 5, 3),
+            MainState::from_integration_and_counts(false, true, None, false, 5, 3),
             MainState::WouldConflict
         ));
 
-        // SameCommit (passed as integration state)
+        // Empty (passed as integration state - same commit with clean working tree)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, Some(MainState::SameCommit), 0, 0),
-            MainState::SameCommit
+            MainState::from_integration_and_counts(
+                false,
+                false,
+                Some(MainState::Empty),
+                false,
+                0,
+                0
+            ),
+            MainState::Empty
         ));
 
         // Integrated (passed as integration state)
@@ -1402,33 +1438,40 @@ mod tests {
                 false,
                 false,
                 Some(MainState::Integrated(IntegrationReason::Ancestor)),
+                false,
                 0,
                 5
             ),
             MainState::Integrated(IntegrationReason::Ancestor)
         ));
 
+        // SameCommit (via is_same_commit_dirty flag, NOT integration)
+        assert!(matches!(
+            MainState::from_integration_and_counts(false, false, None, true, 0, 0),
+            MainState::SameCommit
+        ));
+
         // Diverged (both ahead and behind)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, 3, 2),
+            MainState::from_integration_and_counts(false, false, None, false, 3, 2),
             MainState::Diverged
         ));
 
         // Ahead only
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, 3, 0),
+            MainState::from_integration_and_counts(false, false, None, false, 3, 0),
             MainState::Ahead
         ));
 
         // Behind only
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, 0, 2),
+            MainState::from_integration_and_counts(false, false, None, false, 0, 2),
             MainState::Behind
         ));
 
         // None (in sync)
         assert!(matches!(
-            MainState::from_integration_and_counts(false, false, None, 0, 0),
+            MainState::from_integration_and_counts(false, false, None, false, 0, 0),
             MainState::None
         ));
     }
