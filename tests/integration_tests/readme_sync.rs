@@ -93,6 +93,11 @@ static RUST_RAW_STRING_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 static ZOLA_LINK_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(@/([^)#]+)\.md(#[^)]*)?\)").unwrap());
 
+/// Regex to convert Zola rawcode shortcode to HTML pre tags
+/// Matches: {% rawcode() %}...{% end %}
+static ZOLA_RAWCODE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\{% rawcode\(\) %\}(.*?)\{% end %\}").unwrap());
+
 // =============================================================================
 // Unified Template Infrastructure
 // =============================================================================
@@ -685,13 +690,23 @@ fn heading_to_anchor(heading: &str) -> String {
 /// Converts:
 /// - `[text](@/page.md)` → `[text](https://worktrunk.dev/page/)`
 /// - `[text](@/page.md#anchor)` → `[text](https://worktrunk.dev/page/#anchor)`
+/// - `{% rawcode() %}...{% end %}` → `<pre>...</pre>`
 fn transform_zola_to_github(content: &str) -> String {
-    ZOLA_LINK_PATTERN
+    // Transform internal links
+    let content = ZOLA_LINK_PATTERN
         .replace_all(content, |caps: &regex::Captures| {
             let text = caps.get(1).unwrap().as_str();
             let page = caps.get(2).unwrap().as_str();
             let anchor = caps.get(3).map_or("", |m| m.as_str());
             format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
+        })
+        .into_owned();
+
+    // Transform rawcode shortcodes to pre tags
+    ZOLA_RAWCODE_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            let inner = caps.get(1).unwrap().as_str();
+            format!("<pre>{}</pre>", inner)
         })
         .into_owned()
 }

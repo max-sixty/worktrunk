@@ -40,7 +40,7 @@ Start with the core commands; add workflow automation as needed.
 
 **Core commands:**
 
-<table>
+<table class="cmd-compare">
   <thead>
     <tr>
       <th>Task</th>
