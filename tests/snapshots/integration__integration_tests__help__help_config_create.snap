@@ -141,6 +141,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# - Describe the change, not the intent or benefit
   [2m# </style>
   [2m#
+  [2m# <diffstat>
+  [2m# {{ git_diff_stat }}
+  [2m# </diffstat>
+  [2m#
   [2m# <diff>
   [2m# {{ git_diff }}
   [2m# </diff>
@@ -199,6 +203,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# <commits branch="{{ branch }}" target="{{ target_branch }}">
   [2m# {% for commit in commits %}- {{ commit }}
   [2m# {% endfor %}</commits>
+  [2m#
+  [2m# <diffstat>
+  [2m# {{ git_diff_stat }}
+  [2m# </diffstat>
   [2m#
   [2m# <diff>
   [2m# {{ git_diff }}

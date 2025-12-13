@@ -8,6 +8,160 @@ use worktrunk::path::format_path_for_display;
 
 use minijinja::Environment;
 
+/// Maximum diff size in characters before filtering kicks in
+const DIFF_SIZE_THRESHOLD: usize = 400_000;
+
+/// Maximum lines per file after truncation
+const MAX_LINES_PER_FILE: usize = 50;
+
+/// Maximum number of files to include after truncation
+const MAX_FILES: usize = 50;
+
+/// Lock file patterns that are filtered out when diff is too large
+const LOCK_FILE_PATTERNS: &[&str] = &[".lock", "-lock.json", "-lock.yaml", ".lock.hcl"];
+
+/// Prepared diff output with optional filtering applied
+struct PreparedDiff {
+    /// The diff content (possibly filtered/truncated)
+    diff: String,
+    /// The diffstat output
+    stat: String,
+}
+
+/// Check if a filename matches lock file patterns
+fn is_lock_file(filename: &str) -> bool {
+    LOCK_FILE_PATTERNS
+        .iter()
+        .any(|pattern| filename.ends_with(pattern))
+}
+
+/// Parse a diff into individual file sections
+///
+/// Returns Vec of (filename, diff_content) pairs
+fn parse_diff_sections(diff: &str) -> Vec<(&str, &str)> {
+    let mut sections = Vec::new();
+    let mut current_file: Option<&str> = None;
+    let mut section_start_byte = 0;
+    let mut current_byte = 0;
+
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            // Save previous section
+            if let Some(file) = current_file
+                && current_byte > section_start_byte
+            {
+                sections.push((file, &diff[section_start_byte..current_byte]));
+            }
+
+            // Extract filename from "diff --git a/path b/path"
+            current_file = line.split(" b/").nth(1);
+            section_start_byte = current_byte;
+        }
+        current_byte += line.len() + 1; // +1 for newline
+    }
+
+    // Save final section
+    if let Some(file) = current_file
+        && section_start_byte < diff.len()
+    {
+        sections.push((file, &diff[section_start_byte..]));
+    }
+
+    sections
+}
+
+/// Truncate a diff section to max lines, keeping the header
+fn truncate_diff_section(section: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = section.lines().collect();
+    if lines.len() <= max_lines {
+        return section.to_string();
+    }
+
+    // Find where the actual diff content starts (after the @@ line)
+    let header_end = lines.iter().position(|l| l.starts_with("@@")).unwrap_or(0);
+    let header_lines = header_end + 1; // Include the first @@ line
+
+    let content_lines = max_lines.saturating_sub(header_lines);
+    let total_lines = header_lines + content_lines;
+
+    let mut result: String = lines
+        .iter()
+        .take(total_lines)
+        .map(|l| format!("{}\n", l))
+        .collect();
+    let omitted = lines.len() - total_lines;
+    if omitted > 0 {
+        result.push_str(&format!("\n... ({} lines omitted)\n", omitted));
+    }
+
+    result
+}
+
+/// Prepare diff for LLM consumption, applying filtering if needed
+fn prepare_diff(diff: String, stat: String) -> PreparedDiff {
+    // If under threshold, pass through unchanged
+    if diff.len() < DIFF_SIZE_THRESHOLD {
+        return PreparedDiff { diff, stat };
+    }
+
+    log::debug!(
+        "Diff size ({} chars) exceeds threshold ({}), filtering",
+        diff.len(),
+        DIFF_SIZE_THRESHOLD
+    );
+
+    // Step 1: Filter out lock files
+    let sections = parse_diff_sections(&diff);
+    let filtered_sections: Vec<_> = sections
+        .iter()
+        .filter(|(filename, _)| !is_lock_file(filename))
+        .collect();
+
+    let lock_files_removed = sections.len() - filtered_sections.len();
+    if lock_files_removed > 0 {
+        log::debug!("Filtered out {} lock file(s)", lock_files_removed);
+    }
+
+    let filtered_diff: String = filtered_sections
+        .iter()
+        .map(|(_, content)| *content)
+        .collect();
+
+    // If filtering lock files brought us under threshold, we're done
+    if filtered_diff.len() < DIFF_SIZE_THRESHOLD {
+        return PreparedDiff {
+            diff: filtered_diff,
+            stat,
+        };
+    }
+
+    // Step 2: Truncate each file and limit file count
+    log::debug!(
+        "Still too large ({} chars), truncating to {} lines/file, {} files max",
+        filtered_diff.len(),
+        MAX_LINES_PER_FILE,
+        MAX_FILES
+    );
+
+    let truncated: String = filtered_sections
+        .iter()
+        .take(MAX_FILES)
+        .map(|(_, content)| truncate_diff_section(content, MAX_LINES_PER_FILE))
+        .collect();
+
+    let files_omitted = filtered_sections.len().saturating_sub(MAX_FILES);
+    let final_diff = if files_omitted > 0 {
+        format!("{}\n... ({} files omitted)\n", truncated, files_omitted)
+    } else {
+        truncated
+    };
+
+    PreparedDiff {
+        diff: final_diff,
+        stat,
+    }
+}
+
 /// Context data for building LLM prompts
 ///
 /// All fields are available to both commit and squash templates.
@@ -15,6 +169,8 @@ use minijinja::Environment;
 struct TemplateContext<'a> {
     /// The diff to describe (staged changes for commit, combined diff for squash)
     git_diff: &'a str,
+    /// Diff statistics summary (output of git diff --stat)
+    git_diff_stat: &'a str,
     /// Current branch name
     branch: &'a str,
     /// Recent commit subjects for style reference
@@ -52,6 +208,10 @@ const DEFAULT_TEMPLATE: &str = r#"Write a commit message for the staged changes 
 - Describe the change, not the intent or benefit
 </style>
 
+<diffstat>
+{{ git_diff_stat }}
+</diffstat>
+
 <diff>
 {{ git_diff }}
 </diff>
@@ -83,6 +243,10 @@ const DEFAULT_SQUASH_TEMPLATE: &str = r#"Combine these commits into a single com
 <commits branch="{{ branch }}" target="{{ target_branch }}">
 {% for commit in commits %}- {{ commit }}
 {% endfor %}</commits>
+
+<diffstat>
+{{ git_diff_stat }}
+</diffstat>
 
 <diff>
 {{ git_diff }}
@@ -232,6 +396,7 @@ fn build_prompt(
 
     let rendered = tmpl.render(minijinja::context! {
         git_diff => context.git_diff,
+        git_diff_stat => context.git_diff_stat,
         branch => context.branch,
         recent_commits => context.recent_commits.unwrap_or(&vec![]),
         repo => context.repo_name,
@@ -295,8 +460,22 @@ fn try_generate_commit_message(
 ) -> anyhow::Result<String> {
     let repo = Repository::current();
 
-    // Get staged diff
-    let diff_output = repo.run_command(&["--no-pager", "diff", "--staged"])?;
+    // Get staged diff and diffstat
+    // Use -c flags to ensure consistent format regardless of user's git config
+    // (diff.noprefix, diff.mnemonicPrefix, etc. could break our parsing)
+    let diff_output = repo.run_command(&[
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "--no-pager",
+        "diff",
+        "--staged",
+    ])?;
+    let diff_stat = repo.run_command(&["--no-pager", "diff", "--staged", "--stat"])?;
+
+    // Prepare diff (may filter if too large)
+    let prepared = prepare_diff(diff_output, diff_stat);
 
     // Get current branch
     let current_branch = repo.current_branch()?.unwrap_or_else(|| "HEAD".to_string());
@@ -322,7 +501,8 @@ fn try_generate_commit_message(
 
     // Build prompt from template
     let context = TemplateContext {
-        git_diff: &diff_output,
+        git_diff: &prepared.diff,
+        git_diff_stat: &prepared.stat,
         branch: &current_branch,
         recent_commits: recent_commits.as_ref(),
         repo_name,
@@ -347,9 +527,23 @@ pub fn generate_squash_message(
         let command = commit_generation_config.command.as_ref().unwrap();
         let args = &commit_generation_config.args;
 
-        // Get the combined diff for all commits being squashed
+        // Get the combined diff and diffstat for all commits being squashed
+        // Use -c flags to ensure consistent format regardless of user's git config
         let repo = Repository::current();
-        let diff_output = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD"])?;
+        let diff_output = repo.run_command(&[
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "--no-pager",
+            "diff",
+            merge_base,
+            "HEAD",
+        ])?;
+        let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
+
+        // Prepare diff (may filter if too large)
+        let prepared = prepare_diff(diff_output, diff_stat);
 
         // Get recent commit messages for style reference (from before the commits being squashed)
         let recent_commits = repo
@@ -372,7 +566,8 @@ pub fn generate_squash_message(
 
         // Build prompt from template with all variables
         let context = TemplateContext {
-            git_diff: &diff_output,
+            git_diff: &prepared.diff,
+            git_diff_stat: &prepared.stat,
             branch: current_branch,
             recent_commits: recent_commits.as_ref(),
             repo_name,
@@ -414,6 +609,10 @@ index abc1234..def5678 100644
  }
 "#;
 
+/// Synthetic diffstat for testing commit generation
+const SYNTHETIC_DIFF_STAT: &str = " src/main.rs | 4 ++++
+ 1 file changed, 4 insertions(+)";
+
 /// Test commit generation with a synthetic diff.
 ///
 /// Returns Ok(message) if the LLM command succeeds, or an error describing
@@ -438,6 +637,7 @@ pub fn test_commit_generation(
     ];
     let context = TemplateContext {
         git_diff: SYNTHETIC_DIFF,
+        git_diff_stat: SYNTHETIC_DIFF_STAT,
         branch: "feature/example",
         recent_commits: Some(&recent_commits),
         repo_name: "test-repo",
@@ -468,6 +668,7 @@ mod tests {
     ) -> TemplateContext<'a> {
         TemplateContext {
             git_diff,
+            git_diff_stat: "",
             branch,
             recent_commits,
             repo_name,
@@ -487,6 +688,7 @@ mod tests {
     ) -> TemplateContext<'a> {
         TemplateContext {
             git_diff,
+            git_diff_stat: "",
             branch,
             recent_commits,
             repo_name,
@@ -983,5 +1185,125 @@ Single commit: {{ commits[0] }}
         let prompt = result.unwrap();
         // Squash-specific variables are empty for regular commits
         assert_eq!(prompt, "Branch: feature\nTarget: \nCommits: 0");
+    }
+
+    // Tests for diff filtering
+
+    #[test]
+    fn test_is_lock_file() {
+        assert!(is_lock_file("Cargo.lock"));
+        assert!(is_lock_file("package-lock.json"));
+        assert!(is_lock_file("pnpm-lock.yaml"));
+        assert!(is_lock_file(".terraform.lock.hcl"));
+        assert!(is_lock_file("path/to/Cargo.lock"));
+
+        assert!(!is_lock_file("src/main.rs"));
+        assert!(!is_lock_file("lockfile.txt"));
+        assert!(!is_lock_file("my.lock.rs")); // Not a standard lock pattern
+    }
+
+    #[test]
+    fn test_parse_diff_sections() {
+        let diff = r#"diff --git a/src/foo.rs b/src/foo.rs
+index abc..def 100644
+--- a/src/foo.rs
++++ b/src/foo.rs
+@@ -1,3 +1,4 @@
+ fn foo() {}
++fn bar() {}
+diff --git a/Cargo.lock b/Cargo.lock
+index 111..222 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,100 +1,150 @@
+ lots of lock content
+"#;
+
+        let sections = parse_diff_sections(diff);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].0, "src/foo.rs");
+        assert!(sections[0].1.contains("fn foo()"));
+        assert_eq!(sections[1].0, "Cargo.lock");
+        assert!(sections[1].1.contains("lots of lock content"));
+    }
+
+    #[test]
+    fn test_truncate_diff_section() {
+        let section = r#"diff --git a/file.rs b/file.rs
+index abc..def 100644
+--- a/file.rs
++++ b/file.rs
+@@ -1,10 +1,15 @@
+ line 1
+ line 2
+ line 3
+ line 4
+ line 5
+ line 6
+ line 7
+ line 8
+ line 9
+ line 10
+"#;
+
+        // Truncate to 8 lines (should keep header + first few content lines)
+        let truncated = truncate_diff_section(section, 8);
+        assert!(truncated.contains("diff --git"));
+        assert!(truncated.contains("@@"));
+        assert!(truncated.contains("... ("));
+        assert!(truncated.contains("lines omitted)"));
+    }
+
+    #[test]
+    fn test_prepare_diff_small_diff_passes_through() {
+        let diff = "small diff".to_string();
+        let stat = "1 file changed".to_string();
+
+        let prepared = prepare_diff(diff.clone(), stat.clone());
+        assert_eq!(prepared.diff, diff);
+        assert_eq!(prepared.stat, stat);
+    }
+
+    #[test]
+    fn test_prepare_diff_filters_lock_files() {
+        // Create a diff just over the threshold with a lock file
+        let regular_content = "x".repeat(100_000);
+        let lock_content = "y".repeat(350_000);
+
+        let diff = format!(
+            r#"diff --git a/src/main.rs b/src/main.rs
+{}
+diff --git a/Cargo.lock b/Cargo.lock
+{}
+"#,
+            regular_content, lock_content
+        );
+        let stat = "2 files changed".to_string();
+
+        let prepared = prepare_diff(diff, stat);
+
+        // Lock file should be filtered out
+        assert!(!prepared.diff.contains("Cargo.lock"));
+        assert!(prepared.diff.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_prepare_diff_filters_then_truncates() {
+        // Create many non-lock files that exceed threshold even after lock filtering
+        let mut diff = String::new();
+        for i in 0..100 {
+            diff.push_str(&format!(
+                "diff --git a/file{}.rs b/file{}.rs\n{}\n",
+                i,
+                i,
+                "x".repeat(5000)
+            ));
+        }
+
+        let stat = "100 files changed".to_string();
+        let prepared = prepare_diff(diff, stat);
+
+        // Should be truncated (max 50 files)
+        assert!(prepared.diff.contains("files omitted"));
     }
 }

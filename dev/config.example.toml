@@ -96,6 +96,10 @@ approved-commands = ["npm install"]
 # - Describe the change, not the intent or benefit
 # </style>
 #
+# <diffstat>
+# {{ git_diff_stat }}
+# </diffstat>
+#
 # <diff>
 # {{ git_diff }}
 # </diff>
@@ -154,6 +158,10 @@ approved-commands = ["npm install"]
 # <commits branch="{{ branch }}" target="{{ target_branch }}">
 # {% for commit in commits %}- {{ commit }}
 # {% endfor %}</commits>
+#
+# <diffstat>
+# {{ git_diff_stat }}
+# </diffstat>
 #
 # <diff>
 # {{ git_diff }}
