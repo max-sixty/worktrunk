@@ -22,21 +22,21 @@ Here's a quick demo:
 
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#git-worktrees-are-a-great-primitive..worktrunk-makes-git-worktrees-easy — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-easy — edit source to update -->
 
-## Git worktrees are a great primitive
+## Context: git worktrees
 
-For context, AI agents like Claude Code and Codex can increasingly handle longer tasks
-without supervision, and it's very practical to run several in parallel. Git
-worktrees provide each agent with its own working directory, avoiding agents
-stepping on each other's changes.
+AI agents like Claude Code and Codex can handle longer tasks without supervision,
+and running several in parallel is practical. Git worktrees give each agent its
+own working directory — no stepping on each other's changes.
 
-But the git worktree UX is clunky. Even something as simple as "start a new worktree" is verbose:
-`git worktree add -b feature ../repo.feature`, then `cd ../repo.feature`.
+But the git worktree UX is clunky. Even starting a new worktree means typing the
+branch name three times: `git worktree add -b feature ../repo.feature`, then
+`cd ../repo.feature`.
 
 ## Worktrunk makes git worktrees easy
 
-Worktrunk makes git worktrees easy to use — branch-based navigation, unified status, and workflow automation.
+Start with the core commands; add workflow automation as needed.
 
 **Core commands:**
 
