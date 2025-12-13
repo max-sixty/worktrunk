@@ -22,19 +22,19 @@ Here's a quick demo:
 
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 
-<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-easy — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#context-git-worktrees..worktrunk-makes-git-worktrees-simple — edit source to update -->
 
 ## Context: git worktrees
 
-AI agents like Claude Code and Codex can handle longer tasks without supervision,
-and running several in parallel is practical. Git worktrees give each agent its
-own working directory — no stepping on each other's changes.
+AI agents like Claude Code and Codex can handle longer tasks without
+supervision, such that it's possible to manage 5-10+ in parallel. Git worktrees
+give each agent its own working directory; no stepping on each other's changes.
 
-But the git worktree UX is clunky. Even starting a new worktree means typing the
-branch name three times: `git worktree add -b feature ../repo.feature`, then
-`cd ../repo.feature`.
+But the git worktree UX is clunky. Even a task as simple as starting a new
+worktree requires typing the branch name three times: `git worktree add -b feature
+../repo.feature`, then `cd ../repo.feature`.
 
-## Worktrunk makes git worktrees easy
+## Worktrunk makes git worktrees simple
 
 Start with the core commands; add workflow automation as needed.
 
@@ -81,7 +81,7 @@ git branch -d feature</pre></td>
 - **[Lifecycle hooks](https://worktrunk.dev/hook/)** — run commands on create, pre-merge, post-merge
 - **[LLM commit messages](https://worktrunk.dev/llm-commits/)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
-- ...and [lots more](#next-steps)
+- ...and **[lots more](#next-steps)**
 
 <!-- END AUTO-GENERATED -->
 
@@ -107,7 +107,9 @@ $ wt config shell install
 
 - Learn the core commands: [wt switch](https://worktrunk.dev/switch/), [wt list](https://worktrunk.dev/list/), [wt merge](https://worktrunk.dev/merge/), [wt remove](https://worktrunk.dev/remove/)
 - Set up [project hooks](https://worktrunk.dev/hook/) for automated setup
-- Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [fzf-like picker](https://worktrunk.dev/select/), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI status & PR links](https://worktrunk.dev/list/#ci-status)
+- Explore [LLM commit messages](https://worktrunk.dev/llm-commits/), [fzf-like
+  selector](https://worktrunk.dev/select/), [Claude Code integration](https://worktrunk.dev/claude-code/), [CI
+  status & PR links](https://worktrunk.dev/list/#ci-status)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading

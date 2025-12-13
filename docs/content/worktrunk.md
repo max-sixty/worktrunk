@@ -17,15 +17,15 @@ Here's a quick demo:
 
 ## Context: git worktrees
 
-AI agents like Claude Code and Codex can handle longer tasks without supervision,
-and running several in parallel is practical. Git worktrees give each agent its
-own working directory — no stepping on each other's changes.
+AI agents like Claude Code and Codex can handle longer tasks without
+supervision, such that it's possible to manage 5-10+ in parallel. Git worktrees
+give each agent its own working directory; no stepping on each other's changes.
 
-But the git worktree UX is clunky. Even starting a new worktree means typing the
-branch name three times: `git worktree add -b feature ../repo.feature`, then
-`cd ../repo.feature`.
+But the git worktree UX is clunky. Even a task as simple as starting a new
+worktree requires typing the branch name three times: `git worktree add -b feature
+../repo.feature`, then `cd ../repo.feature`.
 
-## Worktrunk makes git worktrees easy
+## Worktrunk makes git worktrees simple
 
 Start with the core commands; add workflow automation as needed.
 
@@ -72,7 +72,7 @@ git branch -d feature{% end %}</td>
 - **[Lifecycle hooks](@/hook.md)** — run commands on create, pre-merge, post-merge
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
-- ...and [lots more](#next-steps)
+- ...and **[lots more](#next-steps)**
 
 ## Install
 
@@ -94,7 +94,9 @@ $ wt config shell install
 
 - Learn the core commands: [wt switch](@/switch.md), [wt list](@/list.md), [wt merge](@/merge.md), [wt remove](@/remove.md)
 - Set up [project hooks](@/hook.md) for automated setup
-- Explore [LLM commit messages](@/llm-commits.md), [fzf-like picker](@/select.md), [Claude Code integration](@/claude-code.md), [CI status & PR links](@/list.md#ci-status)
+- Explore [LLM commit messages](@/llm-commits.md), [fzf-like
+  selector](@/select.md), [Claude Code integration](@/claude-code.md), [CI
+  status & PR links](@/list.md#ci-status)
 - Run `wt --help` or `wt <command> --help` for quick CLI reference
 
 ## Further reading
