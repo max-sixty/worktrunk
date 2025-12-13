@@ -887,6 +887,12 @@ pub enum StepCommand {
         /// What to stage before committing [default: all]
         #[arg(long)]
         stage: Option<crate::commands::commit::StageMode>,
+
+        /// Show prompt without running LLM
+        ///
+        /// Outputs the rendered prompt to stdout for debugging or manual piping.
+        #[arg(long)]
+        show_prompt: bool,
     },
 
     /// Squash commits down to target
@@ -910,6 +916,12 @@ pub enum StepCommand {
         /// What to stage before committing [default: all]
         #[arg(long)]
         stage: Option<crate::commands::commit::StageMode>,
+
+        /// Show prompt without running LLM
+        ///
+        /// Outputs the rendered prompt to stdout for debugging or manual piping.
+        #[arg(long)]
+        show_prompt: bool,
     },
 
     /// Push changes to local target branch

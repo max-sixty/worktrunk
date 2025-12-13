@@ -192,6 +192,24 @@ fn format_command_display(command: &str, args: &[String]) -> String {
     }
 }
 
+/// Get recent commit subjects for style reference.
+///
+/// If `start_ref` is provided, gets commits starting from that ref (exclusive).
+/// Otherwise gets commits from HEAD.
+fn get_recent_commits(repo: &Repository, start_ref: Option<&str>) -> Option<Vec<String>> {
+    let mut args = vec!["log", "--pretty=format:%s", "-n", "5", "--no-merges"];
+    if let Some(ref_name) = start_ref {
+        args.push(ref_name);
+    }
+    repo.run_command(&args).ok().and_then(|output| {
+        if output.trim().is_empty() {
+            None
+        } else {
+            Some(output.lines().map(String::from).collect())
+        }
+    })
+}
+
 /// Default template for commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
@@ -458,6 +476,15 @@ fn try_generate_commit_message(
     args: &[String],
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
+    let prompt = build_commit_prompt(config)?;
+    execute_llm_command(command, args, &prompt)
+}
+
+/// Build the commit prompt from staged changes.
+///
+/// Gathers the staged diff, branch name, repo name, and recent commits, then renders
+/// the prompt template. Used by both normal commit generation and `--show-prompt`.
+pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
     let repo = Repository::current();
 
     // Get staged diff and diffstat
@@ -487,19 +514,8 @@ fn try_generate_commit_message(
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    // Get recent commit messages for style reference
-    let recent_commits = repo
-        .run_command(&["log", "--pretty=format:%s", "-n", "5", "--no-merges"])
-        .ok()
-        .and_then(|output| {
-            if output.trim().is_empty() {
-                None
-            } else {
-                Some(output.lines().map(String::from).collect::<Vec<_>>())
-            }
-        });
+    let recent_commits = get_recent_commits(&repo, None);
 
-    // Build prompt from template
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
@@ -509,9 +525,7 @@ fn try_generate_commit_message(
         commits: &[],
         target_branch: None,
     };
-    let prompt = build_prompt(config, TemplateType::Commit, &context)?;
-
-    execute_llm_command(command, args, &prompt)
+    build_prompt(config, TemplateType::Commit, &context)
 }
 
 pub fn generate_squash_message(
@@ -527,54 +541,14 @@ pub fn generate_squash_message(
         let command = commit_generation_config.command.as_ref().unwrap();
         let args = &commit_generation_config.args;
 
-        // Get the combined diff and diffstat for all commits being squashed
-        // Use -c flags to ensure consistent format regardless of user's git config
-        let repo = Repository::current();
-        let diff_output = repo.run_command(&[
-            "-c",
-            "diff.noprefix=false",
-            "-c",
-            "diff.mnemonicPrefix=false",
-            "--no-pager",
-            "diff",
+        let prompt = build_squash_prompt(
+            target_branch,
             merge_base,
-            "HEAD",
-        ])?;
-        let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
-
-        // Prepare diff (may filter if too large)
-        let prepared = prepare_diff(diff_output, diff_stat);
-
-        // Get recent commit messages for style reference (from before the commits being squashed)
-        let recent_commits = repo
-            .run_command(&[
-                "log",
-                "--pretty=format:%s",
-                "-n",
-                "5",
-                "--no-merges",
-                merge_base,
-            ])
-            .ok()
-            .and_then(|output| {
-                if output.trim().is_empty() {
-                    None
-                } else {
-                    Some(output.lines().map(String::from).collect::<Vec<_>>())
-                }
-            });
-
-        // Build prompt from template with all variables
-        let context = TemplateContext {
-            git_diff: &prepared.diff,
-            git_diff_stat: &prepared.stat,
-            branch: current_branch,
-            recent_commits: recent_commits.as_ref(),
+            subjects,
+            current_branch,
             repo_name,
-            commits: subjects,
-            target_branch: Some(target_branch),
-        };
-        let prompt = build_prompt(commit_generation_config, TemplateType::Squash, &context)?;
+            commit_generation_config,
+        )?;
 
         return execute_llm_command(command, args, &prompt).map_err(|e| {
             worktrunk::git::GitError::LlmCommandFailed {
@@ -593,6 +567,50 @@ pub fn generate_squash_message(
         commit_message.push_str(&format!("- {}\n", subject));
     }
     Ok(commit_message)
+}
+
+/// Build the squash prompt from commits being squashed.
+///
+/// Gathers the combined diff, commit subjects, branch names, and recent commits, then
+/// renders the prompt template. Used by both normal squash generation and `--show-prompt`.
+pub fn build_squash_prompt(
+    target_branch: &str,
+    merge_base: &str,
+    subjects: &[String],
+    current_branch: &str,
+    repo_name: &str,
+    config: &CommitGenerationConfig,
+) -> anyhow::Result<String> {
+    let repo = Repository::current();
+
+    // Get the combined diff and diffstat for all commits being squashed
+    // Use -c flags to ensure consistent format regardless of user's git config
+    let diff_output = repo.run_command(&[
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "--no-pager",
+        "diff",
+        merge_base,
+        "HEAD",
+    ])?;
+    let diff_stat = repo.run_command(&["--no-pager", "diff", merge_base, "HEAD", "--stat"])?;
+
+    // Prepare diff (may filter if too large)
+    let prepared = prepare_diff(diff_output, diff_stat);
+
+    let recent_commits = get_recent_commits(&repo, Some(merge_base));
+    let context = TemplateContext {
+        git_diff: &prepared.diff,
+        git_diff_stat: &prepared.stat,
+        branch: current_branch,
+        recent_commits: recent_commits.as_ref(),
+        repo_name,
+        commits: subjects,
+        target_branch: Some(target_branch),
+    };
+    build_prompt(config, TemplateType::Squash, &context)
 }
 
 /// Synthetic diff for testing commit generation

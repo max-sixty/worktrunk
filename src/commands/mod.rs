@@ -34,7 +34,7 @@ pub use merge::{execute_pre_remove_commands, handle_merge};
 pub use select::handle_select;
 pub use standalone::{
     RebaseResult, SquashResult, add_approvals, clear_approvals, handle_hook_show, handle_rebase,
-    handle_squash, run_hook, step_commit,
+    handle_squash, run_hook, step_commit, step_show_squash_prompt,
 };
 pub use worktree::{
     compute_worktree_path, handle_remove, handle_remove_by_path, handle_remove_current,

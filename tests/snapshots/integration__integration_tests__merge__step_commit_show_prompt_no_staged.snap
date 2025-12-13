@@ -1,0 +1,58 @@
+---
+source: tests/integration_tests/merge.rs
+info:
+  program: wt
+  args:
+    - step
+    - commit
+    - "--show-prompt"
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+Write a commit message for the staged changes below.
+
+<format>
+- Subject under 50 chars, blank line, then optional body
+- Output only the commit message, no quotes or code blocks
+</format>
+
+<style>
+- Imperative mood: "Add feature" not "Added feature"
+- Match recent commit style (conventional commits if used)
+- Describe the change, not the intent or benefit
+</style>
+
+<diffstat>
+
+</diffstat>
+
+<diff>
+
+</diff>
+
+<context>
+Branch: main
+<recent_commits>
+- Initial commit
+</recent_commits>
+</context>
+
+----- stderr -----

@@ -2603,3 +2603,52 @@ fn test_merge_error_conflicting_changes_in_target(mut repo_with_alternate_primar
         Some(&feature_wt),
     );
 }
+
+// =============================================================================
+// --show-prompt tests
+// =============================================================================
+
+#[rstest]
+fn test_step_commit_show_prompt(repo: TestRepo) {
+    // Create some staged changes so there's a diff to include in the prompt
+    fs::write(repo.root_path().join("new_file.txt"), "new content").expect("Failed to write file");
+    repo.git_command(&["add", "new_file.txt"]);
+
+    // The prompt should be written to stdout
+    snapshot_step_commit_with_env(
+        "step_commit_show_prompt",
+        &repo,
+        &["--show-prompt"],
+        None,
+        &[],
+    );
+}
+
+#[rstest]
+fn test_step_commit_show_prompt_no_staged_changes(repo: TestRepo) {
+    // No staged changes - should still output the prompt (with empty diff)
+    snapshot_step_commit_with_env(
+        "step_commit_show_prompt_no_staged",
+        &repo,
+        &["--show-prompt"],
+        None,
+        &[],
+    );
+}
+
+#[rstest]
+fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
+    let repo = repo_with_multi_commit_feature;
+
+    // Get the feature worktree path
+    let feature_wt = repo.worktree_path("feature");
+
+    // Should output the squash prompt with commits and diff
+    snapshot_step_squash_with_env(
+        "step_squash_show_prompt",
+        &repo,
+        &["--show-prompt"],
+        Some(feature_wt),
+        &[],
+    );
+}

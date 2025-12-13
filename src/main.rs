@@ -1010,25 +1010,35 @@ fn main() {
                 force,
                 verify,
                 stage,
+                show_prompt,
             } => WorktrunkConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
                     let stage_final = stage
                         .or_else(|| config.commit.and_then(|c| c.stage))
                         .unwrap_or_default();
-                    step_commit(force, !verify, stage_final)
+                    step_commit(force, !verify, stage_final, show_prompt)
                 }),
             StepCommand::Squash {
                 target,
                 force,
                 verify,
                 stage,
+                show_prompt,
             } => WorktrunkConfig::load()
                 .context("Failed to load config")
                 .and_then(|config| {
                     let stage_final = stage
                         .or_else(|| config.commit.and_then(|c| c.stage))
                         .unwrap_or_default();
+
+                    // Handle --show-prompt early: just build and output the prompt
+                    if show_prompt {
+                        return commands::step_show_squash_prompt(
+                            target.as_deref(),
+                            &config.commit_generation,
+                        );
+                    }
 
                     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
                     // Shadow verify: if user declines approval, skip hooks but continue squash

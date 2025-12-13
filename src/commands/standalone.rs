@@ -142,8 +142,17 @@ pub fn step_commit(
     force: bool,
     no_verify: bool,
     stage_mode: super::commit::StageMode,
+    show_prompt: bool,
 ) -> anyhow::Result<()> {
     use super::command_approval::approve_hooks;
+
+    // Handle --show-prompt early: just build and output the prompt
+    if show_prompt {
+        let config = WorktrunkConfig::load().context("Failed to load config")?;
+        let prompt = crate::llm::build_commit_prompt(&config.commit_generation)?;
+        crate::output::data(prompt)?;
+        return Ok(());
+    }
 
     let env = CommandEnv::for_action("commit")?;
     let ctx = env.context(force);
@@ -396,6 +405,47 @@ pub fn handle_squash(
     )))?;
 
     Ok(SquashResult::Squashed)
+}
+
+/// Handle `wt step squash --show-prompt`
+///
+/// Builds and outputs the squash prompt without running the LLM or squashing.
+pub fn step_show_squash_prompt(
+    target: Option<&str>,
+    config: &worktrunk::config::CommitGenerationConfig,
+) -> anyhow::Result<()> {
+    let repo = Repository::current();
+
+    // Get target branch (default to default branch if not provided)
+    let target_branch = repo.resolve_target_branch(target)?;
+
+    // Get current branch
+    let current_branch = repo.current_branch()?.unwrap_or_else(|| "HEAD".to_string());
+
+    // Get merge base with target branch
+    let merge_base = repo.merge_base("HEAD", &target_branch)?;
+
+    // Get commit subjects for the squash message
+    let range = format!("{}..HEAD", merge_base);
+    let subjects = repo.commit_subjects(&range)?;
+
+    // Get repo name from directory
+    let repo_root = repo.worktree_root()?;
+    let repo_name = repo_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo");
+
+    let prompt = crate::llm::build_squash_prompt(
+        &target_branch,
+        &merge_base,
+        &subjects,
+        &current_branch,
+        repo_name,
+        config,
+    )?;
+    crate::output::data(prompt)?;
+    Ok(())
 }
 
 /// Result of a rebase operation
