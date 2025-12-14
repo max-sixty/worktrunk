@@ -7,8 +7,11 @@
 ```
 
 Creates:
-- `docs/demos/wt-select/out/wt-select.gif` - Animated demo
+- `docs/demos/wt-select/out/wt-select.gif` - Light theme demo
+- `docs/demos/wt-select/out/wt-select-dark.gif` - Dark theme demo
 - Demo repo at `docs/demos/wt-select/out/.demo-select/` (gitignored)
+
+Theme colors are defined in `docs/demos/themes.py` to match the doc site's CSS variables.
 
 ## Demo Goals
 

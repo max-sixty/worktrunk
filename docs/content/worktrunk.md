@@ -11,7 +11,10 @@ becomes as simple as scaling git branches.
 Here's a quick demo:
 
 <figure class="demo">
-<img src="/assets/wt-demo.gif" alt="Worktrunk demo showing wt list, wt switch, and wt merge" width="1600" height="900">
+<picture>
+  <source srcset="/assets/wt-demo-dark.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/wt-demo.gif" alt="Worktrunk demo showing wt list, wt switch, and wt merge" width="1600" height="900">
+</picture>
 <figcaption>Listing worktrees, creating a worktree, working, merging back</figcaption>
 </figure>
 

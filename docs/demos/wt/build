@@ -15,6 +15,7 @@ DEMOS_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(DEMOS_DIR))
 
 from lib import DemoEnv, run, git, render_tape, record_vhs, build_wt, REAL_HOME
+from themes import THEMES, format_theme_for_vhs
 
 REPO_ROOT = DEMOS_DIR.parent.parent
 FIXTURES_DIR = SCRIPT_DIR / "fixtures"
@@ -22,7 +23,12 @@ OUT_DIR = SCRIPT_DIR / "out"
 TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
 TAPE_RENDERED = OUT_DIR / ".rendered.tape"
 STARSHIP_CONFIG = OUT_DIR / "starship.toml"
-OUTPUT_GIF = OUT_DIR / "wt-demo.gif"
+
+# Output GIF paths for light and dark variants
+OUTPUT_GIFS = {
+    "light": OUT_DIR / "wt-demo.gif",
+    "dark": OUT_DIR / "wt-demo-dark.gif",
+}
 
 
 def commit_dated(repo, message, offset):
@@ -302,28 +308,34 @@ def main():
     record_text(text_env)
 
     prepare_repo(vhs_env)
-    replacements = {
-        "DEMO_REPO": vhs_env.repo,
-        "DEMO_HOME": vhs_env.home,
-        "REAL_HOME": REAL_HOME,
-        "STARSHIP_CONFIG": STARSHIP_CONFIG,
-        "OUTPUT_GIF": OUTPUT_GIF,
-        "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
-    }
-    render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements)
-    record_vhs(TAPE_RENDERED)
 
-    # Cleanup
-    TAPE_RENDERED.unlink(missing_ok=True)
-
-    # Copy to docs for local preview
+    # Record both light and dark variants
     docs_assets = REPO_ROOT / "docs" / "static" / "assets"
     docs_assets.mkdir(parents=True, exist_ok=True)
-    shutil.copy(OUTPUT_GIF, docs_assets / "wt-demo.gif")
 
-    print(f"GIF saved to {OUTPUT_GIF}")
-    print(f"Copied to {docs_assets / 'wt-demo.gif'}")
-    print(f"Text log saved to {OUT_DIR / 'run.txt'}")
+    for theme_name, output_gif in OUTPUT_GIFS.items():
+        theme = THEMES[theme_name]
+        replacements = {
+            "DEMO_REPO": vhs_env.repo,
+            "DEMO_HOME": vhs_env.home,
+            "REAL_HOME": REAL_HOME,
+            "STARSHIP_CONFIG": STARSHIP_CONFIG,
+            "OUTPUT_GIF": output_gif,
+            "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
+            "THEME": format_theme_for_vhs(theme),
+        }
+        render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements)
+        print(f"\nRecording {theme_name} GIF...")
+        record_vhs(TAPE_RENDERED)
+        TAPE_RENDERED.unlink(missing_ok=True)
+        print(f"GIF saved to {output_gif}")
+
+        # Copy to docs for local preview
+        asset_name = output_gif.name
+        shutil.copy(output_gif, docs_assets / asset_name)
+        print(f"Copied to {docs_assets / asset_name}")
+
+    print(f"\nText log saved to {OUT_DIR / 'run.txt'}")
 
 
 if __name__ == "__main__":

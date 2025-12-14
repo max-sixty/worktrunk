@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from themes import THEMES, format_theme_for_vhs
+
 REAL_HOME = Path.home()
 
 

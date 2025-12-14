@@ -272,3 +272,23 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
 ```
 
 Deploy runs `fetch-assets` before building.
+
+### Light/dark theme variants
+
+Each demo build generates both light and dark GIF variants:
+- `wt-demo.gif` / `wt-demo-dark.gif`
+- `wt-select.gif` / `wt-select-dark.gif`
+
+Theme definitions are in `docs/demos/themes.py`, matching the CSS variables in `_variables.html`.
+
+In markdown, use `<picture>` with media queries:
+```html
+<figure class="demo">
+<picture>
+  <source srcset="/assets/wt-select-dark.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/wt-select.gif" alt="wt select demo" width="1600" height="800">
+</picture>
+</figure>
+```
+
+The browser automatically shows the appropriate variant based on system preference.

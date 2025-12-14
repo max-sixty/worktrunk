@@ -7,9 +7,12 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ASSETS_REPO="$REPO_ROOT/../worktrunk-assets"
 
 # Demo sources: name|source_path
+# Both light and dark variants for theme switching
 DEMOS=(
     "wt-demo.gif|$REPO_ROOT/docs/demos/wt/out/wt-demo.gif"
+    "wt-demo-dark.gif|$REPO_ROOT/docs/demos/wt/out/wt-demo-dark.gif"
     "wt-select.gif|$REPO_ROOT/docs/demos/wt-select/out/wt-select.gif"
+    "wt-select-dark.gif|$REPO_ROOT/docs/demos/wt-select/out/wt-select-dark.gif"
 )
 
 # Clone assets repo if needed

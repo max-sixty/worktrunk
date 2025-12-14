@@ -63,6 +63,7 @@ DEMOS_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(DEMOS_DIR))
 
 from lib import DemoEnv, run, git, render_tape, record_vhs, build_wt, REAL_HOME
+from themes import THEMES, format_theme_for_vhs
 
 REPO_ROOT = DEMOS_DIR.parent.parent
 FIXTURES_DIR = SCRIPT_DIR / "fixtures"
@@ -70,7 +71,12 @@ OUT_DIR = SCRIPT_DIR / "out"
 TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
 TAPE_RENDERED = OUT_DIR / ".rendered.tape"
 STARSHIP_CONFIG = OUT_DIR / "starship.toml"
-OUTPUT_GIF = OUT_DIR / "wt-select.gif"
+
+# Output GIF paths for light and dark variants
+OUTPUT_GIFS = {
+    "light": OUT_DIR / "wt-select.gif",
+    "dark": OUT_DIR / "wt-select-dark.gif",
+}
 
 # Custom VHS binary with keystroke overlay
 # Clone and build from: https://github.com/max-sixty/vhs/tree/keypress-overlay
@@ -427,19 +433,31 @@ def main():
     # Record if VHS is available and tape exists
     vhs_available = Path(VHS_BINARY).exists() if "/" in VHS_BINARY else shutil.which(VHS_BINARY)
     if vhs_available:
-        replacements = {
-            "DEMO_REPO": demo_env.repo,
-            "DEMO_HOME": demo_env.home,
-            "REAL_HOME": REAL_HOME,
-            "STARSHIP_CONFIG": STARSHIP_CONFIG,
-            "OUTPUT_GIF": OUTPUT_GIF,
-            "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
-        }
-        if render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements):
-            print(f"\nRecording GIF with {VHS_BINARY}...")
-            record_vhs(TAPE_RENDERED, VHS_BINARY)
-            TAPE_RENDERED.unlink(missing_ok=True)
-            print(f"GIF saved to {OUTPUT_GIF}")
+        # Record both light and dark variants
+        docs_assets = REPO_ROOT / "docs" / "static" / "assets"
+        docs_assets.mkdir(parents=True, exist_ok=True)
+
+        for theme_name, output_gif in OUTPUT_GIFS.items():
+            theme = THEMES[theme_name]
+            replacements = {
+                "DEMO_REPO": demo_env.repo,
+                "DEMO_HOME": demo_env.home,
+                "REAL_HOME": REAL_HOME,
+                "STARSHIP_CONFIG": STARSHIP_CONFIG,
+                "OUTPUT_GIF": output_gif,
+                "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
+                "THEME": format_theme_for_vhs(theme),
+            }
+            if render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements):
+                print(f"\nRecording {theme_name} GIF with {VHS_BINARY}...")
+                record_vhs(TAPE_RENDERED, VHS_BINARY)
+                TAPE_RENDERED.unlink(missing_ok=True)
+                print(f"GIF saved to {output_gif}")
+
+                # Copy to docs for local preview
+                asset_name = output_gif.name
+                shutil.copy(output_gif, docs_assets / asset_name)
+                print(f"Copied to {docs_assets / asset_name}")
     else:
         print(f"\nSkipping GIF recording ({VHS_BINARY} not available)")
         print("\nTo test manually:")
