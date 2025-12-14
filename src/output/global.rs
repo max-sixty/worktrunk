@@ -5,29 +5,26 @@
 //!
 //! # Implementation
 //!
-//! Uses a hybrid approach:
+//! Uses a simple global approach:
 //! - `OnceLock<OutputMode>` stores the mode globally (set once at startup)
-//! - `thread_local!` stores per-thread handlers, initialized from the global mode
-//! - `RefCell<T>` enables interior mutability (runtime borrow checking)
-//! - Trait object (`Box<dyn OutputHandler>`) for runtime polymorphism
+//! - Handlers are created on-demand for each operation
+//! - Directive state (target_dir, exec_command) is stored globally for main thread
 //!
 //! # Trade-offs
 //!
 //! - ✅ Zero parameter threading - call from anywhere
 //! - ✅ Single initialization point - set once in main()
-//! - ✅ Fast access - thread-local is just a pointer lookup
-//! - ✅ Spawned threads inherit the mode - handlers created with correct mode
-//! - ✅ Simple mental model - one trait, no enum wrapper
-//! - ⚠️ Runtime borrow checks - acceptable for this access pattern
+//! - ✅ Spawned threads automatically use correct mode
+//! - ✅ Simple mental model - one global mode, handlers created on-demand
+//! - ✅ No thread-local complexity
 
 use super::directive::DirectiveOutput;
 use super::interactive::InteractiveOutput;
 use super::traits::OutputHandler;
 use crate::cli::DirectiveShell;
-use std::cell::RefCell;
-use std::io;
-use std::path::Path;
-use std::sync::OnceLock;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// Output mode selection
 #[derive(Debug, Clone, Copy)]
@@ -38,45 +35,41 @@ pub enum OutputMode {
 }
 
 /// Global output mode, set once at initialization.
-/// Spawned threads read this to initialize their thread-local handlers.
 static GLOBAL_MODE: OnceLock<OutputMode> = OnceLock::new();
 
-thread_local! {
-    static OUTPUT_CONTEXT: RefCell<Box<dyn OutputHandler>> = RefCell::new({
-        // Read mode from global (set by initialize()), default to Interactive if unset
-        let mode = GLOBAL_MODE.get().copied().unwrap_or(OutputMode::Interactive);
-        match mode {
-            OutputMode::Interactive => Box::new(InteractiveOutput::new()),
-            OutputMode::Directive(shell) => Box::new(DirectiveOutput::new(shell)),
-        }
-    });
+/// Accumulated state for change_directory/execute/terminate_output.
+/// Only used by main thread - these operations are never called from spawned threads.
+///
+/// Uses `OnceLock<Mutex<T>>` pattern:
+/// - `OnceLock` provides one-time initialization (set in `initialize()`)
+/// - `Mutex` allows mutation after initialization
+/// - No unsafe code required
+///
+/// Lock poisoning (from `.expect()`) is theoretically possible but practically
+/// unreachable - the lock is only held for trivial Option assignments that cannot panic.
+static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
+
+#[derive(Default)]
+struct OutputState {
+    target_dir: Option<PathBuf>,
+    exec_command: Option<String>,
 }
 
-/// Helper to access the output handler
-fn with_output<R>(f: impl FnOnce(&mut dyn OutputHandler) -> R) -> R {
-    OUTPUT_CONTEXT.with(|ctx| {
-        let mut handler = ctx.borrow_mut();
-        f(handler.as_mut())
-    })
+/// Get the current output mode, defaulting to Interactive if not initialized.
+fn get_mode() -> OutputMode {
+    GLOBAL_MODE
+        .get()
+        .copied()
+        .unwrap_or(OutputMode::Interactive)
 }
 
 /// Initialize the global output context
 ///
 /// Call this once at program startup to set the output mode.
-/// Spawned threads will automatically use the same mode.
+/// All threads will automatically use the same mode.
 pub fn initialize(mode: OutputMode) {
-    // Set global mode FIRST so spawned threads pick it up
     let _ = GLOBAL_MODE.set(mode);
-
-    // Then initialize current thread's context
-    let handler: Box<dyn OutputHandler> = match mode {
-        OutputMode::Interactive => Box::new(InteractiveOutput::new()),
-        OutputMode::Directive(shell) => Box::new(DirectiveOutput::new(shell)),
-    };
-
-    OUTPUT_CONTEXT.with(|ctx| {
-        *ctx.borrow_mut() = handler;
-    });
+    let _ = OUTPUT_STATE.set(Mutex::new(OutputState::default()));
 }
 
 /// Display a shell integration hint (suppressed in directive mode)
@@ -86,7 +79,10 @@ pub fn initialize(mode: OutputMode) {
 ///
 /// This is kept as a separate method because it has mode-specific behavior.
 pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.shell_integration_hint(message.into()))
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().shell_integration_hint(message.into()),
+        OutputMode::Directive(_) => Ok(()), // Suppressed
+    }
 }
 
 /// Print a message (written as-is)
@@ -99,7 +95,10 @@ pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
 /// output::print(hint_message("Use --force to override"))?;
 /// ```
 pub fn print(message: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.print(message.into()))
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().print(message.into()),
+        OutputMode::Directive(_) => DirectiveOutput::new().print(message.into()),
+    }
 }
 
 /// Emit gutter-formatted content
@@ -107,14 +106,20 @@ pub fn print(message: impl Into<String>) -> io::Result<()> {
 /// Gutter content has its own visual structure (column 0 gutter + content),
 /// so no additional emoji is added. Use with `format_with_gutter()` or `format_bash_with_gutter()`.
 pub fn gutter(content: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.gutter(content.into()))
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().gutter(content.into()),
+        OutputMode::Directive(_) => DirectiveOutput::new().gutter(content.into()),
+    }
 }
 
 /// Emit a blank line for visual separation
 ///
 /// Used to separate logical sections of output.
 pub fn blank() -> io::Result<()> {
-    with_output(|h| h.blank())
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().blank(),
+        OutputMode::Directive(_) => DirectiveOutput::new().blank(),
+    }
 }
 
 /// Emit structured data output without emoji decoration
@@ -127,7 +132,10 @@ pub fn blank() -> io::Result<()> {
 /// output::data(json_string)?;
 /// ```
 pub fn data(content: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.data(content.into()))
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().data(content.into()),
+        OutputMode::Directive(_) => DirectiveOutput::new().data(content.into()),
+    }
 }
 
 /// Emit table/UI output to stderr
@@ -143,22 +151,65 @@ pub fn data(content: impl Into<String>) -> io::Result<()> {
 /// }
 /// ```
 pub fn table(content: impl Into<String>) -> io::Result<()> {
-    with_output(|h| h.table(content.into()))
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().table(content.into()),
+        OutputMode::Directive(_) => DirectiveOutput::new().table(content.into()),
+    }
 }
 
 /// Request directory change (for shell integration)
+///
+/// In directive mode, buffers the path for the final shell script.
+/// In interactive mode, stores path for execute() to use as working directory.
+///
+/// No-op if called before initialize() - this is safe since main thread
+/// operations only happen after initialization.
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
-    with_output(|h| h.change_directory(path.as_ref()))
+    if let Some(state) = OUTPUT_STATE.get() {
+        state.lock().expect("OUTPUT_STATE lock poisoned").target_dir =
+            Some(path.as_ref().to_path_buf());
+    }
+    Ok(())
 }
 
 /// Request command execution
+///
+/// In interactive mode, executes the command directly (replacing process on Unix).
+/// In directive mode, buffers the command for the final shell script.
 pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
-    with_output(|h| h.execute(command.into()))
+    let command = command.into();
+    match get_mode() {
+        OutputMode::Interactive => {
+            // Get target directory (lock released before execute to avoid holding across I/O)
+            let target_dir = OUTPUT_STATE.get().and_then(|s| {
+                let guard = s.lock().expect("OUTPUT_STATE lock poisoned");
+                guard.target_dir.clone()
+            });
+
+            let mut handler = InteractiveOutput::new();
+            if let Some(path) = target_dir {
+                handler.change_directory(&path)?;
+            }
+            handler.execute(command)
+        }
+        OutputMode::Directive(_) => {
+            if let Some(state) = OUTPUT_STATE.get() {
+                state
+                    .lock()
+                    .expect("OUTPUT_STATE lock poisoned")
+                    .exec_command = Some(command);
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Flush any buffered output
 pub fn flush() -> io::Result<()> {
-    with_output(|h| h.flush())
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().flush(),
+        OutputMode::Directive(_) => DirectiveOutput::new().flush(),
+    }
 }
 
 /// Flush streams before showing stderr prompt
@@ -171,7 +222,10 @@ pub fn flush() -> io::Result<()> {
 /// Note: With stderr separation (messages on stderr in directive mode), prompts
 /// naturally appear after messages without needing special synchronization.
 pub fn flush_for_stderr_prompt() -> io::Result<()> {
-    with_output(|h| h.flush_for_stderr_prompt())
+    match get_mode() {
+        OutputMode::Interactive => InteractiveOutput::new().flush_for_stderr_prompt(),
+        OutputMode::Directive(_) => DirectiveOutput::new().flush_for_stderr_prompt(),
+    }
 }
 
 /// Terminate command output
@@ -179,7 +233,48 @@ pub fn flush_for_stderr_prompt() -> io::Result<()> {
 /// In directive mode, emits the buffered shell script (cd and exec commands) to stdout.
 /// In interactive mode, this is a no-op.
 pub fn terminate_output() -> io::Result<()> {
-    with_output(|h| h.terminate_output())
+    match get_mode() {
+        OutputMode::Interactive => Ok(()),
+        OutputMode::Directive(shell) => {
+            let mut stderr = io::stderr();
+
+            // Reset ANSI state before returning to shell
+            write!(stderr, "{}", anstyle::Reset)?;
+            stderr.flush()?;
+
+            // Emit shell script to stdout with buffered directives
+            let mut stdout = io::stdout();
+
+            if let Some(state) = OUTPUT_STATE.get() {
+                let guard = state.lock().expect("OUTPUT_STATE lock poisoned");
+
+                // cd command
+                if let Some(ref path) = guard.target_dir {
+                    let path_str = path.to_string_lossy();
+                    match shell {
+                        DirectiveShell::Posix => {
+                            // shell_escape handles quoting (adds quotes if needed)
+                            let escaped = shell_escape::escape(path_str.as_ref().into());
+                            writeln!(stdout, "cd {}", escaped)?;
+                        }
+                        DirectiveShell::Powershell => {
+                            // PowerShell: double single quotes for escaping
+                            // (no crate support for PowerShell escaping)
+                            let escaped = path_str.replace('\'', "''");
+                            writeln!(stdout, "Set-Location '{}'", escaped)?;
+                        }
+                    }
+                }
+
+                // exec command
+                if let Some(ref cmd) = guard.exec_command {
+                    writeln!(stdout, "{}", cmd)?;
+                }
+            }
+
+            stdout.flush()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -191,15 +286,15 @@ mod tests {
         use crate::cli::DirectiveShell;
 
         // Verify initialize() doesn't panic when called (possibly multiple times in tests).
-        // Note: GLOBAL_MODE can only be set once per process, but the current thread's
-        // handler is always updated. In production, initialize() is called exactly once.
+        // Note: GLOBAL_MODE can only be set once per process.
+        // In production, initialize() is called exactly once.
         initialize(OutputMode::Interactive);
         initialize(OutputMode::Directive(DirectiveShell::Posix));
         initialize(OutputMode::Directive(DirectiveShell::Powershell));
     }
 
     #[test]
-    fn test_spawned_thread_inherits_mode() {
+    fn test_spawned_thread_uses_correct_mode() {
         use crate::cli::DirectiveShell;
         use std::sync::mpsc;
 
@@ -207,12 +302,11 @@ mod tests {
         initialize(OutputMode::Directive(DirectiveShell::Posix));
 
         // Spawn a thread and verify it can access output without panicking.
-        // The thread will inherit the mode from GLOBAL_MODE.
+        // The thread reads the same GLOBAL_MODE.
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            // Access output system in spawned thread - this should use Directive mode
-            // if GLOBAL_MODE was set, or Interactive as fallback.
-            let _ = with_output(|h| h.flush());
+            // Access output system in spawned thread
+            let _ = flush();
             tx.send(()).unwrap();
         })
         .join()

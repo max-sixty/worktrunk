@@ -53,7 +53,15 @@ impl OutputHandler for InteractiveOutput {
         self.write_message_line(&hint_message(&message))
     }
 
-    fn change_directory(&mut self, path: &Path) -> io::Result<()> {
+    fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
+        // All messages go to stderr, so just flush stderr
+        stderr().flush()
+    }
+}
+
+// Non-trait methods for command execution (called directly from global.rs)
+impl InteractiveOutput {
+    pub fn change_directory(&mut self, path: &Path) -> io::Result<()> {
         // In interactive mode, we can't actually change directory
         // Just store the target for execute commands
         self.target_dir = Some(path.to_path_buf());
@@ -61,7 +69,7 @@ impl OutputHandler for InteractiveOutput {
     }
 
     #[cfg(unix)]
-    fn execute(&mut self, command: String) -> anyhow::Result<()> {
+    pub fn execute(&mut self, command: String) -> anyhow::Result<()> {
         use std::os::unix::process::CommandExt;
 
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
@@ -88,7 +96,7 @@ impl OutputHandler for InteractiveOutput {
     }
 
     #[cfg(not(unix))]
-    fn execute(&mut self, command: String) -> anyhow::Result<()> {
+    pub fn execute(&mut self, command: String) -> anyhow::Result<()> {
         use worktrunk::git::WorktrunkError;
 
         // On non-Unix platforms, fall back to spawn-and-wait.
@@ -106,16 +114,6 @@ impl OutputHandler for InteractiveOutput {
             }
             return Err(err);
         }
-        Ok(())
-    }
-
-    fn flush_for_stderr_prompt(&mut self) -> io::Result<()> {
-        // All messages go to stderr, so just flush stderr
-        stderr().flush()
-    }
-
-    fn terminate_output(&mut self) -> io::Result<()> {
-        // No-op in interactive mode - shell script only emitted in directive mode
         Ok(())
     }
 }

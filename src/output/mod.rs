@@ -4,31 +4,30 @@
 //!
 //! Global context-based output system similar to logging frameworks (`log`, `tracing`).
 //! Initialize once at program start with `initialize(OutputMode)`, then use
-//! output functions anywhere: `success()`, `change_directory()`, `execute()`, etc.
+//! output functions anywhere: `print()`, `change_directory()`, `execute()`, etc.
 //!
 //! ## Design
 //!
-//! **Thread-local storage** stores the output handler globally:
+//! **Global mode storage** with `OnceLock`:
 //!
 //! ```rust,ignore
-//! thread_local! {
-//!     static OUTPUT_CONTEXT: RefCell<OutputHandler> = ...;
+//! static GLOBAL_MODE: OnceLock<OutputMode> = OnceLock::new();
+//! static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
+//! ```
+//!
+//! The mode is set once at initialization and readable by all threads.
+//! State (target_dir, exec_command) is stored globally for main thread operations.
+//!
+//! **On-demand handlers** created for each operation:
+//!
+//! ```rust,ignore
+//! match get_mode() {
+//!     OutputMode::Interactive => InteractiveOutput::new().print(msg),
+//!     OutputMode::Directive(_) => DirectiveOutput::new().print(msg),
 //! }
 //! ```
 //!
-//! Each thread gets its own output context. `RefCell` provides interior mutability
-//! for mutation through shared references (runtime borrow checking).
-//!
-//! **Enum dispatch** routes calls to the appropriate handler:
-//!
-//! ```rust,ignore
-//! enum OutputHandler {
-//!     Interactive(InteractiveOutput),  // Human-friendly with colors
-//!     Directive(DirectiveOutput),      // Machine-readable for shell integration
-//! }
-//! ```
-//!
-//! This enables static dispatch and compiler optimizations.
+//! This enables type-safe dispatch without thread-local complexity.
 //!
 //! ## Usage Pattern
 //!

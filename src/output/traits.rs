@@ -20,7 +20,6 @@
 //! formatting functions to be used both for output and in Display impls.
 
 use std::io::{self, Write};
-use std::path::Path;
 
 /// Core output handler trait
 ///
@@ -99,19 +98,4 @@ pub trait OutputHandler {
     ///
     /// Interactive shows it, Directive suppresses it
     fn shell_integration_hint(&mut self, message: String) -> io::Result<()>;
-
-    /// Request directory change
-    ///
-    /// Interactive stores path, Directive emits directive
-    fn change_directory(&mut self, path: &Path) -> io::Result<()>;
-
-    /// Request command execution
-    ///
-    /// Interactive runs command, Directive emits directive
-    fn execute(&mut self, command: String) -> anyhow::Result<()>;
-
-    /// Terminate output
-    ///
-    /// Interactive no-op, Directive writes NUL
-    fn terminate_output(&mut self) -> io::Result<()>;
 }

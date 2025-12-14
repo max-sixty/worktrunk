@@ -43,33 +43,28 @@
 //! The `--internal` flag is hidden from help output—end users never interact with it.
 
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
 
 use super::traits::OutputHandler;
 
 /// Directive output mode for shell integration
 ///
-/// Buffers cd/exec directives and emits them as a shell script at the end.
+/// Handles message output to stderr. State management (target_dir, exec_command)
+/// is handled by the global output module.
 ///
 /// See module-level documentation for protocol details.
 pub struct DirectiveOutput {
     /// Cached stderr handle
     stderr: io::Stderr,
-    /// Target directory for cd (set by change_directory, emitted in terminate_output)
-    target_dir: Option<PathBuf>,
-    /// Command to execute (set by execute, emitted in terminate_output)
-    exec_command: Option<String>,
-    /// Shell type for directive output formatting
-    shell: crate::cli::DirectiveShell,
 }
 
 impl DirectiveOutput {
-    pub fn new(shell: crate::cli::DirectiveShell) -> Self {
+    /// Create a new DirectiveOutput handler.
+    ///
+    /// Shell-specific formatting (cd vs Set-Location) is handled in
+    /// `global::terminate_output()`, not here.
+    pub fn new() -> Self {
         Self {
             stderr: io::stderr(),
-            target_dir: None,
-            exec_command: None,
-            shell,
         }
     }
 }
@@ -94,61 +89,11 @@ impl OutputHandler for DirectiveOutput {
 
     // Note: data() uses the default which calls write_message_line() -> stderr
     // This is correct for directive mode where stdout is reserved for the final shell script
-
-    fn change_directory(&mut self, path: &Path) -> io::Result<()> {
-        // Buffer the path - will be emitted as shell script in terminate_output()
-        self.target_dir = Some(path.to_path_buf());
-        Ok(())
-    }
-
-    fn execute(&mut self, command: String) -> anyhow::Result<()> {
-        // Buffer the command - will be emitted as shell script in terminate_output()
-        self.exec_command = Some(command);
-        Ok(())
-    }
-
-    fn terminate_output(&mut self) -> io::Result<()> {
-        use crate::cli::DirectiveShell;
-
-        // Reset ANSI state before returning to shell.
-        // wt's colored messages set terminal state on stderr.
-        write!(self.stderr, "{}", anstyle::Reset)?;
-        self.stderr.flush()?;
-
-        // Emit shell script to stdout with buffered directives
-        // The shell wrapper captures this via $(...) and evals it (POSIX)
-        // or | Out-String | Invoke-Expression (PowerShell)
-        let mut stdout = io::stdout();
-
-        // cd command (if target directory was set)
-        if let Some(ref path) = self.target_dir {
-            let path_str = path.to_string_lossy();
-            match self.shell {
-                DirectiveShell::Posix => {
-                    // POSIX: Use single quotes, escape embedded single quotes as '\''
-                    let escaped = path_str.replace('\'', "'\\''");
-                    writeln!(stdout, "cd '{}'", escaped)?;
-                }
-                DirectiveShell::Powershell => {
-                    // PowerShell: Use single quotes, escape embedded single quotes by doubling
-                    let escaped = path_str.replace('\'', "''");
-                    writeln!(stdout, "Set-Location '{}'", escaped)?;
-                }
-            }
-        }
-
-        // exec command (if one was set via --execute)
-        if let Some(ref cmd) = self.exec_command {
-            writeln!(stdout, "{}", cmd)?;
-        }
-
-        stdout.flush()
-    }
 }
 
 impl Default for DirectiveOutput {
     fn default() -> Self {
-        Self::new(crate::cli::DirectiveShell::Posix)
+        Self::new()
     }
 }
 
