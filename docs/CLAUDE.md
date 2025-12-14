@@ -264,18 +264,27 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
 ./scripts/fetch-assets      # Download to docs/static/assets/ (gitignored)
 ```
 
-**To update demos:**
-```bash
-./docs/demos/wt/build          # Build from VHS tape file
-./docs/demos/wt-select/build   # Build select demo (requires vhs-keystrokes, see below)
-./scripts/publish-assets       # Push to assets repo
-```
+**To regenerate demos** (required after CLI output changes):
+
+1. Build the vhs-keystrokes binary if missing (one-time setup, see below)
+2. Run both demo build scripts:
+   ```bash
+   ./docs/demos/wt/build
+   ./docs/demos/wt-select/build
+   ```
+3. Publish: `./scripts/publish-assets`
 
 Deploy runs `fetch-assets` before building.
 
-### wt-select prerequisites
+### vhs-keystrokes setup (REQUIRED for wt-select)
 
-The `wt-select` demo requires a custom VHS fork with keystroke overlay. Build it once:
+The `wt-select` demo requires a custom VHS fork with keystroke overlay. **Check if the binary exists before regenerating demos:**
+
+```bash
+ls docs/demos/wt-select/vhs-keystrokes/vhs-keystrokes
+```
+
+If missing, build it (requires Go):
 
 ```bash
 cd docs/demos/wt-select
@@ -283,7 +292,7 @@ git clone -b keypress-overlay https://github.com/max-sixty/vhs.git vhs-keystroke
 cd vhs-keystrokes && go build -o vhs-keystrokes .
 ```
 
-The build script looks for `docs/demos/wt-select/vhs-keystrokes/vhs-keystrokes`.
+The `wt-select/build` script will skip GIF recording if the binary is missing and only print manual test instructions. **Always ensure the binary exists before regenerating demos.**
 
 ### Light/dark theme variants
 
