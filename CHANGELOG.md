@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- **Branch names with slashes**: Branch names like `fix/feature-name` no longer break git config markers. Slashes are now escaped for git config compatibility. ([#189](https://github.com/max-sixty/worktrunk/pull/189), thanks @kyleacmooney)
+- **stdin inheritance for `--execute`**: Interactive programs (vim, python -i, claude) now work correctly with `--execute` on non-Unix platforms. ([#191](https://github.com/max-sixty/worktrunk/pull/191))
+- **Filenames with spaces/newlines**: Git status parsing now handles filenames containing spaces and newlines correctly using NUL-separated output.
+- **Concurrent approval race condition**: Multiple concurrent approval/revocation operations no longer overwrite each other. Approvals now reload from disk before saving.
+- **Dirty worktrees incorrectly marked integrated**: Priority 5 integration check now requires clean working tree state, preventing worktrees with uncommitted changes from being flagged as safe to remove.
+- **Type changes not detected as staged**: Index status check now recognizes file type changes (`T` status) as staged changes.
+- **User hook failure strategy**: Hook failure strategy now correctly applies to user hooks instead of always using fail-fast.
+- **Branch variable in detached HEAD**: `{{ branch }}` now correctly expands to "HEAD" in detached HEAD worktrees instead of "(detached)".
+
+### Improved
+
+- **Self-hosted GitLab support**: CI auth checks now detect the GitLab host from the remote URL, supporting self-hosted GitLab instances instead of always checking gitlab.com.
+- **Platform-specific CI status**: `wt list --full` and `wt config show` now show only the relevant CI tool (GitHub Actions or GitLab CI) based on the repository's remote URL.
+- **LLM error reproduction**: When LLM commands fail, error messages now show the full reproduction command (e.g., `wt step commit --show-prompt | llm`) for easier debugging.
+- **Location format**: Messages now use `@` instead of `at` for location phrases (e.g., "Switched to feature @ /path").
+- **Switch help text**: Clarified that `wt switch` creates worktrees automatically for existing branches, not just for new branches with `--create`.
+
 ## 0.3.0
 
 ### Added

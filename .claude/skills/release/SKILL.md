@@ -10,14 +10,15 @@ description: Worktrunk release workflow. Use when user asks to "do a release", "
 1. **Run tests**: `cargo run -- hook pre-merge --force`
 2. **Check current version**: Read `version` in `Cargo.toml`
 3. **Review commits**: Check commits since last release to understand scope of changes
-4. **Confirm release type with user**: Present changes summary and ask user to confirm patch/minor/major (see below)
-5. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
-6. **Bump version**: Update `version` in `Cargo.toml`, run `cargo check` to update `Cargo.lock`
-7. **Commit**: `git add -A && git commit -m "Release vX.Y.Z"`
-8. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
-9. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
-10. **Wait for release workflow**: `gh run watch <run-id> --exit-status`
-11. **Update Homebrew**: `./dev/update-homebrew.sh` (requires sibling `homebrew-worktrunk` checkout)
+4. **Credit contributors**: Check for external contributors with `git log v<last-version>..HEAD --format="%an <%ae>" | sort -u` and credit them in changelog entries (see below)
+5. **Confirm release type with user**: Present changes summary and ask user to confirm patch/minor/major (see below)
+6. **Update CHANGELOG**: Add `## X.Y.Z` section at top with changes (see MANDATORY verification below)
+7. **Bump version**: Update `version` in `Cargo.toml`, run `cargo check` to update `Cargo.lock`
+8. **Commit**: `git add -A && git commit -m "Release vX.Y.Z"`
+9. **Merge to main**: `wt merge --no-remove` (rebases onto main, pushes, keeps worktree)
+10. **Tag and push**: `git tag vX.Y.Z && git push origin vX.Y.Z`
+11. **Wait for release workflow**: `gh run watch <run-id> --exit-status`
+12. **Update Homebrew**: `./dev/update-homebrew.sh` (requires sibling `homebrew-worktrunk` checkout)
 
 The tag push triggers the release workflow which builds binaries and publishes to crates.io. The Homebrew script fetches SHA256 hashes from the release assets and updates the formula.
 
@@ -48,6 +49,21 @@ Notable changes to document:
 - Breaking changes
 
 Skip: internal refactors, doc-only changes, test additions (unless user-facing like shell completion tests).
+
+### Credit External Contributors
+
+For any changelog entry where an external contributor (not the repo owner) authored the commit, add credit with their GitHub username:
+
+```markdown
+- **Feature name**: Description. ([#123](https://github.com/user/repo/pull/123), thanks @contributor)
+```
+
+Find external contributors:
+```bash
+git log v<last-version>..HEAD --format="%an <%ae>" | sort -u
+```
+
+Then for each external contributor's commit, find their GitHub username from the commit (usually in the email or PR).
 
 ### MANDATORY: Verify Each Changelog Entry
 
