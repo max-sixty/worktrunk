@@ -19,13 +19,13 @@
 //! - Within worktrees: Git operations (ahead/behind, diffs, CI) run concurrently via scoped threads
 //!
 //! This ensures fast operations don't wait for slow ones (e.g., CI doesn't block ahead/behind counts)
-use std::path::Path;
-
 use crossbeam_channel as chan;
 use dunce::canonicalize;
 use rayon::prelude::*;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::styling::{INFO_EMOJI, warning_message};
+
+use crate::commands::is_worktree_at_expected_path;
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -515,13 +515,6 @@ pub fn collect(
         current_worktree_path.as_ref(),
     );
 
-    // Get main worktree directory name for path template expansion
-    let main_worktree_name = main_worktree
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-
     // Get branches early for layout calculation and skeleton creation (when --branches is used)
     // Sort by timestamp (most recent first)
     let branches_without_worktrees = if show_branches {
@@ -563,30 +556,8 @@ pub fn collect(
                 .as_deref()
                 .is_some_and(|prev| wt.branch.as_deref() == Some(prev));
 
-            // Compute path mismatch: does the actual path match what the template would generate?
-            // Main worktree on default branch is the reference point (no mismatch possible)
-            // Main worktree on OTHER branch should show mismatch (it's "not at home")
-            let paths_equal = |expected: &Path| -> bool {
-                match (&wt_canonical, canonicalize(expected).ok()) {
-                    (Some(actual), Some(expected)) => actual == &expected,
-                    _ => wt.path == *expected,
-                }
-            };
-            let path_mismatch = if is_main && wt.branch.as_deref() == Some(default_branch.as_str())
-            {
-                false
-            } else if let Some(branch) = &wt.branch {
-                config
-                    .format_path(main_worktree_name, branch)
-                    .map(|rel| !paths_equal(&main_worktree.path.join(&rel)))
-                    .unwrap_or_else(|e| {
-                        log::debug!("Template expansion failed for branch {}: {}", branch, e);
-                        false
-                    })
-            } else {
-                // Detached HEAD - not on any branch, so "not at home"
-                true
-            };
+            // Check if worktree is at its expected path based on config template
+            let path_mismatch = !is_worktree_at_expected_path(wt, repo, config);
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);

@@ -446,6 +446,146 @@ fn test_switch_default_branch_missing_worktree(repo: TestRepo) {
 
     snapshot_switch("switch_default_branch_missing_worktree", &repo, &["main"]);
 }
+
+/// Test switching to a linked worktree that's on a different branch than expected
+#[rstest]
+fn test_switch_linked_worktree_wrong_branch(mut repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch
+    let worktree_path = repo.add_worktree("feature");
+
+    // Now switch that worktree to a different branch "bugfix"
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["switch", "-c", "bugfix"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Try to switch to "feature" - should go to repo.feature but warn it's on "bugfix"
+    snapshot_switch("switch_linked_worktree_wrong_branch", &repo, &["feature"]);
+}
+
+/// Test switching to a linked worktree that's in detached HEAD state
+#[rstest]
+fn test_switch_linked_worktree_detached(mut repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch
+    let worktree_path = repo.add_worktree("feature");
+
+    // Get the current HEAD commit
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Detach HEAD in the worktree
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "--detach", &commit])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Try to switch to "feature" - should go to repo.feature but warn it's detached
+    snapshot_switch("switch_linked_worktree_detached", &repo, &["feature"]);
+}
+
+/// Test that normal switch (branch matches) does NOT show warning
+#[rstest]
+fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
+    // Create a worktree for "feature" branch (normal case)
+    repo.add_worktree("feature");
+
+    // Switch to feature with shell integration - should NOT show any warning
+    snapshot_switch_with_global_flags(
+        "switch_no_warning_when_branch_matches",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
+/// Test switching to main worktree when it's on a different branch (with shell integration)
+#[rstest]
+fn test_switch_mismatch_main_worktree(repo: TestRepo) {
+    // Move the primary worktree off the default branch
+    repo.switch_primary_to("develop");
+
+    // Switch to main with shell integration
+    snapshot_switch_with_global_flags(
+        "switch_mismatch_main_worktree",
+        &repo,
+        &["main"],
+        &["--internal"],
+    );
+}
+
+/// Test switching to linked worktree on wrong branch (with shell integration)
+#[rstest]
+fn test_switch_mismatch_linked_worktree(mut repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch
+    let worktree_path = repo.add_worktree("feature");
+
+    // Switch that worktree to "bugfix" branch
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["switch", "-c", "bugfix"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Switch to feature with shell integration - should warn about bugfix
+    snapshot_switch_with_global_flags(
+        "switch_mismatch_linked_worktree",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
+/// Test switching to detached worktree (with shell integration)
+#[rstest]
+fn test_switch_mismatch_detached(mut repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch
+    let worktree_path = repo.add_worktree("feature");
+
+    // Get HEAD commit and detach
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "--detach", &commit])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Switch to feature with shell integration - should warn about detached
+    snapshot_switch_with_global_flags(
+        "switch_mismatch_detached",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
 // Internal mode with execute tests
 /// Test that --execute with exit code is emitted in directive mode shell script.
 /// The shell wrapper will eval this script and propagate the exit code.

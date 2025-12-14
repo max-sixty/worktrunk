@@ -3,6 +3,7 @@ source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
+    - "--internal"
     - switch
     - main
   env:
@@ -26,6 +27,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+cd '[REPO]'
 
 ----- stderr -----
 🟡 [33mAlready at [1m[REPO][22m; expected [1mmain[22m, got [1mdevelop[22m[39m

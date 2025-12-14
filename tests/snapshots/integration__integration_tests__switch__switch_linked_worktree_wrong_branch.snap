@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - switch
-    - main
+    - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -28,4 +28,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAlready at [1m[REPO][22m; expected [1mmain[22m, got [1mdevelop[22m[39m
+🟡 [33mWorktree @ [1m[REPO].feature[22m; expected [1mfeature[22m, got [1mbugfix[22m (cannot cd, no shell integration)[39m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

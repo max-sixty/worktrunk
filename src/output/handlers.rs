@@ -6,11 +6,12 @@ use std::path::Path;
 use crate::commands::command_executor::CommandContext;
 use crate::commands::execute_pre_remove_commands;
 use crate::commands::process::spawn_detached;
-use crate::commands::worktree::{RemoveResult, SwitchResult};
+use crate::commands::worktree::{RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::GitError;
 use worktrunk::git::IntegrationReason;
 use worktrunk::git::Repository;
+use worktrunk::git::path_dir_name;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
@@ -346,37 +347,75 @@ fn shell_integration_hint() -> String {
 /// When false, we show warnings for operations that can't complete without shell integration.
 pub fn handle_switch_output(
     result: &SwitchResult,
-    branch: &str,
+    branch_info: &SwitchBranchInfo,
     has_execute_command: bool,
     is_directive_mode: bool,
 ) -> anyhow::Result<()> {
     // Set target directory for command execution
     super::change_directory(result.path())?;
 
-    // Show message based on result type and mode
+    let path = result.path();
+    let path_display = format_path_for_display(path);
+    let expected = &branch_info.expected;
+
+    // Handle mismatch cases with single combined message
+    if branch_info.is_mismatch() {
+        let mismatch_info = match &branch_info.current {
+            Some(current) => cformat!("expected <bold>{expected}</>, got <bold>{current}</>"),
+            None => cformat!("expected <bold>{expected}</>, got detached HEAD"),
+        };
+
+        match result {
+            SwitchResult::AlreadyAt(_) => {
+                super::print(warning_message(cformat!(
+                    "Already at <bold>{path_display}</>; {mismatch_info}"
+                )))?;
+            }
+            SwitchResult::Existing(_) => {
+                if is_directive_mode || has_execute_command {
+                    super::print(warning_message(cformat!(
+                        "Switched to worktree @ <bold>{path_display}</>; {mismatch_info}"
+                    )))?;
+                } else if Shell::is_integration_configured().ok().flatten().is_some() {
+                    super::print(warning_message(cformat!(
+                        "Worktree @ <bold>{path_display}</>; {mismatch_info} (cannot cd, binary invoked directly)"
+                    )))?;
+                } else {
+                    super::print(warning_message(cformat!(
+                        "Worktree @ <bold>{path_display}</>; {mismatch_info} (cannot cd, no shell integration)"
+                    )))?;
+                    super::shell_integration_hint(shell_integration_hint())?;
+                }
+            }
+            SwitchResult::Created { .. } => {
+                // Created case should never have mismatch - we just created it
+                unreachable!("Created worktree should not have branch mismatch");
+            }
+        }
+
+        super::flush()?;
+        return Ok(());
+    }
+
+    // Normal case - no mismatch
+    let branch = branch_info.branch();
+
     match result {
-        SwitchResult::AlreadyAt(path) => {
-            // Already at target - show info, no hint needed
+        SwitchResult::AlreadyAt(_) => {
             super::print(info_message(cformat!(
-                "Already on worktree for <bold>{branch}</> @ <bold>{}</>",
-                format_path_for_display(path)
+                "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
             )))?;
         }
-        SwitchResult::Existing(path) => {
-            let path_display = format_path_for_display(path);
-
+        SwitchResult::Existing(_) => {
             if is_directive_mode || has_execute_command {
-                // Shell integration active or --execute provided - show success
                 super::print(success_message(format_switch_success_message(
                     branch, path, false, None, None,
                 )))?;
             } else if Shell::is_integration_configured().ok().flatten().is_some() {
-                // Shell configured but not active (ran binary directly, e.g. `command wt`)
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> @ <bold>{path_display}</>; cannot cd (binary invoked directly)"
                 )))?;
             } else {
-                // Shell integration not configured - show warning and setup hint
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> @ <bold>{path_display}</>; cannot cd (no shell integration)"
                 )))?;
@@ -384,12 +423,11 @@ pub fn handle_switch_output(
             }
         }
         SwitchResult::Created {
-            path,
             created_branch,
             base_branch,
             from_remote,
+            ..
         } => {
-            // Creation succeeded - show success
             super::print(success_message(format_switch_success_message(
                 branch,
                 path,
@@ -404,9 +442,7 @@ pub fn handle_switch_output(
         }
     }
 
-    // Flush output (important for directive mode)
     super::flush()?;
-
     Ok(())
 }
 
@@ -598,7 +634,7 @@ fn handle_removed_worktree_output(
             let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
             if let Err(err) = repo.remove_worktree(worktree_path) {
                 return Err(GitError::WorktreeRemovalFailed {
-                    branch: "(detached)".into(),
+                    branch: path_dir_name(worktree_path).to_string(),
                     path: worktree_path.to_path_buf(),
                     error: err.to_string(),
                 }

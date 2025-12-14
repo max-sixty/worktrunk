@@ -207,12 +207,22 @@ pub fn resolve_worktree_path_first(
 }
 
 /// Compute the expected worktree path for a branch name.
+///
+/// For the default branch, returns the repo root (main worktree location).
+/// For other branches, applies the `worktree-path` template from config.
 pub fn compute_worktree_path(
     repo: &Repository,
     branch: &str,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<PathBuf> {
     let repo_root = repo.worktree_base()?;
+
+    // Default branch lives at repo root (main worktree), not a templated path.
+    // Exception: bare repos have no main worktree, so all branches use templated paths.
+    if !repo.is_bare()? && repo.default_branch().is_ok_and(|default| branch == default) {
+        return Ok(repo_root);
+    }
+
     let repo_name = repo_root
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("Repository path has no filename: {}", repo_root.display()))?
@@ -230,6 +240,61 @@ pub fn compute_worktree_path(
 
     // Normalize to resolve ".." from relative paths like "../repo.branch"
     Ok(repo_root.join(relative_path).normalize())
+}
+
+/// Check if a worktree is at its expected path based on config template.
+///
+/// Returns true if the worktree's actual path matches what `compute_worktree_path`
+/// would generate for its branch. Detached HEAD always returns false (no expected path).
+///
+/// Uses canonicalization to handle symlinks and relative paths correctly.
+pub fn is_worktree_at_expected_path(
+    wt: &worktrunk::git::Worktree,
+    repo: &Repository,
+    config: &WorktrunkConfig,
+) -> bool {
+    use dunce::canonicalize;
+
+    match &wt.branch {
+        Some(branch) => compute_worktree_path(repo, branch, config)
+            .map(|expected| {
+                // Use canonicalization to handle symlinks
+                match (canonicalize(&wt.path), canonicalize(&expected)) {
+                    (Ok(actual), Ok(expected)) => actual == expected,
+                    _ => wt.path == expected, // Fallback to direct comparison
+                }
+            })
+            .unwrap_or(false),
+        None => false, // Detached HEAD has no expected path
+    }
+}
+
+/// Compute a user-facing display name for a worktree.
+///
+/// Returns styled content with branch names bolded:
+/// - If branch is consistent with worktree location: just the branch name (bolded)
+/// - If branch differs from expected location: `dir_name (on **branch**)` (both bolded)
+/// - If detached HEAD: `dir_name (detached)` (dir_name bolded)
+///
+/// "Consistent" means the worktree path matches `compute_worktree_path(branch)`,
+/// which returns repo root for default branch and templated path for others.
+pub fn worktree_display_name(
+    wt: &worktrunk::git::Worktree,
+    repo: &Repository,
+    config: &WorktrunkConfig,
+) -> String {
+    let dir_name = wt.dir_name();
+
+    match &wt.branch {
+        Some(branch) => {
+            if is_worktree_at_expected_path(wt, repo, config) {
+                cformat!("<bold>{branch}</>")
+            } else {
+                cformat!("<bold>{dir_name}</> (on <bold>{branch}</>)")
+            }
+        }
+        None => cformat!("<bold>{dir_name}</> (detached)"),
+    }
 }
 
 /// Flags indicating which merge operations occurred
@@ -270,6 +335,27 @@ impl SwitchResult {
     }
 }
 
+/// Branch state for a switch operation, tracking expected vs current branch.
+#[derive(Debug, Clone)]
+pub struct SwitchBranchInfo {
+    /// The branch user expected to switch to (resolved from input)
+    pub expected: String,
+    /// The branch currently checked out (None = detached HEAD)
+    pub current: Option<String>,
+}
+
+impl SwitchBranchInfo {
+    /// Check if there's a mismatch between expected and current branch
+    pub fn is_mismatch(&self) -> bool {
+        self.current.as_deref() != Some(self.expected.as_str())
+    }
+
+    /// The branch name (for no-mismatch case where expected == current)
+    pub fn branch(&self) -> &str {
+        self.current.as_deref().unwrap_or(&self.expected)
+    }
+}
+
 /// Result of a worktree remove operation
 pub enum RemoveResult {
     /// Removed worktree and returned to main (if needed)
@@ -298,7 +384,7 @@ pub fn handle_switch(
     force: bool,
     no_verify: bool,
     config: &WorktrunkConfig,
-) -> anyhow::Result<(SwitchResult, String)> {
+) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
     let repo = Repository::current();
 
     // Get the actual current branch BEFORE switching.
@@ -351,23 +437,29 @@ pub fn handle_switch(
     let expected_path = compute_worktree_path(&repo, &resolved_branch, config)?;
 
     // Helper to build switch result for an existing worktree
-    let switch_to_existing = |path: PathBuf, branch: String| -> (SwitchResult, String) {
-        let canonical_path = canonicalize(&path).unwrap_or(path);
-        let current_dir = std::env::current_dir()
-            .ok()
-            .and_then(|p| canonicalize(&p).ok());
-        let already_at_worktree = current_dir
-            .as_ref()
-            .map(|cur| cur == &canonical_path)
-            .unwrap_or(false);
+    // `actual_branch` is None for detached HEAD
+    let switch_to_existing =
+        |path: PathBuf, actual_branch: Option<String>| -> (SwitchResult, SwitchBranchInfo) {
+            let canonical_path = canonicalize(&path).unwrap_or(path);
+            let current_dir = std::env::current_dir()
+                .ok()
+                .and_then(|p| canonicalize(&p).ok());
+            let already_at_worktree = current_dir
+                .as_ref()
+                .map(|cur| cur == &canonical_path)
+                .unwrap_or(false);
 
-        let result = if already_at_worktree {
-            SwitchResult::AlreadyAt(canonical_path)
-        } else {
-            SwitchResult::Existing(canonical_path)
+            let result = if already_at_worktree {
+                SwitchResult::AlreadyAt(canonical_path)
+            } else {
+                SwitchResult::Existing(canonical_path)
+            };
+            let branch_info = SwitchBranchInfo {
+                expected: resolved_branch.clone(),
+                current: actual_branch,
+            };
+            (result, branch_info)
         };
-        (result, branch)
-    };
 
     // Path-first lookup: check if a worktree exists at the expected path
     if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
@@ -376,17 +468,21 @@ pub fn handle_switch(
             let branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
             return Err(GitError::WorktreeMissing { branch }.into());
         }
-        // Worktree exists at expected path - switch to it regardless of its branch
+        // Worktree exists at expected path - switch to it
+        // If the actual branch differs from requested, caller will show a warning
         let _ = repo.record_switch_previous(new_previous.as_deref());
-        let actual_branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
-        return Ok(switch_to_existing(existing_path, actual_branch));
+        return Ok(switch_to_existing(existing_path, path_branch));
     }
 
     // Fallback: check if branch has a worktree at a different path
     match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
             let _ = repo.record_switch_previous(new_previous.as_deref());
-            return Ok(switch_to_existing(existing_path, resolved_branch));
+            // Branch matches (found by branch lookup), so actual = requested
+            return Ok(switch_to_existing(
+                existing_path,
+                Some(resolved_branch.clone()),
+            ));
         }
         Some(_) => {
             return Err(GitError::WorktreeMissing {
@@ -511,7 +607,10 @@ pub fn handle_switch(
             base_branch: base_for_creation,
             from_remote,
         },
-        resolved_branch,
+        SwitchBranchInfo {
+            expected: resolved_branch.clone(),
+            current: Some(resolved_branch),
+        },
     ))
 }
 
