@@ -67,16 +67,15 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Two distinct operations:
+Switches to a worktree, creating one if needed.
 
-- [1mSwitch to existing worktree[0m — Changes directory, nothing else
-- [1mCreate new worktree[0m ([2m--create[0m) — Creates branch and worktree, runs hooks
+With [2m--create[0m, creates a new branch based off [2m--base[0m (defaults to default branch) and runs hooks.
 
 [32mExamples
 
-  [2mwt switch feature-auth           # Switch to existing worktree
+  [2mwt switch feature-auth           # Switch to worktree
   [2mwt switch -                      # Previous worktree (like cd -)
-  [2mwt switch --create new-feature   # Create branch and worktree
+  [2mwt switch --create new-feature   # Create new branch and worktree
   [2mwt switch --create hotfix --base production
 
 For interactive selection, use `wt select`.

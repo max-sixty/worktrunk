@@ -2009,17 +2009,16 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
     },
 
     /// Switch to a worktree
-    #[command(after_long_help = r#"Two distinct operations:
+    #[command(after_long_help = r#"Switches to a worktree, creating one if needed.
 
-- **Switch to existing worktree** — Changes directory, nothing else
-- **Create new worktree** (`--create`) — Creates branch and worktree, runs [hooks](@/hook.md)
+With `--create`, creates a new branch based off `--base` (defaults to default branch) and runs [hooks](@/hook.md).
 
 ## Examples
 
 ```console
-wt switch feature-auth           # Switch to existing worktree
+wt switch feature-auth           # Switch to worktree
 wt switch -                      # Previous worktree (like cd -)
-wt switch --create new-feature   # Create branch and worktree
+wt switch --create new-feature   # Create new branch and worktree
 wt switch --create hotfix --base production
 ```
 
