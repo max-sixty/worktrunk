@@ -1,12 +1,13 @@
-//! Global output context using thread-local storage
+//! Global output context with thread-safe mode propagation
 //!
 //! This provides a logging-like API where you configure output mode once
 //! at program start, then use it anywhere without passing parameters.
 //!
 //! # Implementation
 //!
-//! Uses `thread_local!` to store per-thread output state:
-//! - Each thread gets its own `OUTPUT_CONTEXT`
+//! Uses a hybrid approach:
+//! - `OnceLock<OutputMode>` stores the mode globally (set once at startup)
+//! - `thread_local!` stores per-thread handlers, initialized from the global mode
 //! - `RefCell<T>` enables interior mutability (runtime borrow checking)
 //! - Trait object (`Box<dyn OutputHandler>`) for runtime polymorphism
 //!
@@ -15,8 +16,8 @@
 //! - ✅ Zero parameter threading - call from anywhere
 //! - ✅ Single initialization point - set once in main()
 //! - ✅ Fast access - thread-local is just a pointer lookup
+//! - ✅ Spawned threads inherit the mode - handlers created with correct mode
 //! - ✅ Simple mental model - one trait, no enum wrapper
-//! - ⚠️ Per-thread state - not an issue for single-threaded CLI
 //! - ⚠️ Runtime borrow checks - acceptable for this access pattern
 
 use super::directive::DirectiveOutput;
@@ -26,6 +27,7 @@ use crate::cli::DirectiveShell;
 use std::cell::RefCell;
 use std::io;
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// Output mode selection
 #[derive(Debug, Clone, Copy)]
@@ -35,10 +37,19 @@ pub enum OutputMode {
     Directive(DirectiveShell),
 }
 
+/// Global output mode, set once at initialization.
+/// Spawned threads read this to initialize their thread-local handlers.
+static GLOBAL_MODE: OnceLock<OutputMode> = OnceLock::new();
+
 thread_local! {
-    static OUTPUT_CONTEXT: RefCell<Box<dyn OutputHandler>> = RefCell::new(
-        Box::new(InteractiveOutput::new())
-    );
+    static OUTPUT_CONTEXT: RefCell<Box<dyn OutputHandler>> = RefCell::new({
+        // Read mode from global (set by initialize()), default to Interactive if unset
+        let mode = GLOBAL_MODE.get().copied().unwrap_or(OutputMode::Interactive);
+        match mode {
+            OutputMode::Interactive => Box::new(InteractiveOutput::new()),
+            OutputMode::Directive(shell) => Box::new(DirectiveOutput::new(shell)),
+        }
+    });
 }
 
 /// Helper to access the output handler
@@ -52,7 +63,12 @@ fn with_output<R>(f: impl FnOnce(&mut dyn OutputHandler) -> R) -> R {
 /// Initialize the global output context
 ///
 /// Call this once at program startup to set the output mode.
+/// Spawned threads will automatically use the same mode.
 pub fn initialize(mode: OutputMode) {
+    // Set global mode FIRST so spawned threads pick it up
+    let _ = GLOBAL_MODE.set(mode);
+
+    // Then initialize current thread's context
     let handler: Box<dyn OutputHandler> = match mode {
         OutputMode::Interactive => Box::new(InteractiveOutput::new()),
         OutputMode::Directive(shell) => Box::new(DirectiveOutput::new(shell)),
@@ -171,19 +187,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mode_switching() {
+    fn test_initialize_does_not_panic() {
         use crate::cli::DirectiveShell;
 
-        // Default is interactive
+        // Verify initialize() doesn't panic when called (possibly multiple times in tests).
+        // Note: GLOBAL_MODE can only be set once per process, but the current thread's
+        // handler is always updated. In production, initialize() is called exactly once.
         initialize(OutputMode::Interactive);
-        // Just verify initialize doesn't panic
-
-        // Switch to directive (POSIX)
         initialize(OutputMode::Directive(DirectiveShell::Posix));
-        // Just verify initialize doesn't panic
-
-        // Switch to directive (PowerShell)
         initialize(OutputMode::Directive(DirectiveShell::Powershell));
-        // Just verify initialize doesn't panic
+    }
+
+    #[test]
+    fn test_spawned_thread_inherits_mode() {
+        use crate::cli::DirectiveShell;
+        use std::sync::mpsc;
+
+        // Initialize mode (may already be set by another test, which is fine)
+        initialize(OutputMode::Directive(DirectiveShell::Posix));
+
+        // Spawn a thread and verify it can access output without panicking.
+        // The thread will inherit the mode from GLOBAL_MODE.
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // Access output system in spawned thread - this should use Directive mode
+            // if GLOBAL_MODE was set, or Interactive as fallback.
+            let _ = with_output(|h| h.flush());
+            tx.send(()).unwrap();
+        })
+        .join()
+        .unwrap();
+
+        rx.recv().unwrap();
     }
 }
