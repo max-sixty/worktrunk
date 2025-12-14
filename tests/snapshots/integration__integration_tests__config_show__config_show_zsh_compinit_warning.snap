@@ -41,6 +41,3 @@ exit_code: 0
 [107m [0m  autoload -Uz compinit && compinit
 ⚪ [2mSkipped bash; ~/.bashrc not found[22m
 ⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
-
-[36mBINARIES[39m
-💡 [2mCI status requires GitHub or GitLab remote[22m

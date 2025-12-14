@@ -127,3 +127,26 @@ pub fn progress_message(content: impl AsRef<str>) -> String {
 pub fn info_message(content: impl AsRef<str>) -> String {
     cformat!("{INFO_EMOJI} {}", content.as_ref())
 }
+
+/// Format a section heading (cyan uppercase text, no emoji)
+///
+/// Used for organizing output into distinct sections. Headings can have
+/// optional suffix info (e.g., path, location).
+///
+/// ```
+/// use worktrunk::styling::format_heading;
+///
+/// // Plain heading
+/// let h = format_heading("BINARIES", None);
+/// // => "BINARIES"
+///
+/// // Heading with suffix
+/// let h = format_heading("USER CONFIG", Some("~/.config/wt.toml"));
+/// // => "USER CONFIG  ~/.config/wt.toml"
+/// ```
+pub fn format_heading(title: &str, suffix: Option<&str>) -> String {
+    match suffix {
+        Some(s) => cformat!("<cyan>{}</>  {}", title, s),
+        None => cformat!("<cyan>{}</>", title),
+    }
+}

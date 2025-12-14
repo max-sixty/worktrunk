@@ -55,7 +55,7 @@ pub mod handlers;
 // Re-export the public API
 pub use global::{
     OutputMode, blank, change_directory, data, execute, flush, flush_for_stderr_prompt, gutter,
-    initialize, print, shell_integration_hint, table, terminate_output,
+    heading, initialize, print, shell_integration_hint, table, terminate_output,
 };
 // Re-export output handlers
 pub use handlers::{

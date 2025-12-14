@@ -6,8 +6,8 @@ use worktrunk::config::{CommandConfig, ProjectConfig, WorktrunkConfig};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
-    INFO_EMOJI, PROMPT_EMOJI, format_bash_with_gutter, format_with_gutter, hint_message,
-    info_message, progress_message, success_message,
+    INFO_EMOJI, PROMPT_EMOJI, format_bash_with_gutter, format_heading, format_with_gutter,
+    hint_message, info_message, progress_message, success_message,
 };
 
 use super::command_executor::CommandContext;
@@ -714,12 +714,14 @@ fn render_user_hooks(
     writeln!(
         out,
         "{}",
-        cformat!(
-            "<cyan>USER HOOKS</>  {}",
-            config_path
-                .as_ref()
-                .map(|p| format_path_for_display(p))
-                .unwrap_or_else(|| "(not found)".to_string())
+        format_heading(
+            "USER HOOKS",
+            Some(
+                &config_path
+                    .as_ref()
+                    .map(|p| format_path_for_display(p))
+                    .unwrap_or_else(|| "(not found)".to_string())
+            )
         )
     )?;
 
@@ -771,9 +773,9 @@ fn render_project_hooks(
     writeln!(
         out,
         "{}",
-        cformat!(
-            "<cyan>PROJECT HOOKS</>  {}",
-            format_path_for_display(&config_path)
+        format_heading(
+            "PROJECT HOOKS",
+            Some(&format_path_for_display(&config_path))
         )
     )?;
 
