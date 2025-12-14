@@ -36,7 +36,7 @@ worktree requires typing the branch name three times: `git worktree add -b feat
 
 ## Worktrunk makes git worktrees simple
 
-Start with the core commands; add workflow automation as needed.
+> Start with the core commands; add workflow automation as needed.
 
 **Core commands:**
 

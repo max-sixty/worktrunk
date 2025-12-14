@@ -5,7 +5,7 @@ weight = 1
 
 Worktrunk is a CLI for git worktree management, designed for parallel AI agent
 workflows. Git worktrees give each agent an isolated branch and directory;
-Worktrunk wraps them in a clean interface, plus hooks to extend. Scaling agents
+Worktrunk wraps them in a clean interface, plus extension points. Scaling agents
 becomes as simple as scaling git branches.
 
 Here's a quick demo:
@@ -30,7 +30,7 @@ worktree requires typing the branch name three times: `git worktree add -b feat
 
 ## Worktrunk makes git worktrees simple
 
-Start with the core commands; add workflow automation as needed.
+> Start with the core commands; add workflow automation as needed.
 
 **Core commands:**
 
