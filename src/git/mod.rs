@@ -43,6 +43,57 @@ pub use error::{
 };
 pub use repository::{Repository, ResolvedWorktree, set_base_path};
 
+/// Escape branch name for use in git config key.
+///
+/// Git config keys only allow alphanumeric, `-`, and `.` characters.
+/// Branch names commonly contain `/` and `_`, so we encode them as `-XX`
+/// where XX is the uppercase hex value. We also encode `-` itself to
+/// ensure round-trip safety.
+pub fn escape_branch_for_config(branch: &str) -> String {
+    let mut escaped = String::with_capacity(branch.len());
+    for ch in branch.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' => escaped.push(ch),
+            '-' => escaped.push_str("-2D"),
+            _ => {
+                // Encode as -XX where XX is uppercase hex
+                for byte in ch.to_string().bytes() {
+                    escaped.push_str(&format!("-{byte:02X}"));
+                }
+            }
+        }
+    }
+    escaped
+}
+
+/// Unescape branch name from git config key.
+pub fn unescape_branch_from_config(escaped: &str) -> String {
+    let mut bytes = Vec::with_capacity(escaped.len());
+    let mut chars = escaped.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '-' {
+            // Try to read two hex digits
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2
+                && let Ok(byte) = u8::from_str_radix(&hex, 16)
+            {
+                bytes.push(byte);
+                continue;
+            }
+            // Invalid escape sequence, keep as-is
+            bytes.push(b'-');
+            bytes.extend(hex.bytes());
+        } else {
+            // Unescaped char - encode as UTF-8 bytes
+            bytes.extend(ch.to_string().bytes());
+        }
+    }
+
+    // Decode collected bytes as UTF-8
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+}
+
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).

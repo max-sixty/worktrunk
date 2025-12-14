@@ -270,6 +270,8 @@ mod tests {
 
     #[test]
     fn test_escape_branch_round_trip() {
+        use worktrunk::git::{escape_branch_for_config, unescape_branch_from_config};
+
         let cases = [
             "main",
             "feature/test",
@@ -289,8 +291,8 @@ mod tests {
         ];
 
         for branch in cases {
-            let escaped = CachedCiStatus::escape_branch(branch);
-            let unescaped = CachedCiStatus::unescape_branch(&escaped);
+            let escaped = escape_branch_for_config(branch);
+            let unescaped = unescape_branch_from_config(&escaped);
             assert_eq!(
                 unescaped, branch,
                 "Round-trip failed for '{}': escaped='{}', unescaped='{}'",
@@ -301,6 +303,8 @@ mod tests {
 
     #[test]
     fn test_escape_branch_git_config_compatible() {
+        use worktrunk::git::escape_branch_for_config;
+
         // Git config keys only allow alphanumeric, `-`, and `.`
         let is_valid_config_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.';
 
@@ -315,7 +319,7 @@ mod tests {
         ];
 
         for branch in cases {
-            let escaped = CachedCiStatus::escape_branch(branch);
+            let escaped = escape_branch_for_config(branch);
             assert!(
                 escaped.chars().all(is_valid_config_char),
                 "Escaped '{}' contains invalid git config chars: '{}'",
@@ -648,62 +652,6 @@ impl CachedCiStatus {
         Self::TTL_BASE_SECS + jitter
     }
 
-    /// Escape branch name for use in git config key.
-    ///
-    /// Git config keys only allow alphanumeric, `-`, and `.` characters.
-    /// Branch names commonly contain `/` and `_`, so we encode them as `-XX`
-    /// where XX is the uppercase hex value. We also encode `-` itself to
-    /// ensure round-trip safety.
-    ///
-    /// NOTE: This encoding is verbose but necessary — standard percent-encoding
-    /// uses `%` which git config doesn't allow, and base64 uses `_`. Open to
-    /// simpler approaches if someone finds one.
-    pub(crate) fn escape_branch(branch: &str) -> String {
-        let mut escaped = String::with_capacity(branch.len());
-        for ch in branch.chars() {
-            match ch {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '.' => escaped.push(ch),
-                '-' => escaped.push_str("-2D"),
-                _ => {
-                    // Encode as -XX where XX is uppercase hex
-                    for byte in ch.to_string().bytes() {
-                        escaped.push_str(&format!("-{byte:02X}"));
-                    }
-                }
-            }
-        }
-        escaped
-    }
-
-    /// Unescape branch name from git config key.
-    pub(crate) fn unescape_branch(escaped: &str) -> String {
-        let mut bytes = Vec::with_capacity(escaped.len());
-        let mut chars = escaped.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '-' {
-                // Try to read two hex digits
-                let hex: String = chars.by_ref().take(2).collect();
-                if hex.len() == 2
-                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
-                {
-                    bytes.push(byte);
-                    continue;
-                }
-                // Invalid escape sequence, keep as-is
-                bytes.push(b'-');
-                bytes.extend(hex.bytes());
-            } else {
-                // Unescaped char - encode as UTF-8 bytes
-                bytes.extend(ch.to_string().bytes());
-            }
-        }
-
-        // Decode collected bytes as UTF-8
-        String::from_utf8(bytes)
-            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
-    }
-
     /// Check if the cache is still valid
     fn is_valid(&self, current_head: &str, now_secs: u64, repo_root: &str) -> bool {
         // Cache is valid if:
@@ -715,7 +663,10 @@ impl CachedCiStatus {
 
     /// Read cached CI status from git config
     fn read(branch: &str, repo_root: &str) -> Option<Self> {
-        let config_key = format!("worktrunk.ci.{}", Self::escape_branch(branch));
+        let config_key = format!(
+            "worktrunk.ci.{}",
+            worktrunk::git::escape_branch_for_config(branch)
+        );
         let output = Command::new("git")
             .args(["config", "--get", &config_key])
             .current_dir(repo_root)
@@ -732,7 +683,10 @@ impl CachedCiStatus {
 
     /// Write CI status to git config cache
     fn write(&self, branch: &str, repo_root: &str) {
-        let config_key = format!("worktrunk.ci.{}", Self::escape_branch(branch));
+        let config_key = format!(
+            "worktrunk.ci.{}",
+            worktrunk::git::escape_branch_for_config(branch)
+        );
         let Ok(json) = serde_json::to_string(self) else {
             log::debug!("Failed to serialize CI cache for {}", branch);
             return;
@@ -757,7 +711,7 @@ impl CachedCiStatus {
             .filter_map(|line| {
                 let (key, json) = line.split_once(' ')?;
                 let escaped = key.strip_prefix("worktrunk.ci.")?;
-                let branch = Self::unescape_branch(escaped);
+                let branch = worktrunk::git::unescape_branch_from_config(escaped);
                 let cached: Self = serde_json::from_str(json).ok()?;
                 Some((branch, cached))
             })

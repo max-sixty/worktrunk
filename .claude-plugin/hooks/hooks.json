@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git branch --show-current 2>/dev/null | sed 's|/|--|g' | xargs -I {} git config worktrunk.marker.{} 🤖"
+            "command": "wt config state marker set 🤖 || true"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git branch --show-current 2>/dev/null | sed 's|/|--|g' | xargs -I {} git config worktrunk.marker.{} 💬"
+            "command": "wt config state marker set 💬 || true"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git branch --show-current 2>/dev/null | sed 's|/|--|g' | xargs -I {} git config --unset worktrunk.marker.{} 2>/dev/null || true"
+            "command": "wt config state marker clear || true"
           }
         ]
       }

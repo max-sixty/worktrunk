@@ -1541,6 +1541,18 @@ exit /b 1
             cmd.env("PATH", new_path);
         }
     }
+
+    /// Set a marker for a branch with proper escaping for git config keys.
+    ///
+    /// This handles the branch name escaping required for git config keys,
+    /// which only allow alphanumeric, `-`, and `.` characters.
+    pub fn set_marker(&self, branch: &str, marker: &str) {
+        let escaped = worktrunk::git::escape_branch_for_config(branch);
+        let config_key = format!("worktrunk.marker.{}", escaped);
+        self.git_command(&["config", &config_key, marker])
+            .output()
+            .unwrap();
+    }
 }
 
 /// Add standard env var redactions to insta settings

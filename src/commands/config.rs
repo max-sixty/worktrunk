@@ -637,7 +637,7 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 // Clear cache to force refresh
                 let config_key = format!(
                     "worktrunk.ci.{}",
-                    super::list::ci_status::CachedCiStatus::escape_branch(&branch_name)
+                    worktrunk::git::escape_branch_for_config(&branch_name)
                 );
                 let _ = repo.run_command(&["config", "--unset", &config_key]);
             }
@@ -759,7 +759,8 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
                 "set_at": now
             });
 
-            let config_key = format!("worktrunk.marker.{}", branch_name);
+            let escaped = worktrunk::git::escape_branch_for_config(&branch_name);
+            let config_key = format!("worktrunk.marker.{}", escaped);
             repo.run_command(&["config", &config_key, &json.to_string()])?;
 
             crate::output::print(success_message(cformat!(
@@ -815,7 +816,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                 };
                 let config_key = format!(
                     "worktrunk.ci.{}",
-                    super::list::ci_status::CachedCiStatus::escape_branch(&branch_name)
+                    worktrunk::git::escape_branch_for_config(&branch_name)
                 );
                 if repo
                     .run_command(&["config", "--unset", &config_key])
@@ -859,7 +860,8 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     None => repo.require_current_branch("clear marker for current branch")?,
                 };
 
-                let config_key = format!("worktrunk.marker.{}", branch_name);
+                let escaped = worktrunk::git::escape_branch_for_config(&branch_name);
+                let config_key = format!("worktrunk.marker.{}", escaped);
                 if repo
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
@@ -1211,10 +1213,11 @@ fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
 
     let mut markers = Vec::new();
     for line in output.lines() {
-        // Format: "worktrunk.marker.branch_name json_or_plain_value"
+        // Format: "worktrunk.marker.escaped_branch json_or_plain_value"
         if let Some((key, value)) = line.split_once(' ')
-            && let Some(branch) = key.strip_prefix("worktrunk.marker.")
+            && let Some(escaped_branch) = key.strip_prefix("worktrunk.marker.")
         {
+            let branch = worktrunk::git::unescape_branch_from_config(escaped_branch);
             // Try to parse as JSON, fall back to legacy plain-text
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
                 // Skip if "marker" field is missing (corrupted data)
@@ -1223,14 +1226,14 @@ fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
                 };
                 let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
                 markers.push(MarkerEntry {
-                    branch: branch.to_string(),
+                    branch,
                     marker: marker.to_string(),
                     set_at,
                 });
             } else {
                 // Legacy plain-text marker (no timestamp)
                 markers.push(MarkerEntry {
-                    branch: branch.to_string(),
+                    branch,
                     marker: value.to_string(),
                     set_at: 0, // Unknown age
                 });

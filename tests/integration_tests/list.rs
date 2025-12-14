@@ -701,12 +701,7 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
         "Add REST API endpoints",
     );
     // Set user marker
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.feature-api", "🤖"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("feature-api", "🤖");
 
     // Branch with uncommitted changes and user marker 💬
     let review_wt = repo.add_worktree_with_commit(
@@ -718,12 +713,7 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
     // Add uncommitted changes
     std::fs::write(review_wt.join("styles.css"), "/* pending styles */").unwrap();
     // Set user marker
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.review-ui", "💬"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("review-ui", "💬");
 
     // Branch with uncommitted changes only (no user marker)
     let wip_wt = repo.add_worktree("wip-docs");
@@ -740,12 +730,7 @@ fn test_list_json_with_user_marker(mut repo: TestRepo) {
     repo.add_worktree("with-status");
 
     // Set user marker (branch-keyed)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.with-status", "🔧"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("with-status", "🔧");
 
     // Worktree without user marker
     repo.add_worktree("without-status");
@@ -824,12 +809,7 @@ fn test_list_branch_only_with_status(repo: TestRepo) {
         .unwrap();
 
     // Set branch-keyed status for the branch-only entry
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.branch-only", "🌿"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("branch-only", "🌿");
 
     // Use --branches flag to show branch-only entries
     snapshot_list_with_branches("branch_only_with_status", &repo);
@@ -839,23 +819,11 @@ fn test_list_branch_only_with_status(repo: TestRepo) {
 fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
     // Test with single emoji
     repo.add_worktree("emoji");
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.emoji", "🔄"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("emoji", "🔄");
 
     // Test with compound emoji (multi-codepoint)
     repo.add_worktree("multi");
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.multi", "👨‍💻"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("multi", "👨‍💻");
 
     snapshot_list("user_marker_special_chars", &repo);
 }
@@ -1676,23 +1644,6 @@ fn run_git(repo: &TestRepo, args: &[&str], cwd: &std::path::Path) {
 }
 
 /// Mock CI status by writing to git config cache
-/// Escape branch name for git config key (must match CachedCiStatus::escape_branch)
-fn escape_branch_for_config(branch: &str) -> String {
-    let mut escaped = String::with_capacity(branch.len());
-    for ch in branch.chars() {
-        match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' => escaped.push(ch),
-            '-' => escaped.push_str("-2D"),
-            _ => {
-                for byte in ch.to_string().bytes() {
-                    escaped.push_str(&format!("-{byte:02X}"));
-                }
-            }
-        }
-    }
-    escaped
-}
-
 fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
     // Get HEAD commit for the branch
     let mut cmd = Command::new("git");
@@ -1718,7 +1669,10 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     );
 
     // Write to git config (using escaped branch name)
-    let config_key = format!("worktrunk.ci.{}", escape_branch_for_config(branch));
+    let config_key = format!(
+        "worktrunk.ci.{}",
+        worktrunk::git::escape_branch_for_config(branch)
+    );
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", &config_key, &cache_json])
@@ -2024,24 +1978,14 @@ fn test_list_large_diffs_alignment(mut repo: TestRepo) {
     std::fs::write(large_wt.join("another.txt"), &another_large).unwrap();
 
     // Set user marker
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.feature-changes", "🤖"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("feature-changes", "🤖");
 
     // Worktree with short name to show gap before Status column
     let short_wt = repo.add_worktree("fix");
     std::fs::write(short_wt.join("quick.txt"), "quick fix").unwrap();
 
     // Set user marker for short branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.fix", "💬"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("fix", "💬");
 
     // Worktree with diverged status and working tree changes
     let diverged_wt = repo.add_worktree("diverged");
@@ -2073,12 +2017,7 @@ fn test_list_large_diffs_alignment(mut repo: TestRepo) {
     std::fs::write(diverged_wt.join("test.txt"), &modified_diverged).unwrap();
 
     // Set user marker
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.diverged", "💬"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("diverged", "💬");
 
     snapshot_list("large_diffs_alignment", &repo);
 }
@@ -2125,12 +2064,7 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
     std::fs::write(wli_seq.join("new.txt"), &new_content).unwrap();
 
     // Set user marker emoji 🤖
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.wli-sequence", "🤖"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("wli-sequence", "🤖");
 
     // Create "pr-link" worktree with different status (fewer symbols, same emoji type)
     let pr_link = repo.add_worktree("pr-link");
@@ -2151,12 +2085,7 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
         .unwrap();
 
     // Set same emoji type
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.pr-link", "🤖"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("pr-link", "🤖");
 
     // Create "main-symbol" with different emoji
     let main_sym = repo.add_worktree("main-symbol");
@@ -2174,12 +2103,7 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.main-symbol", "💬"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("main-symbol", "💬");
 
     snapshot_list("status_column_padding_emoji", &repo);
 }
@@ -2345,12 +2269,7 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
         .unwrap();
 
     // Set user marker emoji (🤖)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.feature", "🤖"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("feature", "🤖");
 
     // Result should show: ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // Use --full to enable conflict detection
@@ -2511,12 +2430,7 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
         .unwrap();
 
     // Set user marker emoji (🤖)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.marker.feature", "🤖"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.set_marker("feature", "🤖");
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
     let settings = setup_snapshot_settings(&repo);

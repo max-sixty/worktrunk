@@ -277,7 +277,8 @@ impl Repository {
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
     /// Falls back to plain text for legacy markers without timestamps.
     pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
-        let config_key = format!("worktrunk.marker.{}", branch);
+        let escaped = super::escape_branch_for_config(branch);
+        let config_key = format!("worktrunk.marker.{}", escaped);
         let raw = self
             .run_command(&["config", "--get", &config_key])
             .ok()
