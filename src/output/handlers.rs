@@ -397,8 +397,8 @@ pub fn handle_switch_output(
                 base_branch.as_deref(),
                 from_remote.as_deref(),
             )))?;
-            // Show setup hint if shell integration not active
-            if !is_directive_mode && !has_execute_command {
+            // Show setup hint if no execute command (hint suppressed in directive mode)
+            if !has_execute_command {
                 super::shell_integration_hint(shell_integration_hint())?;
             }
         }

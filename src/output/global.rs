@@ -7,24 +7,33 @@
 //!
 //! Uses a simple global approach:
 //! - `OnceLock<OutputMode>` stores the mode globally (set once at startup)
-//! - Handlers are created on-demand for each operation
-//! - Directive state (target_dir, exec_command) is stored globally for main thread
+//! - `OnceLock<Mutex<OutputState>>` stores stateful data (target_dir, exec_command)
+//! - All output functions check the mode and behave accordingly
+//!
+//! # Output Modes
+//!
+//! - **Interactive**: User messages to stderr, data (JSON) to stdout for piping
+//! - **Directive**: All output to stderr, stdout reserved for shell script at end
 //!
 //! # Trade-offs
 //!
-//! - ✅ Zero parameter threading - call from anywhere
-//! - ✅ Single initialization point - set once in main()
-//! - ✅ Spawned threads automatically use correct mode
-//! - ✅ Simple mental model - one global mode, handlers created on-demand
-//! - ✅ No thread-local complexity
+//! - Zero parameter threading - call from anywhere
+//! - Single initialization point - set once in main()
+//! - Spawned threads automatically use correct mode
+//! - Simple implementation - no traits, no handler structs
 
-use super::directive::DirectiveOutput;
-use super::interactive::InteractiveOutput;
-use super::traits::OutputHandler;
+#[cfg(not(unix))]
+use super::handlers::execute_streaming;
 use crate::cli::DirectiveShell;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
+#[cfg(unix)]
+use worktrunk::shell_exec::ShellConfig;
+use worktrunk::styling::{eprintln, hint_message, println, stderr};
 
 /// Output mode selection
 #[derive(Debug, Clone, Copy)]
@@ -72,20 +81,20 @@ pub fn initialize(mode: OutputMode) {
     let _ = OUTPUT_STATE.set(Mutex::new(OutputState::default()));
 }
 
-/// Display a shell integration hint (suppressed in directive mode)
+/// Display a shell integration hint
 ///
 /// Shell integration hints like "Run `wt config shell install` to enable automatic cd" are only
-/// shown in interactive mode since directive mode users already have shell integration.
-///
-/// This is kept as a separate method because it has mode-specific behavior.
+/// shown in interactive mode. In directive mode, users already have shell integration.
+/// This is the canonical check - call sites don't need to guard.
 pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().shell_integration_hint(message.into()),
-        OutputMode::Directive(_) => Ok(()), // Suppressed
+    if matches!(get_mode(), OutputMode::Directive(_)) {
+        return Ok(());
     }
+    eprintln!("{}", hint_message(message.into()));
+    stderr().flush()
 }
 
-/// Print a message (written as-is)
+/// Print a message to stderr (written as-is)
 ///
 /// Use with message formatting functions for semantic output:
 /// ```ignore
@@ -95,46 +104,50 @@ pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
 /// output::print(hint_message("Use --force to override"))?;
 /// ```
 pub fn print(message: impl Into<String>) -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().print(message.into()),
-        OutputMode::Directive(_) => DirectiveOutput::new().print(message.into()),
-    }
+    eprintln!("{}", message.into());
+    stderr().flush()
 }
 
-/// Emit gutter-formatted content
+/// Emit gutter-formatted content to stderr
 ///
 /// Gutter content has its own visual structure (column 0 gutter + content),
 /// so no additional emoji is added. Use with `format_with_gutter()` or `format_bash_with_gutter()`.
+///
+/// Note: Gutter content is pre-formatted with its own newlines, so we use write! not writeln!.
 pub fn gutter(content: impl Into<String>) -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().gutter(content.into()),
-        OutputMode::Directive(_) => DirectiveOutput::new().gutter(content.into()),
-    }
+    write!(stderr(), "{}", content.into())?;
+    stderr().flush()
 }
 
 /// Emit a blank line for visual separation
-///
-/// Used to separate logical sections of output.
 pub fn blank() -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().blank(),
-        OutputMode::Directive(_) => DirectiveOutput::new().blank(),
-    }
+    eprintln!();
+    stderr().flush()
 }
 
 /// Emit structured data output without emoji decoration
 ///
-/// Used for JSON and other pipeable data. In interactive mode, writes to stdout
-/// for piping. In directive mode, writes to stderr (where user messages go).
+/// Used for JSON and other pipeable data.
+/// - **Interactive**: writes to stdout (for piping to `jq`, etc.)
+/// - **Directive**: writes to stderr (stdout reserved for shell script)
 ///
 /// Example:
 /// ```rust,ignore
 /// output::data(json_string)?;
 /// ```
 pub fn data(content: impl Into<String>) -> io::Result<()> {
+    let content = content.into();
     match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().data(content.into()),
-        OutputMode::Directive(_) => DirectiveOutput::new().data(content.into()),
+        OutputMode::Interactive => {
+            // Structured data goes to stdout for piping
+            println!("{content}");
+            io::stdout().flush()
+        }
+        OutputMode::Directive(_) => {
+            // stdout reserved for shell script, data goes to stderr
+            eprintln!("{content}");
+            stderr().flush()
+        }
     }
 }
 
@@ -151,10 +164,8 @@ pub fn data(content: impl Into<String>) -> io::Result<()> {
 /// }
 /// ```
 pub fn table(content: impl Into<String>) -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().table(content.into()),
-        OutputMode::Directive(_) => DirectiveOutput::new().table(content.into()),
-    }
+    eprintln!("{}", content.into());
+    stderr().flush()
 }
 
 /// Request directory change (for shell integration)
@@ -186,11 +197,7 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
                 guard.target_dir.clone()
             });
 
-            let mut handler = InteractiveOutput::new();
-            if let Some(path) = target_dir {
-                handler.change_directory(&path)?;
-            }
-            handler.execute(command)
+            execute_command(command, target_dir.as_deref())
         }
         OutputMode::Directive(_) => {
             if let Some(state) = OUTPUT_STATE.get() {
@@ -204,28 +211,69 @@ pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     }
 }
 
+/// Execute a command in the given directory (Unix: exec, non-Unix: spawn)
+#[cfg(unix)]
+fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
+    let shell = ShellConfig::get();
+
+    // Use exec() to replace wt process with the command.
+    // This gives the command full TTY access (stdin, stdout, stderr all inherited),
+    // enabling interactive programs like `claude` to work properly.
+    let mut cmd = shell.command(&command);
+    let err = cmd
+        .current_dir(exec_dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .exec();
+
+    // exec() only returns on error
+    Err(anyhow::anyhow!(
+        "Failed to exec '{}' with {}: {}",
+        command,
+        shell.name,
+        err
+    ))
+}
+
+/// Execute a command in the given directory (non-Unix: spawn and wait)
+#[cfg(not(unix))]
+fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result<()> {
+    use worktrunk::git::WorktrunkError;
+
+    // On non-Unix platforms, fall back to spawn-and-wait.
+    // This uses the shell abstraction (Git Bash if available).
+    let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
+    if let Err(err) = execute_streaming(&command, exec_dir, false, None, true) {
+        // If the command failed with an exit code, just exit with that code.
+        // This matches Unix behavior where exec() replaces the process and
+        // the shell's exit code becomes the process exit code (no error message).
+        if let Some(WorktrunkError::ChildProcessExited { code, .. }) =
+            err.downcast_ref::<WorktrunkError>()
+        {
+            std::process::exit(*code);
+        }
+        return Err(err);
+    }
+    Ok(())
+}
+
 /// Flush any buffered output
 pub fn flush() -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().flush(),
-        OutputMode::Directive(_) => DirectiveOutput::new().flush(),
-    }
+    io::stdout().flush()?;
+    io::stderr().flush()
 }
 
 /// Flush streams before showing stderr prompt
 ///
 /// This prevents stream interleaving. Interactive prompts write to stderr, so we must
-/// ensure all previous output is flushed first:
-/// - In directive mode: Flushes stderr (messages stream there in real-time)
-/// - In interactive mode: Flushes both stdout and stderr
-///
-/// Note: With stderr separation (messages on stderr in directive mode), prompts
-/// naturally appear after messages without needing special synchronization.
+/// ensure all previous output is flushed first.
 pub fn flush_for_stderr_prompt() -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => InteractiveOutput::new().flush_for_stderr_prompt(),
-        OutputMode::Directive(_) => DirectiveOutput::new().flush_for_stderr_prompt(),
-    }
+    io::stdout().flush()?;
+    io::stderr().flush()
 }
 
 /// Terminate command output
@@ -253,13 +301,13 @@ pub fn terminate_output() -> io::Result<()> {
                     let path_str = path.to_string_lossy();
                     match shell {
                         DirectiveShell::Posix => {
-                            // shell_escape handles quoting (adds quotes if needed)
-                            let escaped = shell_escape::escape(path_str.as_ref().into());
-                            writeln!(stdout, "cd {}", escaped)?;
+                            // Always single-quote for consistent cross-platform behavior
+                            // (shell_escape behaves differently on Windows vs Unix)
+                            let escaped = path_str.replace('\'', "'\\''");
+                            writeln!(stdout, "cd '{}'", escaped)?;
                         }
                         DirectiveShell::Powershell => {
                             // PowerShell: double single quotes for escaping
-                            // (no crate support for PowerShell escaping)
                             let escaped = path_str.replace('\'', "''");
                             writeln!(stdout, "Set-Location '{}'", escaped)?;
                         }
@@ -280,6 +328,7 @@ pub fn terminate_output() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_initialize_does_not_panic() {
@@ -313,5 +362,136 @@ mod tests {
         .unwrap();
 
         rx.recv().unwrap();
+    }
+
+    // Shell escaping tests (moved from directive.rs)
+
+    #[test]
+    fn test_shell_script_format() {
+        // Test that POSIX quoting produces correct output
+        let path = PathBuf::from("/test/path");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "'\\''");
+        let cd_cmd = format!("cd '{}'", escaped);
+        assert_eq!(cd_cmd, "cd '/test/path'");
+    }
+
+    #[test]
+    fn test_path_with_single_quotes() {
+        // Paths with single quotes need escaping: ' -> '\''
+        let path = PathBuf::from("/test/it's/path");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "'\\''");
+        let cd_cmd = format!("cd '{}'", escaped);
+        assert_eq!(cd_cmd, "cd '/test/it'\\''s/path'");
+    }
+
+    #[test]
+    fn test_path_with_spaces() {
+        // Paths with spaces are safely quoted
+        let path = PathBuf::from("/test/my path/here");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "'\\''");
+        let cd_cmd = format!("cd '{}'", escaped);
+        assert_eq!(cd_cmd, "cd '/test/my path/here'");
+    }
+
+    #[test]
+    fn test_powershell_path_format() {
+        // PowerShell uses Set-Location and doubles single quotes for escaping
+        let path = PathBuf::from("C:\\Users\\test\\path");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "''");
+        let ps_cmd = format!("Set-Location '{}'", escaped);
+        assert_eq!(ps_cmd, "Set-Location 'C:\\Users\\test\\path'");
+    }
+
+    #[test]
+    fn test_powershell_path_with_single_quotes() {
+        // PowerShell escapes single quotes by doubling them
+        let path = PathBuf::from("C:\\Users\\it's a test\\path");
+        let path_str = path.to_string_lossy();
+        let escaped = path_str.replace('\'', "''");
+        let ps_cmd = format!("Set-Location '{}'", escaped);
+        assert_eq!(ps_cmd, "Set-Location 'C:\\Users\\it''s a test\\path'");
+    }
+
+    /// Test that anstyle formatting is preserved
+    #[test]
+    fn test_success_preserves_anstyle() {
+        use anstyle::{AnsiColor, Color, Style};
+
+        let bold = Style::new().bold();
+        let cyan = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
+
+        // Create a styled message
+        let styled = format!("{cyan}Styled{cyan:#} {bold}message{bold:#}");
+
+        // The styled message should contain ANSI escape codes
+        assert!(
+            styled.contains('\x1b'),
+            "Styled message should contain ANSI escape codes"
+        );
+    }
+
+    #[test]
+    fn test_color_reset_on_empty_style() {
+        // BUG HYPOTHESIS from CLAUDE.md (lines 154-177):
+        // Using {:#} on Style::new() produces empty string, not reset code
+        use anstyle::Style;
+
+        let empty_style = Style::new();
+        let output = format!("{:#}", empty_style);
+
+        // This is the bug: {:#} on empty style produces empty string!
+        assert_eq!(
+            output, "",
+            "BUG: Empty style reset produces empty string, not \\x1b[0m"
+        );
+
+        // This means colors can leak: "text in color{:#}" where # is on empty Style
+        // doesn't actually reset, it just removes the style prefix!
+    }
+
+    #[test]
+    fn test_proper_reset_with_anstyle_reset() {
+        // The correct way to reset ALL styles is anstyle::Reset
+        use anstyle::Reset;
+
+        let output = format!("{}", Reset);
+
+        // This should produce the actual reset escape code
+        assert!(
+            output.contains("\x1b[0m") || output == "\x1b[0m",
+            "Reset should produce actual ANSI reset code"
+        );
+    }
+
+    #[test]
+    fn test_nested_style_resets_leak_color() {
+        // BUG HYPOTHESIS from CLAUDE.md:
+        // Nested style resets can leak colors
+        use anstyle::{AnsiColor, Color, Style};
+
+        let warning = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
+        let bold = Style::new().bold();
+
+        // BAD pattern: nested reset
+        let bad_output = format!("{warning}Text with {bold}nested{bold:#} styles{warning:#}");
+
+        // When {bold:#} resets, it might also reset the warning color!
+        // We can't easily test the actual ANSI codes here, but document the issue
+        std::println!(
+            "Nested reset output: {}",
+            bad_output.replace('\x1b', "\\x1b")
+        );
+
+        // GOOD pattern: compose styles
+        let warning_bold = warning.bold();
+        let good_output =
+            format!("{warning}Text with {warning_bold}composed{warning_bold:#} styles{warning:#}");
+        std::println!("Composed output: {}", good_output.replace('\x1b', "\\x1b"));
+
+        // The good pattern maintains color through the bold section
     }
 }

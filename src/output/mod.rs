@@ -8,7 +8,7 @@
 //!
 //! ## Design
 //!
-//! **Global mode storage** with `OnceLock`:
+//! **Global state** with `OnceLock`:
 //!
 //! ```rust,ignore
 //! static GLOBAL_MODE: OnceLock<OutputMode> = OnceLock::new();
@@ -18,16 +18,7 @@
 //! The mode is set once at initialization and readable by all threads.
 //! State (target_dir, exec_command) is stored globally for main thread operations.
 //!
-//! **On-demand handlers** created for each operation:
-//!
-//! ```rust,ignore
-//! match get_mode() {
-//!     OutputMode::Interactive => InteractiveOutput::new().print(msg),
-//!     OutputMode::Directive(_) => DirectiveOutput::new().print(msg),
-//! }
-//! ```
-//!
-//! This enables type-safe dispatch without thread-local complexity.
+//! All output functions check the mode directly - no handler structs or traits.
 //!
 //! ## Usage Pattern
 //!
@@ -36,7 +27,7 @@
 //!
 //! // 1. Initialize once in main()
 //! let mode = if internal {
-//!     OutputMode::Directive
+//!     OutputMode::Directive(shell)
 //! } else {
 //!     OutputMode::Interactive
 //! };
@@ -52,15 +43,14 @@
 //! ## Output Modes
 //!
 //! - **Interactive**: Colors, emojis, shell hints, direct command execution
-//! - **Directive**: Shell script on stdout (at end), user messages on stderr (streaming)
+//!   - Messages to stderr, data (JSON) to stdout for piping
+//! - **Directive**: Shell script protocol for shell integration
+//!   - All messages to stderr, stdout reserved for shell script at end
 //!   - stdout: Shell script emitted at end (e.g., `cd '/path'`)
 //!   - stderr: Success messages, progress updates, warnings (streams in real-time)
 
-pub mod directive;
-pub mod global;
+mod global;
 pub mod handlers;
-pub mod interactive;
-mod traits;
 
 // Re-export the public API
 pub use global::{
