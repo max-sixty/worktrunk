@@ -762,6 +762,10 @@ fn handle_removed_worktree_output(
 ///
 /// If `stdin_content` is provided, it will be piped to the command's stdin (used for hook context JSON).
 ///
+/// If `inherit_stdin` is true and `stdin_content` is None, stdin is inherited from the parent process,
+/// enabling interactive programs (like `claude`, `vim`, or `python -i`) to read user input.
+/// If false and `stdin_content` is None, stdin is set to null (appropriate for non-interactive hooks).
+///
 /// Returns error if command exits with non-zero status.
 ///
 /// ## Cross-Platform Shell Execution
@@ -782,6 +786,7 @@ pub(crate) fn execute_streaming(
     working_dir: &std::path::Path,
     redirect_stdout_to_stderr: bool,
     stdin_content: Option<&str>,
+    inherit_stdin: bool,
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use worktrunk::git::WorktrunkError;
@@ -802,6 +807,8 @@ pub(crate) fn execute_streaming(
 
     let stdin_mode = if stdin_content.is_some() {
         std::process::Stdio::piped()
+    } else if inherit_stdin {
+        std::process::Stdio::inherit()
     } else {
         std::process::Stdio::null()
     };
@@ -909,7 +916,8 @@ pub fn execute_command_in_worktree(
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
     // Execute with stdout→stderr redirect for deterministic ordering
-    execute_streaming(command, worktree_path, true, stdin_content)?;
+    // Hooks don't need stdin inheritance (inherit_stdin=false)
+    execute_streaming(command, worktree_path, true, stdin_content, false)?;
 
     // Flush to ensure all output appears before we continue
     super::flush()?;

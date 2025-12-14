@@ -93,8 +93,9 @@ impl OutputHandler for InteractiveOutput {
 
         // On non-Unix platforms, fall back to spawn-and-wait.
         // This uses the shell abstraction (Git Bash if available).
+        // inherit_stdin=true enables interactive programs (like `claude`, `vim`, `python -i`)
         let exec_dir = self.target_dir.as_deref().unwrap_or_else(|| Path::new("."));
-        if let Err(err) = execute_streaming(&command, exec_dir, false, None) {
+        if let Err(err) = execute_streaming(&command, exec_dir, false, None, true) {
             // If the command failed with an exit code, just exit with that code.
             // This matches Unix behavior where exec() replaces the process and
             // the shell's exit code becomes the process exit code (no error message).

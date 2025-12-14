@@ -588,3 +588,49 @@ fn test_switch_missing_argument_shows_hints(repo: TestRepo) {
     // Run switch with no arguments - should show clap error plus hints
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
 }
+
+/// Test that --execute commands can read from stdin (stdin inheritance).
+///
+/// This verifies the fix for non-Unix platforms where stdin was incorrectly
+/// set to Stdio::null() instead of Stdio::inherit(), breaking interactive
+/// programs like `vim`, `python -i`, or `claude`.
+///
+/// The test pipes input to `wt switch --execute "cat"` and verifies the
+/// cat command receives and outputs that input, proving stdin was inherited.
+#[rstest]
+fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let test_input = "stdin_inheritance_test_content\n";
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_wt"));
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["switch", "--create", "stdin-test", "--execute", "cat"])
+        .current_dir(repo.root_path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().expect("failed to spawn wt");
+
+    // Write test input to stdin and close it to signal EOF
+    {
+        let stdin = child.stdin.as_mut().expect("failed to get stdin");
+        stdin
+            .write_all(test_input.as_bytes())
+            .expect("failed to write to stdin");
+    }
+
+    let output = child.wait_with_output().expect("failed to wait for child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The cat command should have received our input via inherited stdin
+    // and echoed it to stdout
+    assert!(
+        stdout.contains("stdin_inheritance_test_content"),
+        "Expected cat to receive piped stdin. Got stdout: {}\nstderr: {}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
