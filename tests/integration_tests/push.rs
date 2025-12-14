@@ -130,6 +130,73 @@ fn test_push_dirty_target_autostash(mut repo: TestRepo) {
 }
 
 #[rstest]
+fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
+    // Regression test: overlap detection must detect conflicts when a file is renamed
+    // in the source branch but has uncommitted changes under the old name in the target.
+    //
+    // Setup:
+    // 1. main has file.txt (committed)
+    // 2. main (target) has uncommitted modifications to file.txt
+    // 3. feature renames file.txt -> renamed.txt (committed)
+    // 4. Push from feature to main should FAIL (conflict on the same file)
+
+    // Create initial file in main
+    repo.commit_in_worktree(
+        repo.root_path(),
+        "file.txt",
+        "original content",
+        "Initial file",
+    );
+
+    // Create feature branch from main
+    let feature_wt = repo.add_worktree("feature");
+
+    // Make uncommitted changes to file.txt in main (target worktree)
+    std::fs::write(repo.root_path().join("file.txt"), "modified in target").unwrap();
+
+    // In feature worktree, rename file.txt to renamed.txt and commit
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["mv", "file.txt", "renamed.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Rename file.txt to renamed.txt"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+
+    // Try to push from feature to main (should fail due to conflicting changes)
+    // The renamed file.txt (now renamed.txt) conflicts with uncommitted file.txt changes
+    snapshot_push(
+        "push_dirty_target_overlap_renamed_file",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+
+    // Ensure target worktree still has the modified file.txt and no stash was created
+    let main_contents = std::fs::read_to_string(repo.root_path().join("file.txt")).unwrap();
+    assert_eq!(main_contents, "modified in target");
+
+    let mut git_cmd = Command::new("git");
+    repo.configure_git_cmd(&mut git_cmd);
+    let stash_list = git_cmd
+        .args(["stash", "list"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&stash_list.stdout)
+            .trim()
+            .is_empty()
+    );
+}
+
+#[rstest]
 fn test_push_error_not_fast_forward(mut repo: TestRepo) {
     // Create feature branch from initial commit
     let feature_wt = repo.add_worktree("feature");

@@ -666,10 +666,34 @@ impl Repository {
     }
 
     /// Get files changed between base and head.
+    ///
+    /// For renames and copies, both old and new paths are included to ensure
+    /// overlap detection works correctly (e.g., detecting conflicts when a file
+    /// is renamed in one branch but has uncommitted changes under the old name).
     pub fn changed_files(&self, base: &str, head: &str) -> anyhow::Result<Vec<String>> {
         let range = format!("{}..{}", base, head);
-        let stdout = self.run_command(&["diff", "--name-only", &range])?;
-        Ok(stdout.lines().map(String::from).collect())
+        let stdout = self.run_command(&["diff", "--name-status", "-z", &range])?;
+
+        // Format: STATUS\0PATH\0 or STATUS\0NEW_PATH\0OLD_PATH\0 for renames/copies
+        let mut files = Vec::new();
+        let mut parts = stdout.split('\0').filter(|s| !s.is_empty());
+
+        while let Some(status) = parts.next() {
+            let path = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Malformed git diff output: status without path"))?;
+            files.push(path.to_string());
+
+            // For renames (R) and copies (C), the old path follows
+            if status.starts_with('R') || status.starts_with('C') {
+                let old_path = parts.next().ok_or_else(|| {
+                    anyhow::anyhow!("Malformed git diff output: rename/copy without old path")
+                })?;
+                files.push(old_path.to_string());
+            }
+        }
+
+        Ok(files)
     }
 
     /// Get commit timestamp in seconds since epoch.

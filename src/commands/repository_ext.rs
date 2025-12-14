@@ -67,8 +67,9 @@ impl RepositoryCliExt for Repository {
     }
 
     fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
+        // Use -z for NUL-separated output to handle filenames with spaces/newlines
         let status = self
-            .run_command(&["status", "--porcelain"])
+            .run_command(&["status", "--porcelain", "-z"])
             .context("Failed to get status")?;
         AutoStageWarning::from_status(&status).emit()
     }
@@ -325,12 +326,36 @@ struct AutoStageWarning {
 }
 
 impl AutoStageWarning {
+    /// Parse `git status --porcelain -z` output for untracked files.
+    ///
+    /// Format: "XY path\0" where XY is the status code and path follows a space.
+    /// Untracked files have status "??".
     fn from_status(status_output: &str) -> Self {
-        let files = status_output
-            .lines()
-            .filter_map(|line| line.strip_prefix("?? "))
-            .map(|filename| filename.to_string())
-            .collect();
+        let mut files = Vec::new();
+        let mut entries = status_output
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .peekable();
+
+        while let Some(entry) = entries.next() {
+            // Format: "XY PATH" where XY is 2 status chars, space, then path
+            if entry.len() < 3 {
+                continue;
+            }
+
+            let status = &entry[0..2];
+            let path = &entry[3..];
+
+            // Only collect untracked files
+            if status == "??" {
+                files.push(path.to_string());
+            }
+
+            // Skip old path for renames/copies (we don't care about them here)
+            if status.starts_with('R') || status.starts_with('C') {
+                entries.next();
+            }
+        }
 
         Self { files }
     }

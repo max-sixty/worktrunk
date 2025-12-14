@@ -446,11 +446,12 @@ pub fn generate_commit_message(
 
     // Fallback: generate a descriptive commit message based on changed files
     let repo = Repository::current();
-    let file_list = repo.run_command(&["diff", "--staged", "--name-only"])?;
+    // Use -z for NUL-separated output to handle filenames with spaces/newlines
+    let file_list = repo.run_command(&["diff", "--staged", "--name-only", "-z"])?;
     let staged_files = file_list
-        .lines()
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
+        .split('\0')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
         .map(|path| {
             Path::new(path)
                 .file_name()
