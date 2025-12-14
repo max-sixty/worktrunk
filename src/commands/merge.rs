@@ -12,6 +12,18 @@ use super::project_config::collect_commands_for_hooks;
 use super::repository_ext::RepositoryCliExt;
 use super::worktree::{MergeOperations, RemoveResult, handle_push};
 
+/// Options for the merge command
+pub struct MergeOptions<'a> {
+    pub target: Option<&'a str>,
+    pub squash: bool,
+    pub commit: bool,
+    pub rebase: bool,
+    pub remove: bool,
+    pub verify: bool,
+    pub force: bool,
+    pub stage_mode: super::commit::StageMode,
+}
+
 /// Reason why a worktree was preserved (not removed) after merge
 enum PreserveReason {
     /// User explicitly passed --no-remove
@@ -72,15 +84,18 @@ impl<'a> MergeCommandCollector<'a> {
     }
 }
 
-pub fn handle_merge(
-    target: Option<&str>,
-    squash: bool,
-    commit: bool,
-    remove: bool,
-    verify: bool,
-    force: bool,
-    stage_mode: super::commit::StageMode,
-) -> anyhow::Result<()> {
+pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    let MergeOptions {
+        target,
+        squash,
+        commit,
+        rebase,
+        remove,
+        verify,
+        force,
+        stage_mode,
+    } = opts;
+
     let env = CommandEnv::for_action("merge")?;
     let repo = &env.repo;
     let config = &env.config;
@@ -166,14 +181,22 @@ pub fn handle_merge(
         false
     };
 
-    // Rebase onto target (skip if --no-commit) - track whether rebasing occurred
-    let rebased = if commit {
+    // Rebase onto target - track whether rebasing occurred
+    let rebased = if rebase {
+        // Auto-rebase onto target
         matches!(
             super::standalone::handle_rebase(Some(&target_branch))?,
             super::standalone::RebaseResult::Rebased
         )
     } else {
-        false
+        // --no-rebase: verify already rebased, fail if not
+        if !repo.is_rebased_onto(&target_branch)? {
+            return Err(worktrunk::git::GitError::NotRebased {
+                target_branch: target_branch.clone(),
+            }
+            .into());
+        }
+        false // Already rebased, no rebase occurred
     };
 
     // Run pre-merge checks unless --no-verify was specified

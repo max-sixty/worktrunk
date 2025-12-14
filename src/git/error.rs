@@ -105,6 +105,9 @@ pub enum GitError {
         target_branch: String,
         git_output: String,
     },
+    NotRebased {
+        target_branch: String,
+    },
     PushFailed {
         error: String,
     },
@@ -406,6 +409,17 @@ impl std::fmt::Display for GitError {
                         ))
                     )
                 }
+            }
+
+            GitError::NotRebased { target_branch } => {
+                write!(
+                    f,
+                    "{}\n\n{}",
+                    error_message(cformat!("Branch not rebased onto <bold>{target_branch}</>")),
+                    hint_message(cformat!(
+                        "Run <bright-black>wt rebase</> first or remove <bright-black>--no-rebase</>"
+                    ))
+                )
             }
 
             GitError::PushFailed { error } => {

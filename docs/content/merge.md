@@ -83,7 +83,10 @@ Options:
           Skip commit squashing
 
       --no-commit
-          Skip commit, squash, and rebase
+          Skip commit and squash
+
+      --no-rebase
+          Skip rebase (fail if not already rebased)
 
       --no-remove
           Keep worktree after merge
