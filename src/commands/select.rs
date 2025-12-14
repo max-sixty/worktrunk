@@ -505,7 +505,9 @@ impl WorktreeSkimItem {
             return cformat!("{INFO_EMOJI} <bold>{branch}</> has no commits ahead of main\n");
         };
         if self.item.counts().ahead == 0 {
-            return cformat!("{INFO_EMOJI} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n");
+            return cformat!(
+                "{INFO_EMOJI} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n"
+            );
         }
 
         let merge_base = format!("{}...{}", default_branch, self.item.head());

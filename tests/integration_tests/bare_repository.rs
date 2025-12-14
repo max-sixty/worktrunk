@@ -49,11 +49,7 @@ impl BareRepoTest {
 
         // Write config with template for worktrees inside bare repo
         // Template {{ branch }} creates worktrees as subdirectories: repo/main, repo/feature
-        fs::write(
-            &test.test_config_path,
-            "worktree-path = \"{{ branch }}\"\n",
-        )
-        .unwrap();
+        fs::write(&test.test_config_path, "worktree-path = \"{{ branch }}\"\n").unwrap();
 
         test
     }

@@ -358,31 +358,31 @@ pub fn handle_switch_output(
     let path_display = format_path_for_display(path);
     let expected = &branch_info.expected;
 
-    // Handle mismatch cases with single combined message
+    // Handle mismatch cases with two-part message: what happened + what's wrong
     if branch_info.is_mismatch() {
         let mismatch_info = match &branch_info.current {
-            Some(current) => cformat!("expected <bold>{expected}</>, got <bold>{current}</>"),
-            None => cformat!("expected <bold>{expected}</>, got detached HEAD"),
+            Some(current) => cformat!("expecting <bold>{expected}</>, got <bold>{current}</>"),
+            None => cformat!("expecting <bold>{expected}</>, got detached HEAD"),
         };
 
         match result {
             SwitchResult::AlreadyAt(_) => {
                 super::print(warning_message(cformat!(
-                    "Already at <bold>{path_display}</>; {mismatch_info}"
+                    "Already at <bold>{path_display}</>. Branch doesn't match path: {mismatch_info}"
                 )))?;
             }
             SwitchResult::Existing(_) => {
                 if is_directive_mode || has_execute_command {
                     super::print(warning_message(cformat!(
-                        "Switched to worktree @ <bold>{path_display}</>; {mismatch_info}"
+                        "Switched to <bold>{path_display}</>. Branch doesn't match path: {mismatch_info}"
                     )))?;
                 } else if Shell::is_integration_configured().ok().flatten().is_some() {
                     super::print(warning_message(cformat!(
-                        "Worktree @ <bold>{path_display}</>; {mismatch_info} (cannot cd, binary invoked directly)"
+                        "Worktree at <bold>{path_display}</>. Branch doesn't match path: {mismatch_info} (cannot cd, binary invoked directly)"
                     )))?;
                 } else {
                     super::print(warning_message(cformat!(
-                        "Worktree @ <bold>{path_display}</>; {mismatch_info} (cannot cd, no shell integration)"
+                        "Worktree at <bold>{path_display}</>. Branch doesn't match path: {mismatch_info} (cannot cd, no shell integration)"
                     )))?;
                     super::shell_integration_hint(shell_integration_hint())?;
                 }

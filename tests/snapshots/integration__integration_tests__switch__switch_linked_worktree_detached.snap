@@ -28,5 +28,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mWorktree @ [1m[REPO].feature[22m; expected [1mfeature[22m, got detached HEAD (cannot cd, no shell integration)[39m
+🟡 [33mWorktree at [1m[REPO].feature[22m. Branch doesn't match path: expecting [1mfeature[22m, got detached HEAD (cannot cd, no shell integration)[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

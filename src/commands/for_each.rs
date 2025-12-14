@@ -60,9 +60,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
 
     for wt in &worktrees.worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
-        output::print(progress_message(format!(
-            "Running in {display_name}..."
-        )))?;
+        output::print(progress_message(format!("Running in {display_name}...")))?;
 
         // Open repository at worktree path to get worktree-specific context (commit, etc.)
         let wt_repo = Repository::at(&wt.path);

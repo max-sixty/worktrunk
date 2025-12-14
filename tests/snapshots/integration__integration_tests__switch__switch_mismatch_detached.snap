@@ -30,4 +30,4 @@ exit_code: 0
 cd '[REPO].feature'
 
 ----- stderr -----
-🟡 [33mSwitched to worktree @ [1m[REPO].feature[22m; expected [1mfeature[22m, got detached HEAD[39m
+🟡 [33mSwitched to [1m[REPO].feature[22m. Branch doesn't match path: expecting [1mfeature[22m, got detached HEAD[39m

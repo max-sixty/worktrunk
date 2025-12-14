@@ -28,4 +28,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAlready at [1m[REPO][22m; expected [1mmain[22m, got [1mdevelop[22m[39m
+🟡 [33mAlready at [1m[REPO][22m. Branch doesn't match path: expecting [1mmain[22m, got [1mdevelop[22m[39m
