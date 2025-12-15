@@ -1212,14 +1212,13 @@ mod tests {
         use crate::HookType;
 
         // Create a WorktrunkError with hook_type
-        let inner_error: anyhow::Error =
-            WorktrunkError::HookCommandFailed {
-                hook_type: HookType::PreMerge,
-                command_name: Some("test".into()),
-                error: "Test failed".into(),
-                exit_code: Some(1),
-            }
-            .into();
+        let inner_error: anyhow::Error = WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreMerge,
+            command_name: Some("test".into()),
+            error: "Test failed".into(),
+            exit_code: Some(1),
+        }
+        .into();
 
         // Wrap it using add_hook_skip_hint
         let wrapped = add_hook_skip_hint(inner_error);
