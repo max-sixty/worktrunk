@@ -2104,7 +2104,7 @@ dependencies = [
  "timer",
  "unicode-width",
  "vte 0.15.0",
- "which",
+ "which 7.0.3",
 ]
 
 [[package]]
@@ -2672,6 +2672,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "which"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
+dependencies = [
+ "env_home",
+ "rustix",
+ "winsafe",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3000,7 +3011,7 @@ dependencies = [
  "unicode-width",
  "vergen-gitcl",
  "vt100",
- "which",
+ "which 8.0.0",
  "wrap-ansi",
 ]
 
