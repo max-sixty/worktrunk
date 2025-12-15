@@ -1,0 +1,60 @@
+---
+source: tests/integration_tests/help.rs
+info:
+  program: wt
+  args:
+    - "--help-md"
+  env:
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_EDITOR: ""
+    SOURCE_DATE_EPOCH: "1735776000"
+    WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+---
+success: true
+exit_code: 0
+----- stdout -----
+wt - Git worktree management
+
+Usage: wt [OPTIONS] [COMMAND]
+
+Commands:
+  config  Manage configuration and shell integration
+  step    Run individual workflow operations
+  hook    Run hooks independently
+  select  Interactive worktree selector
+  list    List worktrees and optionally branches
+  switch  Switch to a worktree
+  remove  Remove worktree and branch
+  merge   Merge worktree into target branch
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global Options:
+  -C <path>
+          Working directory for this command
+
+      --config <path>
+          User config file path
+
+  -v, --verbose
+          Show commands and debug info
+
+Getting started
+
+  wt switch --create feature    Create worktree and branch
+  wt switch feature             Switch to existing worktree
+  wt merge                      Squash, rebase, and merge to main
+
+Run `wt config shell` to set up directory switching.
+
+Docs: https://worktrunk.dev
+GitHub: https://github.com/max-sixty/worktrunk
+
+
+----- stderr -----

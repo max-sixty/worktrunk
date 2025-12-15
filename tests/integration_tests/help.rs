@@ -76,3 +76,90 @@ fn test_help(#[case] test_name: &str, #[case] args_str: &str) {
     };
     snapshot_help(test_name, &args);
 }
+
+/// Test --version flag
+#[test]
+fn test_version() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    // Filter out version number for stable snapshots
+    // Format: wt v0.4.0-25-gc9bcf6c0 (version with git commit info)
+    settings.add_filter(r"wt v\d+\.\d+\.\d+(-[\w.-]+)?", "wt [VERSION]");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg("--version");
+        assert_cmd_snapshot!("version", cmd);
+    });
+}
+
+/// Test --help-md flag (raw markdown output without ANSI codes)
+#[test]
+fn test_help_md() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["--help-md"]);
+        assert_cmd_snapshot!("help_md_root", cmd);
+    });
+}
+
+/// Test --help-md for subcommand
+#[test]
+fn test_help_md_subcommand() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["merge", "--help-md"]);
+        assert_cmd_snapshot!("help_md_merge", cmd);
+    });
+}
+
+/// Test --help-page flag for generating doc pages
+#[test]
+fn test_help_page_merge() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["merge", "--help-page"]);
+        assert_cmd_snapshot!("help_page_merge", cmd);
+    });
+}
+
+/// Test --help-page flag for switch command
+#[test]
+fn test_help_page_switch() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["switch", "--help-page"]);
+        assert_cmd_snapshot!("help_page_switch", cmd);
+    });
+}
+
+/// Test --help-page without subcommand shows usage
+#[test]
+fn test_help_page_no_subcommand() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg("--help-page");
+        assert_cmd_snapshot!("help_page_no_subcommand", cmd);
+    });
+}
+
+/// Test --help-page with unknown subcommand
+#[test]
+fn test_help_page_unknown_command() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.args(["nonexistent", "--help-page"]);
+        assert_cmd_snapshot!("help_page_unknown", cmd);
+    });
+}
