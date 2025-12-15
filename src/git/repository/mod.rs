@@ -280,7 +280,6 @@ impl Repository {
     /// Read a user-defined marker from `worktrunk.marker.<branch>` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
-    /// Falls back to plain text for legacy markers without timestamps.
     pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
         let escaped = super::escape_branch_for_config(branch);
         let config_key = format!("worktrunk.marker.{}", escaped);
@@ -290,15 +289,11 @@ impl Repository {
             .map(|output| output.trim().to_string())
             .filter(|s| !s.is_empty())?;
 
-        // Try to parse as JSON, fall back to raw string for legacy markers
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
-            parsed
-                .get("marker")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        } else {
-            Some(raw) // Legacy plain-text marker
-        }
+        let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        parsed
+            .get("marker")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Read user-defined branch-keyed marker.
