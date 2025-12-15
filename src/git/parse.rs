@@ -136,3 +136,207 @@ impl DefaultBranchName {
         self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // DefaultBranchName::from_local Tests
+    // ============================================================================
+
+    #[test]
+    fn test_from_local_simple() {
+        let result = DefaultBranchName::from_local("origin", "main");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "main");
+    }
+
+    #[test]
+    fn test_from_local_with_remote_prefix() {
+        let result = DefaultBranchName::from_local("origin", "origin/main");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "main");
+    }
+
+    #[test]
+    fn test_from_local_with_whitespace() {
+        let result = DefaultBranchName::from_local("origin", "  main  \n");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "main");
+    }
+
+    #[test]
+    fn test_from_local_empty() {
+        let result = DefaultBranchName::from_local("origin", "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_local_only_whitespace() {
+        let result = DefaultBranchName::from_local("origin", "   \n  ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_local_different_remote() {
+        let result = DefaultBranchName::from_local("upstream", "upstream/develop");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "develop");
+    }
+
+    // ============================================================================
+    // DefaultBranchName::from_remote Tests
+    // ============================================================================
+
+    #[test]
+    fn test_from_remote_standard() {
+        let output = "ref: refs/heads/main\tHEAD\n";
+        let result = DefaultBranchName::from_remote(output);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "main");
+    }
+
+    #[test]
+    fn test_from_remote_master() {
+        let output = "ref: refs/heads/master\tHEAD\n";
+        let result = DefaultBranchName::from_remote(output);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "master");
+    }
+
+    #[test]
+    fn test_from_remote_with_other_lines() {
+        let output = "abc123\tHEAD\nref: refs/heads/develop\tHEAD\ndef456\trefs/heads/main\n";
+        let result = DefaultBranchName::from_remote(output);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().into_string(), "develop");
+    }
+
+    #[test]
+    fn test_from_remote_no_ref() {
+        let output = "abc123\tHEAD\n";
+        let result = DefaultBranchName::from_remote(output);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_remote_empty() {
+        let result = DefaultBranchName::from_remote("");
+        assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // Worktree::parse_porcelain_list Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_porcelain_list_single_worktree() {
+        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].path.to_str().unwrap(), "/path/to/repo");
+        assert_eq!(worktrees[0].head, "abc123");
+        assert_eq!(worktrees[0].branch, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_multiple_worktrees() {
+        let output = "worktree /path/main\nHEAD aaa\nbranch refs/heads/main\n\nworktree /path/feature\nHEAD bbb\nbranch refs/heads/feature\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].branch, Some("main".to_string()));
+        assert_eq!(worktrees[1].branch, Some("feature".to_string()));
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_bare_repo() {
+        let output = "worktree /path/to/repo.git\nHEAD abc123\nbare\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert!(worktrees[0].bare);
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_detached() {
+        let output = "worktree /path/to/repo\nHEAD abc123\ndetached\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert!(worktrees[0].detached);
+        assert!(worktrees[0].branch.is_none());
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_locked() {
+        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nlocked reason for lock\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].locked, Some("reason for lock".to_string()));
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_prunable() {
+        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main\nprunable gitdir file missing\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(
+            worktrees[0].prunable,
+            Some("gitdir file missing".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_empty() {
+        let result = Worktree::parse_porcelain_list("");
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert!(worktrees.is_empty());
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_no_trailing_blank() {
+        // Git output may not always end with a blank line
+        let output = "worktree /path/to/repo\nHEAD abc123\nbranch refs/heads/main";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        assert_eq!(worktrees.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_missing_worktree_path() {
+        let output = "worktree\nHEAD abc123\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_missing_head_sha() {
+        let output = "worktree /path\nHEAD\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_porcelain_list_branch_without_refs_prefix() {
+        // This can happen in some edge cases
+        let output = "worktree /path/to/repo\nHEAD abc123\nbranch main\n\n";
+        let result = Worktree::parse_porcelain_list(output);
+        assert!(result.is_ok());
+        let worktrees = result.unwrap();
+        // Should use the branch name as-is when no refs/heads/ prefix
+        assert_eq!(worktrees[0].branch, Some("main".to_string()));
+    }
+}
