@@ -1296,4 +1296,127 @@ mod tests {
         let expected = "# [hooks]\n# command = \"npm test\"\n";
         assert_eq!(comment_out_config(input), expected);
     }
+
+    #[test]
+    fn test_comment_out_config_empty() {
+        let input = "";
+        let expected = "";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_only_comments() {
+        let input = "# comment 1\n# comment 2\n";
+        let expected = "# comment 1\n# comment 2\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_multiline_values() {
+        let input = "array = [\n  \"item1\",\n  \"item2\"\n]\n";
+        let expected = "# array = [\n#   \"item1\",\n#   \"item2\"\n# ]\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_empty() {
+        let mut out = String::new();
+        warn_unknown_keys(&mut out, &[]).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_single() {
+        let mut out = String::new();
+        warn_unknown_keys(&mut out, &["unknown-key".to_string()]).unwrap();
+        assert!(out.contains("unknown-key"));
+        assert!(out.contains("Unknown key"));
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_multiple() {
+        let mut out = String::new();
+        warn_unknown_keys(&mut out, &["key1".to_string(), "key2".to_string()]).unwrap();
+        assert!(out.contains("key1"));
+        assert!(out.contains("key2"));
+    }
+
+    #[test]
+    fn test_render_ci_tool_status_installed_authenticated() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "gh", "GitHub", true, true).unwrap();
+        assert!(out.contains("gh"));
+        assert!(out.contains("installed"));
+        assert!(out.contains("authenticated"));
+    }
+
+    #[test]
+    fn test_render_ci_tool_status_installed_not_authenticated() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "glab", "GitLab", true, false).unwrap();
+        assert!(out.contains("glab"));
+        assert!(out.contains("installed"));
+        assert!(out.contains("not authenticated"));
+        assert!(out.contains("auth login"));
+    }
+
+    #[test]
+    fn test_render_ci_tool_status_not_installed() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "gh", "GitHub", false, false).unwrap();
+        assert!(out.contains("gh"));
+        assert!(out.contains("not found"));
+        assert!(out.contains("GitHub"));
+        assert!(out.contains("unavailable"));
+    }
+
+    #[test]
+    fn test_get_user_config_path_returns_valid_path() {
+        // Test that the function returns a valid path structure
+        let path = get_user_config_path();
+        // Should return Some on any system with HOME or XDG_CONFIG_HOME set
+        // or with a proper base strategy
+        if let Some(path) = path {
+            // Should end with the expected path structure
+            assert!(path.to_string_lossy().contains("worktrunk"));
+            assert!(path.to_string_lossy().ends_with("config.toml"));
+        }
+        // It's OK if path is None on systems without HOME (unlikely in tests)
+    }
+
+    #[test]
+    fn test_marker_entry_sorting() {
+        // Test that markers would sort by age (most recent first)
+        let now = 1000;
+        let older = 500;
+        let legacy = 0;
+
+        let entries = vec![
+            MarkerEntry { branch: "b".to_string(), marker: "m2".to_string(), set_at: older },
+            MarkerEntry { branch: "a".to_string(), marker: "m1".to_string(), set_at: now },
+            MarkerEntry { branch: "c".to_string(), marker: "m3".to_string(), set_at: legacy },
+        ];
+
+        let mut sorted = entries;
+        sorted.sort_by(|a, b| {
+            b.set_at.cmp(&a.set_at).then_with(|| a.branch.cmp(&b.branch))
+        });
+
+        assert_eq!(sorted[0].branch, "a"); // newest
+        assert_eq!(sorted[1].branch, "b"); // older
+        assert_eq!(sorted[2].branch, "c"); // legacy (0)
+    }
+
+    #[test]
+    fn test_user_config_example_exists() {
+        // Ensure the example config file is included
+        assert!(!USER_CONFIG_EXAMPLE.is_empty());
+        assert!(USER_CONFIG_EXAMPLE.contains("worktree-path"));
+    }
+
+    #[test]
+    fn test_project_config_example_exists() {
+        // Ensure the example project config file is included
+        assert!(!PROJECT_CONFIG_EXAMPLE.is_empty());
+    }
 }

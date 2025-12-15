@@ -326,4 +326,35 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_shell_config_debug() {
+        let config = ShellConfig::get();
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("ShellConfig"));
+        assert!(debug.contains(&config.name));
+    }
+
+    #[test]
+    fn test_shell_config_clone() {
+        let config = ShellConfig::get();
+        let cloned = config.clone();
+        assert_eq!(config.name, cloned.name);
+        assert_eq!(config.is_posix, cloned.is_posix);
+        assert_eq!(config.args, cloned.args);
+    }
+
+    #[test]
+    fn test_shell_is_posix_method() {
+        let config = ShellConfig::get();
+        // is_posix method should match the field
+        assert_eq!(config.is_posix(), config.is_posix);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_unix_is_not_windows_without_git_bash() {
+        let config = ShellConfig::get();
+        assert!(!config.is_windows_without_git_bash());
+    }
 }
