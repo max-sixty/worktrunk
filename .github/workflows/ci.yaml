@@ -20,6 +20,11 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
+    - name: Install lychee
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: lychee
+
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
 
