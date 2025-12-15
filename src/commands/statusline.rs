@@ -70,8 +70,8 @@ impl ClaudeCodeContext {
             let _ = tx.send(input);
         });
 
-        // Wait up to 50ms for stdin (needs to be longer on Windows where process spawning is slower)
-        let input = rx.recv_timeout(Duration::from_millis(50)).ok()?;
+        // Wait up to 100ms for stdin (Windows CI can be slow)
+        let input = rx.recv_timeout(Duration::from_millis(100)).ok()?;
 
         Self::parse(&input)
     }
@@ -129,9 +129,9 @@ fn format_directory_fish_style(path: &str) -> String {
 
 /// Run the statusline command.
 ///
-/// Uses the output system like other commands:
-/// - Interactive mode: output goes to stdout
-/// - Directive mode: output goes to stderr, keeping stdout clean for shell directives
+/// Output uses `output::data_raw()` which routes based on mode:
+/// - Interactive: stdout (for shell prompts)
+/// - Directive: stderr (stdout reserved for shell script)
 pub fn run(claude_code: bool) -> Result<()> {
     // Get context - either from stdin (claude-code mode) or current directory
     let (cwd, model_name) = if claude_code {
@@ -202,20 +202,12 @@ pub fn run(claude_code: bool) -> Result<()> {
         output.push_str(&model);
     }
 
-    // Output via output system (goes to stderr, like `wt list`)
+    // Output via output system (routes based on mode: interactive→stdout, directive→stderr)
     if !output.is_empty() {
-        if claude_code {
-            use std::io::Write;
-            use worktrunk::styling::fix_dim_after_color_reset;
-            let reset = anstyle::Reset;
-            // Bypass anstream - write directly to stdout to preserve ANSI codes
-            // regardless of TTY detection (Claude Code expects raw ANSI)
-            let output = fix_dim_after_color_reset(&output);
-            writeln!(std::io::stdout(), "{reset} {output}")?;
-            std::io::stdout().flush()?;
-        } else {
-            output::data(output)?;
-        }
+        use worktrunk::styling::fix_dim_after_color_reset;
+        let reset = anstyle::Reset;
+        let output = fix_dim_after_color_reset(&output);
+        output::data_raw(format!("{reset} {output}"))?;
     }
 
     Ok(())
