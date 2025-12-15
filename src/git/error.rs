@@ -225,17 +225,17 @@ impl std::fmt::Display for GitError {
                 occupant,
             } => {
                 let path_display = format_path_for_display(path);
-                let (hint, command) = if let Some(occupant_branch) = occupant {
+                let (error_suffix, hint, command) = if let Some(occupant_branch) = occupant {
                     (
-                        hint_message(cformat!(
-                            "Worktree is on <bold>{occupant_branch}</>; switch it back"
-                        )),
+                        cformat!("path occupied by worktree on <bold>{occupant_branch}</>"),
+                        hint_message("Switch it back"),
                         format!("cd {path_display} && git switch {branch}"),
                     )
                 } else {
                     // Detached HEAD - can't suggest git switch
                     (
-                        hint_message("Worktree is detached; access it"),
+                        "path occupied by detached worktree".to_string(),
+                        hint_message("Access the worktree"),
                         format!("cd {path_display}"),
                     )
                 };
@@ -243,7 +243,7 @@ impl std::fmt::Display for GitError {
                     f,
                     "{}\n\n{}\n{}",
                     error_message(cformat!(
-                        "Cannot create worktree for <bold>{branch}</> at <bold>{path_display}</>: path occupied by another worktree"
+                        "Cannot create worktree for <bold>{branch}</> at <bold>{path_display}</>: {error_suffix}"
                     )),
                     hint,
                     format_with_gutter(&command, "", None)
