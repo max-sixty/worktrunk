@@ -39,6 +39,7 @@ pub mod post_start_commands;
 pub mod push;
 pub mod readme_sync;
 pub mod remove;
+pub mod repository;
 pub mod security;
 pub mod select;
 pub mod shell_wrapper;

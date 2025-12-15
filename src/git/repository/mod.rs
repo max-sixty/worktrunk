@@ -102,11 +102,6 @@ impl Repository {
         Self::at(base_path().clone())
     }
 
-    /// Get the path this repository context operates on.
-    pub fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-
     /// Get the repository layout, initializing it if needed.
     fn layout(&self) -> anyhow::Result<&RepositoryLayout> {
         if let Some(layout) = self.layout.get() {
@@ -659,12 +654,10 @@ impl Repository {
         let range = format!("{}..{}", base, head);
         let stdout = self.run_command(&["rev-list", "--count", &range])?;
 
-        stdout.trim().parse().map_err(|e| {
-            GitError::ParseError {
-                message: format!("Failed to parse commit count: {}", e),
-            }
-            .into()
-        })
+        stdout
+            .trim()
+            .parse()
+            .context("Failed to parse commit count")
     }
 
     /// Check if there are merge commits in the range base..head.
@@ -708,12 +701,7 @@ impl Repository {
     /// Get commit timestamp in seconds since epoch.
     pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
         let stdout = self.run_command(&["show", "-s", "--format=%ct", commit])?;
-        stdout.trim().parse().map_err(|e| {
-            GitError::ParseError {
-                message: format!("Failed to parse timestamp: {}", e),
-            }
-            .into()
-        })
+        stdout.trim().parse().context("Failed to parse timestamp")
     }
 
     /// Get commit message (subject line) for a commit.
@@ -833,12 +821,11 @@ impl Repository {
         // Example: "5\t3" means 5 commits behind, 3 commits ahead
         // git rev-list --left-right outputs left (base) first, then right (head)
         let parts: Vec<&str> = output.trim().split('\t').collect();
-        if parts.len() != 2 {
-            return Err(crate::git::GitError::ParseError {
-                message: format!("Unexpected rev-list output format: {}", output),
-            }
-            .into());
-        }
+        anyhow::ensure!(
+            parts.len() == 2,
+            "Unexpected rev-list output format: {}",
+            output
+        );
 
         let behind: usize = parts[0].parse().context("Failed to parse behind count")?;
         let ahead: usize = parts[1].parse().context("Failed to parse ahead count")?;

@@ -2997,7 +2997,6 @@ dependencies = [
  "serde_json",
  "shell-escape",
  "shellexpand",
- "signal-hook",
  "skim",
  "strum",
  "synoptic",
