@@ -1330,4 +1330,55 @@ diff --git a/Cargo.lock b/Cargo.lock
         // Should be truncated (max 50 files)
         assert!(prepared.diff.contains("files omitted"));
     }
+
+    #[test]
+    fn test_format_command_display_no_args() {
+        let result = format_command_display("echo", &[]);
+        assert_eq!(result, "echo");
+    }
+
+    #[test]
+    fn test_format_command_display_with_args() {
+        let args = vec!["--model".to_string(), "gpt-4".to_string()];
+        let result = format_command_display("llm", &args);
+        assert_eq!(result, "llm --model gpt-4");
+    }
+
+    #[test]
+    fn test_format_command_display_single_arg() {
+        let args = vec!["--help".to_string()];
+        let result = format_command_display("wt", &args);
+        assert_eq!(result, "wt --help");
+    }
+
+    #[test]
+    fn test_parse_diff_sections_empty() {
+        let sections = parse_diff_sections("");
+        assert!(sections.is_empty());
+    }
+
+    #[test]
+    fn test_parse_diff_sections_single_file() {
+        let diff = "diff --git a/foo.rs b/foo.rs\nsome content\n";
+        let sections = parse_diff_sections(diff);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, "foo.rs");
+    }
+
+    #[test]
+    fn test_truncate_diff_section_short() {
+        // Section shorter than max lines should pass through unchanged
+        let section = "line1\nline2\nline3\n";
+        let truncated = truncate_diff_section(section, 10);
+        assert_eq!(truncated, section);
+    }
+
+    #[test]
+    fn test_truncate_diff_section_no_header() {
+        // Section without @@ marker
+        let section = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n";
+        let truncated = truncate_diff_section(section, 3);
+        assert!(truncated.contains("line1"));
+        assert!(truncated.contains("lines omitted"));
+    }
 }

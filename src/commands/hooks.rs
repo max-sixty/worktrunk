@@ -335,3 +335,41 @@ pub fn run_hook_with_filter(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hook_source_label_prefix() {
+        assert_eq!(HookSource::User.label_prefix(), "user");
+        assert_eq!(HookSource::Project.label_prefix(), "project");
+    }
+
+    #[test]
+    fn test_hook_source_format_label() {
+        assert_eq!(
+            HookSource::User.format_label(HookType::PreMerge),
+            "user pre-merge"
+        );
+        assert_eq!(
+            HookSource::Project.format_label(HookType::PostCreate),
+            "project post-create"
+        );
+        assert_eq!(
+            HookSource::User.format_label(HookType::PreCommit),
+            "user pre-commit"
+        );
+    }
+
+    #[test]
+    fn test_hook_failure_strategy_copy() {
+        let strategy = HookFailureStrategy::FailFast;
+        let copied = strategy; // Copy trait
+        assert!(matches!(copied, HookFailureStrategy::FailFast));
+
+        let warn = HookFailureStrategy::Warn;
+        let copied_warn = warn;
+        assert!(matches!(copied_warn, HookFailureStrategy::Warn));
+    }
+}

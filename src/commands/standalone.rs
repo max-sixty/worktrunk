@@ -898,3 +898,56 @@ fn expand_command_template(template: &str, ctx: &CommandContext, hook_type: Hook
     worktrunk::config::expand_template(template, &vars, true)
         .unwrap_or_else(|_| template.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_squash_result_variants() {
+        // Test Debug implementation
+        let result = SquashResult::Squashed;
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("Squashed"));
+
+        let result = SquashResult::NoCommitsAhead("main".to_string());
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("NoCommitsAhead"));
+        assert!(debug.contains("main"));
+
+        let result = SquashResult::AlreadySingleCommit;
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("AlreadySingleCommit"));
+
+        let result = SquashResult::NoNetChanges;
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("NoNetChanges"));
+    }
+
+    #[test]
+    fn test_squash_result_clone() {
+        let original = SquashResult::NoCommitsAhead("develop".to_string());
+        let cloned = original.clone();
+        assert!(matches!(cloned, SquashResult::NoCommitsAhead(ref s) if s == "develop"));
+    }
+
+    #[test]
+    fn test_rebase_result_variants() {
+        // RebaseResult doesn't derive Debug/Clone by default, just test matching
+        let result = RebaseResult::Rebased;
+        assert!(matches!(result, RebaseResult::Rebased));
+
+        let result = RebaseResult::UpToDate("main".to_string());
+        assert!(matches!(result, RebaseResult::UpToDate(ref s) if s == "main"));
+    }
+
+    #[test]
+    fn test_rebase_result_up_to_date_branch_extraction() {
+        let result = RebaseResult::UpToDate("feature-branch".to_string());
+        if let RebaseResult::UpToDate(branch) = result {
+            assert_eq!(branch, "feature-branch");
+        } else {
+            panic!("Expected UpToDate variant");
+        }
+    }
+}

@@ -749,6 +749,211 @@ mod tests {
     use worktrunk::git::LineDiff;
 
     #[test]
+    fn test_fit_header() {
+        // Data wider than header - return data width
+        assert_eq!(fit_header("Age", 10), 10);
+
+        // Header wider than data - return header width
+        assert_eq!(fit_header("Branch", 3), 6);
+
+        // Empty data - return header width
+        assert_eq!(fit_header("Status", 0), 6);
+
+        // Equal widths
+        assert_eq!(fit_header("Path", 4), 4);
+    }
+
+    #[test]
+    fn test_try_allocate() {
+        // First column doesn't need spacing
+        let mut remaining = 100;
+        let allocated = try_allocate(&mut remaining, 20, 2, true);
+        assert_eq!(allocated, 20);
+        assert_eq!(remaining, 80);
+
+        // Subsequent columns need spacing
+        let allocated = try_allocate(&mut remaining, 15, 2, false);
+        assert_eq!(allocated, 15);
+        assert_eq!(remaining, 63); // 80 - 15 - 2
+
+        // Zero width returns 0
+        let mut remaining = 50;
+        assert_eq!(try_allocate(&mut remaining, 0, 2, false), 0);
+        assert_eq!(remaining, 50);
+
+        // Insufficient space returns 0
+        let mut remaining = 10;
+        assert_eq!(try_allocate(&mut remaining, 20, 2, false), 0);
+        assert_eq!(remaining, 10);
+    }
+
+    #[test]
+    fn test_column_kind_has_data() {
+        let all_true = ColumnDataFlags {
+            status: true,
+            working_diff: true,
+            ahead_behind: true,
+            branch_diff: true,
+            upstream: true,
+            ci_status: true,
+        };
+        let all_false = ColumnDataFlags {
+            status: false,
+            working_diff: false,
+            ahead_behind: false,
+            branch_diff: false,
+            upstream: false,
+            ci_status: false,
+        };
+
+        // Always-have-data columns
+        assert!(ColumnKind::Gutter.has_data(&all_false));
+        assert!(ColumnKind::Branch.has_data(&all_false));
+        assert!(ColumnKind::Path.has_data(&all_false));
+        assert!(ColumnKind::Time.has_data(&all_false));
+        assert!(ColumnKind::Commit.has_data(&all_false));
+        assert!(ColumnKind::Message.has_data(&all_false));
+
+        // Flag-dependent columns
+        assert!(ColumnKind::Status.has_data(&all_true));
+        assert!(!ColumnKind::Status.has_data(&all_false));
+        assert!(ColumnKind::WorkingDiff.has_data(&all_true));
+        assert!(!ColumnKind::WorkingDiff.has_data(&all_false));
+        assert!(ColumnKind::AheadBehind.has_data(&all_true));
+        assert!(!ColumnKind::AheadBehind.has_data(&all_false));
+        assert!(ColumnKind::BranchDiff.has_data(&all_true));
+        assert!(!ColumnKind::BranchDiff.has_data(&all_false));
+        assert!(ColumnKind::Upstream.has_data(&all_true));
+        assert!(!ColumnKind::Upstream.has_data(&all_false));
+        assert!(ColumnKind::CiStatus.has_data(&all_true));
+        assert!(!ColumnKind::CiStatus.has_data(&all_false));
+    }
+
+    #[test]
+    fn test_column_kind_diff_display_config() {
+        // Diff columns have config
+        assert!(ColumnKind::WorkingDiff.diff_display_config().is_some());
+        assert!(ColumnKind::BranchDiff.diff_display_config().is_some());
+        assert!(ColumnKind::AheadBehind.diff_display_config().is_some());
+        assert!(ColumnKind::Upstream.diff_display_config().is_some());
+
+        // Non-diff columns don't have config
+        assert!(ColumnKind::Branch.diff_display_config().is_none());
+        assert!(ColumnKind::Status.diff_display_config().is_none());
+        assert!(ColumnKind::Path.diff_display_config().is_none());
+        assert!(ColumnKind::Time.diff_display_config().is_none());
+        assert!(ColumnKind::Message.diff_display_config().is_none());
+        assert!(ColumnKind::Commit.diff_display_config().is_none());
+        assert!(ColumnKind::CiStatus.diff_display_config().is_none());
+
+        // Check variants
+        let working = ColumnKind::WorkingDiff.diff_display_config().unwrap();
+        assert!(matches!(working.variant, DiffVariant::Signs));
+
+        let ahead = ColumnKind::AheadBehind.diff_display_config().unwrap();
+        assert!(matches!(ahead.variant, DiffVariant::Arrows));
+
+        let upstream = ColumnKind::Upstream.diff_display_config().unwrap();
+        assert!(matches!(upstream.variant, DiffVariant::UpstreamArrows));
+    }
+
+    #[test]
+    fn test_column_ideal_text() {
+        // Zero width returns None
+        assert!(ColumnIdeal::text(0).is_none());
+
+        // Non-zero width returns Some with text format
+        let ideal = ColumnIdeal::text(10).unwrap();
+        assert_eq!(ideal.width, 10);
+        assert!(matches!(ideal.format, ColumnFormat::Text));
+    }
+
+    #[test]
+    fn test_column_ideal_diff() {
+        // Zero total returns None
+        let zero_widths = DiffWidths {
+            total: 0,
+            positive_digits: 0,
+            negative_digits: 0,
+        };
+        assert!(ColumnIdeal::diff(zero_widths, ColumnKind::WorkingDiff).is_none());
+
+        // Non-zero returns Some with diff format
+        let widths = DiffWidths {
+            total: 9,
+            positive_digits: 3,
+            negative_digits: 3,
+        };
+        let ideal = ColumnIdeal::diff(widths, ColumnKind::WorkingDiff).unwrap();
+        assert_eq!(ideal.width, 9);
+        assert!(matches!(ideal.format, ColumnFormat::Diff(_)));
+    }
+
+    #[test]
+    fn test_column_kind_ideal() {
+        let widths = ColumnWidths {
+            branch: 15,
+            status: 8,
+            time: 4,
+            ci_status: 2,
+            message: 50,
+            ahead_behind: DiffWidths {
+                total: 7,
+                positive_digits: 2,
+                negative_digits: 2,
+            },
+            working_diff: DiffWidths {
+                total: 9,
+                positive_digits: 3,
+                negative_digits: 3,
+            },
+            branch_diff: DiffWidths {
+                total: 9,
+                positive_digits: 3,
+                negative_digits: 3,
+            },
+            upstream: DiffWidths {
+                total: 7,
+                positive_digits: 2,
+                negative_digits: 2,
+            },
+        };
+
+        // Text columns
+        assert_eq!(
+            ColumnKind::Gutter.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(2)
+        );
+        assert_eq!(
+            ColumnKind::Branch.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(15)
+        );
+        assert_eq!(
+            ColumnKind::Status.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(8)
+        );
+        assert_eq!(
+            ColumnKind::Path.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(20)
+        );
+        assert_eq!(
+            ColumnKind::Time.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(4)
+        );
+        assert_eq!(
+            ColumnKind::Commit.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(8)
+        );
+
+        // Message returns None (handled specially)
+        assert!(ColumnKind::Message.ideal(&widths, 20, 8).is_none());
+
+        // Diff columns
+        assert!(ColumnKind::WorkingDiff.ideal(&widths, 20, 8).is_some());
+        assert!(ColumnKind::AheadBehind.ideal(&widths, 20, 8).is_some());
+    }
+
+    #[test]
     fn test_pre_allocated_width_estimates() {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
         // Empty skip set means all tasks are computed (equivalent to --full)

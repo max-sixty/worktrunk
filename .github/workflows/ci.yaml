@@ -202,7 +202,9 @@ jobs:
     - run: cargo llvm-cov clean --workspace
 
     - name: 📊 Generate coverage report
-      run: cargo llvm-cov --cobertura --output-path=cobertura.xml
+      env:
+        NEXTEST_NO_INPUT_HANDLER: 1
+      run: cargo llvm-cov --features shell-integration-tests --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results
       uses: actions/upload-artifact@v6

@@ -332,4 +332,49 @@ mod tests {
         let result = shorten_path(&other, &prefix);
         assert!(!result.starts_with("./"));
     }
+
+    #[test]
+    fn test_format_relative_time_short_public() {
+        // Test the public function (uses get_now internally)
+        let result = format_relative_time_short(0);
+        // A timestamp of 0 (Unix epoch) should show years ago
+        assert!(
+            result.contains('y') || result == "future",
+            "Expected years format, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_now() {
+        // get_now should return a reasonable timestamp
+        let now = get_now();
+        // Should be after 2020 (1577836800)
+        assert!(now > 1577836800, "get_now() should return current time");
+    }
+
+    #[test]
+    fn test_truncate_edge_cases() {
+        // Empty string
+        let result = truncate_at_word_boundary("", 10);
+        assert_eq!(result, "");
+
+        // Single character
+        let result = truncate_at_word_boundary("X", 10);
+        assert_eq!(result, "X");
+
+        // Exact width
+        let result = truncate_at_word_boundary("12345", 5);
+        assert_eq!(result, "12345");
+
+        // Just over width
+        let result = truncate_at_word_boundary("123456", 5);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_find_common_prefix_relative_paths() {
+        let paths = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
+        assert_eq!(find_common_prefix(&paths), PathBuf::from("src"));
+    }
 }

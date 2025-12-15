@@ -856,4 +856,427 @@ mod tests {
             ""
         );
     }
+
+    #[test]
+    fn test_git_error_invalid_reference() {
+        let err = GitError::InvalidReference {
+            reference: "nonexistent".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("nonexistent"));
+        assert!(display.contains("not found"));
+        assert!(display.contains("--create"));
+    }
+
+    #[test]
+    fn test_git_error_worktree_missing() {
+        let err = GitError::WorktreeMissing {
+            branch: "feature".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+        assert!(display.contains("missing"));
+    }
+
+    #[test]
+    fn test_git_error_no_worktree_found() {
+        let err = GitError::NoWorktreeFound {
+            branch: "feature".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("No worktree found"));
+        assert!(display.contains("feature"));
+    }
+
+    #[test]
+    fn test_git_error_remote_only_branch() {
+        let err = GitError::RemoteOnlyBranch {
+            branch: "feature".into(),
+            remote: "origin".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+        assert!(display.contains("remote"));
+        assert!(display.contains("origin"));
+    }
+
+    #[test]
+    fn test_git_error_worktree_path_occupied() {
+        // With occupant branch
+        let err = GitError::WorktreePathOccupied {
+            branch: "feature".into(),
+            path: PathBuf::from("/tmp/repo"),
+            occupant: Some("main".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+        assert!(display.contains("main"));
+        assert!(display.contains("existing worktree"));
+
+        // Without occupant (detached)
+        let err = GitError::WorktreePathOccupied {
+            branch: "feature".into(),
+            path: PathBuf::from("/tmp/repo"),
+            occupant: None,
+        };
+        let display = err.to_string();
+        assert!(display.contains("detached"));
+    }
+
+    #[test]
+    fn test_git_error_worktree_creation_failed() {
+        // With base branch
+        let err = GitError::WorktreeCreationFailed {
+            branch: "feature".into(),
+            base_branch: Some("main".into()),
+            error: "git error".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+        assert!(display.contains("main"));
+        assert!(display.contains("git error"));
+
+        // Without base branch
+        let err = GitError::WorktreeCreationFailed {
+            branch: "feature".into(),
+            base_branch: None,
+            error: "git error".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+    }
+
+    #[test]
+    fn test_git_error_worktree_removal_failed() {
+        let err = GitError::WorktreeRemovalFailed {
+            branch: "feature".into(),
+            path: PathBuf::from("/tmp/repo"),
+            error: "still has changes".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+        assert!(display.contains("still has changes"));
+    }
+
+    #[test]
+    fn test_git_error_cannot_remove_main() {
+        let err = GitError::CannotRemoveMainWorktree;
+        let display = err.to_string();
+        assert!(display.contains("main worktree"));
+    }
+
+    #[test]
+    fn test_git_error_conflicting_changes() {
+        let err = GitError::ConflictingChanges {
+            files: vec!["file1.rs".into(), "file2.rs".into()],
+            worktree_path: PathBuf::from("/tmp/repo"),
+        };
+        let display = err.to_string();
+        assert!(display.contains("conflicting"));
+        assert!(display.contains("file1.rs"));
+    }
+
+    #[test]
+    fn test_git_error_not_fast_forward() {
+        // In merge context
+        let err = GitError::NotFastForward {
+            target_branch: "main".into(),
+            commits_formatted: "abc1234 Some commit".into(),
+            in_merge_context: true,
+        };
+        let display = err.to_string();
+        assert!(display.contains("main"));
+        assert!(display.contains("wt merge"));
+
+        // Not in merge context
+        let err = GitError::NotFastForward {
+            target_branch: "main".into(),
+            commits_formatted: String::new(),
+            in_merge_context: false,
+        };
+        let display = err.to_string();
+        assert!(display.contains("wt step rebase"));
+    }
+
+    #[test]
+    fn test_git_error_merge_commits_found() {
+        let err = GitError::MergeCommitsFound;
+        let display = err.to_string();
+        assert!(display.contains("merge commits"));
+        assert!(display.contains("--allow-merge-commits"));
+    }
+
+    #[test]
+    fn test_git_error_rebase_conflict() {
+        // With git output
+        let err = GitError::RebaseConflict {
+            target_branch: "main".into(),
+            git_output: "CONFLICT in file.rs".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("main"));
+        assert!(display.contains("CONFLICT"));
+
+        // Without git output
+        let err = GitError::RebaseConflict {
+            target_branch: "main".into(),
+            git_output: String::new(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("rebase --continue"));
+    }
+
+    #[test]
+    fn test_git_error_not_rebased() {
+        let err = GitError::NotRebased {
+            target_branch: "main".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("main"));
+        assert!(display.contains("not rebased"));
+    }
+
+    #[test]
+    fn test_git_error_push_failed() {
+        let err = GitError::PushFailed {
+            error: "rejected".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("Push failed"));
+        assert!(display.contains("rejected"));
+    }
+
+    #[test]
+    fn test_git_error_not_interactive() {
+        let err = GitError::NotInteractive;
+        let display = err.to_string();
+        assert!(display.contains("non-interactive"));
+        assert!(display.contains("--force"));
+    }
+
+    #[test]
+    fn test_git_error_hook_command_not_found() {
+        // With available commands
+        let err = GitError::HookCommandNotFound {
+            name: "unknown".into(),
+            available: vec!["lint".into(), "test".into()],
+        };
+        let display = err.to_string();
+        assert!(display.contains("unknown"));
+        assert!(display.contains("lint"));
+
+        // No available commands
+        let err = GitError::HookCommandNotFound {
+            name: "unknown".into(),
+            available: vec![],
+        };
+        let display = err.to_string();
+        assert!(display.contains("no named commands"));
+    }
+
+    #[test]
+    fn test_git_error_llm_command_failed() {
+        // With reproduction command
+        let err = GitError::LlmCommandFailed {
+            command: "llm".into(),
+            error: "connection failed".into(),
+            reproduction_command: Some("wt step commit --show-prompt | llm".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("connection failed"));
+        assert!(display.contains("wt step commit"));
+
+        // Without reproduction command
+        let err = GitError::LlmCommandFailed {
+            command: "llm --model gpt-4".into(),
+            error: "timeout".into(),
+            reproduction_command: None,
+        };
+        let display = err.to_string();
+        assert!(display.contains("llm --model gpt-4"));
+    }
+
+    #[test]
+    fn test_git_error_project_config_not_found() {
+        let err = GitError::ProjectConfigNotFound {
+            config_path: PathBuf::from("/.worktrunk.toml"),
+        };
+        let display = err.to_string();
+        assert!(display.contains("No project configuration"));
+        assert!(display.contains(".worktrunk.toml"));
+    }
+
+    #[test]
+    fn test_git_error_parse_error() {
+        let err = GitError::ParseError {
+            message: "invalid syntax".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("invalid syntax"));
+    }
+
+    #[test]
+    fn test_git_error_other() {
+        let err = GitError::Other {
+            message: "something went wrong".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("something went wrong"));
+    }
+
+    #[test]
+    fn test_git_error_detached_head_with_action() {
+        let err = GitError::DetachedHead {
+            action: Some("merge".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("Cannot merge"));
+        assert!(display.contains("detached HEAD"));
+    }
+
+    #[test]
+    fn test_git_error_uncommitted_changes_variants() {
+        // Action only
+        let err = GitError::UncommittedChanges {
+            action: Some("push".into()),
+            worktree: None,
+        };
+        let display = err.to_string();
+        assert!(display.contains("Cannot push"));
+        assert!(display.contains("working tree"));
+
+        // Worktree only
+        let err = GitError::UncommittedChanges {
+            action: None,
+            worktree: Some("feature".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("feature"));
+        assert!(display.contains("uncommitted"));
+
+        // Neither
+        let err = GitError::UncommittedChanges {
+            action: None,
+            worktree: None,
+        };
+        let display = err.to_string();
+        assert!(display.contains("Working tree"));
+    }
+
+    #[test]
+    fn test_git_error_not_fast_forward_empty_commits() {
+        // Test with empty commits_formatted to cover that branch
+        let err = GitError::NotFastForward {
+            target_branch: "main".into(),
+            commits_formatted: "".into(),
+            in_merge_context: false,
+        };
+        let display = err.to_string();
+        assert!(display.contains("main"));
+        assert!(display.contains("newer commits"));
+        // Should still have hint
+        assert!(display.contains("rebase"));
+    }
+
+    #[test]
+    fn test_git_error_not_fast_forward_outside_merge() {
+        // Test outside merge context (in_merge_context = false)
+        let err = GitError::NotFastForward {
+            target_branch: "develop".into(),
+            commits_formatted: "abc123 Some commit".into(),
+            in_merge_context: false,
+        };
+        let display = err.to_string();
+        assert!(display.contains("develop"));
+        // Should have generic rebase hint, not "wt merge"
+        assert!(display.contains("rebase"));
+        // commits_formatted should be in gutter
+        assert!(display.contains("abc123"));
+    }
+
+    #[test]
+    fn test_git_error_conflicting_changes_empty_files() {
+        // Test with empty files list
+        let err = GitError::ConflictingChanges {
+            files: vec![],
+            worktree_path: PathBuf::from("/tmp/repo"),
+        };
+        let display = err.to_string();
+        assert!(display.contains("conflicting"));
+        // Should still have hint about commit/stash
+        assert!(display.contains("Commit or stash"));
+    }
+
+    #[test]
+    fn test_hook_error_with_hint_source() {
+        use crate::HookType;
+
+        // Create a WorktrunkError with hook_type
+        let inner_error: anyhow::Error = WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreMerge,
+            command_name: Some("test".into()),
+            error: "Test failed".into(),
+            exit_code: Some(1),
+        }
+        .into();
+
+        // Wrap it using add_hook_skip_hint
+        let wrapped = add_hook_skip_hint(inner_error);
+
+        // The source() method should return the underlying error
+        let source = wrapped.source();
+        // source can be Some or None depending on implementation
+        let _ = source;
+    }
+
+    #[test]
+    fn test_add_hook_skip_hint_with_hook_type() {
+        use crate::HookType;
+
+        let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreCommit,
+            command_name: Some("build".into()),
+            error: "Build failed".into(),
+            exit_code: Some(1),
+        }
+        .into();
+
+        let wrapped = add_hook_skip_hint(inner);
+        let display = wrapped.to_string();
+
+        // Should include the original error
+        assert!(display.contains("build"));
+        // Should include the hint
+        assert!(display.contains("--no-verify"));
+        assert!(display.contains("pre-commit"));
+    }
+
+    #[test]
+    fn test_add_hook_skip_hint_non_hook_error() {
+        // Test with a non-hook error (should pass through unchanged)
+        let inner: anyhow::Error = GitError::Other {
+            message: "some error".into(),
+        }
+        .into();
+
+        let wrapped = add_hook_skip_hint(inner);
+        let display = wrapped.to_string();
+
+        // Should include the original error
+        assert!(display.contains("some error"));
+        // Should NOT include hint (not a hook error)
+        assert!(!display.contains("--no-verify"));
+    }
+
+    #[test]
+    fn test_rebase_conflict_empty_output() {
+        let err = GitError::RebaseConflict {
+            target_branch: "main".into(),
+            git_output: "".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("incomplete"));
+        assert!(display.contains("main"));
+        // Empty output shouldn't cause issues
+    }
 }

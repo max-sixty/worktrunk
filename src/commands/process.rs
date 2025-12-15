@@ -285,4 +285,25 @@ mod tests {
         assert_eq!(sanitize_for_filename("CONSOLE"), "CONSOLE");
         assert_eq!(sanitize_for_filename("COM10"), "COM10");
     }
+
+    #[test]
+    fn test_posix_command_separator() {
+        // Commands ending with newline don't need separator
+        assert_eq!(posix_command_separator("echo hello\n"), "");
+
+        // Commands ending with semicolon don't need separator
+        assert_eq!(posix_command_separator("echo hello;"), "");
+
+        // Commands without trailing newline/semicolon need separator
+        assert_eq!(posix_command_separator("echo hello"), ";");
+
+        // Empty command needs separator
+        assert_eq!(posix_command_separator(""), ";");
+
+        // Commands with internal newlines but not trailing
+        assert_eq!(posix_command_separator("echo\nhello"), ";");
+
+        // Commands with internal semicolons but not trailing
+        assert_eq!(posix_command_separator("echo; hello"), ";");
+    }
 }

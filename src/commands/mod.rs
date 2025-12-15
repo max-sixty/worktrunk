@@ -88,3 +88,33 @@ pub fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_command_label_with_name() {
+        let result = format_command_label("post-create", Some("install"));
+        assert!(result.contains("Running"));
+        assert!(result.contains("post-create"));
+        assert!(result.contains("install"));
+    }
+
+    #[test]
+    fn test_format_command_label_without_name() {
+        let result = format_command_label("pre-merge", None);
+        assert_eq!(result, "Running pre-merge");
+    }
+
+    #[test]
+    fn test_format_command_label_various_types() {
+        let result = format_command_label("post-start", Some("build"));
+        assert!(result.contains("post-start"));
+        assert!(result.contains("build"));
+
+        let result = format_command_label("pre-commit", None);
+        assert!(result.contains("pre-commit"));
+        assert!(!result.contains("None"));
+    }
+}

@@ -366,3 +366,138 @@ pub(crate) fn format_summary_message(
         .join(", ");
     format!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_summary_metrics_default() {
+        let metrics = SummaryMetrics::default();
+        assert_eq!(metrics.worktrees, 0);
+        assert_eq!(metrics.local_branches, 0);
+        assert_eq!(metrics.remote_branches, 0);
+        assert_eq!(metrics.dirty_worktrees, 0);
+        assert_eq!(metrics.ahead_items, 0);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_single_worktree() {
+        let metrics = SummaryMetrics {
+            worktrees: 1,
+            local_branches: 0,
+            remote_branches: 0,
+            dirty_worktrees: 0,
+            ahead_items: 0,
+        };
+        let parts = metrics.summary_parts(false, 0);
+        assert_eq!(parts, vec!["1 worktree"]);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_multiple_worktrees() {
+        let metrics = SummaryMetrics {
+            worktrees: 3,
+            local_branches: 0,
+            remote_branches: 0,
+            dirty_worktrees: 0,
+            ahead_items: 0,
+        };
+        let parts = metrics.summary_parts(false, 0);
+        assert_eq!(parts, vec!["3 worktrees"]);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_with_branches() {
+        let metrics = SummaryMetrics {
+            worktrees: 2,
+            local_branches: 5,
+            remote_branches: 10,
+            dirty_worktrees: 0,
+            ahead_items: 0,
+        };
+        let parts = metrics.summary_parts(true, 0);
+        assert_eq!(
+            parts,
+            vec!["2 worktrees", "5 branches", "10 remote branches"]
+        );
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_with_dirty() {
+        let metrics = SummaryMetrics {
+            worktrees: 3,
+            local_branches: 0,
+            remote_branches: 0,
+            dirty_worktrees: 2,
+            ahead_items: 0,
+        };
+        let parts = metrics.summary_parts(false, 0);
+        assert_eq!(parts, vec!["3 worktrees", "2 with changes"]);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_with_ahead() {
+        let metrics = SummaryMetrics {
+            worktrees: 2,
+            local_branches: 0,
+            remote_branches: 0,
+            dirty_worktrees: 0,
+            ahead_items: 1,
+        };
+        let parts = metrics.summary_parts(false, 0);
+        assert_eq!(parts, vec!["2 worktrees", "1 ahead"]);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_with_hidden_columns() {
+        let metrics = SummaryMetrics {
+            worktrees: 1,
+            local_branches: 0,
+            remote_branches: 0,
+            dirty_worktrees: 0,
+            ahead_items: 0,
+        };
+        let parts = metrics.summary_parts(false, 1);
+        assert_eq!(parts, vec!["1 worktree", "1 column hidden"]);
+
+        let parts = metrics.summary_parts(false, 3);
+        assert_eq!(parts, vec!["1 worktree", "3 columns hidden"]);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_branches_no_local() {
+        let metrics = SummaryMetrics {
+            worktrees: 2,
+            local_branches: 0,
+            remote_branches: 5,
+            dirty_worktrees: 0,
+            ahead_items: 0,
+        };
+        let parts = metrics.summary_parts(true, 0);
+        assert_eq!(parts, vec!["2 worktrees", "5 remote branches"]);
+    }
+
+    #[test]
+    fn test_summary_metrics_summary_parts_all_features() {
+        let metrics = SummaryMetrics {
+            worktrees: 5,
+            local_branches: 3,
+            remote_branches: 8,
+            dirty_worktrees: 2,
+            ahead_items: 4,
+        };
+        let parts = metrics.summary_parts(true, 2);
+        assert_eq!(
+            parts,
+            vec![
+                "5 worktrees",
+                "3 branches",
+                "8 remote branches",
+                "2 with changes",
+                "4 ahead",
+                "2 columns hidden"
+            ]
+        );
+    }
+}

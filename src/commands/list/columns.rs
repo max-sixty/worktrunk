@@ -111,6 +111,7 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn columns_are_ordered_and_unique() {
@@ -160,6 +161,119 @@ mod tests {
                 assert!(
                     spec.requires_task.is_none(),
                     "{:?} unexpectedly requires a task",
+                    spec.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_column_kind_debug() {
+        // Test Debug trait implementation
+        assert_eq!(format!("{:?}", ColumnKind::Gutter), "Gutter");
+        assert_eq!(format!("{:?}", ColumnKind::Branch), "Branch");
+        assert_eq!(format!("{:?}", ColumnKind::Status), "Status");
+        assert_eq!(format!("{:?}", ColumnKind::Message), "Message");
+    }
+
+    #[test]
+    fn test_column_kind_copy() {
+        let kind = ColumnKind::Branch;
+        let copied1 = kind; // Copy trait
+        let copied2 = kind;
+        assert_eq!(kind, copied1);
+        assert_eq!(kind, copied2);
+    }
+
+    #[test]
+    fn test_column_kind_hash() {
+        let mut set = HashSet::new();
+        set.insert(ColumnKind::Branch);
+        set.insert(ColumnKind::Path);
+        assert!(set.contains(&ColumnKind::Branch));
+        assert!(set.contains(&ColumnKind::Path));
+        assert!(!set.contains(&ColumnKind::Message));
+    }
+
+    #[test]
+    fn test_diff_variant_debug() {
+        assert_eq!(format!("{:?}", DiffVariant::Signs), "Signs");
+        assert_eq!(format!("{:?}", DiffVariant::Arrows), "Arrows");
+        assert_eq!(
+            format!("{:?}", DiffVariant::UpstreamArrows),
+            "UpstreamArrows"
+        );
+    }
+
+    #[test]
+    fn test_diff_variant_copy() {
+        let variant = DiffVariant::Signs;
+        let copied1 = variant; // Copy trait
+        let copied2 = variant;
+        assert_eq!(variant, copied1);
+        assert_eq!(variant, copied2);
+    }
+
+    #[test]
+    fn test_column_spec_new() {
+        let spec = ColumnSpec::new(ColumnKind::Branch, "Branch", 1, None, 1);
+        assert_eq!(spec.kind, ColumnKind::Branch);
+        assert_eq!(spec.header, "Branch");
+        assert_eq!(spec.base_priority, 1);
+        assert!(spec.requires_task.is_none());
+        assert_eq!(spec.display_index, 1);
+    }
+
+    #[test]
+    fn test_column_spec_with_required_task() {
+        let spec = ColumnSpec::new(
+            ColumnKind::BranchDiff,
+            "main…±",
+            5,
+            Some(TaskKind::BranchDiff),
+            5,
+        );
+        assert_eq!(spec.kind, ColumnKind::BranchDiff);
+        assert_eq!(spec.requires_task, Some(TaskKind::BranchDiff));
+    }
+
+    #[test]
+    fn test_column_spec_debug() {
+        let spec = ColumnSpec::new(ColumnKind::Path, "Path", 6, None, 6);
+        let debug_str = format!("{:?}", spec);
+        assert!(debug_str.contains("ColumnSpec"));
+        assert!(debug_str.contains("Path"));
+    }
+
+    #[test]
+    fn test_column_spec_copy() {
+        let spec = ColumnSpec::new(ColumnKind::Time, "Age", 10, None, 10);
+        let copied = spec; // Copy trait - should work without clone
+        assert_eq!(spec.kind, copied.kind);
+        assert_eq!(spec.header, copied.header);
+        assert_eq!(spec.base_priority, copied.base_priority);
+    }
+
+    #[test]
+    fn test_column_specs_priorities_are_unique() {
+        // Each column should have a unique base_priority
+        let priorities: Vec<u8> = COLUMN_SPECS.iter().map(|c| c.base_priority).collect();
+        let unique: HashSet<u8> = priorities.iter().cloned().collect();
+        assert_eq!(
+            priorities.len(),
+            unique.len(),
+            "base_priority values should be unique"
+        );
+    }
+
+    #[test]
+    fn test_column_specs_headers_are_non_empty() {
+        // All columns except Gutter should have non-empty headers
+        for spec in COLUMN_SPECS {
+            if spec.kind != ColumnKind::Gutter {
+                assert!(
+                    !spec.header.is_empty(),
+                    "{:?} should have a non-empty header",
                     spec.kind
                 );
             }
