@@ -32,4 +32,4 @@ cd '[PROJECT_ID]'
 
 ----- stderr -----
 ✅ [32m[32mSwitched to worktree for [1mfeature[22m @ [1m[PROJECT_ID]
-💡 [2mWorktree path doesn't match naming template (expected [REPO].feature)[22m
+🟡 [33mWorktree path doesn't match naming template (expected [REPO].feature)[39m
