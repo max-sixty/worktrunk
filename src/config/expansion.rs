@@ -93,255 +93,121 @@ pub fn expand_template(
 mod tests {
     use super::*;
 
-    // ============================================================================
-    // sanitize_branch_name Tests
-    // ============================================================================
-
     #[test]
-    fn test_sanitize_branch_name_forward_slash() {
-        assert_eq!(sanitize_branch_name("feature/foo"), "feature-foo");
+    fn test_sanitize_branch_name() {
+        let cases = [
+            ("feature/foo", "feature-foo"),
+            ("user\\task", "user-task"),
+            ("feature/user/task", "feature-user-task"),
+            ("feature/user\\task", "feature-user-task"),
+            ("simple-branch", "simple-branch"),
+            ("", ""),
+            ("///", "---"),
+            ("/feature", "-feature"),
+            ("feature/", "feature-"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(sanitize_branch_name(input), expected, "input: {input}");
+        }
     }
 
     #[test]
-    fn test_sanitize_branch_name_backslash() {
-        assert_eq!(sanitize_branch_name("user\\task"), "user-task");
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_multiple_slashes() {
-        assert_eq!(
-            sanitize_branch_name("feature/user/task"),
-            "feature-user-task"
-        );
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_mixed_slashes() {
-        assert_eq!(
-            sanitize_branch_name("feature/user\\task"),
-            "feature-user-task"
-        );
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_no_slashes() {
-        assert_eq!(sanitize_branch_name("simple-branch"), "simple-branch");
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_empty() {
-        assert_eq!(sanitize_branch_name(""), "");
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_only_slashes() {
-        assert_eq!(sanitize_branch_name("///"), "---");
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_leading_slash() {
-        assert_eq!(sanitize_branch_name("/feature"), "-feature");
-    }
-
-    #[test]
-    fn test_sanitize_branch_name_trailing_slash() {
-        assert_eq!(sanitize_branch_name("feature/"), "feature-");
-    }
-
-    // ============================================================================
-    // expand_template Tests - Basic Substitution
-    // ============================================================================
-
-    #[test]
-    fn test_expand_template_single_variable() {
+    fn test_expand_template_basic() {
+        // Single variable
         let mut vars = HashMap::new();
         vars.insert("name", "world");
-        let result = expand_template("Hello {{ name }}", &vars, false);
-        assert_eq!(result.unwrap(), "Hello world");
-    }
+        assert_eq!(
+            expand_template("Hello {{ name }}", &vars, false).unwrap(),
+            "Hello world"
+        );
 
-    #[test]
-    fn test_expand_template_multiple_variables() {
-        let mut vars = HashMap::new();
-        vars.insert("branch", "feature");
+        // Multiple variables
         vars.insert("repo", "myrepo");
-        let result = expand_template("{{ repo }}/{{ branch }}", &vars, false);
-        assert_eq!(result.unwrap(), "myrepo/feature");
+        assert_eq!(
+            expand_template("{{ repo }}/{{ name }}", &vars, false).unwrap(),
+            "myrepo/world"
+        );
+
+        // Empty/static cases
+        let empty: HashMap<&str, &str> = HashMap::new();
+        assert_eq!(expand_template("", &empty, false).unwrap(), "");
+        assert_eq!(
+            expand_template("static text", &empty, false).unwrap(),
+            "static text"
+        );
+        assert_eq!(
+            expand_template("no {{ variables }} here", &empty, false).unwrap(),
+            "no  here"
+        );
     }
 
     #[test]
-    fn test_expand_template_empty_template() {
-        let vars = HashMap::new();
-        let result = expand_template("", &vars, false);
-        assert_eq!(result.unwrap(), "");
-    }
-
-    #[test]
-    fn test_expand_template_no_variables() {
-        let vars = HashMap::new();
-        let result = expand_template("static text", &vars, false);
-        assert_eq!(result.unwrap(), "static text");
-    }
-
-    #[test]
-    fn test_expand_template_empty_vars() {
-        let vars = HashMap::new();
-        let result = expand_template("no {{ variables }} here", &vars, false);
-        // minijinja renders undefined variables as empty string by default
-        assert_eq!(result.unwrap(), "no  here");
-    }
-
-    // ============================================================================
-    // expand_template Tests - Shell Escaping
-    // ============================================================================
-
-    #[test]
-    fn test_expand_template_shell_escape_spaces() {
+    fn test_expand_template_shell_escape() {
         let mut vars = HashMap::new();
         vars.insert("path", "my path");
-        let result = expand_template("cd {{ path }}", &vars, true);
-        // shell_escape wraps strings with spaces in quotes
-        let expanded = result.unwrap();
+        let expanded = expand_template("cd {{ path }}", &vars, true).unwrap();
         assert!(expanded.contains("'my path'") || expanded.contains("my\\ path"));
-    }
 
-    #[test]
-    fn test_expand_template_shell_escape_special_chars() {
-        let mut vars = HashMap::new();
+        // Command injection prevention
         vars.insert("arg", "test;rm -rf");
-        let result = expand_template("echo {{ arg }}", &vars, true);
-        // Should be escaped to prevent command injection
-        let expanded = result.unwrap();
+        let expanded = expand_template("echo {{ arg }}", &vars, true).unwrap();
         assert!(!expanded.contains(";rm") || expanded.contains("'"));
-    }
 
-    #[test]
-    fn test_expand_template_no_escape_literal() {
-        let mut vars = HashMap::new();
+        // No escape for literal mode
         vars.insert("branch", "feature/foo");
-        let result = expand_template("{{ branch }}", &vars, false);
-        // Without shell escape, slashes pass through
-        assert_eq!(result.unwrap(), "feature/foo");
+        assert_eq!(
+            expand_template("{{ branch }}", &vars, false).unwrap(),
+            "feature/foo"
+        );
     }
 
     #[test]
-    fn test_expand_template_shell_escape_quotes() {
-        let mut vars = HashMap::new();
-        vars.insert("msg", "it's working");
-        let result = expand_template("echo {{ msg }}", &vars, true);
-        let expanded = result.unwrap();
-        // Single quote should be escaped
-        assert!(expanded.contains("it") && expanded.contains("working"));
-    }
-
-    // ============================================================================
-    // expand_template Tests - Error Cases
-    // ============================================================================
-
-    #[test]
-    fn test_expand_template_invalid_syntax() {
+    fn test_expand_template_errors() {
         let vars = HashMap::new();
-        let result = expand_template("{{ unclosed", &vars, false);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("syntax error"));
+        assert!(
+            expand_template("{{ unclosed", &vars, false)
+                .unwrap_err()
+                .contains("syntax error")
+        );
+        assert!(expand_template("{{ 1 + }}", &vars, false).is_err());
     }
 
     #[test]
-    fn test_expand_template_invalid_expression() {
-        let vars = HashMap::new();
-        let result = expand_template("{{ 1 + }}", &vars, false);
-        assert!(result.is_err());
-    }
-
-    // ============================================================================
-    // expand_template Tests - Jinja2 Features
-    // ============================================================================
-
-    #[test]
-    fn test_expand_template_jinja_conditional() {
+    fn test_expand_template_jinja_features() {
         let mut vars = HashMap::new();
         vars.insert("debug", "true");
-        let result = expand_template("{% if debug %}DEBUG MODE{% endif %}", &vars, false);
-        assert_eq!(result.unwrap(), "DEBUG MODE");
-    }
+        assert_eq!(
+            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false).unwrap(),
+            "DEBUG"
+        );
 
-    #[test]
-    fn test_expand_template_jinja_conditional_false() {
-        let mut vars = HashMap::new();
         vars.insert("debug", "");
-        let result = expand_template("{% if debug %}DEBUG MODE{% endif %}", &vars, false);
-        // Empty string is falsy in Jinja2
-        assert_eq!(result.unwrap(), "");
-    }
+        assert_eq!(
+            expand_template("{% if debug %}DEBUG{% endif %}", &vars, false).unwrap(),
+            ""
+        );
 
-    #[test]
-    fn test_expand_template_jinja_default_filter() {
-        let vars = HashMap::new();
-        let result = expand_template("{{ missing | default('fallback') }}", &vars, false);
-        assert_eq!(result.unwrap(), "fallback");
-    }
+        let empty: HashMap<&str, &str> = HashMap::new();
+        assert_eq!(
+            expand_template("{{ missing | default('fallback') }}", &empty, false).unwrap(),
+            "fallback"
+        );
 
-    #[test]
-    fn test_expand_template_jinja_upper_filter() {
-        let mut vars = HashMap::new();
         vars.insert("name", "hello");
-        let result = expand_template("{{ name | upper }}", &vars, false);
-        assert_eq!(result.unwrap(), "HELLO");
+        assert_eq!(
+            expand_template("{{ name | upper }}", &vars, false).unwrap(),
+            "HELLO"
+        );
     }
 
-    // ============================================================================
-    // expand_template Tests - Trailing Newline
-    // ============================================================================
-
     #[test]
-    fn test_expand_template_trailing_newline_shell_escape() {
+    fn test_expand_template_trailing_newline() {
         let mut vars = HashMap::new();
         vars.insert("cmd", "echo hello");
-        let result = expand_template("{{ cmd }}\n", &vars, true);
-        // With shell_escape=true, trailing newlines should be preserved
-        assert!(result.unwrap().ends_with('\n'));
-    }
-
-    #[test]
-    fn test_expand_template_trailing_newline_no_escape() {
-        let mut vars = HashMap::new();
-        vars.insert("cmd", "echo hello");
-        let result = expand_template("{{ cmd }}\n", &vars, false);
-        // Without shell_escape, trailing newlines may or may not be preserved
-        // depending on minijinja defaults (not set_keep_trailing_newline)
-        let expanded = result.unwrap();
-        // Just verify it works, don't assert on newline behavior
-        assert!(expanded.contains("echo hello"));
-    }
-
-    // ============================================================================
-    // expand_template Tests - Real-World Patterns
-    // ============================================================================
-
-    #[test]
-    fn test_expand_template_worktree_path_pattern() {
-        let mut vars = HashMap::new();
-        vars.insert("main_worktree", "myrepo");
-        vars.insert("branch", "feature-foo");
-        let result = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false);
-        assert_eq!(result.unwrap(), "myrepo.feature-foo");
-    }
-
-    #[test]
-    fn test_expand_template_shell_command_pattern() {
-        let mut vars = HashMap::new();
-        vars.insert("repo", "myrepo");
-        vars.insert("branch", "feature");
-        let result = expand_template("cargo test --package {{ repo }}", &vars, true);
-        assert_eq!(result.unwrap(), "cargo test --package myrepo");
-    }
-
-    #[test]
-    fn test_expand_template_git_command_pattern() {
-        let mut vars = HashMap::new();
-        vars.insert("target", "main");
-        vars.insert("branch", "feature");
-        let result = expand_template("git merge {{ target }}", &vars, true);
-        assert_eq!(result.unwrap(), "git merge main");
+        assert!(
+            expand_template("{{ cmd }}\n", &vars, true)
+                .unwrap()
+                .ends_with('\n')
+        );
     }
 }

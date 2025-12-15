@@ -707,236 +707,153 @@ mod tests {
         ");
     }
 
-    // ============================================================================
-    // exit_code() Tests
-    // ============================================================================
-
     #[test]
-    fn test_exit_code_child_process_exited() {
+    fn test_exit_code() {
+        // ChildProcessExited
         let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 42,
-            message: "test".to_string(),
+            message: "test".into(),
         }
         .into();
         assert_eq!(exit_code(&err), Some(42));
-    }
 
-    #[test]
-    fn test_exit_code_hook_command_failed_with_code() {
+        // HookCommandFailed with code
         let err: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
-            command_name: Some("test".to_string()),
-            error: "failed".to_string(),
+            command_name: Some("test".into()),
+            error: "failed".into(),
             exit_code: Some(1),
         }
         .into();
         assert_eq!(exit_code(&err), Some(1));
-    }
 
-    #[test]
-    fn test_exit_code_hook_command_failed_no_code() {
+        // HookCommandFailed without code
         let err: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
             command_name: None,
-            error: "failed".to_string(),
+            error: "failed".into(),
             exit_code: None,
         }
         .into();
         assert_eq!(exit_code(&err), None);
-    }
 
-    #[test]
-    fn test_exit_code_command_not_approved() {
-        let err: anyhow::Error = WorktrunkError::CommandNotApproved.into();
-        assert_eq!(exit_code(&err), None);
-    }
+        // CommandNotApproved, AlreadyDisplayed, GitError
+        assert_eq!(exit_code(&WorktrunkError::CommandNotApproved.into()), None);
+        assert_eq!(
+            exit_code(&WorktrunkError::AlreadyDisplayed { exit_code: 5 }.into()),
+            Some(5)
+        );
+        assert_eq!(
+            exit_code(&GitError::DetachedHead { action: None }.into()),
+            None
+        );
 
-    #[test]
-    fn test_exit_code_already_displayed() {
-        let err: anyhow::Error = WorktrunkError::AlreadyDisplayed { exit_code: 5 }.into();
-        assert_eq!(exit_code(&err), Some(5));
-    }
-
-    #[test]
-    fn test_exit_code_git_error() {
-        // GitError doesn't have exit codes
-        let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert_eq!(exit_code(&err), None);
-    }
-
-    #[test]
-    fn test_exit_code_wrapped_hook_error() {
-        // Create a HookCommandFailed error and wrap it with add_hook_skip_hint
+        // Wrapped hook error
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreCommit,
-            command_name: Some("lint".to_string()),
-            error: "failed".to_string(),
+            command_name: Some("lint".into()),
+            error: "failed".into(),
             exit_code: Some(7),
         }
         .into();
-        let wrapped = add_hook_skip_hint(inner);
-        // exit_code should still extract the code from the wrapped error
-        assert_eq!(exit_code(&wrapped), Some(7));
-    }
-
-    // ============================================================================
-    // is_command_not_approved() Tests
-    // ============================================================================
-
-    #[test]
-    fn test_is_command_not_approved_true() {
-        let err: anyhow::Error = WorktrunkError::CommandNotApproved.into();
-        assert!(is_command_not_approved(&err));
+        assert_eq!(exit_code(&add_hook_skip_hint(inner)), Some(7));
     }
 
     #[test]
-    fn test_is_command_not_approved_false_child_process() {
-        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
-            code: 1,
-            message: "test".to_string(),
-        }
-        .into();
-        assert!(!is_command_not_approved(&err));
+    fn test_is_command_not_approved() {
+        assert!(is_command_not_approved(
+            &WorktrunkError::CommandNotApproved.into()
+        ));
+        assert!(!is_command_not_approved(
+            &WorktrunkError::ChildProcessExited {
+                code: 1,
+                message: "test".into()
+            }
+            .into()
+        ));
+        assert!(!is_command_not_approved(
+            &WorktrunkError::HookCommandFailed {
+                hook_type: HookType::PostCreate,
+                command_name: None,
+                error: "failed".into(),
+                exit_code: None,
+            }
+            .into()
+        ));
+        assert!(!is_command_not_approved(
+            &GitError::DetachedHead { action: None }.into()
+        ));
     }
 
     #[test]
-    fn test_is_command_not_approved_false_hook_failed() {
-        let err: anyhow::Error = WorktrunkError::HookCommandFailed {
-            hook_type: HookType::PostCreate,
-            command_name: None,
-            error: "failed".to_string(),
-            exit_code: None,
-        }
-        .into();
-        assert!(!is_command_not_approved(&err));
-    }
-
-    #[test]
-    fn test_is_command_not_approved_false_git_error() {
-        let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        assert!(!is_command_not_approved(&err));
-    }
-
-    // ============================================================================
-    // add_hook_skip_hint() Tests
-    // ============================================================================
-
-    #[test]
-    fn test_add_hook_skip_hint_wraps_hook_command_failed() {
+    fn test_add_hook_skip_hint() {
+        // Wraps HookCommandFailed with --no-verify hint
         let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
-            command_name: Some("test".to_string()),
-            error: "failed".to_string(),
+            command_name: Some("test".into()),
+            error: "failed".into(),
             exit_code: Some(1),
         }
         .into();
-        let wrapped = add_hook_skip_hint(inner);
-        // The wrapped error should display with the hint
-        let display = format!("{wrapped}");
-        assert!(display.contains("--no-verify"));
-        assert!(display.contains("pre-merge"));
-    }
+        let display = format!("{}", add_hook_skip_hint(inner));
+        assert!(display.contains("--no-verify") && display.contains("pre-merge"));
 
-    #[test]
-    fn test_add_hook_skip_hint_passes_through_non_hook_error() {
-        let original: anyhow::Error = WorktrunkError::ChildProcessExited {
+        // Passes through non-hook errors
+        let err: anyhow::Error = WorktrunkError::ChildProcessExited {
             code: 1,
-            message: "test".to_string(),
+            message: "test".into(),
         }
         .into();
-        let wrapped = add_hook_skip_hint(original);
-        // Non-hook errors should not get the hint
-        let display = format!("{wrapped}");
-        assert!(!display.contains("--no-verify"));
+        assert!(!format!("{}", add_hook_skip_hint(err)).contains("--no-verify"));
+
+        let err: anyhow::Error = GitError::DetachedHead { action: None }.into();
+        assert!(!format!("{}", add_hook_skip_hint(err)).contains("--no-verify"));
     }
 
     #[test]
-    fn test_add_hook_skip_hint_passes_through_git_error() {
-        let original: anyhow::Error = GitError::DetachedHead { action: None }.into();
-        let wrapped = add_hook_skip_hint(original);
-        // GitError should not get the hint
-        let display = format!("{wrapped}");
-        assert!(!display.contains("--no-verify"));
-    }
-
-    // ============================================================================
-    // format_error_block() Tests
-    // ============================================================================
-
-    #[test]
-    fn test_format_error_block_with_content() {
+    fn test_format_error_block() {
         let header = "Error occurred".to_string();
-        let error = "  some error text  ";
-        let result = format_error_block(header, error);
-        assert!(result.contains("Error occurred"));
-        assert!(result.contains("some error text"));
+        let result = format_error_block(header.clone(), "  some error text  ");
+        assert!(result.contains("Error occurred") && result.contains("some error text"));
+
+        // Empty/whitespace returns header only
+        assert_eq!(format_error_block(header.clone(), ""), header);
+        assert_eq!(format_error_block(header.clone(), "   \n\t  "), header);
     }
 
     #[test]
-    fn test_format_error_block_empty_error() {
-        let header = "Error occurred".to_string();
-        let result = format_error_block(header.clone(), "");
-        assert_eq!(result, header);
-    }
-
-    #[test]
-    fn test_format_error_block_whitespace_only() {
-        let header = "Error occurred".to_string();
-        let result = format_error_block(header.clone(), "   \n\t  ");
-        assert_eq!(result, header);
-    }
-
-    // ============================================================================
-    // WorktrunkError Display Tests
-    // ============================================================================
-
-    #[test]
-    fn test_worktrunk_error_child_process_display() {
+    fn test_worktrunk_error_display() {
+        // ChildProcessExited
         let err = WorktrunkError::ChildProcessExited {
             code: 1,
-            message: "Command failed".to_string(),
+            message: "Command failed".into(),
         };
-        let display = format!("{err}");
-        assert!(display.contains("Command failed"));
-    }
+        assert!(format!("{err}").contains("Command failed"));
 
-    #[test]
-    fn test_worktrunk_error_hook_command_failed_with_name() {
+        // HookCommandFailed with/without name
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PreMerge,
-            command_name: Some("lint".to_string()),
-            error: "lint failed".to_string(),
+            command_name: Some("lint".into()),
+            error: "lint failed".into(),
             exit_code: Some(1),
         };
         let display = format!("{err}");
-        assert!(display.contains("pre-merge"));
-        assert!(display.contains("lint"));
-    }
+        assert!(display.contains("pre-merge") && display.contains("lint"));
 
-    #[test]
-    fn test_worktrunk_error_hook_command_failed_without_name() {
         let err = WorktrunkError::HookCommandFailed {
             hook_type: HookType::PostCreate,
             command_name: None,
-            error: "setup failed".to_string(),
+            error: "setup failed".into(),
             exit_code: None,
         };
         let display = format!("{err}");
-        assert!(display.contains("post-create"));
-        assert!(display.contains("setup failed"));
-    }
+        assert!(display.contains("post-create") && display.contains("setup failed"));
 
-    #[test]
-    fn test_worktrunk_error_command_not_approved_silent() {
-        let err = WorktrunkError::CommandNotApproved;
-        // Should produce no output (silent error)
-        assert_eq!(format!("{err}"), "");
-    }
-
-    #[test]
-    fn test_worktrunk_error_already_displayed_silent() {
-        let err = WorktrunkError::AlreadyDisplayed { exit_code: 1 };
-        // Should produce no output (error already shown)
-        assert_eq!(format!("{err}"), "");
+        // Silent errors
+        assert_eq!(format!("{}", WorktrunkError::CommandNotApproved), "");
+        assert_eq!(
+            format!("{}", WorktrunkError::AlreadyDisplayed { exit_code: 1 }),
+            ""
+        );
     }
 }
