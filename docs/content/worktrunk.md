@@ -45,26 +45,26 @@ worktree requires typing the branch name three times: `git worktree add -b feat
   <tbody>
     <tr>
       <td>Switch worktrees</td>
-      <td><code>wt switch feat</code></td>
+      <td>{% rawcode() %}wt switch feat{% end %}</td>
       <td>{% rawcode() %}cd ../repo.feat{% end %}</td>
     </tr>
     <tr>
       <td>Create + start Claude</td>
-      <td><code>wt switch -c -x claude feat</code></td>
+      <td>{% rawcode() %}wt switch -c -x claude feat{% end %}</td>
       <td>{% rawcode() %}git worktree add -b feat ../repo.feat && \
 cd ../repo.feat && \
 claude{% end %}</td>
     </tr>
     <tr>
       <td>Clean up</td>
-      <td><code>wt remove</code></td>
+      <td>{% rawcode() %}wt remove{% end %}</td>
       <td>{% rawcode() %}cd ../repo && \
 git worktree remove ../repo.feat && \
 git branch -d feat{% end %}</td>
     </tr>
     <tr>
       <td>List with status</td>
-      <td><code>wt list</code></td>
+      <td>{% rawcode() %}wt list{% end %}</td>
       <td>{% rawcode() %}git worktree list{% end %} (paths only)</td>
     </tr>
   </tbody>
