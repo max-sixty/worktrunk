@@ -73,11 +73,6 @@ pub enum GitError {
     WorktreePathExists {
         path: PathBuf,
     },
-    WorktreePathMismatch {
-        branch: String,
-        expected_path: PathBuf,
-        actual_path: PathBuf,
-    },
     WorktreeCreationFailed {
         branch: String,
         base_branch: Option<String>,
@@ -104,6 +99,9 @@ pub enum GitError {
     RebaseConflict {
         target_branch: String,
         git_output: String,
+    },
+    NotRebased {
+        target_branch: String,
     },
     PushFailed {
         error: String,
@@ -260,25 +258,6 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::WorktreePathMismatch {
-                branch,
-                expected_path,
-                actual_path,
-            } => {
-                let expected = format_path_for_display(expected_path);
-                let actual = format_path_for_display(actual_path);
-                write!(
-                    f,
-                    "{}\n\n{}",
-                    error_message(cformat!(
-                        "Ambiguous: <bold>{expected}</> has a worktree on a different branch, but branch <bold>{branch}</> exists @ <bold>{actual}</>"
-                    )),
-                    hint_message(cformat!(
-                        "Use <bright-black>wt list</> to see worktree-branch mappings"
-                    ))
-                )
-            }
-
             GitError::WorktreeCreationFailed {
                 branch,
                 base_branch,
@@ -406,6 +385,17 @@ impl std::fmt::Display for GitError {
                         ))
                     )
                 }
+            }
+
+            GitError::NotRebased { target_branch } => {
+                write!(
+                    f,
+                    "{}\n\n{}",
+                    error_message(cformat!("Branch not rebased onto <bold>{target_branch}</>")),
+                    hint_message(cformat!(
+                        "Run <bright-black>wt rebase</> first or remove <bright-black>--no-rebase</>"
+                    ))
+                )
             }
 
             GitError::PushFailed { error } => {

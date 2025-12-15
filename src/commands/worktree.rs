@@ -126,25 +126,22 @@ use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
 use super::repository_ext::RepositoryCliExt;
 
-/// Resolve a worktree argument using path-first lookup.
+/// Resolve a worktree argument using branch-first lookup.
 ///
 /// Resolution order:
 /// 1. Special symbols ("@", "-", "^") are handled specially
-/// 2. Compute expected path for the argument using config template
-/// 3. If a worktree exists at that path, return it (regardless of branch)
-/// 4. Otherwise, look up by branch name (standard fallback)
+/// 2. Resolve argument as branch name
+/// 3. If branch has a worktree, return it
+/// 4. Otherwise, return branch-only (no worktree)
 ///
-/// Conflict detection: If expected path has a worktree on branch X, but argument
-/// matches branch Y which has a worktree elsewhere, an error is raised.
-///
-/// This allows `wt remove foo` to target the worktree at `repo.foo/` even if
-/// that worktree is on a different branch.
-pub fn resolve_worktree_path_first(
+/// If the branch has no worktree but expected path is occupied by another
+/// branch's worktree, an error is raised.
+pub fn resolve_worktree_arg(
     repo: &Repository,
     name: &str,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<ResolvedWorktree> {
-    // Special symbols bypass path-first lookup
+    // Special symbols
     match name {
         "@" => {
             // Current worktree by path - works even in detached HEAD
@@ -164,46 +161,31 @@ pub fn resolve_worktree_path_first(
         _ => {}
     }
 
-    // Compute expected path for this argument
-    let expected_path = compute_worktree_path(repo, name, config)?;
+    // Resolve as branch name
+    let branch = repo.resolve_worktree_name(name)?;
 
-    // Check if a worktree exists at the expected path
-    if let Some((path, branch_at_path)) = repo.worktree_at_path(&expected_path)? {
-        // Worktree exists at expected path - check for ambiguity
-        // If the argument also matches a different branch with a worktree elsewhere,
-        // that's ambiguous and we should error
-        // Note: resolve_worktree_name won't fail with DetachedHead here because "@"
-        // was already handled in the early return above
-        let branch = repo.resolve_worktree_name(name)?;
-        if branch_at_path.as_deref() != Some(&branch) {
-            // The worktree at expected path is on a different branch than the argument
-            if let Some(other_path) = repo.worktree_for_branch(&branch)? {
-                // And the argument matches a branch that has a worktree elsewhere
-                // This is ambiguous - error to prevent confusion
-                return Err(GitError::WorktreePathMismatch {
-                    branch,
-                    expected_path,
-                    actual_path: other_path,
-                }
-                .into());
-            }
-        }
+    // Branch-first: check if branch has worktree anywhere
+    if let Some(path) = repo.worktree_for_branch(&branch)? {
         return Ok(ResolvedWorktree::Worktree {
             path,
-            branch: branch_at_path,
+            branch: Some(branch),
         });
     }
 
-    // No worktree at expected path - fall back to branch-based lookup
-    // This handles cases like manually-created worktrees at non-standard paths
-    let branch = repo.resolve_worktree_name(name)?;
-    match repo.worktree_for_branch(&branch)? {
-        Some(path) => Ok(ResolvedWorktree::Worktree {
-            path,
-            branch: Some(branch),
-        }),
-        None => Ok(ResolvedWorktree::BranchOnly { branch }),
+    // No worktree for branch - check if expected path is occupied
+    let expected_path = compute_worktree_path(repo, name, config)?;
+    if let Some((_, occupant_branch)) = repo.worktree_at_path(&expected_path)? {
+        // Path is occupied by a different branch's worktree
+        return Err(GitError::WorktreePathOccupied {
+            branch,
+            path: expected_path,
+            occupant: occupant_branch,
+        }
+        .into());
     }
+
+    // No worktree for branch or at expected path
+    Ok(ResolvedWorktree::BranchOnly { branch })
 }
 
 /// Compute the expected worktree path for a branch name.
@@ -369,20 +351,7 @@ pub fn handle_switch(
         (result, branch)
     };
 
-    // Path-first lookup: check if a worktree exists at the expected path
-    if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
-        // Check if directory actually exists (git might have stale metadata)
-        if !existing_path.exists() {
-            let branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
-            return Err(GitError::WorktreeMissing { branch }.into());
-        }
-        // Worktree exists at expected path - switch to it regardless of its branch
-        let _ = repo.record_switch_previous(new_previous.as_deref());
-        let actual_branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
-        return Ok(switch_to_existing(existing_path, actual_branch));
-    }
-
-    // Fallback: check if branch has a worktree at a different path
+    // Branch-first lookup: check if branch has a worktree anywhere
     match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
             let _ = repo.record_switch_previous(new_previous.as_deref());
@@ -397,7 +366,23 @@ pub fn handle_switch(
         None => {}
     }
 
-    // No existing worktree at expected path or for branch - will create one
+    // No worktree for branch - check if expected path is occupied by a different branch's worktree
+    if let Some((existing_path, path_branch)) = repo.worktree_at_path(&expected_path)? {
+        if !existing_path.exists() {
+            // Stale worktree metadata - git thinks there's a worktree but directory is gone
+            let branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
+            return Err(GitError::WorktreeMissing { branch }.into());
+        }
+        // Path is occupied by a different branch's worktree
+        return Err(GitError::WorktreePathOccupied {
+            branch: resolved_branch.clone(),
+            path: expected_path,
+            occupant: path_branch,
+        }
+        .into());
+    }
+
+    // No existing worktree for branch or at expected path - will create one
     let worktree_path = expected_path;
 
     // If the target path already exists but is NOT a worktree (e.g., stale directory),

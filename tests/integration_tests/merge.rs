@@ -1820,6 +1820,59 @@ fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
     );
 }
 
+// =============================================================================
+// --no-rebase tests
+// =============================================================================
+
+#[rstest]
+fn test_merge_no_rebase_when_already_rebased(merge_scenario: (TestRepo, PathBuf)) {
+    // Feature branch is based on main (no divergence), so --no-rebase should succeed
+    let (repo, feature_wt) = merge_scenario;
+
+    snapshot_merge(
+        "merge_no_rebase_already_rebased",
+        &repo,
+        &["main", "--no-rebase"],
+        Some(&feature_wt),
+    );
+}
+
+#[rstest]
+fn test_merge_no_rebase_when_not_rebased(mut repo: TestRepo) {
+    // Create a feature worktree with a commit
+    let feature_wt = repo.add_worktree_with_commit(
+        "not-rebased-test",
+        "feature.txt",
+        "feature content",
+        "Add feature",
+    );
+
+    // Advance main with a new commit (makes feature branch diverge)
+    fs::write(repo.root_path().join("main-update.txt"), "main content").unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "main-update.txt"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Update main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // --no-rebase should fail because feature is not rebased onto main
+    snapshot_merge(
+        "merge_no_rebase_not_rebased",
+        &repo,
+        &["main", "--no-rebase"],
+        Some(&feature_wt),
+    );
+}
+
 #[rstest]
 fn test_merge_primary_on_different_branch(mut repo: TestRepo) {
     repo.switch_primary_to("develop");

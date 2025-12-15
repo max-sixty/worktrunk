@@ -236,17 +236,6 @@ fn display_project_config_not_found() {
 }
 
 #[test]
-fn display_worktree_path_mismatch() {
-    let err = GitError::WorktreePathMismatch {
-        branch: "feature".into(),
-        expected_path: PathBuf::from("/tmp/repo.feature"),
-        actual_path: PathBuf::from("/tmp/repo.other"),
-    };
-
-    assert_snapshot!("worktree_path_mismatch", err.to_string());
-}
-
-#[test]
 fn display_parse_error() {
     let err = GitError::ParseError {
         message: "Invalid branch name format".into(),
