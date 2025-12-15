@@ -426,4 +426,273 @@ mod tests {
             "Escaped sequence should not appear literally"
         );
     }
+
+    // ============================================================================
+    // strip_ansi Tests
+    // ============================================================================
+
+    #[test]
+    fn test_strip_ansi_no_escapes() {
+        assert_eq!(strip_ansi("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_strip_ansi_with_color() {
+        assert_eq!(strip_ansi("\u{1b}[32mgreen\u{1b}[0m"), "green");
+    }
+
+    #[test]
+    fn test_strip_ansi_multiple_codes() {
+        assert_eq!(
+            strip_ansi("\u{1b}[1mbold\u{1b}[0m and \u{1b}[2mdim\u{1b}[0m"),
+            "bold and dim"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_nested() {
+        assert_eq!(
+            strip_ansi("\u{1b}[1m\u{1b}[32mtext\u{1b}[0m\u{1b}[0m"),
+            "text"
+        );
+    }
+
+    // ============================================================================
+    // render_markdown_in_help Tests
+    // ============================================================================
+
+    #[test]
+    fn test_render_markdown_in_help_h1() {
+        let result = render_markdown_in_help("# Header");
+        // H1 should be green
+        assert!(result.contains("Header"));
+        assert!(result.contains("\u{1b}[")); // Has color codes
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_h2() {
+        let result = render_markdown_in_help("## Section");
+        assert!(result.contains("Section"));
+        assert!(result.contains("\u{1b}[")); // Has color codes
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_h3() {
+        let result = render_markdown_in_help("### Subsection");
+        assert!(result.contains("Subsection"));
+        // H3 is bold
+        assert!(result.contains("\u{1b}[1m")); // Bold
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_code_block() {
+        let md = "```\ncode here\n```\nafter";
+        let result = render_markdown_in_help(md);
+        // Code is dimmed with indent
+        assert!(result.contains("code here"));
+        assert!(result.contains("after"));
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_html_comment() {
+        let md = "<!-- comment -->\nvisible";
+        let result = render_markdown_in_help(md);
+        // Comments should be stripped
+        assert!(!result.contains("comment"));
+        assert!(result.contains("visible"));
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_plain_text() {
+        let result = render_markdown_in_help("Just plain text");
+        assert!(result.contains("Just plain text"));
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_table() {
+        let md = "| A | B |\n| - | - |\n| 1 | 2 |";
+        let result = render_markdown_in_help(md);
+        // Table should be rendered
+        assert!(result.contains("A"));
+        assert!(result.contains("B"));
+        assert!(result.contains("1"));
+        assert!(result.contains("2"));
+    }
+
+    // ============================================================================
+    // render_markdown_table Tests
+    // ============================================================================
+
+    #[test]
+    fn test_render_markdown_table_basic() {
+        let md = "| Col1 | Col2 |\n| ---- | ---- |\n| A | B |";
+        let result = render_markdown_table(md);
+        assert!(result.contains("Col1"));
+        assert!(result.contains("Col2"));
+        assert!(result.contains("A"));
+        assert!(result.contains("B"));
+    }
+
+    #[test]
+    fn test_render_markdown_table_empty() {
+        let result = render_markdown_table("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_render_markdown_table_with_non_table_lines() {
+        let md = "Not a table\n| A | B |\nAlso not\n| - | - |\n| 1 | 2 |";
+        let result = render_markdown_table(md);
+        // Should only include table rows
+        assert!(result.contains("A"));
+        assert!(result.contains("B"));
+        assert!(!result.contains("Not a table"));
+        assert!(!result.contains("Also not"));
+    }
+
+    // ============================================================================
+    // colorize_status_symbols Tests
+    // ============================================================================
+
+    #[test]
+    fn test_colorize_status_symbols_working_tree() {
+        // These symbols should become cyan
+        let dim = Style::new().dimmed();
+        let input = format!("{}+{dim:#} staged", dim);
+        let result = colorize_status_symbols(&input);
+        // Should have cyan color code (36)
+        assert!(result.contains("\u{1b}[36m+"));
+    }
+
+    #[test]
+    fn test_colorize_status_symbols_conflicts() {
+        // ✘ should become red
+        let dim = Style::new().dimmed();
+        let input = format!("{}✘{dim:#} conflicts", dim);
+        let result = colorize_status_symbols(&input);
+        // Should have red color code (31)
+        assert!(result.contains("\u{1b}[31m✘"));
+    }
+
+    #[test]
+    fn test_colorize_status_symbols_git_ops() {
+        // ⤴ and ⤵ should become yellow
+        let dim = Style::new().dimmed();
+        let input = format!("{}⤴{dim:#} rebase", dim);
+        let result = colorize_status_symbols(&input);
+        // Should have yellow color code (33)
+        assert!(result.contains("\u{1b}[33m⤴"));
+    }
+
+    #[test]
+    fn test_colorize_status_symbols_ci_green() {
+        let result = colorize_status_symbols("● passed");
+        // Should have green color (32)
+        assert!(result.contains("\u{1b}[32m●"));
+    }
+
+    #[test]
+    fn test_colorize_status_symbols_ci_red() {
+        let result = colorize_status_symbols("● failed");
+        // Should have red color (31)
+        assert!(result.contains("\u{1b}[31m●"));
+    }
+
+    #[test]
+    fn test_colorize_status_symbols_ci_running() {
+        let result = colorize_status_symbols("● running");
+        // Should have blue color (34)
+        assert!(result.contains("\u{1b}[34m●"));
+    }
+
+    #[test]
+    fn test_colorize_status_symbols_no_change() {
+        // Text without symbols should pass through unchanged
+        let input = "plain text here";
+        let result = colorize_status_symbols(input);
+        assert_eq!(result, input);
+    }
+
+    // ============================================================================
+    // render_inline_formatting Tests
+    // ============================================================================
+
+    #[test]
+    fn test_render_inline_formatting_inline_code() {
+        let result = render_inline_formatting("`code`");
+        // Should have dim escape codes
+        assert!(result.contains("code"));
+        assert!(result.contains("\u{1b}[2m")); // Dimmed
+    }
+
+    #[test]
+    fn test_render_inline_formatting_bold() {
+        let result = render_inline_formatting("**bold**");
+        assert!(result.contains("bold"));
+        assert!(result.contains("\u{1b}[1m")); // Bold
+    }
+
+    #[test]
+    fn test_render_inline_formatting_mixed() {
+        let result = render_inline_formatting("text `code` more **bold** end");
+        assert!(result.contains("text"));
+        assert!(result.contains("code"));
+        assert!(result.contains("more"));
+        assert!(result.contains("bold"));
+        assert!(result.contains("end"));
+    }
+
+    #[test]
+    fn test_render_inline_formatting_unclosed_code() {
+        // Unclosed backtick - should consume until end
+        let result = render_inline_formatting("`unclosed");
+        assert!(result.contains("unclosed"));
+    }
+
+    #[test]
+    fn test_render_inline_formatting_unclosed_bold() {
+        // Unclosed bold - should consume until end
+        let result = render_inline_formatting("**unclosed");
+        assert!(result.contains("unclosed"));
+    }
+
+    // ============================================================================
+    // render_markdown_table_impl Tests (via render_table)
+    // ============================================================================
+
+    #[test]
+    fn test_render_table_column_alignment() {
+        let lines = vec![
+            "| Short | LongerHeader |",
+            "| ----- | ------------ |",
+            "| A | B |",
+        ];
+        let result = render_table(&lines);
+        // Should have proper column alignment
+        assert!(result.contains("Short"));
+        assert!(result.contains("LongerHeader"));
+        // Should have separator line with ─
+        assert!(result.contains('─'));
+    }
+
+    #[test]
+    fn test_render_table_uneven_columns() {
+        let lines = vec!["| A | B | C |", "| --- | --- | --- |", "| 1 | 2 |"];
+        let result = render_table(&lines);
+        // Should handle rows with different column counts
+        assert!(result.contains("A"));
+        assert!(result.contains("1"));
+    }
+
+    #[test]
+    fn test_render_table_no_separator() {
+        // Table without separator row
+        let lines = vec!["| A | B |", "| 1 | 2 |"];
+        let result = render_table(&lines);
+        // Should still render, just without separator line
+        assert!(result.contains("A"));
+        assert!(result.contains("1"));
+        // Should NOT have separator line
+        assert!(!result.contains('─'));
+    }
 }
