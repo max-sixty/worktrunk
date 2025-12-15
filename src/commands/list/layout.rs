@@ -88,6 +88,19 @@
 //! - Narrow terminals: Data columns + message (hide empty columns)
 //! - Wide terminals: Data columns + message + empty columns (visual consistency)
 //!
+//! ## Limitation: Progressive Mode
+//!
+//! The empty penalty system requires knowing whether columns have data, but progressive rendering
+//! computes layout before data arrives. Currently we assume most columns have data (optimistic),
+//! which means empty penalties don't apply in progressive mode.
+//!
+//! Exceptions that we can compute instantly from items:
+//! - `path`: true only if any worktree has `path_mismatch` (computed from items)
+//! - `branch_diff`/`ci_status`: false if their required task is skipped
+//!
+//! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
+//! so we assume they have data until proven otherwise.
+//!
 //! ## Special Cases
 //!
 //! Three columns have non-standard behavior that extends beyond the basic two-tier model:
@@ -263,6 +276,7 @@ pub struct ColumnDataFlags {
     pub branch_diff: bool,
     pub upstream: bool,
     pub ci_status: bool,
+    pub path: bool, // True if any worktree has path_mismatch (path doesn't match template)
 }
 
 /// Layout metadata including position mask for Status column
@@ -316,7 +330,7 @@ impl ColumnKind {
             ColumnKind::WorkingDiff => flags.working_diff,
             ColumnKind::AheadBehind => flags.ahead_behind,
             ColumnKind::BranchDiff => flags.branch_diff,
-            ColumnKind::Path => true,
+            ColumnKind::Path => flags.path,
             ColumnKind::Upstream => flags.upstream,
             ColumnKind::Time => true,
             ColumnKind::CiStatus => flags.ci_status,
@@ -379,7 +393,7 @@ pub struct LayoutConfig {
     pub columns: Vec<ColumnLayout>,
     pub common_prefix: PathBuf,
     pub max_message_len: usize,
-    pub hidden_nonempty_count: usize,
+    pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
 }
 
@@ -438,7 +452,11 @@ struct PendingColumn<'a> {
 /// Uses generous fixed allocations for expensive-to-compute columns (status, diffs, time, CI)
 /// that handle overflow with compact notation (K suffix). This provides consistent layout
 /// without requiring a data scan.
-fn build_estimated_widths(max_branch: usize, skip_tasks: &HashSet<TaskKind>) -> LayoutMetadata {
+fn build_estimated_widths(
+    max_branch: usize,
+    skip_tasks: &HashSet<TaskKind>,
+    has_path_mismatch: bool,
+) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
     //
@@ -452,8 +470,13 @@ fn build_estimated_widths(max_branch: usize, skip_tasks: &HashSet<TaskKind>) -> 
     let age_estimate = 4; // "11mo" (short format)
     let ci_estimate = fit_header(HEADER_CI, 1); // Single indicator symbol
 
-    // Assume columns will have data (better to show and hide than to not show)
-    // Columns whose required task is skipped won't have data
+    // Assume columns will have data (better to show and hide than to not show).
+    // This is a limitation of progressive mode - we can't know which columns have data
+    // before the data arrives, so empty penalties don't apply properly.
+    //
+    // Exceptions that we can compute instantly from items:
+    // - path: true only if any worktree has path_mismatch (path doesn't match template)
+    // - branch_diff/ci_status: false if their required task is skipped
     let data_flags = ColumnDataFlags {
         status: true,
         working_diff: true,
@@ -461,6 +484,7 @@ fn build_estimated_widths(max_branch: usize, skip_tasks: &HashSet<TaskKind>) -> 
         branch_diff: !skip_tasks.contains(&TaskKind::BranchDiff),
         upstream: true,
         ci_status: !skip_tasks.contains(&TaskKind::CiStatus),
+        path: has_path_mismatch,
     };
 
     let widths = ColumnWidths {
@@ -543,7 +567,6 @@ fn allocate_columns_with_priority(
         .collect();
 
     const MIN_MESSAGE: usize = 20;
-    const PREFERRED_MESSAGE: usize = 50;
     const MAX_MESSAGE: usize = 100;
 
     let mut pending: Vec<PendingColumn> = Vec::new();
@@ -564,10 +587,11 @@ fn allocate_columns_with_priority(
             let available = remaining - spacing_cost;
             let mut message_width = 0;
 
-            if available >= PREFERRED_MESSAGE {
-                message_width = PREFERRED_MESSAGE.min(metadata.widths.message);
-            } else if available >= MIN_MESSAGE {
-                message_width = available.min(metadata.widths.message);
+            // Allocate at minimum width initially. Post-allocation expansion will
+            // bring it up to preferred/max width after empty columns have a chance
+            // to be allocated.
+            if available >= MIN_MESSAGE {
+                message_width = MIN_MESSAGE.min(metadata.widths.message);
             }
 
             if message_width > 0 {
@@ -647,19 +671,20 @@ fn allocate_columns_with_priority(
         });
     }
 
-    // Count how many non-empty columns were hidden (not allocated)
+    // Count how many columns were hidden (not allocated).
+    // This includes both data columns and empty columns that could show with more width.
     let allocated_kinds: std::collections::HashSet<_> =
         columns.iter().map(|col| col.kind).collect();
-    let hidden_nonempty_count = candidates_with_data
+    let hidden_column_count = candidates_with_data
         .iter()
-        .filter(|(kind, has_data)| !allocated_kinds.contains(kind) && *has_data)
+        .filter(|(kind, _has_data)| !allocated_kinds.contains(kind))
         .count();
 
     LayoutConfig {
         columns,
         common_prefix,
         max_message_len,
-        hidden_nonempty_count,
+        hidden_column_count,
         status_position_mask: metadata.status_position_mask,
     }
 }
@@ -726,8 +751,15 @@ pub fn calculate_layout_with_width(
         .unwrap_or(0);
     let max_path_width = fit_header(HEADER_PATH, path_data_width);
 
+    // Check if any worktree has a path that doesn't match the expected template.
+    // Path column is only useful when there's a mismatch; otherwise it's redundant with branch.
+    let has_path_mismatch = items
+        .iter()
+        .filter_map(|item| item.worktree_data())
+        .any(|data| data.path_mismatch);
+
     // Build pre-allocated width estimates (same as buffered mode)
-    let metadata = build_estimated_widths(max_branch, skip_tasks);
+    let metadata = build_estimated_widths(max_branch, skip_tasks, has_path_mismatch);
 
     let commit_width = fit_header(HEADER_COMMIT, COMMIT_HASH_WIDTH);
 
@@ -796,6 +828,7 @@ mod tests {
             branch_diff: true,
             upstream: true,
             ci_status: true,
+            path: true,
         };
         let all_false = ColumnDataFlags {
             status: false,
@@ -804,12 +837,12 @@ mod tests {
             branch_diff: false,
             upstream: false,
             ci_status: false,
+            path: false,
         };
 
         // Always-have-data columns
         assert!(ColumnKind::Gutter.has_data(&all_false));
         assert!(ColumnKind::Branch.has_data(&all_false));
-        assert!(ColumnKind::Path.has_data(&all_false));
         assert!(ColumnKind::Time.has_data(&all_false));
         assert!(ColumnKind::Commit.has_data(&all_false));
         assert!(ColumnKind::Message.has_data(&all_false));
@@ -827,6 +860,8 @@ mod tests {
         assert!(!ColumnKind::Upstream.has_data(&all_false));
         assert!(ColumnKind::CiStatus.has_data(&all_true));
         assert!(!ColumnKind::CiStatus.has_data(&all_false));
+        assert!(ColumnKind::Path.has_data(&all_true));
+        assert!(!ColumnKind::Path.has_data(&all_false));
     }
 
     #[test]
@@ -957,7 +992,8 @@ mod tests {
     fn test_pre_allocated_width_estimates() {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
         // Empty skip set means all tasks are computed (equivalent to --full)
-        let metadata = build_estimated_widths(20, &HashSet::new());
+        // has_path_mismatch=true to test the path flag is passed through
+        let metadata = build_estimated_widths(20, &HashSet::new(), true);
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
