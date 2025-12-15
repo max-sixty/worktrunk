@@ -2,6 +2,14 @@
 //!
 //! These tests verify that the CI status parsing code correctly handles
 //! JSON responses from GitHub (gh) and GitLab (glab) CLI tools.
+//!
+//! TODO: Re-enable on Windows once we have a reliable way to mock the `gh` command.
+//! Currently skipped because Rust's `Command::new("gh")` doesn't use PATHEXT for
+//! resolution - it looks for `.exe` directly. Our mock `gh.bat` scripts aren't
+//! found, so we can't mock the gh command reliably without creating a real `.exe`
+//! wrapper or modifying the source to use shell execution.
+
+#![cfg(not(windows))]
 
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
