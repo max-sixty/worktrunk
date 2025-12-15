@@ -55,7 +55,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
 
 ## Argument resolution
 
-If the branch has a worktree, switch to it. Otherwise, create a worktree at the expected path.
+Switches to the branch's worktree if one exists, otherwise creates one at the expected path.
 
 If the expected path is occupied by a different branch's worktree, an error is raised.
 
