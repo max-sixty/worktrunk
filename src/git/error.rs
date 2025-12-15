@@ -232,11 +232,10 @@ impl std::fmt::Display for GitError {
                         format!("cd {path_display} && git switch {branch}"),
                     )
                 } else {
-                    // Detached HEAD - can't suggest git switch
                     (
                         "path occupied by detached worktree".to_string(),
-                        hint_message("Access the worktree"),
-                        format!("cd {path_display}"),
+                        hint_message("Switch it to the branch"),
+                        format!("cd {path_display} && git switch {branch}"),
                     )
                 };
                 write!(
