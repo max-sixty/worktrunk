@@ -1,17 +1,12 @@
-use crate::common::{TestRepo, repo, setup_temp_snapshot_settings, wait_for_file, wt_command};
+use crate::common::{
+    TestRepo, canonicalize, repo, setup_temp_snapshot_settings, wait_for_file, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
-
-/// Canonicalize path without Windows `\\?\` prefix.
-/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
-/// which cause issues with git worktree operations inside bare repos.
-fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
-    dunce::canonicalize(path)
-}
 
 /// Helper to create a bare repository test setup
 struct BareRepoTest {

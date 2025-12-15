@@ -1977,6 +1977,9 @@ dependencies = [
 [[package]]
 name = "setup-select-test"
 version = "0.1.0"
+dependencies = [
+ "dunce",
+]
 
 [[package]]
 name = "sha2"

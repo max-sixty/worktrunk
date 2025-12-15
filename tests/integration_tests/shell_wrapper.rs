@@ -36,6 +36,7 @@
 #![cfg(all(unix, feature = "shell-integration-tests"))]
 
 use crate::common::TestRepo;
+use crate::common::canonicalize;
 use crate::common::shell::shell_available;
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
@@ -1526,7 +1527,7 @@ approved-commands = ["echo 'fish background task'"]
 
         // Get the worktrunk source directory (where this test is running from)
         // This is the directory that contains Cargo.toml with the workspace
-        let worktrunk_source = env::current_dir().unwrap().canonicalize().unwrap();
+        let worktrunk_source = canonicalize(&env::current_dir().unwrap()).unwrap();
 
         // Build a shell script that runs from the worktrunk source directory
         let wt_bin = get_cargo_bin("wt");

@@ -71,6 +71,12 @@ repos:
         entry: '\\x1b\['
         # format.rs strips ANSI codes injected by wrap_ansi crate
         exclude: '^(tests/|.*_test\.rs$|src/styling/(line|mod|format)\.rs$|src/output/global\.rs$|src/cli\.rs$)'
+      - id: no-std-canonicalize-in-tests
+        name: no-std-canonicalize-in-tests
+        description: Use dunce::canonicalize in tests to avoid Windows \\?\ prefix issues
+        language: pygrep
+        entry: '\.canonicalize\(\)'
+        files: '^tests/'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.

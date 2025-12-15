@@ -478,7 +478,7 @@ fn copy_fixture_template(dest: &Path) {
 /// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
 /// which git cannot handle. The `dunce` crate strips this prefix when safe.
 /// On Unix, this is equivalent to `std::fs::canonicalize()`.
-fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
 }
 
