@@ -153,6 +153,22 @@ test = "cargo test"
     });
 }
 
+/// Test error formatting with context (error message + gutter for multi-line)
+#[rstest]
+fn test_error_with_context_formatting(temp_home: TempDir) {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    // Run wt remove outside a git repo - should show "Failed to remove worktree" context
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg("remove").current_dir(temp_dir.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test `wt hook show` outside git repo
 #[rstest]
 fn test_hook_show_outside_git_repo(temp_home: TempDir) {

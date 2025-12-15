@@ -1193,7 +1193,7 @@ fn main() {
                 // If user declines, skip hooks but continue with worktree creation
                 let approved = if create && verify {
                     let repo = Repository::current();
-                    let repo_root = repo.worktree_base()?;
+                    let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     // Compute worktree path for template expansion in approval prompt
                     let worktree_path = compute_worktree_path(&repo, &branch, &config)?;
                     let ctx = CommandContext::new(
@@ -1237,7 +1237,7 @@ fn main() {
                 // Hooks only run if --no-hooks wasn't passed and approval was granted (or --force used)
                 if !skip_hooks && let SwitchResult::Created { path, .. } = &result {
                     let repo = Repository::current();
-                    let repo_root = repo.worktree_base()?;
+                    let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
@@ -1285,9 +1285,10 @@ fn main() {
                     // Create context for template expansion in approval prompt
                     let worktree_path =
                         std::env::current_dir().context("Failed to get current directory")?;
-                    let repo_root = repo.worktree_base()?;
+                    let repo_root = repo.worktree_base().context("Failed to remove worktree")?;
                     // Keep as Option so detached HEAD maps to None -> "HEAD" via branch_or_head()
-                    let current_branch = repo.current_branch()?;
+                    let current_branch =
+                        repo.current_branch().context("Failed to remove worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
@@ -1311,7 +1312,8 @@ fn main() {
                 if worktrees.is_empty() {
                     // No worktrees specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
-                    let result = handle_remove_current(!delete_branch, force_delete, background)?;
+                    let result = handle_remove_current(!delete_branch, force_delete, background)
+                        .context("Failed to remove worktree")?;
                     // Approval was handled at the gate
                     handle_remove_output(&result, None, background, verify)
                 } else {
@@ -1515,12 +1517,18 @@ fn main() {
         } else if let Some(err) = e.downcast_ref::<worktrunk::git::HookErrorWithHint>() {
             let _ = output::print(err.to_string());
         } else {
-            // Anyhow error - format with emoji, multi-line root cause gets gutter
+            // Anyhow error formatting:
+            // - With context: show context as header, root cause in gutter
+            // - Simple error: inline with emoji
             let msg = e.to_string();
             let root_cause = e.root_cause().to_string();
-            let _ = output::print(cformat!("{ERROR_EMOJI} <red>{msg}</>"));
-            if msg != root_cause && root_cause.contains('\n') {
+            if msg != root_cause {
+                // Has context: msg is context, root_cause is underlying error
+                let _ = output::print(error_message(&msg));
                 let _ = output::gutter(format_with_gutter(&root_cause, "", None));
+            } else {
+                // Simple error: inline with emoji
+                let _ = output::print(cformat!("{ERROR_EMOJI} <red>{msg}</>"));
             }
         }
 

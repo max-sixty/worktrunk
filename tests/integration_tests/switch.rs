@@ -1,9 +1,11 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd_with_global_flags, repo, repo_with_remote, setup_snapshot_settings,
+    TestRepo, make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
+    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::path::Path;
+use tempfile::TempDir;
 
 // Snapshot helpers
 
@@ -784,4 +786,25 @@ fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
         stdout,
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+// Error context tests
+
+/// Test `wt switch` outside git repo shows error with context
+#[rstest]
+fn test_switch_outside_git_repo(temp_home: TempDir) {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    // Run wt switch --create outside a git repo - should show "Failed to switch worktree" context
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.arg("switch")
+            .arg("--create")
+            .arg("feature")
+            .current_dir(temp_dir.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
 }
