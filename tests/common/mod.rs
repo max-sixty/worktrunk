@@ -1418,98 +1418,13 @@ impl TestRepo {
     ///
     /// The mock gh returns:
     /// - `gh auth status`: exits successfully (0)
-    /// - `gh pr view`: exits with error (no PR found) - fails fast
-    /// - `gh run list`: exits with error (no runs found) - fails fast
+    /// - `gh pr list`: returns empty JSON array (no PRs found)
+    /// - `gh run list`: returns empty JSON array (no runs found)
     ///
     /// This prevents CI detection from blocking tests with network calls.
     pub fn setup_mock_gh(&mut self) {
-        let mock_bin = self.temp_dir.path().join("mock-bin");
-        std::fs::create_dir_all(&mock_bin).unwrap();
-
-        // Create mock gh script
-        let gh_script = mock_bin.join("gh");
-        std::fs::write(
-            &gh_script,
-            r#"#!/bin/sh
-# Mock gh command that fails fast without network calls
-
-case "$1" in
-    --version)
-        # gh --version - succeed (indicates gh is installed)
-        echo "gh version 2.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # gh auth status - succeed immediately
-        exit 0
-        ;;
-    pr|run)
-        # gh pr view / gh run list - fail fast (no PR/runs found)
-        exit 1
-        ;;
-    *)
-        # Unknown command - fail
-        exit 1
-        ;;
-esac
-"#,
-        )
-        .unwrap();
-
-        // Make executable on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file version of gh mock
-        #[cfg(windows)]
-        {
-            let gh_cmd = mock_bin.join("gh.cmd");
-            std::fs::write(
-                &gh_cmd,
-                r#"@echo off
-if "%1"=="--version" (
-    echo gh version 2.0.0 (mock)
-    exit /b 0
-)
-if "%1"=="auth" (
-    exit /b 0
-)
-if "%1"=="pr" exit /b 1
-if "%1"=="run" exit /b 1
-exit /b 1
-"#,
-            )
-            .unwrap();
-        }
-
-        // Create mock glab script (fails immediately)
-        let glab_script = mock_bin.join("glab");
-        std::fs::write(
-            &glab_script,
-            r#"#!/bin/sh
-# Mock glab command that fails fast
-exit 1
-"#,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file version of glab mock
-        #[cfg(windows)]
-        {
-            let glab_cmd = mock_bin.join("glab.cmd");
-            std::fs::write(&glab_cmd, "@echo off\nexit /b 1\n").unwrap();
-        }
-
-        self.mock_bin_path = Some(mock_bin);
+        // Delegate to setup_mock_gh_with_ci_data with empty arrays
+        self.setup_mock_gh_with_ci_data("[]", "[]");
     }
 
     /// Setup mock `gh` and `glab` commands that show "installed but not authenticated"
