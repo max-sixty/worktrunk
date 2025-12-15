@@ -168,22 +168,6 @@ pub fn table(content: impl Into<String>) -> io::Result<()> {
     stderr().flush()
 }
 
-/// Output a section heading (cyan uppercase text, no emoji)
-///
-/// Used for organizing output into distinct sections (e.g., `wt config show`, `wt state show`).
-/// Section headings are visual separators, not status messages.
-///
-/// # Example
-/// ```rust,ignore
-/// output::heading("BINARIES", None)?;
-/// output::heading("USER CONFIG", Some("~/.config/wt.toml"))?;
-/// ```
-pub fn heading(title: &str, suffix: Option<&str>) -> io::Result<()> {
-    use worktrunk::styling::format_heading;
-    eprintln!("{}", format_heading(title, suffix));
-    stderr().flush()
-}
-
 /// Request directory change (for shell integration)
 ///
 /// In directive mode, buffers the path for the final shell script.
