@@ -151,6 +151,28 @@ pub fn data(content: impl Into<String>) -> io::Result<()> {
     }
 }
 
+/// Emit raw data output, bypassing anstream color detection
+///
+/// Like `data()` but writes directly to stdout/stderr without anstream processing.
+/// Use when ANSI codes must be preserved regardless of TTY detection (e.g., statusline
+/// output for Claude Code which always expects ANSI).
+///
+/// - **Interactive**: writes to stdout
+/// - **Directive**: writes to stderr (stdout reserved for shell script)
+pub fn data_raw(content: impl Into<String>) -> io::Result<()> {
+    let content = content.into();
+    match get_mode() {
+        OutputMode::Interactive => {
+            writeln!(io::stdout(), "{content}")?;
+            io::stdout().flush()
+        }
+        OutputMode::Directive(_) => {
+            writeln!(io::stderr(), "{content}")?;
+            io::stderr().flush()
+        }
+    }
+}
+
 /// Emit table/UI output to stderr
 ///
 /// Used for table rows and progress indicators that should appear on the same
