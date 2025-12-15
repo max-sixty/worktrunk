@@ -492,6 +492,13 @@ pub const WEEK: i64 = 7 * DAY;
 /// Use this when creating test data with timestamps (cache entries, etc.).
 pub const TEST_EPOCH: u64 = 1735776000;
 
+/// Null device path, platform-appropriate.
+/// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
+#[cfg(windows)]
+const NULL_DEVICE: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_DEVICE: &str = "/dev/null";
+
 /// Create a `wt` CLI command with standardized test environment settings.
 ///
 /// The command has the following guarantees:
@@ -703,7 +710,7 @@ impl TestRepo {
     pub fn configure_git_cmd(&self, cmd: &mut Command) {
         // Use test git config file with advice settings disabled
         cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
-        cmd.env("GIT_CONFIG_SYSTEM", "/dev/null");
+        cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
         cmd.env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z");
         cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
         cmd.env("LC_ALL", "C");
@@ -724,7 +731,7 @@ impl TestRepo {
                 "GIT_CONFIG_GLOBAL".to_string(),
                 self.git_config_path.display().to_string(),
             ),
-            ("GIT_CONFIG_SYSTEM".to_string(), "/dev/null".to_string()),
+            ("GIT_CONFIG_SYSTEM".to_string(), NULL_DEVICE.to_string()),
             (
                 "GIT_AUTHOR_DATE".to_string(),
                 "2025-01-01T00:00:00Z".to_string(),
@@ -902,7 +909,7 @@ impl TestRepo {
         // Create commit with custom timestamp
         let mut cmd = Command::new("git");
         cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
-        cmd.env("GIT_CONFIG_SYSTEM", "/dev/null");
+        cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
         cmd.env("GIT_AUTHOR_DATE", &timestamp);
         cmd.env("GIT_COMMITTER_DATE", &timestamp);
         cmd.env("LC_ALL", "C");
@@ -931,7 +938,7 @@ impl TestRepo {
 
         let mut cmd = Command::new("git");
         cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
-        cmd.env("GIT_CONFIG_SYSTEM", "/dev/null");
+        cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
         cmd.env("GIT_AUTHOR_DATE", &timestamp);
         cmd.env("GIT_COMMITTER_DATE", &timestamp);
         cmd.env("LC_ALL", "C");

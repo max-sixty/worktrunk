@@ -108,13 +108,9 @@ The [2m--create[0m flag creates a new branch from [2m--base[0m (defaults to 
 
 [32mArgument resolution
 
-Arguments resolve by checking the filesystem before git branches:
+If the branch has a worktree, switch to it. Otherwise, create a worktree at the expected path.
 
-1. Compute expected path from argument (using configured path template)
-2. If worktree exists at that path, switch to it
-3. Otherwise, look up as branch name
-
-If the path and branch resolve to different worktrees (e.g., [2mrepo.foo/[0m tracks branch [2mbar[0m), the path takes precedence.
+If the expected path is occupied by a different branch's worktree, an error is raised.
 
 [32mSee also
 

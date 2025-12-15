@@ -2057,13 +2057,9 @@ wt switch --create fix --base=@  # Branch from current HEAD
 
 ## Argument resolution
 
-Arguments resolve by checking the filesystem before git branches:
+If the branch has a worktree, switch to it. Otherwise, create a worktree at the expected path.
 
-1. Compute expected path from argument (using configured path template)
-2. If worktree exists at that path, switch to it
-3. Otherwise, look up as branch name
-
-If the path and branch resolve to different worktrees (e.g., `repo.foo/` tracks branch `bar`), the path takes precedence.
+If the expected path is occupied by a different branch's worktree, an error is raised.
 
 ## See also
 
@@ -2166,7 +2162,9 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--no-background` to run in the foreground.
 
-Arguments use path-first resolution—see [wt switch](@/switch.md#argument-resolution). Shortcuts: `@` (current), `-` (previous), `^` (main worktree).
+## Shortcuts
+
+`@` (current), `-` (previous), `^` (main worktree). See [wt switch](@/switch.md#argument-resolution) for argument resolution.
 
 ## See also
 

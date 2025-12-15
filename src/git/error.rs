@@ -73,11 +73,6 @@ pub enum GitError {
     WorktreePathExists {
         path: PathBuf,
     },
-    WorktreePathMismatch {
-        branch: String,
-        expected_path: PathBuf,
-        actual_path: PathBuf,
-    },
     WorktreeCreationFailed {
         branch: String,
         base_branch: Option<String>,
@@ -259,25 +254,6 @@ impl std::fmt::Display for GitError {
                     )),
                     hint_message(cformat!(
                         "Remove with <bright-black>rm -rf {path_display}</> or use a different branch name"
-                    ))
-                )
-            }
-
-            GitError::WorktreePathMismatch {
-                branch,
-                expected_path,
-                actual_path,
-            } => {
-                let expected = format_path_for_display(expected_path);
-                let actual = format_path_for_display(actual_path);
-                write!(
-                    f,
-                    "{}\n\n{}",
-                    error_message(cformat!(
-                        "Ambiguous: <bold>{expected}</> has a worktree on a different branch, but branch <bold>{branch}</> exists @ <bold>{actual}</>"
-                    )),
-                    hint_message(cformat!(
-                        "Use <bright-black>wt list</> to see worktree-branch mappings"
                     ))
                 )
             }

@@ -32,8 +32,8 @@ use commands::{
     handle_configure_shell, handle_hook_show, handle_init, handle_list, handle_merge,
     handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current, handle_show_theme,
     handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_path_first,
-    run_hook, step_commit, step_for_each,
+    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
+    step_commit, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -1320,8 +1320,7 @@ fn main() {
                     // to avoid deleting the directory we're currently in
                     let current_worktree = repo.worktree_root().ok();
 
-                    // Partition worktrees into current, others, and branch-only using path-first
-                    // resolution, which checks expected path before falling back to branch lookup.
+                    // Partition worktrees into current, others, and branch-only.
                     // Collect errors for invalid names so we can report all of them.
                     let mut others = Vec::new();
                     let mut branch_only = Vec::new();
@@ -1329,7 +1328,7 @@ fn main() {
                     let mut errors: Vec<anyhow::Error> = Vec::new();
 
                     for worktree_name in &worktrees {
-                        match resolve_worktree_path_first(&repo, worktree_name, &config) {
+                        match resolve_worktree_arg(&repo, worktree_name, &config) {
                             Ok(ResolvedWorktree::Worktree { path, branch }) => {
                                 if Some(&path) == current_worktree.as_ref() {
                                     current = Some((path, branch));
