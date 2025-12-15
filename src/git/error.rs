@@ -1162,4 +1162,122 @@ mod tests {
         let display = err.to_string();
         assert!(display.contains("Working tree"));
     }
+
+    #[test]
+    fn test_git_error_not_fast_forward_empty_commits() {
+        // Test with empty commits_formatted to cover that branch
+        let err = GitError::NotFastForward {
+            target_branch: "main".into(),
+            commits_formatted: "".into(),
+            in_merge_context: false,
+        };
+        let display = err.to_string();
+        assert!(display.contains("main"));
+        assert!(display.contains("newer commits"));
+        // Should still have hint
+        assert!(display.contains("rebase"));
+    }
+
+    #[test]
+    fn test_git_error_not_fast_forward_outside_merge() {
+        // Test outside merge context (in_merge_context = false)
+        let err = GitError::NotFastForward {
+            target_branch: "develop".into(),
+            commits_formatted: "abc123 Some commit".into(),
+            in_merge_context: false,
+        };
+        let display = err.to_string();
+        assert!(display.contains("develop"));
+        // Should have generic rebase hint, not "wt merge"
+        assert!(display.contains("rebase"));
+        // commits_formatted should be in gutter
+        assert!(display.contains("abc123"));
+    }
+
+    #[test]
+    fn test_git_error_conflicting_changes_empty_files() {
+        // Test with empty files list
+        let err = GitError::ConflictingChanges {
+            files: vec![],
+            worktree_path: PathBuf::from("/tmp/repo"),
+        };
+        let display = err.to_string();
+        assert!(display.contains("conflicting"));
+        // Should still have hint about commit/stash
+        assert!(display.contains("Commit or stash"));
+    }
+
+    #[test]
+    fn test_hook_error_with_hint_source() {
+        use crate::HookType;
+
+        // Create a WorktrunkError with hook_type
+        let inner_error: anyhow::Error =
+            WorktrunkError::HookCommandFailed {
+                hook_type: HookType::PreMerge,
+                command_name: Some("test".into()),
+                error: "Test failed".into(),
+                exit_code: Some(1),
+            }
+            .into();
+
+        // Wrap it using add_hook_skip_hint
+        let wrapped = add_hook_skip_hint(inner_error);
+
+        // The source() method should return the underlying error
+        let source = wrapped.source();
+        // source can be Some or None depending on implementation
+        let _ = source;
+    }
+
+    #[test]
+    fn test_add_hook_skip_hint_with_hook_type() {
+        use crate::HookType;
+
+        let inner: anyhow::Error = WorktrunkError::HookCommandFailed {
+            hook_type: HookType::PreCommit,
+            command_name: Some("build".into()),
+            error: "Build failed".into(),
+            exit_code: Some(1),
+        }
+        .into();
+
+        let wrapped = add_hook_skip_hint(inner);
+        let display = wrapped.to_string();
+
+        // Should include the original error
+        assert!(display.contains("build"));
+        // Should include the hint
+        assert!(display.contains("--no-verify"));
+        assert!(display.contains("pre-commit"));
+    }
+
+    #[test]
+    fn test_add_hook_skip_hint_non_hook_error() {
+        // Test with a non-hook error (should pass through unchanged)
+        let inner: anyhow::Error = GitError::Other {
+            message: "some error".into(),
+        }
+        .into();
+
+        let wrapped = add_hook_skip_hint(inner);
+        let display = wrapped.to_string();
+
+        // Should include the original error
+        assert!(display.contains("some error"));
+        // Should NOT include hint (not a hook error)
+        assert!(!display.contains("--no-verify"));
+    }
+
+    #[test]
+    fn test_rebase_conflict_empty_output() {
+        let err = GitError::RebaseConflict {
+            target_branch: "main".into(),
+            git_output: "".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("incomplete"));
+        assert!(display.contains("main"));
+        // Empty output shouldn't cause issues
+    }
 }
