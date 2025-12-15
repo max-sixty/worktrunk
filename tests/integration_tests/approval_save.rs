@@ -598,3 +598,84 @@ fn test_permission_error_prevents_save() {
     // The approval succeeds (commands execute) even though saving failed.
     // This test verifies the save operation correctly fails with permission errors.
 }
+
+/// Test that saving config through a symlink preserves the symlink
+///
+/// When the config file is a symlink (e.g., user has config.toml -> dotfiles/worktrunk.toml),
+/// saving should write to the target file without destroying the symlink.
+#[test]
+#[cfg(unix)]
+fn test_saving_through_symlink_preserves_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    // Create a "dotfiles" directory with the actual config
+    let dotfiles_dir = temp_dir.path().join("dotfiles");
+    fs::create_dir_all(&dotfiles_dir).unwrap();
+    let target_path = dotfiles_dir.join("worktrunk.toml");
+
+    // Create initial config at the target location
+    let initial_content = r#"# My dotfiles config
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[commit-generation]
+command = "llm"
+"#;
+    fs::write(&target_path, initial_content).unwrap();
+
+    // Create symlink: config_path -> dotfiles/worktrunk.toml
+    let config_dir = temp_dir.path().join("config").join("worktrunk");
+    fs::create_dir_all(&config_dir).unwrap();
+    let symlink_path = config_dir.join("config.toml");
+    symlink(&target_path, &symlink_path).unwrap();
+
+    // Verify symlink was created correctly
+    assert!(symlink_path.is_symlink(), "Should be a symlink before save");
+    assert_eq!(
+        fs::read_link(&symlink_path).unwrap(),
+        target_path,
+        "Symlink should point to target"
+    );
+
+    // Load config and add an approval through the symlink path
+    let toml_str = fs::read_to_string(&symlink_path).unwrap();
+    let mut config: WorktrunkConfig = toml::from_str(&toml_str).unwrap();
+
+    config
+        .approve_command_to(
+            "github.com/test/symlink-repo".to_string(),
+            "npm install".to_string(),
+            Some(&symlink_path),
+        )
+        .unwrap();
+
+    // Verify symlink is preserved
+    assert!(
+        symlink_path.is_symlink(),
+        "Symlink should be preserved after save"
+    );
+    assert_eq!(
+        fs::read_link(&symlink_path).unwrap(),
+        target_path,
+        "Symlink target should be unchanged"
+    );
+
+    // Verify content was written to the target file
+    let target_content = fs::read_to_string(&target_path).unwrap();
+    assert!(
+        target_content.contains("npm install"),
+        "Approval should be written to target. Content:\n{target_content}"
+    );
+    assert!(
+        target_content.contains("# My dotfiles config"),
+        "Comments should be preserved. Content:\n{target_content}"
+    );
+
+    // Verify reading through symlink gets the same content
+    let symlink_content = fs::read_to_string(&symlink_path).unwrap();
+    assert_eq!(
+        target_content, symlink_content,
+        "Content should be identical whether read through symlink or target"
+    );
+}
