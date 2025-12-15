@@ -471,3 +471,438 @@ fn format_raw_symbols(symbols: &super::model::StatusSymbols) -> String {
 pub fn to_json_items(items: &[ListItem]) -> Vec<JsonItem> {
     items.iter().map(JsonItem::from_list_item).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::list::ci_status::{CiSource, CiStatus};
+    use crate::commands::list::model::{
+        Divergence, GitOperationState, MainState, OperationState, StatusSymbols, WorkingTreeStatus,
+        WorktreeData, WorktreeState,
+    };
+    use std::path::PathBuf;
+
+    // ============================================================================
+    // JsonDiff Tests
+    // ============================================================================
+
+    #[test]
+    fn test_json_diff_from_line_diff() {
+        let line_diff = LineDiff {
+            added: 10,
+            deleted: 5,
+        };
+        let json_diff = JsonDiff::from(line_diff);
+        assert_eq!(json_diff.added, 10);
+        assert_eq!(json_diff.deleted, 5);
+    }
+
+    #[test]
+    fn test_json_diff_from_line_diff_zeros() {
+        let line_diff = LineDiff {
+            added: 0,
+            deleted: 0,
+        };
+        let json_diff = JsonDiff::from(line_diff);
+        assert_eq!(json_diff.added, 0);
+        assert_eq!(json_diff.deleted, 0);
+    }
+
+    // ============================================================================
+    // pr_status_to_json Tests
+    // ============================================================================
+
+    #[test]
+    fn test_pr_status_to_json_passed() {
+        let pr = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: Some("https://github.com/org/repo/pull/123".to_string()),
+        };
+        let json = pr_status_to_json(&pr);
+        assert_eq!(json.ci, "passed");
+        assert_eq!(json.source, "pull_request");
+        assert!(!json.stale);
+        assert_eq!(
+            json.url,
+            Some("https://github.com/org/repo/pull/123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pr_status_to_json_failed_branch() {
+        let pr = PrStatus {
+            ci_status: CiStatus::Failed,
+            source: CiSource::Branch,
+            is_stale: true,
+            url: None,
+        };
+        let json = pr_status_to_json(&pr);
+        assert_eq!(json.ci, "failed");
+        assert_eq!(json.source, "branch");
+        assert!(json.stale);
+        assert!(json.url.is_none());
+    }
+
+    #[test]
+    fn test_pr_status_to_json_running() {
+        let pr = PrStatus {
+            ci_status: CiStatus::Running,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+        };
+        let json = pr_status_to_json(&pr);
+        assert_eq!(json.ci, "running");
+    }
+
+    #[test]
+    fn test_pr_status_to_json_conflicts() {
+        let pr = PrStatus {
+            ci_status: CiStatus::Conflicts,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+        };
+        let json = pr_status_to_json(&pr);
+        assert_eq!(json.ci, "conflicts");
+    }
+
+    #[test]
+    fn test_pr_status_to_json_no_ci() {
+        let pr = PrStatus {
+            ci_status: CiStatus::NoCI,
+            source: CiSource::Branch,
+            is_stale: false,
+            url: None,
+        };
+        let json = pr_status_to_json(&pr);
+        assert_eq!(json.ci, "no_ci");
+    }
+
+    #[test]
+    fn test_pr_status_to_json_error() {
+        let pr = PrStatus {
+            ci_status: CiStatus::Error,
+            source: CiSource::Branch,
+            is_stale: false,
+            url: None,
+        };
+        let json = pr_status_to_json(&pr);
+        assert_eq!(json.ci, "error");
+    }
+
+    // ============================================================================
+    // upstream_to_json Tests
+    // ============================================================================
+
+    #[test]
+    fn test_upstream_to_json_with_remote() {
+        let upstream = UpstreamStatus::from_parts(Some("origin".to_string()), 3, 2);
+        let branch = Some("feature".to_string());
+        let json = upstream_to_json(&upstream, &branch);
+        assert!(json.is_some());
+        let json = json.unwrap();
+        assert_eq!(json.name, "origin");
+        assert_eq!(json.branch, "feature");
+        assert_eq!(json.ahead, 3);
+        assert_eq!(json.behind, 2);
+    }
+
+    #[test]
+    fn test_upstream_to_json_no_remote() {
+        let upstream = UpstreamStatus::from_parts(None, 0, 0);
+        let branch = Some("feature".to_string());
+        let json = upstream_to_json(&upstream, &branch);
+        assert!(json.is_none());
+    }
+
+    #[test]
+    fn test_upstream_to_json_no_branch() {
+        let upstream = UpstreamStatus::from_parts(Some("origin".to_string()), 1, 0);
+        let branch = None;
+        let json = upstream_to_json(&upstream, &branch);
+        assert!(json.is_some());
+        let json = json.unwrap();
+        assert_eq!(json.branch, ""); // Empty string when branch is None
+    }
+
+    // ============================================================================
+    // worktree_state_to_json Tests
+    // ============================================================================
+
+    fn make_worktree_data() -> WorktreeData {
+        WorktreeData {
+            path: PathBuf::from("/test/path"),
+            is_main: false,
+            is_current: false,
+            is_previous: false,
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+            working_tree_diff: None,
+            working_tree_diff_with_main: None,
+            git_operation: GitOperationState::None,
+            path_mismatch: false,
+            working_diff_display: None,
+        }
+    }
+
+    fn make_status_symbols_with_worktree_state(state: WorktreeState) -> StatusSymbols {
+        StatusSymbols {
+            working_tree: WorkingTreeStatus::default(),
+            worktree_state: state,
+            main_state: MainState::None,
+            operation_state: OperationState::None,
+            upstream_divergence: Divergence::None,
+            user_marker: None,
+        }
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_none() {
+        let data = make_worktree_data();
+        let symbols = make_status_symbols_with_worktree_state(WorktreeState::None);
+        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        assert!(state.is_none());
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_no_worktree() {
+        let data = make_worktree_data();
+        let symbols = make_status_symbols_with_worktree_state(WorktreeState::Branch);
+        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        assert_eq!(state, Some("no_worktree"));
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_path_mismatch() {
+        let data = make_worktree_data();
+        let symbols = make_status_symbols_with_worktree_state(WorktreeState::PathMismatch);
+        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        assert_eq!(state, Some("path_mismatch"));
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_locked() {
+        let mut data = make_worktree_data();
+        data.locked = Some("manual lock".to_string());
+        let symbols = make_status_symbols_with_worktree_state(WorktreeState::Locked);
+        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        assert_eq!(state, Some("locked"));
+        assert_eq!(reason, Some("manual lock".to_string()));
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_prunable() {
+        let mut data = make_worktree_data();
+        data.prunable = Some("gitdir file missing".to_string());
+        let symbols = make_status_symbols_with_worktree_state(WorktreeState::Prunable);
+        let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
+        assert_eq!(state, Some("prunable"));
+        assert_eq!(reason, Some("gitdir file missing".to_string()));
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_fallback_prunable() {
+        let mut data = make_worktree_data();
+        data.prunable = Some("missing gitdir".to_string());
+        // No status symbols provided - fallback to data fields
+        let (state, reason) = worktree_state_to_json(&data, None);
+        assert_eq!(state, Some("prunable"));
+        assert_eq!(reason, Some("missing gitdir".to_string()));
+    }
+
+    #[test]
+    fn test_worktree_state_to_json_fallback_locked() {
+        let mut data = make_worktree_data();
+        data.locked = Some("in use".to_string());
+        let (state, reason) = worktree_state_to_json(&data, None);
+        assert_eq!(state, Some("locked"));
+        assert_eq!(reason, Some("in use".to_string()));
+    }
+
+    // ============================================================================
+    // format_raw_symbols Tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_raw_symbols_empty() {
+        let symbols = StatusSymbols::default();
+        let result = format_raw_symbols(&symbols);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_format_raw_symbols_working_tree() {
+        let symbols = StatusSymbols {
+            working_tree: WorkingTreeStatus::new(true, true, true, false, false),
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains('+'));
+        assert!(result.contains('!'));
+        assert!(result.contains('?'));
+    }
+
+    #[test]
+    fn test_format_raw_symbols_main_state() {
+        let symbols = StatusSymbols {
+            main_state: MainState::Ahead,
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains('↑'));
+    }
+
+    #[test]
+    fn test_format_raw_symbols_upstream_divergence() {
+        let symbols = StatusSymbols {
+            upstream_divergence: Divergence::Behind,
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains('⇣'));
+    }
+
+    #[test]
+    fn test_format_raw_symbols_operation_state() {
+        let symbols = StatusSymbols {
+            operation_state: OperationState::Rebase,
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains('⤴'));
+    }
+
+    #[test]
+    fn test_format_raw_symbols_worktree_state() {
+        let symbols = StatusSymbols {
+            worktree_state: WorktreeState::Locked,
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains('⊞'));
+    }
+
+    #[test]
+    fn test_format_raw_symbols_user_marker() {
+        let symbols = StatusSymbols {
+            user_marker: Some("🔥".to_string()),
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains("🔥"));
+    }
+
+    #[test]
+    fn test_format_raw_symbols_combined() {
+        let symbols = StatusSymbols {
+            working_tree: WorkingTreeStatus::new(true, false, false, false, false),
+            main_state: MainState::Behind,
+            upstream_divergence: Divergence::Ahead,
+            ..Default::default()
+        };
+        let result = format_raw_symbols(&symbols);
+        assert!(result.contains('+'));
+        assert!(result.contains('↓'));
+        assert!(result.contains('⇡'));
+    }
+
+    // ============================================================================
+    // JSON Serialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_json_commit_serialization() {
+        let commit = JsonCommit {
+            sha: "abc123def456".to_string(),
+            short_sha: "abc123d".to_string(),
+            message: "Fix bug".to_string(),
+            timestamp: 1700000000,
+        };
+        let json = serde_json::to_string(&commit).unwrap();
+        assert!(json.contains("abc123def456"));
+        assert!(json.contains("Fix bug"));
+        assert!(json.contains("1700000000"));
+    }
+
+    #[test]
+    fn test_json_working_tree_serialization() {
+        let wt = JsonWorkingTree {
+            staged: true,
+            modified: false,
+            untracked: true,
+            renamed: false,
+            deleted: false,
+            diff: Some(JsonDiff {
+                added: 10,
+                deleted: 5,
+            }),
+            diff_vs_main: None,
+        };
+        let json = serde_json::to_string(&wt).unwrap();
+        assert!(json.contains("\"staged\":true"));
+        assert!(json.contains("\"modified\":false"));
+        assert!(json.contains("\"added\":10"));
+    }
+
+    #[test]
+    fn test_json_main_serialization() {
+        let main = JsonMain {
+            ahead: 3,
+            behind: 1,
+            diff: Some(JsonDiff {
+                added: 50,
+                deleted: 20,
+            }),
+        };
+        let json = serde_json::to_string(&main).unwrap();
+        assert!(json.contains("\"ahead\":3"));
+        assert!(json.contains("\"behind\":1"));
+    }
+
+    #[test]
+    fn test_json_remote_serialization() {
+        let remote = JsonRemote {
+            name: "origin".to_string(),
+            branch: "feature".to_string(),
+            ahead: 2,
+            behind: 0,
+        };
+        let json = serde_json::to_string(&remote).unwrap();
+        assert!(json.contains("\"name\":\"origin\""));
+        assert!(json.contains("\"branch\":\"feature\""));
+    }
+
+    #[test]
+    fn test_json_worktree_serialization() {
+        let wt = JsonWorktree {
+            state: Some("locked"),
+            reason: Some("manual".to_string()),
+            detached: false,
+            bare: false,
+        };
+        let json = serde_json::to_string(&wt).unwrap();
+        assert!(json.contains("\"state\":\"locked\""));
+        assert!(json.contains("\"reason\":\"manual\""));
+    }
+
+    #[test]
+    fn test_json_pr_serialization() {
+        let pr = JsonPr {
+            ci: "passed",
+            source: "pull_request",
+            stale: false,
+            url: Some("https://example.com".to_string()),
+        };
+        let json = serde_json::to_string(&pr).unwrap();
+        assert!(json.contains("\"ci\":\"passed\""));
+        assert!(json.contains("\"source\":\"pull_request\""));
+    }
+}
