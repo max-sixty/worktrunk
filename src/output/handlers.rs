@@ -53,42 +53,6 @@ fn format_switch_success_message(
     }
 }
 
-/// Determine the effective target for integration checks.
-///
-/// If the upstream of the local target (e.g., `origin/main`) is strictly ahead of
-/// the local target (i.e., local is an ancestor of upstream but not the same commit),
-/// uses the upstream. This handles the common case where a branch was merged remotely
-/// but the user hasn't pulled yet.
-///
-/// When local and upstream are the same commit, prefers local for clearer messaging.
-///
-/// Returns the effective target ref to check against.
-///
-/// TODO(future): When local and remote have diverged (neither is ancestor),
-/// check integration against both and delete only if integrated into both.
-/// Current behavior: uses only local in diverged state, may miss remote-merged branches.
-fn effective_integration_target(repo: &Repository, local_target: &str) -> String {
-    // Get the upstream ref for the local target (e.g., origin/main for main)
-    let upstream = match repo.upstream_branch(local_target) {
-        Ok(Some(upstream)) => upstream,
-        _ => return local_target.to_string(),
-    };
-
-    // If local and upstream are the same commit, prefer local for clearer messaging
-    if repo.same_commit(local_target, &upstream).unwrap_or(false) {
-        return local_target.to_string();
-    }
-
-    // Check if local is strictly behind upstream (local is ancestor of upstream)
-    // This means upstream has commits that local doesn't have
-    // On error, fall back to local target (defensive: don't fail remove due to git errors)
-    if repo.is_ancestor(local_target, &upstream).unwrap_or(false) {
-        return upstream;
-    }
-
-    local_target.to_string()
-}
-
 /// Result of an integration check, including which target was used.
 struct IntegrationResult {
     reason: Option<IntegrationReason>,
@@ -110,7 +74,7 @@ struct IntegrationResult {
 /// This fail-safe default prevents accidental branch deletion when integration cannot
 /// be determined.
 fn get_integration_reason(repo: &Repository, branch_name: &str, target: &str) -> IntegrationResult {
-    let effective_target = effective_integration_target(repo, target);
+    let effective_target = repo.effective_integration_target(target);
 
     let reason = check_integration_against(repo, branch_name, &effective_target);
 

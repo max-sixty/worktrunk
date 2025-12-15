@@ -229,6 +229,8 @@ fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
             return Ok(Some(wt.branch.as_deref().unwrap_or("HEAD").to_string()));
         }
     };
+    // Effective target for integration checks: upstream if ahead of local, else local.
+    let integration_target = repo.effective_integration_target(&default_branch);
 
     // Determine if this is the main worktree
     let main_worktree = worktrees
@@ -243,7 +245,7 @@ fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
 
     // Populate computed fields (parallel git operations) and format status_line
     // Compute everything (same as --full) for complete status symbols
-    list::populate_items(&mut items, &default_branch, CollectOptions::default())?;
+    list::populate_items(&mut items, &integration_target, CollectOptions::default())?;
 
     // Return the pre-formatted statusline
     if let Some(ref statusline) = items[0].display.statusline {

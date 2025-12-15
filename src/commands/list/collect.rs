@@ -498,6 +498,9 @@ pub fn collect(
     }
 
     let default_branch = repo.default_branch()?;
+    // Effective target for integration checks: upstream if ahead of local, else local.
+    // This handles the case where a branch was merged remotely but user hasn't pulled yet.
+    let integration_target = repo.effective_integration_target(&default_branch);
     // Main worktree is the worktree on the default branch (if exists), else first worktree
     let main_worktree = worktrees
         .worktrees
@@ -698,7 +701,7 @@ pub fn collect(
     // Spawn worktree collection in background thread
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worktrees = tx.clone();
-    let default_branch_clone = default_branch.clone();
+    let integration_target_clone = integration_target.clone();
     let expected_results_wt = expected_results.clone();
     let options_wt = options.clone();
     std::thread::spawn(move || {
@@ -706,12 +709,12 @@ pub fn collect(
             .par_iter()
             .enumerate()
             .for_each(|(idx, wt)| {
-                // Always pass default_branch for ahead/behind/diff computation
-                // Status symbols will filter based on is_main flag
+                // Pass integration_target for ahead/behind/diff/integration checks.
+                // May be upstream (origin/main) if it's ahead of local main.
                 super::collect_progressive_impl::collect_worktree_progressive(
                     wt,
                     idx,
-                    &default_branch_clone,
+                    &integration_target_clone,
                     &options_wt,
                     tx_worktrees.clone(),
                     &expected_results_wt,
@@ -742,7 +745,7 @@ pub fn collect(
 
         let main_path = main_worktree.path.clone();
         let tx_branches = tx.clone();
-        let default_branch_clone = default_branch.clone();
+        let integration_target_clone = integration_target.clone();
         let expected_results_br = expected_results.clone();
         let options_br = options.clone();
         std::thread::spawn(move || {
@@ -754,7 +757,7 @@ pub fn collect(
                         commit_sha,
                         &main_path,
                         *item_idx,
-                        &default_branch_clone,
+                        &integration_target_clone,
                         &options_br,
                         tx_branches.clone(),
                         &expected_results_br,
@@ -777,13 +780,9 @@ pub fn collect(
         |item_idx, item, ctx| {
             // Compute/recompute status symbols as data arrives (both modes)
             // This is idempotent and updates status as new data (like upstream) arrives
-            let item_default_branch = if item.is_main() {
-                None
-            } else {
-                Some(default_branch.as_str())
-            };
+            // Main worktree case is handled inside check_integration_state()
             item.compute_status_symbols(
-                item_default_branch,
+                Some(integration_target.as_str()),
                 ctx.has_merge_tree_conflicts,
                 ctx.user_marker.clone(),
                 ctx.working_tree_status,
@@ -1000,11 +999,14 @@ pub fn build_worktree_item(
 /// Spawns parallel git operations and collects results. Modifies items in place
 /// with: commit details, ahead/behind, diffs, upstream, CI, etc.
 ///
+/// The `integration_target` parameter is the effective target for integration checks
+/// (may be upstream like `origin/main` if it's ahead of local `main`).
+///
 /// This is the blocking version used by statusline. For progressive rendering
 /// with callbacks, see the `collect()` function.
 pub fn populate_items(
     items: &mut [ListItem],
-    default_branch: &str,
+    integration_target: &str,
     options: CollectOptions,
 ) -> anyhow::Result<()> {
     use std::sync::Arc;
@@ -1036,7 +1038,7 @@ pub fn populate_items(
         .collect();
 
     // Spawn collection in background thread
-    let default_branch_clone = default_branch.to_string();
+    let integration_target_clone = integration_target.to_string();
     let expected_results_clone = expected_results.clone();
     std::thread::spawn(move || {
         for (idx, path, head, branch) in worktree_info {
@@ -1053,7 +1055,7 @@ pub fn populate_items(
             super::collect_progressive_impl::collect_worktree_progressive(
                 &wt,
                 idx,
-                &default_branch_clone,
+                &integration_target_clone,
                 &options,
                 tx.clone(),
                 &expected_results_clone,
@@ -1062,15 +1064,12 @@ pub fn populate_items(
     });
 
     // Drain task results (blocking until all complete)
+    // TODO: This callback duplicates logic from collect()'s drain_results callback.
+    // Consider unifying by making collect() take options to skip progressive rendering.
     let drain_outcome = drain_results(rx, items, &expected_results, |_item_idx, item, ctx| {
-        // Compute status symbols as data arrives (same logic as in collect())
-        let item_default_branch = if item.is_main() {
-            None
-        } else {
-            Some(default_branch)
-        };
+        // Main worktree case is handled inside check_integration_state()
         item.compute_status_symbols(
-            item_default_branch,
+            Some(integration_target),
             ctx.has_merge_tree_conflicts,
             ctx.user_marker.clone(),
             ctx.working_tree_status,

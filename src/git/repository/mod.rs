@@ -740,6 +740,44 @@ impl Repository {
         }
     }
 
+    /// Determine the effective target for integration checks.
+    ///
+    /// If the upstream of the local target (e.g., `origin/main`) is strictly ahead of
+    /// the local target (i.e., local is an ancestor of upstream but not the same commit),
+    /// uses the upstream. This handles the common case where a branch was merged remotely
+    /// but the user hasn't pulled yet.
+    ///
+    /// When local and upstream are the same commit, prefers local for clearer messaging.
+    ///
+    /// Returns the effective target ref to check against.
+    ///
+    /// Used by both `wt list` and `wt remove` to ensure consistent integration detection.
+    ///
+    /// TODO(future): When local and remote have diverged (neither is ancestor),
+    /// check integration against both and delete only if integrated into both.
+    /// Current behavior: uses only local in diverged state, may miss remote-merged branches.
+    pub fn effective_integration_target(&self, local_target: &str) -> String {
+        // Get the upstream ref for the local target (e.g., origin/main for main)
+        let upstream = match self.upstream_branch(local_target) {
+            Ok(Some(upstream)) => upstream,
+            _ => return local_target.to_string(),
+        };
+
+        // If local and upstream are the same commit, prefer local for clearer messaging
+        if self.same_commit(local_target, &upstream).unwrap_or(false) {
+            return local_target.to_string();
+        }
+
+        // Check if local is strictly behind upstream (local is ancestor of upstream)
+        // This means upstream has commits that local doesn't have
+        // On error, fall back to local target (defensive: don't fail due to git errors)
+        if self.is_ancestor(local_target, &upstream).unwrap_or(false) {
+            return upstream;
+        }
+
+        local_target.to_string()
+    }
+
     /// Get merge/rebase status for the worktree.
     pub fn worktree_state(&self) -> anyhow::Result<Option<String>> {
         let git_dir = self.git_dir()?;
