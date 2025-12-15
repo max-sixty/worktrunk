@@ -22,7 +22,7 @@
 use crate::common::{TestRepo, repo};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
-use portable_pty::{CommandBuilder, PtySize};
+use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -100,15 +100,7 @@ fn exec_in_pty_with_input_expectations(
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
 ) -> (Vec<u8>, i32) {
-    let pty_system = crate::common::native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: TERM_ROWS,
-            cols: TERM_COLS,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
     let mut cmd = CommandBuilder::new(command);
     for arg in args {
@@ -116,16 +108,8 @@ fn exec_in_pty_with_input_expectations(
     }
     cmd.cwd(working_dir);
 
-    // Set minimal environment
-    cmd.env_clear();
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    );
+    // Set up isolated environment with coverage passthrough
+    crate::common::configure_pty_command(&mut cmd);
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
 

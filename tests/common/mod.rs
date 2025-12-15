@@ -420,6 +420,27 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
     portable_pty::native_pty_system()
 }
 
+/// Open a PTY pair with default size (48 rows x 200 cols).
+///
+/// Most PTY tests use this standard size. Returns the master/slave pair.
+#[cfg(unix)]
+pub fn open_pty() -> portable_pty::PtyPair {
+    open_pty_with_size(48, 200)
+}
+
+/// Open a PTY pair with specified size.
+#[cfg(unix)]
+pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
+    native_pty_system()
+        .openpty(portable_pty::PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap()
+}
+
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -592,6 +613,108 @@ pub fn configure_cli_command(cmd: &mut Command) {
             cmd.env(key, val);
         }
     }
+}
+
+/// Configure a PTY CommandBuilder with isolated environment for testing.
+///
+/// This is the PTY equivalent of `configure_cli_command()`. It:
+/// 1. Clears all inherited environment variables
+/// 2. Sets minimal required vars (HOME, PATH)
+/// 3. Passes through LLVM coverage profiling vars so subprocess coverage works
+///
+/// Call this early in PTY test setup, then add any test-specific env vars after.
+pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
+    // Clear inherited environment for test isolation
+    cmd.env_clear();
+
+    // Minimal environment for shells/binaries to function
+    cmd.env(
+        "HOME",
+        home::home_dir().unwrap().to_string_lossy().to_string(),
+    );
+    cmd.env(
+        "PATH",
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+    );
+
+    // Pass through LLVM coverage profiling environment for subprocess coverage.
+    // Without this, spawned binaries can't write coverage data.
+    pass_coverage_env_to_pty_cmd(cmd);
+}
+
+/// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
+///
+/// PTY tests use `cmd.env_clear()` for isolation, which removes LLVM_PROFILE_FILE.
+/// Without this, spawned binaries can't write coverage data.
+///
+/// Use `configure_pty_command()` for the full setup, or call this directly if you
+/// need custom env_clear handling (e.g., shell-specific env vars).
+pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
+    for key in [
+        "LLVM_PROFILE_FILE",
+        "CARGO_LLVM_COV",
+        "CARGO_LLVM_COV_TARGET_DIR",
+    ] {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
+}
+
+/// Create a CommandBuilder for running a shell in PTY tests.
+///
+/// Handles all shell-specific setup:
+/// - env_clear + HOME + PATH (with optional bin_dir prefix)
+/// - Shell-specific env vars (ZDOTDIR for zsh)
+/// - Shell-specific isolation flags (--norc, --no-rcs, --no-config)
+/// - Coverage passthrough
+///
+/// Returns a CommandBuilder ready for `.arg("-c")` and `.arg(&script)`.
+#[cfg(unix)]
+pub fn shell_command(
+    shell: &str,
+    bin_dir: Option<&std::path::Path>,
+) -> portable_pty::CommandBuilder {
+    let mut cmd = portable_pty::CommandBuilder::new(shell);
+    cmd.env_clear();
+
+    cmd.env(
+        "HOME",
+        home::home_dir().unwrap().to_string_lossy().to_string(),
+    );
+
+    let path = match bin_dir {
+        Some(dir) => format!(
+            "{}:{}",
+            dir.display(),
+            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+        ),
+        None => std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+    };
+    cmd.env("PATH", path);
+
+    // Shell-specific setup
+    match shell {
+        "zsh" => {
+            cmd.env("ZDOTDIR", "/dev/null");
+            cmd.arg("--no-rcs");
+            cmd.arg("-o");
+            cmd.arg("NO_GLOBAL_RCS");
+            cmd.arg("-o");
+            cmd.arg("NO_RCS");
+        }
+        "bash" => {
+            cmd.arg("--norc");
+            cmd.arg("--noprofile");
+        }
+        "fish" => {
+            cmd.arg("--no-config");
+        }
+        _ => {}
+    }
+
+    pass_coverage_env_to_pty_cmd(&mut cmd);
+    cmd
 }
 
 /// Set home environment variables for commands that rely on isolated temp homes.
@@ -1295,98 +1418,13 @@ impl TestRepo {
     ///
     /// The mock gh returns:
     /// - `gh auth status`: exits successfully (0)
-    /// - `gh pr view`: exits with error (no PR found) - fails fast
-    /// - `gh run list`: exits with error (no runs found) - fails fast
+    /// - `gh pr list`: returns empty JSON array (no PRs found)
+    /// - `gh run list`: returns empty JSON array (no runs found)
     ///
     /// This prevents CI detection from blocking tests with network calls.
     pub fn setup_mock_gh(&mut self) {
-        let mock_bin = self.temp_dir.path().join("mock-bin");
-        std::fs::create_dir_all(&mock_bin).unwrap();
-
-        // Create mock gh script
-        let gh_script = mock_bin.join("gh");
-        std::fs::write(
-            &gh_script,
-            r#"#!/bin/sh
-# Mock gh command that fails fast without network calls
-
-case "$1" in
-    --version)
-        # gh --version - succeed (indicates gh is installed)
-        echo "gh version 2.0.0 (mock)"
-        exit 0
-        ;;
-    auth)
-        # gh auth status - succeed immediately
-        exit 0
-        ;;
-    pr|run)
-        # gh pr view / gh run list - fail fast (no PR/runs found)
-        exit 1
-        ;;
-    *)
-        # Unknown command - fail
-        exit 1
-        ;;
-esac
-"#,
-        )
-        .unwrap();
-
-        // Make executable on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file version of gh mock
-        #[cfg(windows)]
-        {
-            let gh_cmd = mock_bin.join("gh.cmd");
-            std::fs::write(
-                &gh_cmd,
-                r#"@echo off
-if "%1"=="--version" (
-    echo gh version 2.0.0 (mock)
-    exit /b 0
-)
-if "%1"=="auth" (
-    exit /b 0
-)
-if "%1"=="pr" exit /b 1
-if "%1"=="run" exit /b 1
-exit /b 1
-"#,
-            )
-            .unwrap();
-        }
-
-        // Create mock glab script (fails immediately)
-        let glab_script = mock_bin.join("glab");
-        std::fs::write(
-            &glab_script,
-            r#"#!/bin/sh
-# Mock glab command that fails fast
-exit 1
-"#,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file version of glab mock
-        #[cfg(windows)]
-        {
-            let glab_cmd = mock_bin.join("glab.cmd");
-            std::fs::write(&glab_cmd, "@echo off\nexit /b 1\n").unwrap();
-        }
-
-        self.mock_bin_path = Some(mock_bin);
+        // Delegate to setup_mock_gh_with_ci_data with empty arrays
+        self.setup_mock_gh_with_ci_data("[]", "[]");
     }
 
     /// Setup mock `gh` and `glab` commands that show "installed but not authenticated"
@@ -1518,14 +1556,137 @@ exit /b 1
         self.mock_bin_path = Some(mock_bin);
     }
 
+    /// Setup mock `gh` that returns configurable PR/CI data
+    ///
+    /// Use this for testing CI status parsing code. The mock returns JSON data
+    /// for `gh pr list` and `gh run list` commands.
+    ///
+    /// # Arguments
+    /// * `pr_json` - JSON string to return for `gh pr list --json ...`
+    /// * `run_json` - JSON string to return for `gh run list --json ...`
+    pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str, run_json: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        // Write JSON files to be read by the script
+        let pr_json_file = mock_bin.join("pr_data.json");
+        let run_json_file = mock_bin.join("run_data.json");
+        std::fs::write(&pr_json_file, pr_json).unwrap();
+        std::fs::write(&run_json_file, run_json).unwrap();
+
+        // Create mock gh script that returns JSON data
+        let gh_script = mock_bin.join("gh");
+        std::fs::write(
+            &gh_script,
+            format!(
+                r#"#!/bin/sh
+# Mock gh command that returns configured JSON data
+
+case "$1" in
+    --version)
+        echo "gh version 2.0.0 (mock)"
+        exit 0
+        ;;
+    auth)
+        # gh auth status - succeed immediately
+        exit 0
+        ;;
+    pr)
+        # gh pr list - return PR data from file
+        cat "{pr_json}"
+        exit 0
+        ;;
+    run)
+        # gh run list - return run data from file
+        cat "{run_json}"
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+"#,
+                pr_json = pr_json_file.display(),
+                run_json = run_json_file.display(),
+            ),
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // Create Windows batch file versions of gh mock (.bat and .cmd)
+        // Both are needed because different resolution methods may prefer different extensions.
+        // Use %~dp0 (directory containing the batch file) for reliable relative paths.
+        #[cfg(windows)]
+        {
+            let batch_content = r#"@echo off
+if "%1"=="--version" goto version
+if "%1"=="auth" goto auth
+if "%1"=="pr" goto pr
+if "%1"=="run" goto run
+goto fail
+
+:version
+echo gh version 2.0.0 (mock)
+exit /b 0
+
+:auth
+exit /b 0
+
+:pr
+type "%~dp0pr_data.json"
+exit /b 0
+
+:run
+type "%~dp0run_data.json"
+exit /b 0
+
+:fail
+exit /b 1
+"#;
+            std::fs::write(mock_bin.join("gh.cmd"), batch_content).unwrap();
+            std::fs::write(mock_bin.join("gh.bat"), batch_content).unwrap();
+        }
+
+        // Create mock glab script (fails immediately - no GitLab support in this mock)
+        let glab_script = mock_bin.join("glab");
+        std::fs::write(
+            &glab_script,
+            r#"#!/bin/sh
+# Mock glab command that fails fast
+exit 1
+"#,
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        #[cfg(windows)]
+        {
+            let glab_content = "@echo off\nexit /b 1\n";
+            std::fs::write(mock_bin.join("glab.cmd"), glab_content).unwrap();
+            std::fs::write(mock_bin.join("glab.bat"), glab_content).unwrap();
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
     /// Configure a command to use mock gh/glab commands
     ///
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
     /// so gh/glab commands are intercepted.
     ///
-    /// On Windows, this also removes directories containing real gh.exe/glab.exe from PATH.
-    /// This is necessary because Windows searches for .exe before .cmd in PATHEXT order,
-    /// so a real gh.exe would be found before our mock gh.cmd even with mock-bin first.
+    /// On Windows, this also removes directories containing real gh.exe/glab.exe
+    /// from PATH and sets PATHEXT to prefer .BAT/.CMD before .EXE. This ensures
+    /// our mock .bat/.cmd scripts are found instead of any real gh.exe.
     ///
     /// Metadata redactions keep PATH private in snapshots, so we can reuse the
     /// caller's PATH instead of a hardcoded minimal list.
@@ -1536,11 +1697,19 @@ exit /b 1
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
 
-            // On Windows, remove directories containing real gh.exe or glab.exe
-            // to ensure our mock .cmd files are found instead
+            // On Windows, Rust's Command::new looks for executables with .exe extension.
+            // We need a gh.exe in mock_bin, but creating real executables is complex.
+            // Instead, create a gh.bat (which Windows will execute for "gh" if .bat
+            // comes before .exe in PATHEXT) and modify PATHEXT accordingly.
+            // Also remove directories containing real gh.exe from PATH.
             #[cfg(windows)]
             {
                 paths.retain(|dir| !dir.join("gh.exe").exists() && !dir.join("glab.exe").exists());
+                // Put .BAT before .EXE so our gh.bat is found
+                cmd.env(
+                    "PATHEXT",
+                    ".BAT;.CMD;.COM;.EXE;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC",
+                );
             }
 
             paths.insert(0, mock_bin.clone());
@@ -1553,10 +1722,12 @@ exit /b 1
     ///
     /// This handles the branch name escaping required for git config keys,
     /// which only allow alphanumeric, `-`, and `.` characters.
+    /// Markers are stored as JSON with a timestamp.
     pub fn set_marker(&self, branch: &str, marker: &str) {
         let escaped = worktrunk::git::escape_branch_for_config(branch);
         let config_key = format!("worktrunk.marker.{}", escaped);
-        self.git_command(&["config", &config_key, marker])
+        let json_value = format!(r#"{{"marker":"{}","set_at":{}}}"#, marker, TEST_EPOCH);
+        self.git_command(&["config", &config_key, &json_value])
             .output()
             .unwrap();
     }

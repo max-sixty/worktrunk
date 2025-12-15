@@ -102,11 +102,6 @@ impl Repository {
         Self::at(base_path().clone())
     }
 
-    /// Get the path this repository context operates on.
-    pub fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-
     /// Get the repository layout, initializing it if needed.
     fn layout(&self) -> anyhow::Result<&RepositoryLayout> {
         if let Some(layout) = self.layout.get() {
@@ -280,7 +275,6 @@ impl Repository {
     /// Read a user-defined marker from `worktrunk.marker.<branch>` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
-    /// Falls back to plain text for legacy markers without timestamps.
     pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
         let escaped = super::escape_branch_for_config(branch);
         let config_key = format!("worktrunk.marker.{}", escaped);
@@ -290,15 +284,11 @@ impl Repository {
             .map(|output| output.trim().to_string())
             .filter(|s| !s.is_empty())?;
 
-        // Try to parse as JSON, fall back to raw string for legacy markers
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
-            parsed
-                .get("marker")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        } else {
-            Some(raw) // Legacy plain-text marker
-        }
+        let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        parsed
+            .get("marker")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Read user-defined branch-keyed marker.
@@ -664,12 +654,10 @@ impl Repository {
         let range = format!("{}..{}", base, head);
         let stdout = self.run_command(&["rev-list", "--count", &range])?;
 
-        stdout.trim().parse().map_err(|e| {
-            GitError::ParseError {
-                message: format!("Failed to parse commit count: {}", e),
-            }
-            .into()
-        })
+        stdout
+            .trim()
+            .parse()
+            .context("Failed to parse commit count")
     }
 
     /// Check if there are merge commits in the range base..head.
@@ -713,12 +701,7 @@ impl Repository {
     /// Get commit timestamp in seconds since epoch.
     pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
         let stdout = self.run_command(&["show", "-s", "--format=%ct", commit])?;
-        stdout.trim().parse().map_err(|e| {
-            GitError::ParseError {
-                message: format!("Failed to parse timestamp: {}", e),
-            }
-            .into()
-        })
+        stdout.trim().parse().context("Failed to parse timestamp")
     }
 
     /// Get commit message (subject line) for a commit.
@@ -838,12 +821,11 @@ impl Repository {
         // Example: "5\t3" means 5 commits behind, 3 commits ahead
         // git rev-list --left-right outputs left (base) first, then right (head)
         let parts: Vec<&str> = output.trim().split('\t').collect();
-        if parts.len() != 2 {
-            return Err(crate::git::GitError::ParseError {
-                message: format!("Unexpected rev-list output format: {}", output),
-            }
-            .into());
-        }
+        anyhow::ensure!(
+            parts.len() == 2,
+            "Unexpected rev-list output format: {}",
+            output
+        );
 
         let behind: usize = parts[0].parse().context("Failed to parse behind count")?;
         let ahead: usize = parts[1].parse().context("Failed to parse ahead count")?;

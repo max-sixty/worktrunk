@@ -52,11 +52,12 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
-    - name: Install shells (bash, zsh, fish) - Ubuntu
+    - name: Install shells (zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y zsh fish
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: zsh fish
+        version: 1.0
 
     - name: Install shells (bash, zsh, fish) - macOS
       if: runner.os == 'macOS'
@@ -75,6 +76,9 @@ jobs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
+      with:
+        # Silence "no file matched" warning; uv is only used to install pre-commit
+        cache-dependency-glob: ".pre-commit-config.yaml"
 
     - name: Install pre-commit
       run: uv tool install pre-commit
@@ -167,9 +171,10 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Install shells (zsh, fish)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y zsh fish
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: zsh fish
+        version: 1.0
 
     - name: 📊 Run benchmarks
       uses: clechasseur/rs-cargo@v4
@@ -194,9 +199,10 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y zsh fish
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: zsh fish
+        version: 1.0
 
     # Ensure nothing remains from caching
     - run: cargo llvm-cov clean --workspace

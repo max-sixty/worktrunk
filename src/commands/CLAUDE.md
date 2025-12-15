@@ -93,6 +93,21 @@ branch: Option<String>,
 
 **Pattern:** All branch arguments should use `branch_value_completer()` for consistency with commands like `wt merge`, `wt switch --base`, `wt rebase`.
 
+## CLI Flag Descriptions
+
+Keep the first line of flag and argument descriptions brief—aim for 3-6 words. Use parenthetical defaults sparingly, only when the default isn't obvious from context.
+
+**Good examples:**
+- `/// Skip approval prompts`
+- `/// Show CI and \`main\` diffstat`
+- `/// Target branch (defaults to default branch)`
+
+**Bad examples (too verbose):**
+- `/// Auto-approve project commands without saving approvals.`
+- `/// Show CI status, conflict detection, and complete diff statistics`
+
+The help text should be scannable. Users reading `wt switch --help` need to quickly understand what each flag does without parsing long sentences.
+
 ## CLI Help Text Placement
 
 Help text has three levels:

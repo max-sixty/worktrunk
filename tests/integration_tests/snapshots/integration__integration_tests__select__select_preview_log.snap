@@ -3,8 +3,8 @@ source: tests/integration_tests/select.rs
 expression: normalized
 ---
 > [QUERY]                                                     │[PREVIEW_HEADER]
-    Branch   Status        HEAD±    main↕  Path            R│Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
-> + feature      ↑                 ↑5      ./repo.feature ..│
+    Branch   Status        HEAD±    main↕  Remote⇅  Commit  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
+> + feature      ↑                 ↑5               a7f9eb..│
                                                             │* a7f9ebb   +1        1d (feature) Add file 5 with content
                                                             │* cd19d36   +1        1d Add file 4 with content
                                                             │* 17c13c5   +1        1d Add file 3 with content
