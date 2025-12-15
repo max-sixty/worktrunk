@@ -225,10 +225,12 @@ impl std::fmt::Display for GitError {
                 occupant,
             } => {
                 let path_display = format_path_for_display(path);
-                let error_suffix = if let Some(occupant_branch) = occupant {
-                    cformat!("existing worktree, on <bold>{occupant_branch}</>")
+                let error_detail = if let Some(occupant_branch) = occupant {
+                    cformat!(
+                        "existing worktree at <bold>{path_display}</> on <bold>{occupant_branch}</>"
+                    )
                 } else {
-                    "existing worktree, detached".to_string()
+                    cformat!("existing worktree at <bold>{path_display}</>, detached")
                 };
                 // Hint is self-contained (includes both path and branch)
                 let hint = hint_message(cformat!(
@@ -239,7 +241,7 @@ impl std::fmt::Display for GitError {
                     f,
                     "{}\n\n{}\n{}",
                     error_message(cformat!(
-                        "Cannot create worktree for <bold>{branch}</> at <bold>{path_display}</>: {error_suffix}"
+                        "Cannot create worktree for <bold>{branch}</>: {error_detail}"
                     )),
                     hint,
                     format_with_gutter(&command, "", None)

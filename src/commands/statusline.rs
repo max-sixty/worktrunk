@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
-use std::time::Duration;
 use worktrunk::git::Repository;
 
 use super::list::{self, CollectOptions};
@@ -55,24 +54,16 @@ impl ClaudeCodeContext {
     }
 
     /// Try to read and parse Claude Code context from stdin.
-    /// Returns None if stdin is empty or not valid JSON.
+    /// Returns None if stdin is a terminal or not valid JSON.
     fn from_stdin() -> Option<Self> {
-        // Non-blocking read with timeout
-        // Claude Code pipes JSON to stdin, but we shouldn't block if nothing is there
-        use std::sync::mpsc;
-        use std::thread;
+        use std::io::IsTerminal;
 
-        let (tx, rx) = mpsc::channel();
+        if io::stdin().is_terminal() {
+            return None;
+        }
 
-        thread::spawn(move || {
-            let mut input = String::new();
-            let _ = io::stdin().read_to_string(&mut input);
-            let _ = tx.send(input);
-        });
-
-        // Wait up to 100ms for stdin (Windows CI can be slow)
-        let input = rx.recv_timeout(Duration::from_millis(100)).ok()?;
-
+        let mut input = String::new();
+        io::stdin().read_to_string(&mut input).ok()?;
         Self::parse(&input)
     }
 }

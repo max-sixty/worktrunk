@@ -29,24 +29,14 @@ repos:
   - repo: https://github.com/lycheeverse/lychee
     rev: lychee-v0.22.0
     hooks:
-      # PR mode - check links using .config/lychee.toml exclusions
+      # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
       - id: lychee-system
-        name: lychee (PR mode)
         types: [markdown]
         args:
           - --config=.config/lychee.toml
           # Suppress warnings about root-relative paths (e.g., /assets/wt-demo.gif)
           # These are valid web paths validated by zola, not lychee
-          - -q
-      # Comprehensive mode - check all links with full config
-      # Run manually: pre-commit run --hook-stage manual lychee-all --all-files
-      - id: lychee-system
-        name: lychee-all (comprehensive)
-        types: [markdown]
-        stages: [manual]
-        args:
-          - --config=.config/lychee.toml
           - -q
   - repo: local
     hooks:

@@ -20,6 +20,11 @@ jobs:
     - name: 💰 Cache
       uses: Swatinem/rust-cache@v2
 
+    - name: Install lychee
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: lychee
+
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
 
@@ -200,7 +205,7 @@ jobs:
       run: cargo llvm-cov --cobertura --output-path=cobertura.xml
 
     - name: Upload code coverage results
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: code-coverage-report
         path: cobertura.xml
