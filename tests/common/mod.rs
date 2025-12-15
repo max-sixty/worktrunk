@@ -1678,6 +1678,12 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
     settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
+    // Windows: C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/path -> [PROJECT_ID]
+    // Handles Windows temp paths with drive letters (after backslash normalization)
+    settings.add_filter(
+        r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
 
     // Generic tilde-prefixed paths that aren't repo or worktree paths.
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
