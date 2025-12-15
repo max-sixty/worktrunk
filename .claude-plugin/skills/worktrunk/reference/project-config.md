@@ -254,7 +254,7 @@ Five hook types with different timing and behavior:
 
 ### post-create
 
-**When**: After creating new worktree, before switching to it
+**When**: After creating new worktree (blocking, before user switches)
 **Blocking**: Yes (user waits)
 **Fail-fast**: No (shows error but continues)
 **Execution**: Sequential
@@ -276,7 +276,7 @@ migrate = "npm run db:migrate"
 
 ### post-start
 
-**When**: After switching to existing worktree
+**When**: After creating new worktree (background, after user switches)
 **Blocking**: No (runs in background)
 **Fail-fast**: No
 **Execution**: Parallel

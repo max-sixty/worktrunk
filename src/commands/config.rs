@@ -683,11 +683,13 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 return Ok(());
             }
 
-            // Sort by modification time (newest first)
+            // Sort by modification time (newest first), then by name for stability
             entries.sort_by(|a, b| {
                 let a_time = a.metadata().and_then(|m| m.modified()).ok();
                 let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time.cmp(&a_time)
+                b_time
+                    .cmp(&a_time)
+                    .then_with(|| a.file_name().cmp(&b.file_name()))
             });
 
             // Build table
@@ -1157,11 +1159,13 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         if entries.is_empty() {
             write!(out, "{}", format_with_gutter("(none)", "", None))?;
         } else {
-            // Sort by modification time (newest first)
+            // Sort by modification time (newest first), then by name for stability
             entries.sort_by(|a, b| {
                 let a_time = a.metadata().and_then(|m| m.modified()).ok();
                 let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time.cmp(&a_time)
+                b_time
+                    .cmp(&a_time)
+                    .then_with(|| a.file_name().cmp(&b.file_name()))
             });
 
             // Build table

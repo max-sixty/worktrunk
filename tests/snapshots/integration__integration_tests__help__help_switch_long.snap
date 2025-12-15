@@ -109,7 +109,7 @@ The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (d
 
 [32mArgument resolution
 
-If the branch has a worktree, switch to it. Otherwise, create a worktree at the expected path.
+Switches to the branch's worktree if one exists, otherwise creates one at the expected path.
 
 If the expected path is occupied by a different branch's worktree, an error is raised.
 

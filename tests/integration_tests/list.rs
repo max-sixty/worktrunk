@@ -661,7 +661,17 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
         .unwrap();
 
     // Scenario 5: Branch without upstream (should show blank)
-    repo.add_worktree("no-upstream");
+    let no_upstream_wt = repo.add_worktree("no-upstream");
+
+    // Run git status to ensure the worktree is fully initialized on Windows.
+    // Without this, Windows CI may show 55y (Unix epoch) because the worktree
+    // isn't ready when wt list tries to read commit timestamps.
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["status", "--porcelain"])
+        .current_dir(&no_upstream_wt)
+        .output()
+        .unwrap();
 
     // Run list --branches --full to show all columns including Remote
     let settings = setup_snapshot_settings(&repo);
