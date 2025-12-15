@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/switch.rs
-assertion_line: 37
 info:
   program: wt
   args:
@@ -30,7 +29,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[0m❌ [31mCannot create worktree for [1mfeature[22m at [1m[REPO].feature[22m: path occupied by detached worktree[39m
+[0m❌ [31mCannot create worktree for [1mfeature[22m at [1m[REPO].feature[22m: existing worktree, detached[39m
 
-💡 [2mSwitch it to the branch[22m
+💡 [2mSwitch the worktree at [90m[REPO].feature[39m to [90mfeature[39m[22m
 [107m [0m  cd [REPO].feature && git switch feature

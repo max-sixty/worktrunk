@@ -1,9 +1,8 @@
 ---
 source: tests/integration_tests/git_error_display.rs
-assertion_line: 57
 expression: err.to_string()
 ---
-❌ [31mCannot create worktree for [1mfeature-z[22m at [1m/tmp/repo.feature-z[22m: path occupied by worktree on [1mother-branch[22m[39m
+❌ [31mCannot create worktree for [1mfeature-z[22m at [1m/tmp/repo.feature-z[22m: existing worktree, on [1mother-branch[22m[39m
 
-💡 [2mSwitch it back[22m
+💡 [2mSwitch the worktree at [90m/tmp/repo.feature-z[39m to [90mfeature-z[39m[22m
 [107m [0m  cd /tmp/repo.feature-z && git switch feature-z
