@@ -1091,11 +1091,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         let mut table = String::from("| Branch | Marker | Age |\n");
         table.push_str("|--------|--------|-----|\n");
         for entry in markers {
-            let age = if entry.set_at == 0 {
-                "?".to_string() // Legacy marker without timestamp
-            } else {
-                format_relative_time_short(entry.set_at as i64)
-            };
+            let age = format_relative_time_short(entry.set_at as i64);
             table.push_str(&format!(
                 "| {} | {} | {} |\n",
                 entry.branch, entry.marker, age
@@ -1223,32 +1219,26 @@ fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
 
     let mut markers = Vec::new();
     for line in output.lines() {
-        // Format: "worktrunk.marker.escaped_branch json_or_plain_value"
-        if let Some((key, value)) = line.split_once(' ')
-            && let Some(escaped_branch) = key.strip_prefix("worktrunk.marker.")
-        {
-            let branch = worktrunk::git::unescape_branch_from_config(escaped_branch);
-            // Try to parse as JSON, fall back to legacy plain-text
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
-                // Skip if "marker" field is missing (corrupted data)
-                let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
-                markers.push(MarkerEntry {
-                    branch,
-                    marker: marker.to_string(),
-                    set_at,
-                });
-            } else {
-                // Legacy plain-text marker (no timestamp)
-                markers.push(MarkerEntry {
-                    branch,
-                    marker: value.to_string(),
-                    set_at: 0, // Unknown age
-                });
-            }
-        }
+        // Format: "worktrunk.marker.escaped_branch json_value"
+        let Some((key, value)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some(escaped_branch) = key.strip_prefix("worktrunk.marker.") else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
+            continue; // Skip invalid JSON
+        };
+        let Some(marker) = parsed.get("marker").and_then(|v| v.as_str()) else {
+            continue; // Skip if "marker" field is missing
+        };
+        let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        let branch = worktrunk::git::unescape_branch_from_config(escaped_branch);
+        markers.push(MarkerEntry {
+            branch,
+            marker: marker.to_string(),
+            set_at,
+        });
     }
 
     // Sort by age (most recent first), then by branch name for ties

@@ -1,5 +1,56 @@
 # Testing Guidelines
 
+## Timing Tests: Long Timeouts with Fast Polling
+
+**Core principle:** Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work.
+
+This achieves both goals:
+- **No flaky failures** on slow machines - generous timeout accommodates worst-case
+- **Fast tests** on normal machines - frequent polling means no unnecessary waiting
+
+```rust
+// ✅ GOOD: Long timeout, fast polling
+let timeout = Duration::from_secs(5);
+let poll_interval = Duration::from_millis(10);
+let start = Instant::now();
+while start.elapsed() < timeout {
+    if condition_met() { break; }
+    thread::sleep(poll_interval);
+}
+
+// ❌ BAD: Fixed sleep (always slow, might still fail)
+thread::sleep(Duration::from_millis(500));
+assert!(condition_met());
+
+// ❌ BAD: Short timeout (flaky on slow CI)
+let timeout = Duration::from_millis(100);
+```
+
+Use the helpers in `tests/common/mod.rs`:
+
+```rust
+use crate::common::{wait_for_file, wait_for_file_count};
+
+// ✅ Poll for file existence with 5+ second timeout
+wait_for_file(&log_file, Duration::from_secs(5));
+
+// ✅ Poll for multiple files
+wait_for_file_count(&log_dir, "log", 3, Duration::from_secs(5));
+```
+
+These use exponential backoff (10ms → 500ms cap) for fast initial checks that back off on slow CI.
+
+**Exception - testing absence:** When verifying something did NOT happen, polling doesn't work. Use a fixed 500ms+ sleep:
+
+```rust
+thread::sleep(Duration::from_millis(500));
+assert!(!marker_file.exists(), "Command should NOT have run");
+```
+
+## Testing with --execute Commands
+
+Use `--force` to skip interactive prompts in tests. Don't pipe input to stdin.
+
 ## README Examples and Snapshot Testing
 
 ### Problem: Separated stdout/stderr in Standard Snapshots
