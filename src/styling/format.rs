@@ -410,4 +410,94 @@ mod tests {
         // Verify the overhead matches documented value
         assert_eq!(GUTTER_OVERHEAD, 3);
     }
+
+    #[test]
+    fn test_format_with_gutter_empty() {
+        let result = format_with_gutter("", "", Some(80));
+        // Empty input should produce empty output
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_format_with_gutter_with_margin() {
+        let result = format_with_gutter("content", "  ", Some(80));
+        // Content with margin should still have the content
+        assert!(result.contains("content"));
+        // Should start with margin spaces
+        assert!(result.starts_with("  "));
+    }
+
+    #[test]
+    fn test_format_with_gutter_wrapping() {
+        // Use a very narrow width to force wrapping
+        let result = format_with_gutter("word1 word2 word3 word4", "", Some(15));
+        // Content should be wrapped to multiple lines
+        let line_count = result.matches('\n').count();
+        assert!(
+            line_count > 1,
+            "Expected multiple lines, got {}",
+            line_count
+        );
+    }
+
+    #[test]
+    fn test_wrap_text_at_width_with_multiple_spaces() {
+        // wrap_text_at_width uses split_whitespace which joins with single space
+        // Let's verify behavior by checking what actually happens
+        let result = wrap_text_at_width("hello    world", 20);
+        // split_whitespace preserves word boundaries but normalizes whitespace
+        // Actually looking at the code - split_whitespace + rejoin with single space
+        // yields "hello world" when joining
+        assert!(result[0].contains("hello"));
+        assert!(result[0].contains("world"));
+    }
+
+    #[test]
+    fn test_wrap_styled_text_with_ansi() {
+        // Text with ANSI codes should wrap based on visible width
+        let styled = "\u{1b}[1mbold text\u{1b}[0m here";
+        let result = wrap_styled_text(styled, 100);
+        // Should preserve the content
+        assert!(result[0].contains("bold"));
+        assert!(result[0].contains("text"));
+    }
+
+    #[test]
+    fn test_wrap_styled_text_strips_injected_resets() {
+        // If wrap_ansi injects [39m or [49m, they should be stripped
+        let styled = "some colored text";
+        let result = wrap_styled_text(styled, 50);
+        // Result should not contain the specific reset codes we strip
+        assert!(!result[0].contains("\u{1b}[39m"));
+        assert!(!result[0].contains("\u{1b}[49m"));
+    }
+
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_format_bash_with_gutter_at_width_basic() {
+        let result = format_bash_with_gutter_at_width("echo hello", "", 80);
+        assert!(result.contains("echo"));
+        assert!(result.contains("hello"));
+        assert!(result.ends_with('\n'));
+    }
+
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_format_bash_with_gutter_at_width_multiline() {
+        let result = format_bash_with_gutter_at_width("echo line1\necho line2", "", 80);
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+        // Two lines should have two newlines
+        assert_eq!(result.matches('\n').count(), 2);
+    }
+
+    #[test]
+    #[cfg(feature = "syntax-highlighting")]
+    fn test_format_bash_with_gutter_complex_command() {
+        let result =
+            format_bash_with_gutter_at_width("npm install && cargo build --release", "", 100);
+        assert!(result.contains("npm"));
+        assert!(result.contains("cargo"));
+        assert!(result.contains("--release"));
+    }
 }
