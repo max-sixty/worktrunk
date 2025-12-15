@@ -356,13 +356,15 @@ pub fn handle_switch_output(
 
     let path = result.path();
     let path_display = format_path_for_display(path);
-    let expected = &branch_info.expected;
+    let expected_branch = &branch_info.expected;
 
-    // Handle mismatch cases with two-part message: what happened + what's wrong
-    if branch_info.is_mismatch() {
+    // Handle branch mismatch cases (worktree checked out to wrong branch or detached)
+    if branch_info.is_branch_mismatch() {
         let mismatch_info = match &branch_info.current {
-            Some(current) => cformat!("expecting <bold>{expected}</>, got <bold>{current}</>"),
-            None => cformat!("expecting <bold>{expected}</>, got detached HEAD"),
+            Some(current) => {
+                cformat!("expecting <bold>{expected_branch}</>, got <bold>{current}</>")
+            }
+            None => cformat!("expecting <bold>{expected_branch}</>, got detached HEAD"),
         };
 
         match result {
@@ -397,28 +399,47 @@ pub fn handle_switch_output(
         return Ok(());
     }
 
-    // Normal case - no mismatch
+    // Normal case - branch matches
     let branch = branch_info.branch();
+
+    // Show path mismatch hint after the main message (info level, not warning)
+    let path_mismatch_hint = if !branch_info.path_at_expected {
+        Some(hint_message("Worktree path doesn't match naming template"))
+    } else {
+        None
+    };
 
     match result {
         SwitchResult::AlreadyAt(_) => {
             super::print(info_message(cformat!(
                 "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
             )))?;
+            if let Some(hint) = path_mismatch_hint {
+                super::print(hint)?;
+            }
         }
         SwitchResult::Existing(_) => {
             if is_directive_mode || has_execute_command {
                 super::print(success_message(format_switch_success_message(
                     branch, path, false, None, None,
                 )))?;
+                if let Some(hint) = path_mismatch_hint {
+                    super::print(hint)?;
+                }
             } else if Shell::is_integration_configured().ok().flatten().is_some() {
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> @ <bold>{path_display}</>; cannot cd (binary invoked directly)"
                 )))?;
+                if let Some(hint) = path_mismatch_hint {
+                    super::print(hint)?;
+                }
             } else {
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> @ <bold>{path_display}</>; cannot cd (no shell integration)"
                 )))?;
+                if let Some(hint) = path_mismatch_hint {
+                    super::print(hint)?;
+                }
                 super::shell_integration_hint(shell_integration_hint())?;
             }
         }

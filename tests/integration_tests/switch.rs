@@ -454,6 +454,35 @@ fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
     );
 }
 
+/// Test switching to a worktree at an unexpected path shows a hint
+#[rstest]
+fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree at a non-standard path (sibling to repo, not following template)
+    let wrong_path = repo.root_path().parent().unwrap().join("wrong-path");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "worktree",
+        "add",
+        wrong_path.to_str().unwrap(),
+        "-b",
+        "feature",
+    ])
+    .current_dir(repo.root_path())
+    .output()
+    .unwrap();
+
+    // Switch to feature - should show hint about path mismatch
+    snapshot_switch_with_global_flags(
+        "switch_path_mismatch_shows_hint",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
 // Internal mode with execute tests
 /// Test that --execute with exit code is emitted in directive mode shell script.
 /// The shell wrapper will eval this script and propagate the exit code.

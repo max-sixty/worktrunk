@@ -324,11 +324,13 @@ pub struct SwitchBranchInfo {
     pub expected: String,
     /// The branch currently checked out (None = detached HEAD)
     pub current: Option<String>,
+    /// Whether the worktree is at the expected path (based on naming template)
+    pub path_at_expected: bool,
 }
 
 impl SwitchBranchInfo {
     /// Check if there's a mismatch between expected and current branch
-    pub fn is_mismatch(&self) -> bool {
+    pub fn is_branch_mismatch(&self) -> bool {
         self.current.as_deref() != Some(self.expected.as_str())
     }
 
@@ -422,7 +424,7 @@ pub fn handle_switch(
     // `actual_branch` is None for detached HEAD
     let switch_to_existing =
         |path: PathBuf, actual_branch: Option<String>| -> (SwitchResult, SwitchBranchInfo) {
-            let canonical_path = canonicalize(&path).unwrap_or(path);
+            let canonical_path = canonicalize(&path).unwrap_or(path.clone());
             let current_dir = std::env::current_dir()
                 .ok()
                 .and_then(|p| canonicalize(&p).ok());
@@ -430,6 +432,10 @@ pub fn handle_switch(
                 .as_ref()
                 .map(|cur| cur == &canonical_path)
                 .unwrap_or(false);
+
+            // Check if the actual path matches the expected path
+            let canonical_expected = canonicalize(&expected_path).unwrap_or(expected_path.clone());
+            let path_at_expected = canonical_path == canonical_expected;
 
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(canonical_path)
@@ -439,6 +445,7 @@ pub fn handle_switch(
             let branch_info = SwitchBranchInfo {
                 expected: resolved_branch.clone(),
                 current: actual_branch,
+                path_at_expected,
             };
             (result, branch_info)
         };
@@ -595,6 +602,7 @@ pub fn handle_switch(
         SwitchBranchInfo {
             expected: resolved_branch.clone(),
             current: Some(resolved_branch),
+            path_at_expected: true, // Created at expected path by definition
         },
     ))
 }

@@ -1663,8 +1663,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
+    // Note: [^)'\s]+ stops at ), ', or whitespace to avoid matching too much
     settings.add_filter(
-        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)]+",
+        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s]+",
         "[PROJECT_ID]",
     );
 
