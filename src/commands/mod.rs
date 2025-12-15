@@ -38,7 +38,7 @@ pub use standalone::{
 };
 pub use worktree::{
     compute_worktree_path, handle_remove, handle_remove_by_path, handle_remove_current,
-    handle_switch, resolve_worktree_path_first,
+    handle_switch, resolve_worktree_arg,
 };
 
 // Re-export Shell from the canonical location

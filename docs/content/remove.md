@@ -56,7 +56,9 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--no-background` to run in the foreground.
 
-Arguments use path-first resolution—see [wt switch](@/switch.md#argument-resolution). Shortcuts: `@` (current), `-` (previous), `^` (main worktree).
+## Shortcuts
+
+`@` (current), `-` (previous), `^` (main worktree). See [wt switch](@/switch.md#argument-resolution) for argument resolution.
 
 ## See also
 
