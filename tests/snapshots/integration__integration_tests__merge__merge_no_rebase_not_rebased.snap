@@ -1,11 +1,11 @@
 ---
-source: tests/integration_tests/internal_flag.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - "--internal"
-    - config
-    - show
+    - merge
+    - main
+    - "--no-rebase"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -24,18 +24,11 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
+❌ [31mBranch not rebased onto [1mmain[22m[39m
 
-[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
-💡 [2mNot found[22m
-
-[36mSHELL INTEGRATION[39m
-⚪ [2mSkipped bash; ~/.bashrc not found[22m
-⚪ [2mSkipped zsh; ~/.zshrc not found[22m
-⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+💡 [2mRun [90mwt rebase[39m first or remove [90m--no-rebase[39m[22m

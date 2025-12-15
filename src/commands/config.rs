@@ -9,8 +9,8 @@ use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
-    error_message, format_toml, format_with_gutter, hint_message, info_message, progress_message,
-    success_message, warning_message,
+    error_message, format_heading, format_toml, format_with_gutter, hint_message, info_message,
+    progress_message, success_message, warning_message,
 };
 
 use super::configure_shell::{ConfigAction, scan_shell_configs};
@@ -131,10 +131,6 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
 
     // Render shell integration status
     render_shell_status(&mut show_output)?;
-    show_output.push('\n');
-
-    // Render binaries status
-    render_binaries_status(&mut show_output)?;
 
     // Display through pager (only if not in full mode, since full adds interactive output)
     if full {
@@ -145,28 +141,57 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         worktrunk::styling::eprintln!("{}", show_output);
     }
 
-    // Run full diagnostic checks if requested
+    // Run full diagnostic checks if requested (includes slow network calls)
     if full {
-        run_full_checks()?;
+        output::blank()?;
+        run_diagnostics()?;
     }
 
     Ok(())
 }
 
-/// Run full diagnostic checks (commit generation test)
-fn run_full_checks() -> anyhow::Result<()> {
-    output::print(info_message("Running diagnostic checks..."))?;
-    output::blank()?;
+/// Run full diagnostic checks (CI tools, commit generation)
+fn run_diagnostics() -> anyhow::Result<()> {
+    use super::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
+
+    output::heading("DIAGNOSTICS", None)?;
+
+    // Check CI tool based on detected platform
+    let platform = Repository::current()
+        .worktree_root()
+        .ok()
+        .and_then(|root| get_platform_for_repo(root.to_str()?));
+
+    match platform {
+        Some(CiPlatform::GitHub) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                "gh",
+                "GitHub",
+                ci_tools.gh_installed,
+                ci_tools.gh_authenticated,
+            )?;
+        }
+        Some(CiPlatform::GitLab) => {
+            let ci_tools = CiToolsStatus::detect(None);
+            render_ci_tool_status(
+                "glab",
+                "GitLab",
+                ci_tools.glab_installed,
+                ci_tools.glab_authenticated,
+            )?;
+        }
+        None => {
+            output::print(hint_message("CI status requires GitHub or GitLab remote"))?;
+        }
+    }
 
     // Test commit generation
     let config = WorktrunkConfig::load()?;
     let commit_config = &config.commit_generation;
 
     if !commit_config.is_configured() {
-        output::print(warning_message("Commit generation is not configured"))?;
-        output::print(hint_message(cformat!(
-            "Add <bright-black>[commit-generation]</> section to enable LLM commit messages"
-        )))?;
+        output::print(hint_message("Commit generation not configured"))?;
         return Ok(());
     }
 
@@ -180,24 +205,18 @@ fn run_full_checks() -> anyhow::Result<()> {
         }
     );
 
-    output::print(progress_message(cformat!(
-        "Testing commit generation with <bold>{command_display}</>"
-    )))?;
-
     match test_commit_generation(commit_config) {
         Ok(message) => {
-            output::print(success_message("Commit generation working"))?;
-            output::blank()?;
-            output::print(info_message("Sample generated message:"))?;
+            output::print(success_message(cformat!(
+                "Commit generation working (<bold>{command_display}</>)"
+            )))?;
             output::gutter(format_with_gutter(&message, "", None))?;
         }
         Err(e) => {
-            output::print(error_message("Commit generation failed"))?;
+            output::print(error_message(cformat!(
+                "Commit generation failed (<bold>{command_display}</>)"
+            )))?;
             output::gutter(format_with_gutter(&e.to_string(), "", None))?;
-            output::blank()?;
-            output::print(hint_message(
-                "Check that the command is installed and API keys are configured",
-            ))?;
         }
     }
 
@@ -210,10 +229,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
     writeln!(
         out,
         "{}",
-        cformat!(
-            "<cyan>USER CONFIG</>  {}",
-            format_path_for_display(&config_path)
-        )
+        format_heading("USER CONFIG", Some(&format_path_for_display(&config_path)))
     )?;
 
     // Check if file exists
@@ -270,7 +286,10 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
             writeln!(
                 out,
                 "{}",
-                cformat!("<cyan><dim>PROJECT CONFIG</>  Not in a git repository</>")
+                cformat!(
+                    "<dim>{}</>",
+                    format_heading("PROJECT CONFIG", Some("Not in a git repository"))
+                )
             )?;
             return Ok(());
         }
@@ -280,9 +299,9 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     writeln!(
         out,
         "{}",
-        cformat!(
-            "<cyan>PROJECT CONFIG</>  {}",
-            format_path_for_display(&config_path)
+        format_heading(
+            "PROJECT CONFIG",
+            Some(&format_path_for_display(&config_path))
         )
     )?;
 
@@ -310,7 +329,7 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
 }
 
 fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
-    writeln!(out, "{}", cformat!("<cyan>SHELL INTEGRATION</>"))?;
+    writeln!(out, "{}", format_heading("SHELL INTEGRATION", None))?;
 
     // Use the same detection logic as `wt config shell install`
     let scan_result = match scan_shell_configs(None, true, "wt") {
@@ -429,7 +448,6 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 }
 
 fn render_ci_tool_status(
-    out: &mut String,
     tool: &str,
     platform: &str,
     installed: bool,
@@ -437,75 +455,19 @@ fn render_ci_tool_status(
 ) -> anyhow::Result<()> {
     if installed {
         if authenticated {
-            writeln!(
-                out,
-                "{}",
-                info_message(cformat!("<bold>{tool}</> installed & authenticated"))
-            )?;
+            output::print(info_message(cformat!(
+                "<bold>{tool}</> installed & authenticated"
+            )))?;
         } else {
-            writeln!(
-                out,
-                "{}",
-                warning_message(cformat!(
-                    "<bold>{tool}</> installed but not authenticated; run <bright-black>{tool} auth login</>"
-                ))
-            )?;
+            output::print(warning_message(cformat!(
+                "<bold>{tool}</> installed but not authenticated; run <bright-black>{tool} auth login</>"
+            )))?;
         }
     } else {
-        writeln!(
-            out,
-            "{}",
-            hint_message(cformat!(
-                "<bold>{tool}</> not found ({platform} CI status unavailable)"
-            ))
-        )?;
+        output::print(hint_message(cformat!(
+            "<bold>{tool}</> not found ({platform} CI status unavailable)"
+        )))?;
     }
-    Ok(())
-}
-
-fn render_binaries_status(out: &mut String) -> anyhow::Result<()> {
-    use super::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
-
-    writeln!(out, "{}", cformat!("<cyan>BINARIES</>"))?;
-
-    let ci_tools = CiToolsStatus::detect(None);
-
-    // Detect platform from repo's remote URL (if in a repo)
-    let platform = Repository::current()
-        .worktree_root()
-        .ok()
-        .and_then(|root| get_platform_for_repo(root.to_str()?));
-
-    // Only show the relevant CI tool based on detected platform
-    // If platform is unknown, don't show any warnings (user may not need CI status)
-    match platform {
-        Some(CiPlatform::GitHub) => {
-            render_ci_tool_status(
-                out,
-                "gh",
-                "GitHub",
-                ci_tools.gh_installed,
-                ci_tools.gh_authenticated,
-            )?;
-        }
-        Some(CiPlatform::GitLab) => {
-            render_ci_tool_status(
-                out,
-                "glab",
-                "GitLab",
-                ci_tools.glab_installed,
-                ci_tools.glab_authenticated,
-            )?;
-        }
-        None => {
-            writeln!(
-                out,
-                "{}",
-                hint_message("CI status requires GitHub or GitLab remote")
-            )?;
-        }
-    }
-
     Ok(())
 }
 
@@ -1080,7 +1042,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     let mut out = String::new();
 
     // Show default branch cache
-    writeln!(out, "{}", cformat!("<cyan>DEFAULT BRANCH</>"))?;
+    writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
     match repo.default_branch() {
         Ok(branch) => write!(out, "{}", format_with_gutter(&branch, "", None))?,
         Err(_) => write!(out, "{}", format_with_gutter("(not cached)", "", None))?,
@@ -1088,7 +1050,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show previous branch (for `wt switch -`)
-    writeln!(out, "{}", cformat!("<cyan>PREVIOUS BRANCH</>"))?;
+    writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
     match repo.get_switch_previous() {
         Some(prev) => write!(out, "{}", format_with_gutter(&prev, "", None))?,
         None => write!(out, "{}", format_with_gutter("(none)", "", None))?,
@@ -1096,7 +1058,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show branch markers
-    writeln!(out, "{}", cformat!("<cyan>BRANCH MARKERS</>"))?;
+    writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
     let markers = get_all_markers(repo);
     if markers.is_empty() {
         write!(out, "{}", format_with_gutter("(none)", "", None))?;
@@ -1120,7 +1082,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show CI status cache
-    writeln!(out, "{}", cformat!("<cyan>CI STATUS CACHE</>"))?;
+    writeln!(out, "{}", format_heading("CI STATUS CACHE", None))?;
     let mut entries = CachedCiStatus::list_all(repo);
     // Sort by age (most recent first), then by branch name for ties
     entries.sort_by(|a, b| {
@@ -1155,7 +1117,11 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show log files
     let git_common_dir = repo.git_common_dir()?;
     let log_dir = git_common_dir.join("wt-logs");
-    writeln!(out, "{}", cformat!("<cyan>LOG FILES</>  @ .git/wt-logs"))?;
+    writeln!(
+        out,
+        "{}",
+        format_heading("LOG FILES", Some("@ .git/wt-logs"))
+    )?;
 
     if !log_dir.exists() {
         write!(out, "{}", format_with_gutter("(none)", "", None))?;

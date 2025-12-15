@@ -310,6 +310,12 @@ pub struct MergeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit: Option<bool>,
 
+    /// Rebase onto target branch before merging (default: true)
+    ///
+    /// When false, merge fails if branch is not already rebased.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebase: Option<bool>,
+
     /// Remove worktree after merge (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remove: Option<bool>,

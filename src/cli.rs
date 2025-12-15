@@ -2272,13 +2272,21 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
         #[arg(long = "no-squash", overrides_with = "squash")]
         no_squash: bool,
 
-        /// Force commit, squash, and rebase
+        /// Force commit and squash
         #[arg(long, overrides_with = "no_commit", hide = true)]
         commit: bool,
 
-        /// Skip commit, squash, and rebase
+        /// Skip commit and squash
         #[arg(long = "no-commit", overrides_with = "commit")]
         no_commit: bool,
+
+        /// Force rebasing onto target
+        #[arg(long, overrides_with = "no_rebase", hide = true)]
+        rebase: bool,
+
+        /// Skip rebase (fail if not already rebased)
+        #[arg(long = "no-rebase", overrides_with = "rebase")]
+        no_rebase: bool,
 
         /// Force worktree removal after merge
         #[arg(long, overrides_with = "no_remove", hide = true)]

@@ -48,6 +48,11 @@ pub trait RepositoryCliExt {
         target_worktree: Option<&PathBuf>,
         target_branch: &str,
     ) -> anyhow::Result<Option<TargetWorktreeStash>>;
+
+    /// Check if HEAD is rebased onto the target branch.
+    ///
+    /// Returns true if the merge-base equals the target's SHA (HEAD is based on target).
+    fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool>;
 }
 
 impl RepositoryCliExt for Repository {
@@ -281,6 +286,12 @@ impl RepositoryCliExt for Repository {
         };
 
         Ok(Some(TargetWorktreeStash::new(wt_path, stash_ref)))
+    }
+
+    fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
+        let merge_base = self.merge_base("HEAD", target)?;
+        let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
+        Ok(merge_base == target_sha)
     }
 }
 

@@ -29,7 +29,7 @@ pub use configure_shell::{
 pub use for_each::step_for_each;
 pub use init::handle_init;
 pub use list::handle_list;
-pub use merge::{execute_pre_remove_commands, handle_merge};
+pub use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
 pub use select::handle_select;
 pub use standalone::{

@@ -44,17 +44,12 @@ exit_code: 0
 ⚪ [2mSkipped zsh; ~/.zshrc not found[22m
 ⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
-[36mBINARIES[39m
+
+[36mDIAGNOSTICS[39m
 💡 [2mCI status requires GitHub or GitLab remote[22m
-
-⚪ Running diagnostic checks...
-
-🔄 [36mTesting commit generation with [1mnonexistent-llm-command-12345 -m test-model[22m[39m
-❌ [31mCommit generation failed[39m
+❌ [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
 [107m [0m  ❌ [31mCommit generation command failed[39m
 [107m [0m  [107m [0m  Failed to spawn LLM command
 [107m [0m  
 [107m [0m  ⚪ Ran command:
 [107m [0m  [107m [0m  nonexistent-llm-command-12345 -m test-model
-
-💡 [2mCheck that the command is installed and API keys are configured[22m
