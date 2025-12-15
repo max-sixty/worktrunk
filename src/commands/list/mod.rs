@@ -354,7 +354,7 @@ impl SummaryMetrics {
 pub(crate) fn format_summary_message(
     items: &[ListItem],
     show_branches: bool,
-    hidden_nonempty_count: usize,
+    hidden_column_count: usize,
 ) -> String {
     use anstyle::Style;
     use worktrunk::styling::INFO_EMOJI;
@@ -362,7 +362,7 @@ pub(crate) fn format_summary_message(
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
     let summary = metrics
-        .summary_parts(show_branches, hidden_nonempty_count)
+        .summary_parts(show_branches, hidden_column_count)
         .join(", ");
     format!("{INFO_EMOJI} {dim}Showing {summary}{dim:#}")
 }
