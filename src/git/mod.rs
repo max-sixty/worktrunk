@@ -596,4 +596,281 @@ mod tests {
             vec!["main".to_string(), "feature".to_string()]
         );
     }
+
+    // ============================================================================
+    // escape_branch_for_config Tests
+    // ============================================================================
+
+    #[test]
+    fn test_escape_branch_simple() {
+        assert_eq!(escape_branch_for_config("main"), "main");
+        assert_eq!(escape_branch_for_config("feature"), "feature");
+    }
+
+    #[test]
+    fn test_escape_branch_with_slash() {
+        assert_eq!(escape_branch_for_config("feature/foo"), "feature-2Ffoo");
+    }
+
+    #[test]
+    fn test_escape_branch_with_underscore() {
+        assert_eq!(escape_branch_for_config("feature_foo"), "feature-5Ffoo");
+    }
+
+    #[test]
+    fn test_escape_branch_with_dash() {
+        assert_eq!(escape_branch_for_config("feature-foo"), "feature-2Dfoo");
+    }
+
+    #[test]
+    fn test_escape_branch_with_dot() {
+        // Dots are allowed in git config keys
+        assert_eq!(escape_branch_for_config("v1.0.0"), "v1.0.0");
+    }
+
+    #[test]
+    fn test_escape_branch_mixed() {
+        assert_eq!(
+            escape_branch_for_config("user/feature_name-v2"),
+            "user-2Ffeature-5Fname-2Dv2"
+        );
+    }
+
+    // ============================================================================
+    // unescape_branch_from_config Tests
+    // ============================================================================
+
+    #[test]
+    fn test_unescape_branch_simple() {
+        assert_eq!(unescape_branch_from_config("main"), "main");
+    }
+
+    #[test]
+    fn test_unescape_branch_with_slash() {
+        assert_eq!(unescape_branch_from_config("feature-2Ffoo"), "feature/foo");
+    }
+
+    #[test]
+    fn test_unescape_branch_with_underscore() {
+        assert_eq!(unescape_branch_from_config("feature-5Ffoo"), "feature_foo");
+    }
+
+    #[test]
+    fn test_unescape_branch_with_dash() {
+        assert_eq!(unescape_branch_from_config("feature-2Dfoo"), "feature-foo");
+    }
+
+    #[test]
+    fn test_escape_unescape_roundtrip() {
+        let branches = vec![
+            "main",
+            "feature/foo",
+            "user_task",
+            "bug-fix",
+            "v1.0.0",
+            "user/feature_name-v2",
+        ];
+        for branch in branches {
+            let escaped = escape_branch_for_config(branch);
+            let unescaped = unescape_branch_from_config(&escaped);
+            assert_eq!(unescaped, branch, "Round-trip failed for '{}'", branch);
+        }
+    }
+
+    #[test]
+    fn test_unescape_invalid_escape_sequence() {
+        // Invalid hex - should keep as-is
+        assert_eq!(unescape_branch_from_config("foo-GGbar"), "foo-GGbar");
+    }
+
+    #[test]
+    fn test_unescape_truncated_escape() {
+        // Truncated escape sequence at end
+        assert_eq!(unescape_branch_from_config("foo-2"), "foo-2");
+    }
+
+    // ============================================================================
+    // check_integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_check_integration_same_commit() {
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: true,
+            is_ancestor: false,
+            has_added_changes: true,
+            trees_match: false,
+            would_merge_add: true,
+        };
+        assert_eq!(
+            check_integration(&mut provider),
+            Some(IntegrationReason::SameCommit)
+        );
+    }
+
+    #[test]
+    fn test_check_integration_ancestor() {
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: false,
+            is_ancestor: true,
+            has_added_changes: true,
+            trees_match: false,
+            would_merge_add: true,
+        };
+        assert_eq!(
+            check_integration(&mut provider),
+            Some(IntegrationReason::Ancestor)
+        );
+    }
+
+    #[test]
+    fn test_check_integration_no_added_changes() {
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: false,
+            is_ancestor: false,
+            has_added_changes: false, // No added changes = integrated
+            trees_match: false,
+            would_merge_add: true,
+        };
+        assert_eq!(
+            check_integration(&mut provider),
+            Some(IntegrationReason::NoAddedChanges)
+        );
+    }
+
+    #[test]
+    fn test_check_integration_trees_match() {
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: false,
+            is_ancestor: false,
+            has_added_changes: true,
+            trees_match: true,
+            would_merge_add: true,
+        };
+        assert_eq!(
+            check_integration(&mut provider),
+            Some(IntegrationReason::TreesMatch)
+        );
+    }
+
+    #[test]
+    fn test_check_integration_merge_adds_nothing() {
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: false,
+            is_ancestor: false,
+            has_added_changes: true,
+            trees_match: false,
+            would_merge_add: false, // Merge adds nothing = integrated
+        };
+        assert_eq!(
+            check_integration(&mut provider),
+            Some(IntegrationReason::MergeAddsNothing)
+        );
+    }
+
+    #[test]
+    fn test_check_integration_not_integrated() {
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: false,
+            is_ancestor: false,
+            has_added_changes: true,
+            trees_match: false,
+            would_merge_add: true,
+        };
+        assert_eq!(check_integration(&mut provider), None);
+    }
+
+    #[test]
+    fn test_check_integration_priority() {
+        // Verify priority: same_commit wins over ancestor
+        let mut provider = PrecomputedIntegration {
+            is_same_commit: true,
+            is_ancestor: true,
+            has_added_changes: false,
+            trees_match: true,
+            would_merge_add: false,
+        };
+        assert_eq!(
+            check_integration(&mut provider),
+            Some(IntegrationReason::SameCommit)
+        );
+    }
+
+    // ============================================================================
+    // IntegrationReason Tests
+    // ============================================================================
+
+    #[test]
+    fn test_integration_reason_description() {
+        assert_eq!(IntegrationReason::SameCommit.description(), "same commit as");
+        assert_eq!(IntegrationReason::Ancestor.description(), "ancestor of");
+        assert_eq!(
+            IntegrationReason::NoAddedChanges.description(),
+            "no added changes"
+        );
+        assert_eq!(IntegrationReason::TreesMatch.description(), "tree matches");
+        assert_eq!(
+            IntegrationReason::MergeAddsNothing.description(),
+            "all changes in"
+        );
+    }
+
+    // ============================================================================
+    // path_dir_name Tests
+    // ============================================================================
+
+    #[test]
+    fn test_path_dir_name_simple() {
+        let path = PathBuf::from("/home/user/repo.feature");
+        assert_eq!(path_dir_name(&path), "repo.feature");
+    }
+
+    #[test]
+    fn test_path_dir_name_root() {
+        let path = PathBuf::from("/");
+        // Root has no file_name, returns "(unknown)"
+        assert_eq!(path_dir_name(&path), "(unknown)");
+    }
+
+    #[test]
+    fn test_path_dir_name_trailing_slash() {
+        // Trailing slash means empty file_name
+        let path = PathBuf::from("/home/user/repo/");
+        // file_name returns None for paths ending in /
+        let name = path_dir_name(&path);
+        // Depending on PathBuf normalization, could be repo or (unknown)
+        assert!(!name.is_empty());
+    }
+
+    // ============================================================================
+    // Worktree::dir_name Tests
+    // ============================================================================
+
+    #[test]
+    fn test_worktree_dir_name() {
+        let wt = Worktree {
+            path: PathBuf::from("/repos/myrepo.feature"),
+            head: "abc123".to_string(),
+            branch: Some("feature".to_string()),
+            bare: false,
+            detached: false,
+            locked: None,
+            prunable: None,
+        };
+        assert_eq!(wt.dir_name(), "myrepo.feature");
+    }
+
+    // ============================================================================
+    // HookType Tests
+    // ============================================================================
+
+    #[test]
+    fn test_hook_type_display() {
+        assert_eq!(format!("{}", HookType::PostCreate), "post-create");
+        assert_eq!(format!("{}", HookType::PostStart), "post-start");
+        assert_eq!(format!("{}", HookType::PreCommit), "pre-commit");
+        assert_eq!(format!("{}", HookType::PreMerge), "pre-merge");
+        assert_eq!(format!("{}", HookType::PostMerge), "post-merge");
+        assert_eq!(format!("{}", HookType::PreRemove), "pre-remove");
+    }
 }
