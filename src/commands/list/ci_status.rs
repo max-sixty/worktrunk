@@ -499,6 +499,258 @@ mod tests {
         assert!(!error.is_stale);
         assert!(error.url.is_none());
     }
+
+    #[test]
+    fn test_github_pr_info_ci_status() {
+        // No checks = NoCI
+        let pr = GitHubPrInfo {
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: None,
+            url: None,
+            head_repository_owner: None,
+        };
+        assert_eq!(pr.ci_status(), CiStatus::NoCI);
+
+        // Empty checks = NoCI
+        let pr = GitHubPrInfo {
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: Some(vec![]),
+            url: None,
+            head_repository_owner: None,
+        };
+        assert_eq!(pr.ci_status(), CiStatus::NoCI);
+
+        // CheckRun pending states
+        for status in ["IN_PROGRESS", "QUEUED", "PENDING", "EXPECTED"] {
+            let pr = GitHubPrInfo {
+                head_ref_oid: None,
+                merge_state_status: None,
+                status_check_rollup: Some(vec![GitHubCheck {
+                    status: Some(status.into()),
+                    conclusion: None,
+                    state: None,
+                }]),
+                url: None,
+                head_repository_owner: None,
+            };
+            assert_eq!(pr.ci_status(), CiStatus::Running, "status={status}");
+        }
+
+        // StatusContext pending
+        let pr = GitHubPrInfo {
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: Some(vec![GitHubCheck {
+                status: None,
+                conclusion: None,
+                state: Some("PENDING".into()),
+            }]),
+            url: None,
+            head_repository_owner: None,
+        };
+        assert_eq!(pr.ci_status(), CiStatus::Running);
+
+        // CheckRun failures
+        for conclusion in ["FAILURE", "ERROR", "CANCELLED"] {
+            let pr = GitHubPrInfo {
+                head_ref_oid: None,
+                merge_state_status: None,
+                status_check_rollup: Some(vec![GitHubCheck {
+                    status: Some("COMPLETED".into()),
+                    conclusion: Some(conclusion.into()),
+                    state: None,
+                }]),
+                url: None,
+                head_repository_owner: None,
+            };
+            assert_eq!(pr.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
+        }
+
+        // StatusContext failures
+        for state in ["FAILURE", "ERROR"] {
+            let pr = GitHubPrInfo {
+                head_ref_oid: None,
+                merge_state_status: None,
+                status_check_rollup: Some(vec![GitHubCheck {
+                    status: None,
+                    conclusion: None,
+                    state: Some(state.into()),
+                }]),
+                url: None,
+                head_repository_owner: None,
+            };
+            assert_eq!(pr.ci_status(), CiStatus::Failed, "state={state}");
+        }
+
+        // Success
+        let pr = GitHubPrInfo {
+            head_ref_oid: None,
+            merge_state_status: None,
+            status_check_rollup: Some(vec![GitHubCheck {
+                status: Some("COMPLETED".into()),
+                conclusion: Some("SUCCESS".into()),
+                state: None,
+            }]),
+            url: None,
+            head_repository_owner: None,
+        };
+        assert_eq!(pr.ci_status(), CiStatus::Passed);
+    }
+
+    #[test]
+    fn test_github_workflow_run_ci_status() {
+        // Running states
+        for status in ["in_progress", "queued", "pending", "waiting"] {
+            let run = GitHubWorkflowRun {
+                status: Some(status.into()),
+                conclusion: None,
+                head_sha: None,
+            };
+            assert_eq!(run.ci_status(), CiStatus::Running, "status={status}");
+        }
+
+        // Completed + success
+        let run = GitHubWorkflowRun {
+            status: Some("completed".into()),
+            conclusion: Some("success".into()),
+            head_sha: None,
+        };
+        assert_eq!(run.ci_status(), CiStatus::Passed);
+
+        // Completed + failures
+        for conclusion in ["failure", "cancelled", "timed_out", "action_required"] {
+            let run = GitHubWorkflowRun {
+                status: Some("completed".into()),
+                conclusion: Some(conclusion.into()),
+                head_sha: None,
+            };
+            assert_eq!(run.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
+        }
+
+        // Completed + skipped/neutral = NoCI
+        for conclusion in ["skipped", "neutral"] {
+            let run = GitHubWorkflowRun {
+                status: Some("completed".into()),
+                conclusion: Some(conclusion.into()),
+                head_sha: None,
+            };
+            assert_eq!(run.ci_status(), CiStatus::NoCI, "conclusion={conclusion}");
+        }
+
+        // Unknown status = NoCI
+        let run = GitHubWorkflowRun {
+            status: Some("unknown".into()),
+            conclusion: None,
+            head_sha: None,
+        };
+        assert_eq!(run.ci_status(), CiStatus::NoCI);
+    }
+
+    #[test]
+    fn test_parse_gitlab_status() {
+        // Running states
+        for status in [
+            "running",
+            "pending",
+            "preparing",
+            "waiting_for_resource",
+            "created",
+            "scheduled",
+        ] {
+            assert_eq!(
+                parse_gitlab_status(Some(status)),
+                CiStatus::Running,
+                "status={status}"
+            );
+        }
+
+        // Failed states
+        for status in ["failed", "canceled", "manual"] {
+            assert_eq!(
+                parse_gitlab_status(Some(status)),
+                CiStatus::Failed,
+                "status={status}"
+            );
+        }
+
+        // Success
+        assert_eq!(parse_gitlab_status(Some("success")), CiStatus::Passed);
+
+        // NoCI states
+        assert_eq!(parse_gitlab_status(Some("skipped")), CiStatus::NoCI);
+        assert_eq!(parse_gitlab_status(None), CiStatus::NoCI);
+        assert_eq!(parse_gitlab_status(Some("unknown")), CiStatus::NoCI);
+    }
+
+    #[test]
+    fn test_gitlab_mr_info_ci_status() {
+        // No pipeline = NoCI
+        let mr = GitLabMrInfo {
+            sha: "abc".into(),
+            has_conflicts: false,
+            detailed_merge_status: None,
+            head_pipeline: None,
+            pipeline: None,
+            source_project_id: None,
+        };
+        assert_eq!(mr.ci_status(), CiStatus::NoCI);
+
+        // head_pipeline takes precedence
+        let mr = GitLabMrInfo {
+            sha: "abc".into(),
+            has_conflicts: false,
+            detailed_merge_status: None,
+            head_pipeline: Some(GitLabPipeline {
+                status: Some("success".into()),
+                sha: None,
+            }),
+            pipeline: Some(GitLabPipeline {
+                status: Some("failed".into()),
+                sha: None,
+            }),
+            source_project_id: None,
+        };
+        assert_eq!(mr.ci_status(), CiStatus::Passed);
+
+        // Falls back to pipeline if no head_pipeline
+        let mr = GitLabMrInfo {
+            sha: "abc".into(),
+            has_conflicts: false,
+            detailed_merge_status: None,
+            head_pipeline: None,
+            pipeline: Some(GitLabPipeline {
+                status: Some("running".into()),
+                sha: None,
+            }),
+            source_project_id: None,
+        };
+        assert_eq!(mr.ci_status(), CiStatus::Running);
+    }
+
+    #[test]
+    fn test_pr_status_style_and_format() {
+        let status = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+        };
+        let formatted = status.format_indicator();
+        assert!(formatted.contains("●"));
+
+        // Stale status gets dimmed
+        let stale = PrStatus {
+            ci_status: CiStatus::Running,
+            source: CiSource::Branch,
+            is_stale: true,
+            url: None,
+        };
+        let style = stale.style();
+        // Just verify it doesn't panic and returns a style
+        let _ = format!("{style}test{style:#}");
+    }
 }
 
 /// Maximum number of PRs/MRs to fetch when filtering by source repository.
