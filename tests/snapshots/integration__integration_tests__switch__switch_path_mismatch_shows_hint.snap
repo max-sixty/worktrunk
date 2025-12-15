@@ -1,6 +1,5 @@
 ---
 source: tests/integration_tests/switch.rs
-assertion_line: 37
 info:
   program: wt
   args:
@@ -31,5 +30,5 @@ exit_code: 0
 cd '[PROJECT_ID]'
 
 ----- stderr -----
-✅ [32m[32mSwitched to worktree for [1mfeature[22m @ [1m[PROJECT_ID]
+✅ [32m[32mSwitched to worktree for [1mfeature[22m @ [1m[PROJECT_ID][39m[22m[39m
 🟡 [33mWorktree path doesn't match naming template (expected [REPO].feature)[39m

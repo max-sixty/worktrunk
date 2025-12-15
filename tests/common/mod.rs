@@ -1671,13 +1671,13 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
-    // Note: [^)'\s]+ stops at ), ', or whitespace to avoid matching too much
+    // Note: [^)'\s\x1b]+ stops at ), ', whitespace, or ANSI escape to avoid matching too much
     settings.add_filter(
-        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s]+",
+        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
         "[PROJECT_ID]",
     );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
-    settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s]+", "[PROJECT_ID]");
+    settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
 
     // Generic tilde-prefixed paths that aren't repo or worktree paths.
     // On CI, HOME is a temp directory, so paths under HOME become ~/something.
