@@ -529,15 +529,16 @@ fn check_zsh_compinit_missing() -> bool {
     }
 }
 
-fn get_user_config_path() -> Option<PathBuf> {
-    // Respect XDG_CONFIG_HOME environment variable for testing (Linux)
-    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+/// Core logic for determining user config path from env var values
+fn resolve_user_config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    // Respect XDG_CONFIG_HOME environment variable (Linux)
+    if let Some(xdg_config) = xdg_config_home {
         let config_path = PathBuf::from(xdg_config);
         return Some(config_path.join("worktrunk").join("config.toml"));
     }
 
-    // Respect HOME environment variable for testing (fallback)
-    if let Ok(home) = std::env::var("HOME") {
+    // Respect HOME environment variable (fallback)
+    if let Some(home) = home {
         let home_path = PathBuf::from(home);
         return Some(
             home_path
@@ -547,8 +548,19 @@ fn get_user_config_path() -> Option<PathBuf> {
         );
     }
 
-    let strategy = choose_base_strategy().ok()?;
-    Some(strategy.config_dir().join("worktrunk").join("config.toml"))
+    None
+}
+
+fn get_user_config_path() -> Option<PathBuf> {
+    // Try env vars first, then fall back to etcetera
+    resolve_user_config_path(
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .or_else(|| {
+        let strategy = choose_base_strategy().ok()?;
+        Some(strategy.config_dir().join("worktrunk").join("config.toml"))
+    })
 }
 
 fn require_user_config_path() -> anyhow::Result<PathBuf> {
@@ -1260,6 +1272,8 @@ fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
 mod tests {
     use super::*;
 
+    // ==================== comment_out_config tests ====================
+
     #[test]
     fn test_comment_out_config_basic() {
         let input = "key = \"value\"\n";
@@ -1295,5 +1309,174 @@ mod tests {
         let input = "[hooks]\ncommand = \"npm test\"\n";
         let expected = "# [hooks]\n# command = \"npm test\"\n";
         assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_empty_input() {
+        assert_eq!(comment_out_config(""), "");
+    }
+
+    #[test]
+    fn test_comment_out_config_only_empty_lines() {
+        let input = "\n\n\n";
+        let expected = "\n\n\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_only_comments() {
+        let input = "# comment 1\n# comment 2\n";
+        let expected = "# comment 1\n# comment 2\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_mixed_content() {
+        let input =
+            "# Header comment\n\n[section]\nkey = \"value\"\n\n# Another comment\nkey2 = true\n";
+        let expected = "# Header comment\n\n# [section]\n# key = \"value\"\n\n# Another comment\n# key2 = true\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_inline_table() {
+        let input = "point = { x = 1, y = 2 }\n";
+        let expected = "# point = { x = 1, y = 2 }\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_multiline_array() {
+        let input = "args = [\n  \"--flag\",\n  \"value\"\n]\n";
+        let expected = "# args = [\n#   \"--flag\",\n#   \"value\"\n# ]\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_whitespace_only_line() {
+        // Lines with only whitespace are not empty - they should NOT be commented
+        // Actually, let's check what the current behavior is:
+        // The function checks `!line.is_empty()` - a line with spaces is not empty
+        let input = "key = 1\n   \nkey2 = 2\n";
+        let expected = "# key = 1\n#    \n# key2 = 2\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    // ==================== warn_unknown_keys tests ====================
+
+    #[test]
+    fn test_warn_unknown_keys_empty() {
+        let mut out = String::new();
+        warn_unknown_keys(&mut out, &[]).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_single() {
+        let mut out = String::new();
+        warn_unknown_keys(&mut out, &["unknown-key".to_string()]).unwrap();
+        assert!(out.contains("unknown-key"));
+        assert!(out.contains("Unknown key"));
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_multiple() {
+        let mut out = String::new();
+        warn_unknown_keys(&mut out, &["key1".to_string(), "key2".to_string()]).unwrap();
+        assert!(out.contains("key1"));
+        assert!(out.contains("key2"));
+        // Should have two separate warning lines
+        assert_eq!(out.matches("Unknown key").count(), 2);
+    }
+
+    // ==================== render_ci_tool_status tests ====================
+
+    #[test]
+    fn test_render_ci_tool_status_installed_authenticated() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "gh", "GitHub", true, true).unwrap();
+        assert!(out.contains("gh"));
+        assert!(out.contains("installed"));
+        assert!(out.contains("authenticated"));
+    }
+
+    #[test]
+    fn test_render_ci_tool_status_installed_not_authenticated() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "gh", "GitHub", true, false).unwrap();
+        assert!(out.contains("gh"));
+        assert!(out.contains("installed"));
+        assert!(out.contains("not authenticated"));
+        assert!(out.contains("gh auth login"));
+    }
+
+    #[test]
+    fn test_render_ci_tool_status_not_installed() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "glab", "GitLab", false, false).unwrap();
+        assert!(out.contains("glab"));
+        assert!(out.contains("not found"));
+        assert!(out.contains("GitLab"));
+        assert!(out.contains("CI status unavailable"));
+    }
+
+    #[test]
+    fn test_render_ci_tool_status_glab() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "glab", "GitLab", true, true).unwrap();
+        assert!(out.contains("glab"));
+        assert!(out.contains("installed"));
+        assert!(out.contains("authenticated"));
+    }
+
+    // ==================== resolve_user_config_path tests ====================
+
+    #[test]
+    fn test_resolve_user_config_path_xdg_takes_priority() {
+        let path = resolve_user_config_path(Some("/custom/xdg"), Some("/home/user"));
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/custom/xdg/worktrunk/config.toml"))
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_config_path_home_fallback() {
+        let path = resolve_user_config_path(None, Some("/home/testuser"));
+        assert_eq!(
+            path,
+            Some(PathBuf::from(
+                "/home/testuser/.config/worktrunk/config.toml"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_config_path_none_when_no_env() {
+        let path = resolve_user_config_path(None, None);
+        assert_eq!(path, None);
+    }
+
+    // ==================== get_user_config_path tests ====================
+
+    #[test]
+    fn test_get_user_config_path_returns_some() {
+        // In a normal environment, get_user_config_path should return Some
+        // (either from env vars or etcetera fallback)
+        let path = get_user_config_path();
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.ends_with("worktrunk/config.toml"));
+    }
+
+    // ==================== require_user_config_path tests ====================
+
+    #[test]
+    fn test_require_user_config_path_returns_ok() {
+        // In a normal environment, require_user_config_path should succeed
+        let result = require_user_config_path();
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("worktrunk/config.toml"));
     }
 }
