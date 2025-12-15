@@ -185,4 +185,33 @@ mod tests {
             "Expected converted path, got: {result}"
         );
     }
+
+    #[test]
+    fn test_home_dir_returns_valid_path() {
+        // home_dir should return a valid path on most systems
+        if let Some(home) = home_dir() {
+            assert!(home.is_absolute(), "Home directory should be absolute");
+            // The home directory itself might not exist in some CI environments,
+            // but the path should at least have components
+            assert!(home.components().count() > 0, "Home should have components");
+        }
+    }
+
+    #[test]
+    fn test_format_path_outside_home() {
+        // A path that definitely won't be under home
+        let path = PathBuf::from("/definitely/not/under/home/dir");
+        let result = format_path_for_display(&path);
+        // Should return unchanged
+        assert_eq!(result, "/definitely/not/under/home/dir");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_to_posix_path_on_unix() {
+        // On Unix, to_posix_path is a no-op
+        assert_eq!(to_posix_path("/some/path"), "/some/path");
+        assert_eq!(to_posix_path("relative"), "relative");
+        assert_eq!(to_posix_path(""), "");
+    }
 }
