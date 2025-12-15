@@ -2549,7 +2549,6 @@ test = "echo 'Running tests...'"
     /// - Completion output being executed as commands (the COMPLETE mode bug)
     #[rstest]
     fn test_bash_completion_produces_correct_output(repo: TestRepo) {
-        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -2628,28 +2627,10 @@ fi
 
         let pair = crate::common::open_pty();
 
-        let mut cmd = CommandBuilder::new("bash");
-        cmd.env_clear();
-        cmd.env(
-            "HOME",
-            home::home_dir().unwrap().to_string_lossy().to_string(),
-        );
-        cmd.env(
-            "PATH",
-            format!(
-                "{}:{}",
-                wt_bin_dir.display(),
-                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
-            ),
-        );
-        cmd.arg("--norc");
-        cmd.arg("--noprofile");
+        let mut cmd = crate::common::shell_command("bash", Some(wt_bin_dir));
         cmd.arg("-c");
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
-
-        // Pass through LLVM coverage env vars for subprocess coverage collection
-        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -2704,7 +2685,6 @@ fi
     /// wt command with COMPLETE=zsh produces completion candidates.
     #[rstest]
     fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
-        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -2772,32 +2752,10 @@ fi
 
         let pair = crate::common::open_pty();
 
-        let mut cmd = CommandBuilder::new("zsh");
-        cmd.env_clear();
-        cmd.env(
-            "HOME",
-            home::home_dir().unwrap().to_string_lossy().to_string(),
-        );
-        cmd.env(
-            "PATH",
-            format!(
-                "{}:{}",
-                wt_bin_dir.display(),
-                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
-            ),
-        );
-        cmd.env("ZDOTDIR", "/dev/null");
-        cmd.arg("--no-rcs");
-        cmd.arg("-o");
-        cmd.arg("NO_GLOBAL_RCS");
-        cmd.arg("-o");
-        cmd.arg("NO_RCS");
+        let mut cmd = crate::common::shell_command("zsh", Some(wt_bin_dir));
         cmd.arg("-c");
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
-
-        // Pass through LLVM coverage env vars for subprocess coverage collection
-        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -2966,7 +2924,6 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[case("fish")]
     fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -3048,47 +3005,10 @@ echo "SCRIPT_COMPLETED"
 
         let pair = crate::common::open_pty();
 
-        let mut cmd = CommandBuilder::new(shell);
-        cmd.env_clear();
-        cmd.env(
-            "HOME",
-            home::home_dir().unwrap().to_string_lossy().to_string(),
-        );
-        cmd.env(
-            "PATH",
-            format!(
-                "{}:{}",
-                wt_bin_dir.display(),
-                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
-            ),
-        );
-
-        // Shell-specific flags for isolation
-        match shell {
-            "zsh" => {
-                cmd.env("ZDOTDIR", "/dev/null");
-                cmd.arg("--no-rcs");
-                cmd.arg("-o");
-                cmd.arg("NO_GLOBAL_RCS");
-                cmd.arg("-o");
-                cmd.arg("NO_RCS");
-            }
-            "bash" => {
-                cmd.arg("--norc");
-                cmd.arg("--noprofile");
-            }
-            "fish" => {
-                cmd.arg("--no-config");
-            }
-            _ => {}
-        }
-
+        let mut cmd = crate::common::shell_command(shell, Some(wt_bin_dir));
         cmd.arg("-c");
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
-
-        // Pass through LLVM coverage env vars for subprocess coverage collection
-        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -3155,7 +3075,6 @@ echo "SCRIPT_COMPLETED"
     #[case("fish")]
     fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -3253,47 +3172,10 @@ echo "SCRIPT_COMPLETED"
 
         let pair = crate::common::open_pty();
 
-        let mut cmd = CommandBuilder::new(shell);
-        cmd.env_clear();
-        cmd.env(
-            "HOME",
-            home::home_dir().unwrap().to_string_lossy().to_string(),
-        );
-        cmd.env(
-            "PATH",
-            format!(
-                "{}:{}",
-                wt_bin_dir.display(),
-                std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
-            ),
-        );
-
-        // Shell-specific flags for isolation
-        match shell {
-            "zsh" => {
-                cmd.env("ZDOTDIR", "/dev/null");
-                cmd.arg("--no-rcs");
-                cmd.arg("-o");
-                cmd.arg("NO_GLOBAL_RCS");
-                cmd.arg("-o");
-                cmd.arg("NO_RCS");
-            }
-            "bash" => {
-                cmd.arg("--norc");
-                cmd.arg("--noprofile");
-            }
-            "fish" => {
-                cmd.arg("--no-config");
-            }
-            _ => {}
-        }
-
+        let mut cmd = crate::common::shell_command(shell, Some(wt_bin_dir));
         cmd.arg("-c");
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
-
-        // Pass through LLVM coverage env vars for subprocess coverage collection
-        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);

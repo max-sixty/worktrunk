@@ -661,6 +661,62 @@ pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
     }
 }
 
+/// Create a CommandBuilder for running a shell in PTY tests.
+///
+/// Handles all shell-specific setup:
+/// - env_clear + HOME + PATH (with optional bin_dir prefix)
+/// - Shell-specific env vars (ZDOTDIR for zsh)
+/// - Shell-specific isolation flags (--norc, --no-rcs, --no-config)
+/// - Coverage passthrough
+///
+/// Returns a CommandBuilder ready for `.arg("-c")` and `.arg(&script)`.
+#[cfg(unix)]
+pub fn shell_command(
+    shell: &str,
+    bin_dir: Option<&std::path::Path>,
+) -> portable_pty::CommandBuilder {
+    let mut cmd = portable_pty::CommandBuilder::new(shell);
+    cmd.env_clear();
+
+    cmd.env(
+        "HOME",
+        home::home_dir().unwrap().to_string_lossy().to_string(),
+    );
+
+    let path = match bin_dir {
+        Some(dir) => format!(
+            "{}:{}",
+            dir.display(),
+            std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string())
+        ),
+        None => std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+    };
+    cmd.env("PATH", path);
+
+    // Shell-specific setup
+    match shell {
+        "zsh" => {
+            cmd.env("ZDOTDIR", "/dev/null");
+            cmd.arg("--no-rcs");
+            cmd.arg("-o");
+            cmd.arg("NO_GLOBAL_RCS");
+            cmd.arg("-o");
+            cmd.arg("NO_RCS");
+        }
+        "bash" => {
+            cmd.arg("--norc");
+            cmd.arg("--noprofile");
+        }
+        "fish" => {
+            cmd.arg("--no-config");
+        }
+        _ => {}
+    }
+
+    pass_coverage_env_to_pty_cmd(&mut cmd);
+    cmd
+}
+
 /// Set home environment variables for commands that rely on isolated temp homes.
 ///
 /// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
