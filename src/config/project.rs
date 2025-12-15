@@ -115,3 +115,180 @@ pub fn find_unknown_keys(contents: &str) -> Vec<String> {
 
     config.unknown.into_keys().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // ProjectConfig Default Tests
+    // ============================================================================
+
+    #[test]
+    fn test_project_config_default() {
+        let config = ProjectConfig::default();
+        assert!(config.post_create.is_none());
+        assert!(config.post_start.is_none());
+        assert!(config.pre_commit.is_none());
+        assert!(config.pre_merge.is_none());
+        assert!(config.post_merge.is_none());
+        assert!(config.pre_remove.is_none());
+    }
+
+    // ============================================================================
+    // Deserialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_empty_config() {
+        let contents = "";
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.post_create.is_none());
+        assert!(config.pre_merge.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_post_create_string() {
+        let contents = r#"post-create = "npm install""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.post_create.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_post_start_table() {
+        let contents = r#"
+[post-start]
+build = "cargo build"
+test = "cargo test"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.post_start.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_pre_merge() {
+        let contents = r#"pre-merge = "cargo test""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.pre_merge.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_post_merge() {
+        let contents = r#"post-merge = "git push origin main""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.post_merge.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_pre_remove() {
+        let contents = r#"pre-remove = "echo cleaning up""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.pre_remove.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_pre_commit() {
+        let contents = r#"pre-commit = "cargo fmt --check""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.pre_commit.is_some());
+    }
+
+    #[test]
+    fn test_deserialize_all_hooks() {
+        let contents = r#"
+post-create = "npm install"
+post-start = "npm run watch"
+pre-commit = "cargo fmt --check"
+pre-merge = "cargo test"
+post-merge = "git push"
+pre-remove = "echo bye"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.post_create.is_some());
+        assert!(config.post_start.is_some());
+        assert!(config.pre_commit.is_some());
+        assert!(config.pre_merge.is_some());
+        assert!(config.post_merge.is_some());
+        assert!(config.pre_remove.is_some());
+    }
+
+    // ============================================================================
+    // find_unknown_keys Tests
+    // ============================================================================
+
+    #[test]
+    fn test_find_unknown_keys_empty() {
+        let contents = "";
+        let keys = find_unknown_keys(contents);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_find_unknown_keys_all_known() {
+        let contents = r#"
+post-create = "npm install"
+pre-merge = "cargo test"
+"#;
+        let keys = find_unknown_keys(contents);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_find_unknown_keys_unknown_key() {
+        let contents = r#"
+post-create = "npm install"
+unknown-key = "value"
+"#;
+        let keys = find_unknown_keys(contents);
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&"unknown-key".to_string()));
+    }
+
+    #[test]
+    fn test_find_unknown_keys_multiple_unknown() {
+        let contents = r#"
+foo = "bar"
+baz = "qux"
+post-create = "npm install"
+"#;
+        let keys = find_unknown_keys(contents);
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"foo".to_string()));
+        assert!(keys.contains(&"baz".to_string()));
+    }
+
+    #[test]
+    fn test_find_unknown_keys_invalid_toml() {
+        let contents = "invalid { toml }}}";
+        let keys = find_unknown_keys(contents);
+        // Returns empty vec for invalid TOML (graceful fallback)
+        assert!(keys.is_empty());
+    }
+
+    // ============================================================================
+    // Serialization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_serialize_empty_config() {
+        let config = ProjectConfig::default();
+        let serialized = toml::to_string(&config).unwrap();
+        // Default config should serialize to empty or minimal string
+        assert!(serialized.is_empty() || serialized.trim().is_empty());
+    }
+
+    #[test]
+    fn test_config_equality() {
+        let config1 = ProjectConfig::default();
+        let config2 = ProjectConfig::default();
+        assert_eq!(config1, config2);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let contents = r#"pre-merge = "cargo test""#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+}
