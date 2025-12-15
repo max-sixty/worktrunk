@@ -936,8 +936,9 @@ fn is_retriable_error(stderr: &str) -> bool {
 /// - Conflicts: Yellow (merge conflicts)
 /// - NoCI: Gray (no PR/checks)
 /// - Error: Yellow (CI fetch failed, e.g., rate limit)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum CiStatus {
     Passed,
     Running,
@@ -954,8 +955,9 @@ pub enum CiStatus {
 /// The internal distinction (CiSource::PullRequest vs CiSource::Branch) is preserved
 /// for potential future visual differentiation. We tried ◒ (half circle) for branch CI
 /// but it renders narrower than ● in many terminal fonts, causing misalignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum CiSource {
     /// Pull request or merge request
     PullRequest,

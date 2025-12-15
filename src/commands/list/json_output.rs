@@ -400,25 +400,9 @@ fn worktree_state_to_json(
 
 /// Convert PrStatus to JsonPr
 fn pr_status_to_json(pr: &PrStatus) -> JsonPr {
-    use super::ci_status::{CiSource, CiStatus};
-
-    let ci = match pr.ci_status {
-        CiStatus::Passed => "passed",
-        CiStatus::Running => "running",
-        CiStatus::Failed => "failed",
-        CiStatus::Conflicts => "conflicts",
-        CiStatus::NoCI => "no_ci",
-        CiStatus::Error => "error",
-    };
-
-    let source = match pr.source {
-        CiSource::PullRequest => "pull_request",
-        CiSource::Branch => "branch",
-    };
-
     JsonPr {
-        ci,
-        source,
+        ci: pr.ci_status.into(),
+        source: pr.source.into(),
         stale: pr.is_stale,
         url: pr.url.clone(),
     }
@@ -522,7 +506,7 @@ mod tests {
         };
         let json = pr_status_to_json(&pr);
         assert_eq!(json.ci, "passed");
-        assert_eq!(json.source, "pull_request");
+        assert_eq!(json.source, "pull-request");
         assert!(!json.stale);
         assert_eq!(
             json.url,
@@ -578,7 +562,7 @@ mod tests {
             url: None,
         };
         let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "no_ci");
+        assert_eq!(json.ci, "no-ci");
     }
 
     #[test]

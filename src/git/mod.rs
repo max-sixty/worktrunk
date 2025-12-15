@@ -110,8 +110,8 @@ pub fn unescape_branch_from_config(escaped: &str) -> String {
 /// 4. [`TreesMatch`](Self::TreesMatch) - tree SHA comparison (~100-300ms)
 /// 5. [`MergeAddsNothing`](Self::MergeAddsNothing) - merge simulation (~500ms-2s)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, strum::IntoStaticStr)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum IntegrationReason {
     /// Branch HEAD is literally the same commit as target.
     ///

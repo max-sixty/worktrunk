@@ -88,7 +88,7 @@ exit_code: 0
       }
     },
     "main_state": "integrated",
-    "integration_reason": "no_added_changes",
+    "integration_reason": "no-added-changes",
     "main": {
       "ahead": 2,
       "behind": 0

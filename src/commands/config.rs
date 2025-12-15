@@ -657,22 +657,10 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             }
 
             let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();
-            match PrStatus::detect(&branch_name, &head, &repo_root, has_upstream) {
-                Some(status) => {
-                    let status_str = match status.ci_status {
-                        super::list::ci_status::CiStatus::Passed => "passed",
-                        super::list::ci_status::CiStatus::Running => "running",
-                        super::list::ci_status::CiStatus::Failed => "failed",
-                        super::list::ci_status::CiStatus::Conflicts => "conflicts",
-                        super::list::ci_status::CiStatus::NoCI => "noci",
-                        super::list::ci_status::CiStatus::Error => "error",
-                    };
-                    crate::output::data(status_str)?;
-                }
-                None => {
-                    crate::output::data("noci")?;
-                }
-            }
+            let ci_status = PrStatus::detect(&branch_name, &head, &repo_root, has_upstream)
+                .map_or(super::list::ci_status::CiStatus::NoCI, |s| s.ci_status);
+            let status_str: &'static str = ci_status.into();
+            crate::output::data(status_str)?;
         }
         "logs" => {
             let git_common_dir = repo.git_common_dir()?;

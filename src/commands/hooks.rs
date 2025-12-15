@@ -36,6 +36,8 @@ pub enum HookFailureStrategy {
 ///
 /// Approval for project hooks is handled at the gate (command entry point),
 /// not during hook execution.
+#[derive(strum::Display)]
+#[strum(serialize_all = "kebab-case")]
 pub enum HookSource {
     /// User hooks from ~/.config/worktrunk/config.toml (no approval required)
     User,
@@ -44,17 +46,9 @@ pub enum HookSource {
 }
 
 impl HookSource {
-    /// Returns the label prefix for this source
-    fn label_prefix(&self) -> &'static str {
-        match self {
-            HookSource::User => "user",
-            HookSource::Project => "project",
-        }
-    }
-
     /// Format a label for display: "user pre-merge" or "project pre-merge"
     fn format_label(&self, hook_type: HookType) -> String {
-        format!("{} {}", self.label_prefix(), hook_type)
+        format!("{} {}", self, hook_type)
     }
 }
 
@@ -215,7 +209,7 @@ impl<'a> HookPipeline<'a> {
             let name = prepared.name.as_deref().unwrap_or("cmd");
             // Include source in operation name to prevent log file collisions between
             // user and project hooks with the same name
-            let operation = format!("{}-{}-{}", source.label_prefix(), operation_prefix, name);
+            let operation = format!("{}-{}-{}", source, operation_prefix, name);
             if let Err(err) = spawn_detached(
                 self.ctx.repo,
                 self.ctx.worktree_path,
@@ -341,9 +335,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hook_source_label_prefix() {
-        assert_eq!(HookSource::User.label_prefix(), "user");
-        assert_eq!(HookSource::Project.label_prefix(), "project");
+    fn test_hook_source_display() {
+        assert_eq!(HookSource::User.to_string(), "user");
+        assert_eq!(HookSource::Project.to_string(), "project");
     }
 
     #[test]

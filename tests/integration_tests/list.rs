@@ -1638,10 +1638,10 @@ TODO: Add request/response examples for each endpoint
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
     // Note: main's CI is mocked AFTER the merge commit so the hash matches
-    mock_ci_status(repo, "main", "passed", "pullrequest", false);
-    mock_ci_status(repo, "fix-auth", "passed", "pullrequest", false);
+    mock_ci_status(repo, "main", "passed", "pull-request", false);
+    mock_ci_status(repo, "fix-auth", "passed", "pull-request", false);
     // feature-api has unpushed commits, so CI is stale (shows dimmed)
-    mock_ci_status(repo, "feature-api", "running", "pullrequest", true);
+    mock_ci_status(repo, "feature-api", "running", "pull-request", true);
 
     feature_api
 }

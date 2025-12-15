@@ -724,7 +724,7 @@ wt config state previous-branch set feature
 pub enum CiStatusAction {
     /// Get CI status for a branch
     #[command(
-        after_long_help = r#"Returns: passed, running, failed, conflicts, noci, or error.
+        after_long_help = r#"Returns: passed, running, failed, conflicts, no-ci, or error.
 
 ## Examples
 

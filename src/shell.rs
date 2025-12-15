@@ -48,7 +48,7 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 /// On Windows, Git Bash users should use `bash` for shell integration.
 /// PowerShell integration is available for native Windows users without Git Bash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, strum::Display, strum::EnumString)]
-#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 pub enum Shell {
     Bash,
     Fish,

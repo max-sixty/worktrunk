@@ -8,7 +8,7 @@ const DEBUG_ENV_VALUE: &str = "1";
 
 /// Operation names for tracking timing
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, strum::AsRefStr)]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum OpName {
     CommitDetails,
     AheadBehind,

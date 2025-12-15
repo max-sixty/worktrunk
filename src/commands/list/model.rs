@@ -940,8 +940,8 @@ impl serde::Serialize for OperationState {
 ///
 /// Represents whether a worktree is in the middle of a git operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, strum::IntoStaticStr)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum GitOperationState {
     #[strum(serialize = "")]
     #[serde(rename = "")]
@@ -1352,15 +1352,15 @@ mod tests {
     #[test]
     fn test_integration_reason_into_static_str() {
         let s: &'static str = IntegrationReason::SameCommit.into();
-        assert_eq!(s, "same_commit");
+        assert_eq!(s, "same-commit");
         let s: &'static str = IntegrationReason::Ancestor.into();
         assert_eq!(s, "ancestor");
         let s: &'static str = IntegrationReason::TreesMatch.into();
-        assert_eq!(s, "trees_match");
+        assert_eq!(s, "trees-match");
         let s: &'static str = IntegrationReason::NoAddedChanges.into();
-        assert_eq!(s, "no_added_changes");
+        assert_eq!(s, "no-added-changes");
         let s: &'static str = IntegrationReason::MergeAddsNothing.into();
-        assert_eq!(s, "merge_adds_nothing");
+        assert_eq!(s, "merge-adds-nothing");
     }
 
     #[test]

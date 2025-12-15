@@ -185,24 +185,24 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_ci_status(repo: TestRepo) {
-    // Without any CI configured, should return "noci"
+    // Without any CI configured, should return "no-ci"
     let output = wt_state_cmd(&repo, "ci-status", "get", &[])
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "noci");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
 }
 
 #[rstest]
 fn test_state_get_ci_status_specific_branch(repo: TestRepo) {
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
-    // Without any CI configured, should return "noci"
+    // Without any CI configured, should return "no-ci"
     let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "feature"])
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "noci");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "no-ci");
 }
 
 #[rstest]
@@ -231,7 +231,7 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
     repo.git_command(&[
         "config",
         "worktrunk.ci.main",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
     .status()
     .unwrap();
@@ -597,7 +597,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     repo.git_command(&[
         "config",
         "worktrunk.ci.feature",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
     ])
     .status()
     .unwrap();
@@ -650,7 +650,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     repo.git_command(&[
         "config",
         "worktrunk.ci.feature",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
     ])
     .status()
     .unwrap();
@@ -702,7 +702,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     repo.git_command(&[
         "config",
         "worktrunk.ci.feature",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pullrequest","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
     ])
     .status()
     .unwrap();

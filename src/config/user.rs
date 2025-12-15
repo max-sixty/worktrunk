@@ -73,7 +73,7 @@ use super::expansion::{expand_template, sanitize_branch_name};
     serde::Serialize,
     serde::Deserialize,
 )]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum StageMode {
     /// Stage everything: untracked files + unstaged tracked changes
     #[default]

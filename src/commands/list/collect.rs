@@ -58,7 +58,7 @@ struct StatusContext {
     name(TaskKind),
     vis(pub),
     derive(Hash, strum::IntoStaticStr),
-    strum(serialize_all = "snake_case")
+    strum(serialize_all = "kebab-case")
 )]
 pub(super) enum TaskResult {
     /// Commit timestamp and message
