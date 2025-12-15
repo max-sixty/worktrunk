@@ -414,6 +414,30 @@ fn test_state_get_logs_empty(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_get_logs_with_files(repo: TestRepo) {
+    // Create wt-logs directory with some log files
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(
+        log_dir.join("feature-post-start-npm.log"),
+        "npm output here",
+    )
+    .unwrap();
+    std::fs::write(log_dir.join("bugfix-remove.log"), "remove output").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    // Verify we get a table with file info
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("File"));
+    assert!(stderr.contains("Size"));
+    assert!(stderr.contains("Age"));
+    assert!(stderr.contains("feature-post-start-npm.log"));
+    assert!(stderr.contains("bugfix-remove.log"));
+}
+
+#[rstest]
 fn test_state_clear_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());

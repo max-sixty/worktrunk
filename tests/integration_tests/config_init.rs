@@ -1,4 +1,7 @@
-use crate::common::{set_temp_home_env, setup_home_snapshot_settings, temp_home, wt_command};
+use crate::common::{
+    TestRepo, make_snapshot_cmd, repo, set_temp_home_env, setup_home_snapshot_settings,
+    setup_snapshot_settings, temp_home, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -64,4 +67,61 @@ fn test_config_init_creates_file(temp_home: TempDir) {
     // Verify file was actually created
     let config_path = global_config_dir.join("config.toml");
     assert!(config_path.exists(), "Config file should be created");
+}
+
+/// Test `wt config create --project` creates project config file
+#[rstest]
+fn test_config_create_project_creates_file(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
+        assert_cmd_snapshot!(cmd, @r"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+
+        ----- stderr -----
+        ✅ [32mCreated project config: [1m[REPO]/.config/wt.toml[22m[39m
+
+        💡 [2mEdit this file to configure hooks for this repository[22m
+        💡 [2mSee https://worktrunk.dev/hooks/ for hook documentation[22m
+        ");
+    });
+
+    // Verify file was actually created
+    let config_path = repo.root_path().join(".config/wt.toml");
+    assert!(
+        config_path.exists(),
+        "Project config file should be created"
+    );
+}
+
+/// Test `wt config create --project` when project config already exists
+#[rstest]
+fn test_config_create_project_already_exists(repo: TestRepo) {
+    // Create project config file
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"[[project.post-create]]
+run = "echo hello"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
+        assert_cmd_snapshot!(cmd, @r"
+        success: true
+        exit_code: 0
+        ----- stdout -----
+
+        ----- stderr -----
+        ⚪ Project config already exists: [1m[REPO]/.config/wt.toml[22m
+
+        💡 [2mUse [90mwt config show[39m to view, or [90mwt config create --help[39m for format reference[22m
+        ");
+    });
 }
