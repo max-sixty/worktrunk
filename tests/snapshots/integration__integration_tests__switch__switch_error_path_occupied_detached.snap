@@ -30,7 +30,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[0m❌ [31mCannot create worktree for [1mfeature[22m: target path already exists[39m
+[0m❌ [31mCannot create worktree for [1mfeature[22m at [1m[REPO].feature[22m: path occupied by another worktree[39m
 
-💡 [2mWorktree exists at [REPO].feature (detached HEAD)[22m
+💡 [2mWorktree is detached; access it[22m
 [107m [0m  cd [REPO].feature

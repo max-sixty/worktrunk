@@ -30,8 +30,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[0m❌ [31mCannot create worktree for [1mmain[22m: target path already exists[39m
+[0m❌ [31mCannot create worktree for [1mmain[22m at [1m[REPO][22m: path occupied by another worktree[39m
 
-💡 [2mWorktree exists at [REPO] (currently on [1mfeature[22m)[22m
-[107m [0m  cd [REPO]
-[107m [0m  git switch main
+💡 [2mWorktree is on [1mfeature[22m; switch it back[22m
+[107m [0m  cd [REPO] && git switch main
