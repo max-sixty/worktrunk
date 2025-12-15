@@ -349,7 +349,13 @@ prunable gitdir file points to non-existent location
     let worktrees = Worktree::parse_porcelain_list(output).unwrap();
     assert_eq!(worktrees.len(), 1);
     assert!(worktrees[0].prunable.is_some());
-    assert!(worktrees[0].prunable.as_ref().unwrap().contains("non-existent"));
+    assert!(
+        worktrees[0]
+            .prunable
+            .as_ref()
+            .unwrap()
+            .contains("non-existent")
+    );
 }
 
 #[test]

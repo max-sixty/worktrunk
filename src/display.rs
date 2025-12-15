@@ -338,7 +338,11 @@ mod tests {
         // Test the public function (uses get_now internally)
         let result = format_relative_time_short(0);
         // A timestamp of 0 (Unix epoch) should show years ago
-        assert!(result.contains('y') || result == "future", "Expected years format, got: {}", result);
+        assert!(
+            result.contains('y') || result == "future",
+            "Expected years format, got: {}",
+            result
+        );
     }
 
     #[test]
@@ -370,10 +374,7 @@ mod tests {
 
     #[test]
     fn test_find_common_prefix_relative_paths() {
-        let paths = vec![
-            PathBuf::from("src/main.rs"),
-            PathBuf::from("src/lib.rs"),
-        ];
+        let paths = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
         assert_eq!(find_common_prefix(&paths), PathBuf::from("src"));
     }
 }

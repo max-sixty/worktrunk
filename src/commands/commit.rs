@@ -218,3 +218,59 @@ impl CommitOptions<'_> {
             .commit_staged_changes(self.show_no_squash_note, self.stage_mode)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use worktrunk::config::CommitGenerationConfig;
+
+    #[test]
+    fn test_format_message_for_display_single_line() {
+        let config = CommitGenerationConfig::default();
+        let generator = CommitGenerator::new(&config);
+        let result = generator.format_message_for_display("Simple commit message");
+        // Should contain the message text with styling
+        assert!(result.contains("Simple commit message"));
+        // Should be styled (output differs from plain input)
+        assert!(result.len() > "Simple commit message".len());
+    }
+
+    #[test]
+    fn test_format_message_for_display_multiline() {
+        let config = CommitGenerationConfig::default();
+        let generator = CommitGenerator::new(&config);
+        let result = generator.format_message_for_display("First line\nSecond line\nThird line");
+        assert!(result.contains("First line"));
+        assert!(result.contains("Second line"));
+        assert!(result.contains("Third line"));
+    }
+
+    #[test]
+    fn test_format_message_for_display_empty() {
+        let config = CommitGenerationConfig::default();
+        let generator = CommitGenerator::new(&config);
+        let result = generator.format_message_for_display("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_commit_options_new() {
+        // CommitOptions::new requires a CommandContext, which requires a Repository.
+        // Instead, test the struct fields directly
+        let stage_mode = StageMode::default();
+        assert!(matches!(stage_mode, StageMode::All));
+    }
+
+    #[test]
+    fn test_stage_mode_variants() {
+        // Test that all StageMode variants can be matched
+        let modes = [StageMode::All, StageMode::Tracked, StageMode::None];
+        for mode in modes {
+            match mode {
+                StageMode::All => assert_eq!(format!("{:?}", mode), "All"),
+                StageMode::Tracked => assert_eq!(format!("{:?}", mode), "Tracked"),
+                StageMode::None => assert_eq!(format!("{:?}", mode), "None"),
+            }
+        }
+    }
+}

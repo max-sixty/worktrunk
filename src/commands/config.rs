@@ -1392,14 +1392,28 @@ mod tests {
         let legacy = 0;
 
         let entries = vec![
-            MarkerEntry { branch: "b".to_string(), marker: "m2".to_string(), set_at: older },
-            MarkerEntry { branch: "a".to_string(), marker: "m1".to_string(), set_at: now },
-            MarkerEntry { branch: "c".to_string(), marker: "m3".to_string(), set_at: legacy },
+            MarkerEntry {
+                branch: "b".to_string(),
+                marker: "m2".to_string(),
+                set_at: older,
+            },
+            MarkerEntry {
+                branch: "a".to_string(),
+                marker: "m1".to_string(),
+                set_at: now,
+            },
+            MarkerEntry {
+                branch: "c".to_string(),
+                marker: "m3".to_string(),
+                set_at: legacy,
+            },
         ];
 
         let mut sorted = entries;
         sorted.sort_by(|a, b| {
-            b.set_at.cmp(&a.set_at).then_with(|| a.branch.cmp(&b.branch))
+            b.set_at
+                .cmp(&a.set_at)
+                .then_with(|| a.branch.cmp(&b.branch))
         });
 
         assert_eq!(sorted[0].branch, "a"); // newest
@@ -1409,14 +1423,13 @@ mod tests {
 
     #[test]
     fn test_user_config_example_exists() {
-        // Ensure the example config file is included
-        assert!(!USER_CONFIG_EXAMPLE.is_empty());
+        // Ensure the example config file is included and has expected content
         assert!(USER_CONFIG_EXAMPLE.contains("worktree-path"));
     }
 
     #[test]
     fn test_project_config_example_exists() {
-        // Ensure the example project config file is included
-        assert!(!PROJECT_CONFIG_EXAMPLE.is_empty());
+        // Ensure the example project config file is included and has expected content
+        assert!(PROJECT_CONFIG_EXAMPLE.contains("["));
     }
 }

@@ -177,12 +177,12 @@ mod tests {
     }
 
     #[test]
-    fn test_column_kind_clone_and_copy() {
+    fn test_column_kind_copy() {
         let kind = ColumnKind::Branch;
-        let cloned = kind.clone();
-        let copied = kind;
-        assert_eq!(kind, cloned);
-        assert_eq!(kind, copied);
+        let copied1 = kind; // Copy trait
+        let copied2 = kind;
+        assert_eq!(kind, copied1);
+        assert_eq!(kind, copied2);
     }
 
     #[test]
@@ -199,27 +199,24 @@ mod tests {
     fn test_diff_variant_debug() {
         assert_eq!(format!("{:?}", DiffVariant::Signs), "Signs");
         assert_eq!(format!("{:?}", DiffVariant::Arrows), "Arrows");
-        assert_eq!(format!("{:?}", DiffVariant::UpstreamArrows), "UpstreamArrows");
+        assert_eq!(
+            format!("{:?}", DiffVariant::UpstreamArrows),
+            "UpstreamArrows"
+        );
     }
 
     #[test]
-    fn test_diff_variant_clone_and_copy() {
+    fn test_diff_variant_copy() {
         let variant = DiffVariant::Signs;
-        let cloned = variant.clone();
-        let copied = variant;
-        assert_eq!(variant, cloned);
-        assert_eq!(variant, copied);
+        let copied1 = variant; // Copy trait
+        let copied2 = variant;
+        assert_eq!(variant, copied1);
+        assert_eq!(variant, copied2);
     }
 
     #[test]
     fn test_column_spec_new() {
-        let spec = ColumnSpec::new(
-            ColumnKind::Branch,
-            "Branch",
-            1,
-            None,
-            1,
-        );
+        let spec = ColumnSpec::new(ColumnKind::Branch, "Branch", 1, None, 1);
         assert_eq!(spec.kind, ColumnKind::Branch);
         assert_eq!(spec.header, "Branch");
         assert_eq!(spec.base_priority, 1);
@@ -249,12 +246,12 @@ mod tests {
     }
 
     #[test]
-    fn test_column_spec_clone() {
+    fn test_column_spec_copy() {
         let spec = ColumnSpec::new(ColumnKind::Time, "Age", 10, None, 10);
-        let cloned = spec.clone();
-        assert_eq!(spec.kind, cloned.kind);
-        assert_eq!(spec.header, cloned.header);
-        assert_eq!(spec.base_priority, cloned.base_priority);
+        let copied = spec; // Copy trait - should work without clone
+        assert_eq!(spec.kind, copied.kind);
+        assert_eq!(spec.header, copied.header);
+        assert_eq!(spec.base_priority, copied.base_priority);
     }
 
     #[test]
@@ -262,7 +259,11 @@ mod tests {
         // Each column should have a unique base_priority
         let priorities: Vec<u8> = COLUMN_SPECS.iter().map(|c| c.base_priority).collect();
         let unique: HashSet<u8> = priorities.iter().cloned().collect();
-        assert_eq!(priorities.len(), unique.len(), "base_priority values should be unique");
+        assert_eq!(
+            priorities.len(),
+            unique.len(),
+            "base_priority values should be unique"
+        );
     }
 
     #[test]
@@ -270,7 +271,11 @@ mod tests {
         // All columns except Gutter should have non-empty headers
         for spec in COLUMN_SPECS {
             if spec.kind != ColumnKind::Gutter {
-                assert!(!spec.header.is_empty(), "{:?} should have a non-empty header", spec.kind);
+                assert!(
+                    !spec.header.is_empty(),
+                    "{:?} should have a non-empty header",
+                    spec.kind
+                );
             }
         }
     }

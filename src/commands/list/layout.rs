@@ -897,19 +897,53 @@ mod tests {
             time: 4,
             ci_status: 2,
             message: 50,
-            ahead_behind: DiffWidths { total: 7, positive_digits: 2, negative_digits: 2 },
-            working_diff: DiffWidths { total: 9, positive_digits: 3, negative_digits: 3 },
-            branch_diff: DiffWidths { total: 9, positive_digits: 3, negative_digits: 3 },
-            upstream: DiffWidths { total: 7, positive_digits: 2, negative_digits: 2 },
+            ahead_behind: DiffWidths {
+                total: 7,
+                positive_digits: 2,
+                negative_digits: 2,
+            },
+            working_diff: DiffWidths {
+                total: 9,
+                positive_digits: 3,
+                negative_digits: 3,
+            },
+            branch_diff: DiffWidths {
+                total: 9,
+                positive_digits: 3,
+                negative_digits: 3,
+            },
+            upstream: DiffWidths {
+                total: 7,
+                positive_digits: 2,
+                negative_digits: 2,
+            },
         };
 
         // Text columns
-        assert_eq!(ColumnKind::Gutter.ideal(&widths, 20, 8).map(|i| i.width), Some(2));
-        assert_eq!(ColumnKind::Branch.ideal(&widths, 20, 8).map(|i| i.width), Some(15));
-        assert_eq!(ColumnKind::Status.ideal(&widths, 20, 8).map(|i| i.width), Some(8));
-        assert_eq!(ColumnKind::Path.ideal(&widths, 20, 8).map(|i| i.width), Some(20));
-        assert_eq!(ColumnKind::Time.ideal(&widths, 20, 8).map(|i| i.width), Some(4));
-        assert_eq!(ColumnKind::Commit.ideal(&widths, 20, 8).map(|i| i.width), Some(8));
+        assert_eq!(
+            ColumnKind::Gutter.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(2)
+        );
+        assert_eq!(
+            ColumnKind::Branch.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(15)
+        );
+        assert_eq!(
+            ColumnKind::Status.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(8)
+        );
+        assert_eq!(
+            ColumnKind::Path.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(20)
+        );
+        assert_eq!(
+            ColumnKind::Time.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(4)
+        );
+        assert_eq!(
+            ColumnKind::Commit.ideal(&widths, 20, 8).map(|i| i.width),
+            Some(8)
+        );
 
         // Message returns None (handled specially)
         assert!(ColumnKind::Message.ideal(&widths, 20, 8).is_none());

@@ -939,7 +939,8 @@ mod tests {
         assert!(msg.contains("main"));
 
         // Created worktree from remote (DWIM)
-        let msg = format_switch_success_message("feature", &path, false, None, Some("origin/feature"));
+        let msg =
+            format_switch_success_message("feature", &path, false, None, Some("origin/feature"));
         assert!(msg.contains("Created worktree for"));
         assert!(msg.contains("origin/feature"));
     }
@@ -972,12 +973,25 @@ mod tests {
             (IntegrationReason::MergeAddsNothing, "all changes in main"),
         ];
         for (reason, expected_contains) in cases {
-            let note = get_flag_note(false, &BranchDeletionOutcome::Integrated(reason), Some("main"));
-            assert!(note.contains(expected_contains), "reason {:?} should contain '{}'", reason, expected_contains);
+            let note = get_flag_note(
+                false,
+                &BranchDeletionOutcome::Integrated(reason),
+                Some("main"),
+            );
+            assert!(
+                note.contains(expected_contains),
+                "reason {:?} should contain '{}'",
+                reason,
+                expected_contains
+            );
         }
 
         // NoAddedChanges is special - no target shown
-        let note = get_flag_note(false, &BranchDeletionOutcome::Integrated(IntegrationReason::NoAddedChanges), Some("main"));
+        let note = get_flag_note(
+            false,
+            &BranchDeletionOutcome::Integrated(IntegrationReason::NoAddedChanges),
+            Some("main"),
+        );
         assert!(note.contains("no added changes"));
         assert!(!note.contains("main"));
     }
@@ -988,8 +1002,13 @@ mod tests {
 
         // Removed worktree and branch (integrated)
         let msg = format_remove_worktree_message(
-            &main_path, false, "feature", Some("feature"), false,
-            &BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit), Some("main"),
+            &main_path,
+            false,
+            "feature",
+            Some("feature"),
+            false,
+            &BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit),
+            Some("main"),
         );
         assert!(msg.contains("feature"));
         assert!(msg.contains("worktree & branch"));
@@ -997,8 +1016,13 @@ mod tests {
 
         // Removed worktree only (--no-delete-branch)
         let msg = format_remove_worktree_message(
-            &main_path, false, "feature", Some("feature"), true,
-            &BranchDeletionOutcome::NotDeleted, None,
+            &main_path,
+            false,
+            "feature",
+            Some("feature"),
+            true,
+            &BranchDeletionOutcome::NotDeleted,
+            None,
         );
         assert!(msg.contains("worktree"));
         assert!(!msg.contains("& branch"));
@@ -1006,16 +1030,26 @@ mod tests {
 
         // Removed with directory change
         let msg = format_remove_worktree_message(
-            &main_path, true, "feature", Some("feature"), false,
-            &BranchDeletionOutcome::ForceDeleted, None,
+            &main_path,
+            true,
+            "feature",
+            Some("feature"),
+            false,
+            &BranchDeletionOutcome::ForceDeleted,
+            None,
         );
         assert!(msg.contains("changed directory"));
         assert!(msg.contains("--force-delete"));
 
         // Unmerged branch retained
         let msg = format_remove_worktree_message(
-            &main_path, false, "feature", Some("feature"), false,
-            &BranchDeletionOutcome::NotDeleted, None,
+            &main_path,
+            false,
+            "feature",
+            Some("feature"),
+            false,
+            &BranchDeletionOutcome::NotDeleted,
+            None,
         );
         assert!(msg.contains("retaining unmerged branch"));
     }
@@ -1054,7 +1088,10 @@ mod tests {
         let outcomes = [
             (BranchDeletionOutcome::NotDeleted, false),
             (BranchDeletionOutcome::ForceDeleted, true),
-            (BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit), true),
+            (
+                BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit),
+                true,
+            ),
         ];
         for (outcome, expected_deleted) in outcomes {
             let deleted = matches!(
