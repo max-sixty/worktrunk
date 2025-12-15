@@ -1786,11 +1786,16 @@ exit 1
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
 
-            // On Windows, remove directories containing real gh.exe or glab.exe
-            // to ensure our mock .cmd files are found instead
+            // On Windows, modify PATHEXT to prefer .CMD over .EXE so our mock gh.cmd
+            // is found before any real gh.exe on the system. Windows searches ALL
+            // directories for .EXE before ANY directory for .CMD by default, so just
+            // reordering PATH isn't enough - we need to change the extension priority.
             #[cfg(windows)]
             {
-                paths.retain(|dir| !dir.join("gh.exe").exists() && !dir.join("glab.exe").exists());
+                cmd.env(
+                    "PATHEXT",
+                    ".CMD;.COM;.EXE;.BAT;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC",
+                );
             }
 
             paths.insert(0, mock_bin.clone());
