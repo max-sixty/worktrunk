@@ -100,7 +100,7 @@
 
 use crate::common::{ExponentialBackoff, TestRepo};
 use insta_cmd::get_cargo_bin;
-use portable_pty::{CommandBuilder, PtySize};
+use portable_pty::CommandBuilder;
 use std::io::Read;
 use std::time::{Duration, Instant};
 
@@ -331,22 +331,7 @@ pub fn capture_progressive_output(
 ) -> ProgressiveOutput {
     let start_time = Instant::now();
 
-    // Create PTY (handles signal blocking for background process groups)
-    // The guard restores the tty foreground pgrp on drop if it was changed
-    let pty_system = super::native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: options.terminal_size.0,
-            cols: options.terminal_size.1,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap_or_else(|_| {
-            panic!(
-                "Failed to open PTY with size {}x{}",
-                options.terminal_size.0, options.terminal_size.1
-            )
-        });
+    let pair = super::open_pty_with_size(options.terminal_size.0, options.terminal_size.1);
 
     // Build command
     let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));

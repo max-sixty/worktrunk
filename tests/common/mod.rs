@@ -420,6 +420,27 @@ pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
     portable_pty::native_pty_system()
 }
 
+/// Open a PTY pair with default size (48 rows x 200 cols).
+///
+/// Most PTY tests use this standard size. Returns the master/slave pair.
+#[cfg(unix)]
+pub fn open_pty() -> portable_pty::PtyPair {
+    open_pty_with_size(48, 200)
+}
+
+/// Open a PTY pair with specified size.
+#[cfg(unix)]
+pub fn open_pty_with_size(rows: u16, cols: u16) -> portable_pty::PtyPair {
+    native_pty_system()
+        .openpty(portable_pty::PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap()
+}
+
 use insta_cmd::get_cargo_bin;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

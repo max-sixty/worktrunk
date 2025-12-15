@@ -351,22 +351,11 @@ fn exec_in_pty_interactive(
     env_vars: &[(&str, &str)],
     inputs: &[&str],
 ) -> (String, i32) {
-    use portable_pty::{CommandBuilder, PtySize};
+    use portable_pty::CommandBuilder;
     use std::io::{Read, Write};
 
-    // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
-    // The guard restores the tty foreground pgrp on drop if it was changed
-    let pty_system = crate::common::native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: 48,
-            cols: 200,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
+    let pair = crate::common::open_pty();
 
-    // Spawn the shell inside the PTY
     let mut cmd = CommandBuilder::new(shell);
 
     // Clear inherited environment for test isolation
@@ -454,7 +443,7 @@ fn exec_bash_truly_interactive(
     working_dir: &std::path::Path,
     env_vars: &[(&str, &str)],
 ) -> (String, i32) {
-    use portable_pty::{CommandBuilder, PtySize};
+    use portable_pty::CommandBuilder;
     use std::io::{Read, Write};
     use std::thread;
     use std::time::Duration;
@@ -464,15 +453,7 @@ fn exec_bash_truly_interactive(
     let script_path = tmp_dir.path().join("setup.sh");
     fs::write(&script_path, setup_script).unwrap();
 
-    let pty_system = crate::common::native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: 48,
-            cols: 200,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
+    let pair = crate::common::open_pty();
 
     // Spawn bash in true interactive mode using env to pass flags
     // (portable_pty's CommandBuilder can have issues with flag parsing)
@@ -2462,7 +2443,7 @@ fi
     /// The shell integration hint is truncated from the output.
     #[rstest]
     fn test_readme_example_approval_prompt(repo: TestRepo) {
-        use portable_pty::{CommandBuilder, PtySize};
+        use portable_pty::CommandBuilder;
         use std::io::{Read, Write};
 
         // Create project config with named post-create commands
@@ -2475,17 +2456,7 @@ test = "echo 'Running tests...'"
         );
         repo.commit("Add config");
 
-        // Direct PTY execution (not through shell wrapper) for interactive prompt
-        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
-        let pty_system = crate::common::native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: 48,
-                cols: 200,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        let pair = crate::common::open_pty();
 
         let cargo_bin = get_cargo_bin("wt");
         let mut cmd = CommandBuilder::new(cargo_bin);
@@ -2578,7 +2549,7 @@ test = "echo 'Running tests...'"
     /// - Completion output being executed as commands (the COMPLETE mode bug)
     #[rstest]
     fn test_bash_completion_produces_correct_output(repo: TestRepo) {
-        use portable_pty::{CommandBuilder, PtySize};
+        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -2655,17 +2626,7 @@ fi
             wrapper_script = wrapper_script
         );
 
-        // Execute in PTY
-        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
-        let pty_system = crate::common::native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: 48,
-                cols: 200,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        let pair = crate::common::open_pty();
 
         let mut cmd = CommandBuilder::new("bash");
         cmd.env_clear();
@@ -2743,7 +2704,7 @@ fi
     /// wt command with COMPLETE=zsh produces completion candidates.
     #[rstest]
     fn test_zsh_completion_produces_correct_output(repo: TestRepo) {
-        use portable_pty::{CommandBuilder, PtySize};
+        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -2809,17 +2770,7 @@ fi
             wrapper_script = wrapper_script
         );
 
-        // Execute in PTY
-        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
-        let pty_system = crate::common::native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: 48,
-                cols: 200,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        let pair = crate::common::open_pty();
 
         let mut cmd = CommandBuilder::new("zsh");
         cmd.env_clear();
@@ -3015,7 +2966,7 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[case("fish")]
     fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        use portable_pty::{CommandBuilder, PtySize};
+        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -3095,17 +3046,7 @@ echo "SCRIPT_COMPLETED"
             ),
         };
 
-        // Execute in PTY
-        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
-        let pty_system = crate::common::native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: 48,
-                cols: 200,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        let pair = crate::common::open_pty();
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.env_clear();
@@ -3214,7 +3155,7 @@ echo "SCRIPT_COMPLETED"
     #[case("fish")]
     fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str, repo: TestRepo) {
         skip_if_shell_unavailable!(shell);
-        use portable_pty::{CommandBuilder, PtySize};
+        use portable_pty::CommandBuilder;
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -3310,17 +3251,7 @@ echo "SCRIPT_COMPLETED"
             ),
         };
 
-        // Execute in PTY (simulates interactive terminal)
-        // Ignore SIGTTIN/SIGTTOU to prevent stopping in background process groups
-        let pty_system = crate::common::native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: 48,
-                cols: 200,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
+        let pair = crate::common::open_pty();
 
         let mut cmd = CommandBuilder::new(shell);
         cmd.env_clear();

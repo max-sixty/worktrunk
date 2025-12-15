@@ -22,7 +22,7 @@
 use crate::common::{TestRepo, repo};
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
-use portable_pty::{CommandBuilder, PtySize};
+use portable_pty::CommandBuilder;
 use rstest::rstest;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -100,15 +100,7 @@ fn exec_in_pty_with_input_expectations(
     env_vars: &[(String, String)],
     inputs: &[(&str, Option<&str>)],
 ) -> (Vec<u8>, i32) {
-    let pty_system = crate::common::native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: TERM_ROWS,
-            cols: TERM_COLS,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .unwrap();
+    let pair = crate::common::open_pty_with_size(TERM_ROWS, TERM_COLS);
 
     let mut cmd = CommandBuilder::new(command);
     for arg in args {
