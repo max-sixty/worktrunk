@@ -985,3 +985,85 @@ pub fn handle_show_theme() -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uninstall_action_description() {
+        assert_eq!(UninstallAction::Removed.description(), "Removed");
+        assert_eq!(UninstallAction::WouldRemove.description(), "Will remove");
+    }
+
+    #[test]
+    fn test_uninstall_action_emoji() {
+        assert_eq!(UninstallAction::Removed.emoji(), SUCCESS_EMOJI);
+        assert_eq!(UninstallAction::WouldRemove.emoji(), PROGRESS_EMOJI);
+    }
+
+    #[test]
+    fn test_config_action_description() {
+        assert_eq!(ConfigAction::Added.description(), "Added");
+        assert_eq!(
+            ConfigAction::AlreadyExists.description(),
+            "Already configured"
+        );
+        assert_eq!(ConfigAction::Created.description(), "Created");
+        assert_eq!(ConfigAction::WouldAdd.description(), "Will add");
+        assert_eq!(ConfigAction::WouldCreate.description(), "Will create");
+    }
+
+    #[test]
+    fn test_config_action_emoji() {
+        assert_eq!(ConfigAction::Added.emoji(), SUCCESS_EMOJI);
+        assert_eq!(ConfigAction::Created.emoji(), SUCCESS_EMOJI);
+        assert_eq!(ConfigAction::AlreadyExists.emoji(), INFO_EMOJI);
+        assert_eq!(ConfigAction::WouldAdd.emoji(), PROGRESS_EMOJI);
+        assert_eq!(ConfigAction::WouldCreate.emoji(), PROGRESS_EMOJI);
+    }
+
+    #[test]
+    fn test_has_integration_pattern() {
+        assert!(has_integration_pattern("wt init bash"));
+        assert!(has_integration_pattern("WT INIT zsh")); // Case insensitive
+        assert!(has_integration_pattern("wt config shell init"));
+        assert!(!has_integration_pattern("echo hello"));
+        assert!(!has_integration_pattern("wt merge"));
+    }
+
+    #[test]
+    fn test_is_integration_line() {
+        // Valid integration lines
+        assert!(is_integration_line("eval \"$(wt init bash)\""));
+        assert!(is_integration_line("  eval \"$(wt init zsh)\"  "));
+        assert!(is_integration_line(
+            "if [ -n \"$BASH_VERSION\" ]; then eval \"$(wt init bash)\"; fi"
+        ));
+        assert!(is_integration_line("source <(wt init fish)"));
+
+        // Not integration lines (comments)
+        assert!(!is_integration_line("# eval \"$(wt init bash)\""));
+        assert!(!is_integration_line("  # wt init zsh"));
+
+        // Not integration lines (no eval/source/if)
+        assert!(!is_integration_line("wt init bash"));
+        assert!(!is_integration_line("echo wt init bash"));
+    }
+
+    #[test]
+    fn test_fish_completion_content() {
+        let content = fish_completion_content("wt");
+        assert!(content.contains("# worktrunk completions for fish"));
+        assert!(content.contains("--command wt"));
+        assert!(content.contains("COMPLETE=fish"));
+        assert!(content.contains("WORKTRUNK_BIN"));
+    }
+
+    #[test]
+    fn test_fish_completion_content_custom_cmd() {
+        let content = fish_completion_content("myapp");
+        assert!(content.contains("--command myapp"));
+        assert!(content.contains("type -P myapp"));
+    }
+}

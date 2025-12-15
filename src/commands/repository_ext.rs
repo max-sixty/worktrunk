@@ -517,4 +517,56 @@ mod tests {
         // Should include new.txt, old path is simply not added
         assert_eq!(result, vec!["new.txt"]);
     }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_untracked() {
+        let warning = AutoStageWarning::from_status("?? new.txt\0");
+        assert_eq!(warning.files, vec!["new.txt"]);
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_multiple_untracked() {
+        let warning = AutoStageWarning::from_status("?? file1.txt\0?? file2.txt\0?? file3.txt\0");
+        assert_eq!(warning.files, vec!["file1.txt", "file2.txt", "file3.txt"]);
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_ignores_modified() {
+        // Only untracked files should be collected
+        let warning = AutoStageWarning::from_status(" M modified.txt\0?? untracked.txt\0");
+        assert_eq!(warning.files, vec!["untracked.txt"]);
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_ignores_staged() {
+        let warning = AutoStageWarning::from_status("M  staged.txt\0?? untracked.txt\0");
+        assert_eq!(warning.files, vec!["untracked.txt"]);
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_empty() {
+        let warning = AutoStageWarning::from_status("");
+        assert!(warning.files.is_empty());
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_skips_rename_old_path() {
+        // Rename entries have old path as second NUL-separated field
+        let warning = AutoStageWarning::from_status("R  new.txt\0old.txt\0?? untracked.txt\0");
+        // Should only have untracked file, not the rename paths
+        assert_eq!(warning.files, vec!["untracked.txt"]);
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_with_spaces() {
+        let warning = AutoStageWarning::from_status("?? file with spaces.txt\0");
+        assert_eq!(warning.files, vec!["file with spaces.txt"]);
+    }
+
+    #[test]
+    fn test_auto_stage_warning_from_status_no_untracked() {
+        // All files are tracked (modified, staged, etc.)
+        let warning = AutoStageWarning::from_status(" M file1.txt\0M  file2.txt\0");
+        assert!(warning.files.is_empty());
+    }
 }

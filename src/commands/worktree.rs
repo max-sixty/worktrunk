@@ -971,3 +971,242 @@ pub fn handle_push(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_switch_result_path_already_at() {
+        let path = PathBuf::from("/test/path");
+        let result = SwitchResult::AlreadyAt(path.clone());
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_result_path_existing() {
+        let path = PathBuf::from("/test/existing");
+        let result = SwitchResult::Existing(path.clone());
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_result_path_created() {
+        let path = PathBuf::from("/test/created");
+        let result = SwitchResult::Created {
+            path: path.clone(),
+            created_branch: true,
+            base_branch: Some("main".to_string()),
+            from_remote: None,
+        };
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_result_created_with_remote() {
+        let path = PathBuf::from("/test/remote");
+        let result = SwitchResult::Created {
+            path: path.clone(),
+            created_branch: false,
+            base_branch: None,
+            from_remote: Some("origin/feature".to_string()),
+        };
+        assert_eq!(result.path(), &path);
+    }
+
+    #[test]
+    fn test_switch_branch_info_is_branch_mismatch_true() {
+        let info = SwitchBranchInfo {
+            expected: "feature".to_string(),
+            current: Some("main".to_string()),
+            expected_path: None,
+        };
+        assert!(info.is_branch_mismatch());
+    }
+
+    #[test]
+    fn test_switch_branch_info_is_branch_mismatch_false() {
+        let info = SwitchBranchInfo {
+            expected: "feature".to_string(),
+            current: Some("feature".to_string()),
+            expected_path: None,
+        };
+        assert!(!info.is_branch_mismatch());
+    }
+
+    #[test]
+    fn test_switch_branch_info_is_branch_mismatch_detached() {
+        let info = SwitchBranchInfo {
+            expected: "feature".to_string(),
+            current: None, // Detached HEAD
+            expected_path: None,
+        };
+        assert!(info.is_branch_mismatch());
+    }
+
+    #[test]
+    fn test_switch_branch_info_branch_with_current() {
+        let info = SwitchBranchInfo {
+            expected: "expected".to_string(),
+            current: Some("current".to_string()),
+            expected_path: None,
+        };
+        assert_eq!(info.branch(), "current");
+    }
+
+    #[test]
+    fn test_switch_branch_info_branch_without_current() {
+        let info = SwitchBranchInfo {
+            expected: "expected".to_string(),
+            current: None,
+            expected_path: None,
+        };
+        assert_eq!(info.branch(), "expected");
+    }
+
+    #[test]
+    fn test_switch_branch_info_with_expected_path() {
+        let info = SwitchBranchInfo {
+            expected: "feature".to_string(),
+            current: Some("feature".to_string()),
+            expected_path: Some(PathBuf::from("/expected/path")),
+        };
+        assert_eq!(
+            info.expected_path.as_ref().unwrap().to_str().unwrap(),
+            "/expected/path"
+        );
+    }
+
+    #[test]
+    fn test_merge_operations_struct() {
+        let ops = MergeOperations {
+            committed: true,
+            squashed: false,
+            rebased: true,
+        };
+        assert!(ops.committed);
+        assert!(!ops.squashed);
+        assert!(ops.rebased);
+    }
+
+    #[test]
+    fn test_merge_operations_clone() {
+        let ops = MergeOperations {
+            committed: true,
+            squashed: true,
+            rebased: false,
+        };
+        // MergeOperations implements both Clone and Copy
+        // Use Clone explicitly to test the Clone impl
+        let cloned = Clone::clone(&ops);
+        assert_eq!(ops.committed, cloned.committed);
+        assert_eq!(ops.squashed, cloned.squashed);
+        assert_eq!(ops.rebased, cloned.rebased);
+    }
+
+    #[test]
+    fn test_merge_operations_copy() {
+        let ops = MergeOperations {
+            committed: false,
+            squashed: false,
+            rebased: true,
+        };
+        let copied = ops; // Copy trait
+        assert_eq!(ops.committed, copied.committed);
+        assert_eq!(ops.squashed, copied.squashed);
+        assert_eq!(ops.rebased, copied.rebased);
+    }
+
+    #[test]
+    fn test_merge_operations_debug() {
+        let ops = MergeOperations {
+            committed: true,
+            squashed: false,
+            rebased: true,
+        };
+        let debug = format!("{:?}", ops);
+        assert!(debug.contains("committed: true"));
+        assert!(debug.contains("squashed: false"));
+        assert!(debug.contains("rebased: true"));
+    }
+
+    #[test]
+    fn test_remove_result_removed_worktree() {
+        let result = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/worktree"),
+            changed_directory: true,
+            branch_name: Some("feature".to_string()),
+            no_delete_branch: false,
+            force_delete: false,
+            target_branch: Some("main".to_string()),
+        };
+        match result {
+            RemoveResult::RemovedWorktree {
+                main_path,
+                worktree_path,
+                changed_directory,
+                branch_name,
+                no_delete_branch,
+                force_delete,
+                target_branch,
+            } => {
+                assert_eq!(main_path.to_str().unwrap(), "/main");
+                assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
+                assert!(changed_directory);
+                assert_eq!(branch_name.as_deref(), Some("feature"));
+                assert!(!no_delete_branch);
+                assert!(!force_delete);
+                assert_eq!(target_branch.as_deref(), Some("main"));
+            }
+            _ => panic!("Expected RemovedWorktree variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_branch_only() {
+        let result = RemoveResult::BranchOnly {
+            branch_name: "stale-branch".to_string(),
+            no_delete_branch: true,
+            force_delete: false,
+        };
+        match result {
+            RemoveResult::BranchOnly {
+                branch_name,
+                no_delete_branch,
+                force_delete,
+            } => {
+                assert_eq!(branch_name, "stale-branch");
+                assert!(no_delete_branch);
+                assert!(!force_delete);
+            }
+            _ => panic!("Expected BranchOnly variant"),
+        }
+    }
+
+    #[test]
+    fn test_remove_result_with_force_delete() {
+        let result = RemoveResult::RemovedWorktree {
+            main_path: PathBuf::from("/main"),
+            worktree_path: PathBuf::from("/worktree"),
+            changed_directory: false,
+            branch_name: None, // Detached HEAD
+            no_delete_branch: true,
+            force_delete: true,
+            target_branch: None,
+        };
+        match result {
+            RemoveResult::RemovedWorktree {
+                branch_name,
+                no_delete_branch,
+                force_delete,
+                ..
+            } => {
+                assert!(branch_name.is_none());
+                assert!(no_delete_branch);
+                assert!(force_delete);
+            }
+            _ => panic!("Expected RemovedWorktree variant"),
+        }
+    }
+}
