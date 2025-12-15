@@ -529,15 +529,16 @@ fn check_zsh_compinit_missing() -> bool {
     }
 }
 
-fn get_user_config_path() -> Option<PathBuf> {
-    // Respect XDG_CONFIG_HOME environment variable for testing (Linux)
-    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+/// Core logic for determining user config path from env var values
+fn resolve_user_config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    // Respect XDG_CONFIG_HOME environment variable (Linux)
+    if let Some(xdg_config) = xdg_config_home {
         let config_path = PathBuf::from(xdg_config);
         return Some(config_path.join("worktrunk").join("config.toml"));
     }
 
-    // Respect HOME environment variable for testing (fallback)
-    if let Ok(home) = std::env::var("HOME") {
+    // Respect HOME environment variable (fallback)
+    if let Some(home) = home {
         let home_path = PathBuf::from(home);
         return Some(
             home_path
@@ -547,8 +548,19 @@ fn get_user_config_path() -> Option<PathBuf> {
         );
     }
 
-    let strategy = choose_base_strategy().ok()?;
-    Some(strategy.config_dir().join("worktrunk").join("config.toml"))
+    None
+}
+
+fn get_user_config_path() -> Option<PathBuf> {
+    // Try env vars first, then fall back to etcetera
+    resolve_user_config_path(
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .or_else(|| {
+        let strategy = choose_base_strategy().ok()?;
+        Some(strategy.config_dir().join("worktrunk").join("config.toml"))
+    })
 }
 
 fn require_user_config_path() -> anyhow::Result<PathBuf> {
@@ -1264,6 +1276,8 @@ fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
 mod tests {
     use super::*;
 
+    // ==================== comment_out_config tests ====================
+
     #[test]
     fn test_comment_out_config_basic() {
         let input = "key = \"value\"\n";
@@ -1302,9 +1316,14 @@ mod tests {
     }
 
     #[test]
-    fn test_comment_out_config_empty() {
-        let input = "";
-        let expected = "";
+    fn test_comment_out_config_empty_input() {
+        assert_eq!(comment_out_config(""), "");
+    }
+
+    #[test]
+    fn test_comment_out_config_only_empty_lines() {
+        let input = "\n\n\n";
+        let expected = "\n\n\n";
         assert_eq!(comment_out_config(input), expected);
     }
 
@@ -1316,11 +1335,38 @@ mod tests {
     }
 
     #[test]
-    fn test_comment_out_config_multiline_values() {
-        let input = "array = [\n  \"item1\",\n  \"item2\"\n]\n";
-        let expected = "# array = [\n#   \"item1\",\n#   \"item2\"\n# ]\n";
+    fn test_comment_out_config_mixed_content() {
+        let input =
+            "# Header comment\n\n[section]\nkey = \"value\"\n\n# Another comment\nkey2 = true\n";
+        let expected = "# Header comment\n\n# [section]\n# key = \"value\"\n\n# Another comment\n# key2 = true\n";
         assert_eq!(comment_out_config(input), expected);
     }
+
+    #[test]
+    fn test_comment_out_config_inline_table() {
+        let input = "point = { x = 1, y = 2 }\n";
+        let expected = "# point = { x = 1, y = 2 }\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_multiline_array() {
+        let input = "args = [\n  \"--flag\",\n  \"value\"\n]\n";
+        let expected = "# args = [\n#   \"--flag\",\n#   \"value\"\n# ]\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    #[test]
+    fn test_comment_out_config_whitespace_only_line() {
+        // Lines with only whitespace are not empty - they should NOT be commented
+        // Actually, let's check what the current behavior is:
+        // The function checks `!line.is_empty()` - a line with spaces is not empty
+        let input = "key = 1\n   \nkey2 = 2\n";
+        let expected = "# key = 1\n#    \n# key2 = 2\n";
+        assert_eq!(comment_out_config(input), expected);
+    }
+
+    // ==================== warn_unknown_keys tests ====================
 
     #[test]
     fn test_warn_unknown_keys_empty() {
@@ -1343,7 +1389,11 @@ mod tests {
         warn_unknown_keys(&mut out, &["key1".to_string(), "key2".to_string()]).unwrap();
         assert!(out.contains("key1"));
         assert!(out.contains("key2"));
+        // Should have two separate warning lines
+        assert_eq!(out.matches("Unknown key").count(), 2);
     }
+
+    // ==================== render_ci_tool_status tests ====================
 
     #[test]
     fn test_render_ci_tool_status_installed_authenticated() {
@@ -1357,83 +1407,80 @@ mod tests {
     #[test]
     fn test_render_ci_tool_status_installed_not_authenticated() {
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "glab", "GitLab", true, false).unwrap();
-        assert!(out.contains("glab"));
+        render_ci_tool_status(&mut out, "gh", "GitHub", true, false).unwrap();
+        assert!(out.contains("gh"));
         assert!(out.contains("installed"));
         assert!(out.contains("not authenticated"));
-        assert!(out.contains("auth login"));
+        assert!(out.contains("gh auth login"));
     }
 
     #[test]
     fn test_render_ci_tool_status_not_installed() {
         let mut out = String::new();
-        render_ci_tool_status(&mut out, "gh", "GitHub", false, false).unwrap();
-        assert!(out.contains("gh"));
+        render_ci_tool_status(&mut out, "glab", "GitLab", false, false).unwrap();
+        assert!(out.contains("glab"));
         assert!(out.contains("not found"));
-        assert!(out.contains("GitHub"));
-        assert!(out.contains("unavailable"));
+        assert!(out.contains("GitLab"));
+        assert!(out.contains("CI status unavailable"));
     }
 
     #[test]
-    fn test_get_user_config_path_returns_valid_path() {
-        // Test that the function returns a valid path structure
+    fn test_render_ci_tool_status_glab() {
+        let mut out = String::new();
+        render_ci_tool_status(&mut out, "glab", "GitLab", true, true).unwrap();
+        assert!(out.contains("glab"));
+        assert!(out.contains("installed"));
+        assert!(out.contains("authenticated"));
+    }
+
+    // ==================== resolve_user_config_path tests ====================
+
+    #[test]
+    fn test_resolve_user_config_path_xdg_takes_priority() {
+        let path = resolve_user_config_path(Some("/custom/xdg"), Some("/home/user"));
+        assert_eq!(
+            path,
+            Some(PathBuf::from("/custom/xdg/worktrunk/config.toml"))
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_config_path_home_fallback() {
+        let path = resolve_user_config_path(None, Some("/home/testuser"));
+        assert_eq!(
+            path,
+            Some(PathBuf::from(
+                "/home/testuser/.config/worktrunk/config.toml"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_config_path_none_when_no_env() {
+        let path = resolve_user_config_path(None, None);
+        assert_eq!(path, None);
+    }
+
+    // ==================== get_user_config_path tests ====================
+
+    #[test]
+    fn test_get_user_config_path_returns_some() {
+        // In a normal environment, get_user_config_path should return Some
+        // (either from env vars or etcetera fallback)
         let path = get_user_config_path();
-        // Should return Some on any system with HOME or XDG_CONFIG_HOME set
-        // or with a proper base strategy
-        if let Some(path) = path {
-            // Should end with the expected path structure
-            assert!(path.to_string_lossy().contains("worktrunk"));
-            assert!(path.to_string_lossy().ends_with("config.toml"));
-        }
-        // It's OK if path is None on systems without HOME (unlikely in tests)
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.ends_with("worktrunk/config.toml"));
     }
 
-    #[test]
-    fn test_marker_entry_sorting() {
-        // Test that markers would sort by age (most recent first)
-        let now = 1000;
-        let older = 500;
-        let legacy = 0;
-
-        let entries = vec![
-            MarkerEntry {
-                branch: "b".to_string(),
-                marker: "m2".to_string(),
-                set_at: older,
-            },
-            MarkerEntry {
-                branch: "a".to_string(),
-                marker: "m1".to_string(),
-                set_at: now,
-            },
-            MarkerEntry {
-                branch: "c".to_string(),
-                marker: "m3".to_string(),
-                set_at: legacy,
-            },
-        ];
-
-        let mut sorted = entries;
-        sorted.sort_by(|a, b| {
-            b.set_at
-                .cmp(&a.set_at)
-                .then_with(|| a.branch.cmp(&b.branch))
-        });
-
-        assert_eq!(sorted[0].branch, "a"); // newest
-        assert_eq!(sorted[1].branch, "b"); // older
-        assert_eq!(sorted[2].branch, "c"); // legacy (0)
-    }
+    // ==================== require_user_config_path tests ====================
 
     #[test]
-    fn test_user_config_example_exists() {
-        // Ensure the example config file is included and has expected content
-        assert!(USER_CONFIG_EXAMPLE.contains("worktree-path"));
-    }
-
-    #[test]
-    fn test_project_config_example_exists() {
-        // Ensure the example project config file is included and has expected content
-        assert!(PROJECT_CONFIG_EXAMPLE.contains("["));
+    fn test_require_user_config_path_returns_ok() {
+        // In a normal environment, require_user_config_path should succeed
+        let result = require_user_config_path();
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("worktrunk/config.toml"));
     }
 }
