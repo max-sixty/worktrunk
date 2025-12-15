@@ -707,3 +707,36 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     assert_eq!(ci_status[0]["checked_at"], TEST_EPOCH);
     assert_eq!(ci_status[0]["head"], "abc12345def67890");
 }
+
+#[rstest]
+fn test_state_get_json_with_logs(repo: TestRepo) {
+    // Create log files
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("feature-post-start-npm.log"), "npm output").unwrap();
+    std::fs::write(log_dir.join("bugfix-remove.log"), "remove log output").unwrap();
+
+    let output = wt_state_get_json_cmd(&repo).output().unwrap();
+    assert!(output.status.success());
+    // JSON output goes to stdout
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+    // Check logs - they should be present and have expected fields
+    let logs = json["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 2);
+
+    // Logs are sorted by modified time (newest first), but in test both are same time
+    // Just check that both log files are present with expected fields
+    let log_files: Vec<&str> = logs.iter().map(|l| l["file"].as_str().unwrap()).collect();
+    assert!(log_files.contains(&"feature-post-start-npm.log"));
+    assert!(log_files.contains(&"bugfix-remove.log"));
+
+    // Each log entry should have file, size, and modified_at
+    for log in logs {
+        assert!(log.get("file").is_some());
+        assert!(log.get("size").is_some());
+        assert!(log.get("modified_at").is_some());
+    }
+}

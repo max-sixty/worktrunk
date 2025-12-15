@@ -1,4 +1,7 @@
-use crate::common::{set_temp_home_env, setup_home_snapshot_settings, temp_home, wt_command};
+use crate::common::{
+    TestRepo, make_snapshot_cmd, repo, set_temp_home_env, setup_home_snapshot_settings,
+    setup_snapshot_settings, temp_home, wt_command,
+};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -64,4 +67,43 @@ fn test_config_init_creates_file(temp_home: TempDir) {
     // Verify file was actually created
     let config_path = global_config_dir.join("config.toml");
     assert!(config_path.exists(), "Config file should be created");
+}
+
+/// Test `wt config create --project` creates project config
+#[rstest]
+fn test_config_create_project(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
+
+        assert_cmd_snapshot!("config_create_project", cmd);
+    });
+
+    // Verify file was created
+    let config_path = repo.root_path().join(".config/wt.toml");
+    assert!(
+        config_path.exists(),
+        "Project config file should be created"
+    );
+}
+
+/// Test `wt config create --project` when project config already exists
+#[rstest]
+fn test_config_create_project_already_exists(repo: TestRepo) {
+    // Create existing project config
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        r#"pre-merge = "cargo test"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
+
+        assert_cmd_snapshot!("config_create_project_exists", cmd);
+    });
 }
