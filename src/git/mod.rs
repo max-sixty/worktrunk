@@ -802,7 +802,10 @@ mod tests {
 
     #[test]
     fn test_integration_reason_description() {
-        assert_eq!(IntegrationReason::SameCommit.description(), "same commit as");
+        assert_eq!(
+            IntegrationReason::SameCommit.description(),
+            "same commit as"
+        );
         assert_eq!(IntegrationReason::Ancestor.description(), "ancestor of");
         assert_eq!(
             IntegrationReason::NoAddedChanges.description(),
