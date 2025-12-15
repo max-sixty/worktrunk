@@ -563,4 +563,121 @@ mod tests {
             assert!(!output.is_empty(), "Empty output for {:?}", shell);
         }
     }
+
+    #[test]
+    fn test_shell_config_paths_returns_paths() {
+        // All shells should return at least one config path
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+        for shell in shells {
+            let result = shell.config_paths();
+            assert!(result.is_ok(), "Failed to get config paths for {:?}", shell);
+            let paths = result.unwrap();
+            assert!(
+                !paths.is_empty(),
+                "No config paths returned for {:?}",
+                shell
+            );
+        }
+    }
+
+    #[test]
+    fn test_shell_completion_path_returns_path() {
+        // All shells should return a completion path
+        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
+        for shell in shells {
+            let result = shell.completion_path();
+            assert!(
+                result.is_ok(),
+                "Failed to get completion path for {:?}",
+                shell
+            );
+            let path = result.unwrap();
+            assert!(
+                !path.as_os_str().is_empty(),
+                "Empty completion path for {:?}",
+                shell
+            );
+        }
+    }
+
+    #[test]
+    fn test_shell_config_paths_with_custom_prefix() {
+        // Test that custom prefix affects the paths where appropriate
+        let prefix = "custom-wt";
+
+        // Fish config path should include prefix in filename
+        let fish_paths = Shell::Fish.config_paths_with_prefix(prefix).unwrap();
+        assert!(
+            fish_paths[0].to_string_lossy().contains("custom-wt.fish"),
+            "Fish config should include prefix in filename"
+        );
+
+        // Bash and Zsh config paths are fixed (not affected by prefix)
+        let bash_paths = Shell::Bash.config_paths_with_prefix(prefix).unwrap();
+        assert!(
+            bash_paths[0].to_string_lossy().contains(".bashrc"),
+            "Bash config should be .bashrc"
+        );
+
+        let zsh_paths = Shell::Zsh.config_paths_with_prefix(prefix).unwrap();
+        assert!(
+            zsh_paths[0].to_string_lossy().contains(".zshrc"),
+            "Zsh config should be .zshrc"
+        );
+    }
+
+    #[test]
+    fn test_shell_completion_path_with_custom_prefix() {
+        let prefix = "my-prefix";
+
+        // Bash completion should include prefix in path
+        let bash_path = Shell::Bash.completion_path_with_prefix(prefix).unwrap();
+        assert!(
+            bash_path.to_string_lossy().contains("my-prefix"),
+            "Bash completion should include prefix"
+        );
+
+        // Fish completion should include prefix in filename
+        let fish_path = Shell::Fish.completion_path_with_prefix(prefix).unwrap();
+        assert!(
+            fish_path.to_string_lossy().contains("my-prefix.fish"),
+            "Fish completion should include prefix in filename"
+        );
+
+        // Zsh completion should include prefix
+        let zsh_path = Shell::Zsh.completion_path_with_prefix(prefix).unwrap();
+        assert!(
+            zsh_path.to_string_lossy().contains("_my-prefix"),
+            "Zsh completion should include underscore prefix"
+        );
+    }
+
+    #[test]
+    fn test_config_line_prefix_arg_handling() {
+        // Default prefix should not include --cmd
+        let bash_default = Shell::Bash.config_line_with_prefix("wt");
+        assert!(
+            !bash_default.contains("--cmd"),
+            "Default prefix should not include --cmd"
+        );
+
+        // Custom prefix should include --cmd
+        let bash_custom = Shell::Bash.config_line_with_prefix("custom");
+        assert!(
+            bash_custom.contains("--cmd=custom"),
+            "Custom prefix should include --cmd=custom"
+        );
+    }
+
+    #[test]
+    fn test_shell_init_with_custom_prefix() {
+        let init = ShellInit::with_prefix(Shell::Bash, "custom".to_string());
+        let result = init.generate();
+        assert!(result.is_ok(), "Should generate with custom prefix");
+        let output = result.unwrap();
+        assert!(
+            output.contains("custom"),
+            "Output should contain custom prefix"
+        );
+    }
 }

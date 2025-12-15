@@ -243,4 +243,150 @@ mod tests {
         assert_eq!(visible_width(&out), 1);
         assert!(out.ends_with("\u{1b}[0m"));
     }
+
+    #[test]
+    fn test_truncate_visible_zero_width() {
+        let text = "hello world";
+        let out = truncate_visible(text, 0, "…");
+        assert!(out.is_empty(), "Zero width should return empty string");
+    }
+
+    #[test]
+    fn test_truncate_visible_no_truncation_needed() {
+        let text = "short";
+        let out = truncate_visible(text, 100, "…");
+        assert_eq!(out, text, "No truncation should return original string");
+    }
+
+    #[test]
+    fn test_truncate_visible_zero_budget() {
+        // When max_width equals ellipsis width, budget becomes 0
+        let text = "hello";
+        let out = truncate_visible(text, 1, "…");
+        assert!(
+            visible_width(&out) <= 1,
+            "Output should be within max_width"
+        );
+    }
+
+    #[test]
+    fn test_styled_string_raw() {
+        let s = StyledString::raw("test");
+        assert_eq!(s.text, "test");
+        assert!(s.style.is_none());
+    }
+
+    #[test]
+    fn test_styled_string_styled() {
+        let style = Style::new().bold();
+        let s = StyledString::styled("test", style);
+        assert_eq!(s.text, "test");
+        assert!(s.style.is_some());
+    }
+
+    #[test]
+    fn test_styled_string_render_raw() {
+        let s = StyledString::raw("test");
+        assert_eq!(s.render(), "test");
+    }
+
+    #[test]
+    fn test_styled_string_render_styled() {
+        let style = Style::new().bold();
+        let s = StyledString::styled("test", style);
+        let rendered = s.render();
+        assert!(rendered.contains("test"));
+        // Should have escape codes for bold
+        assert!(rendered.starts_with("\u{1b}["));
+    }
+
+    #[test]
+    fn test_styled_line_push_methods() {
+        let mut line = StyledLine::new();
+        line.push_raw("hello");
+        line.push_styled(" world", Style::new().bold());
+        line.push(StyledString::raw("!"));
+
+        assert_eq!(line.segments.len(), 3);
+        assert_eq!(line.width(), 12); // "hello world!" = 12
+    }
+
+    #[test]
+    fn test_styled_line_extend() {
+        let mut line1 = StyledLine::new();
+        line1.push_raw("hello");
+
+        let mut line2 = StyledLine::new();
+        line2.push_raw(" world");
+
+        line1.extend(line2);
+        assert_eq!(line1.segments.len(), 2);
+        assert_eq!(line1.plain_text(), "hello world");
+    }
+
+    #[test]
+    fn test_styled_line_pad_to() {
+        let mut line = StyledLine::new();
+        line.push_raw("hi");
+        assert_eq!(line.width(), 2);
+
+        line.pad_to(5);
+        assert_eq!(line.width(), 5);
+        assert!(line.plain_text().ends_with("   ")); // 3 spaces added
+    }
+
+    #[test]
+    fn test_styled_line_pad_to_no_padding_needed() {
+        let mut line = StyledLine::new();
+        line.push_raw("hello");
+        let original_width = line.width();
+
+        line.pad_to(3); // Target is less than current width
+        assert_eq!(line.width(), original_width); // Should not change
+    }
+
+    #[test]
+    fn test_styled_line_render() {
+        let mut line = StyledLine::new();
+        line.push_raw("a");
+        line.push_styled("b", Style::new().bold());
+        line.push_raw("c");
+
+        let rendered = line.render();
+        assert!(rendered.contains("a"));
+        assert!(rendered.contains("b"));
+        assert!(rendered.contains("c"));
+    }
+
+    #[test]
+    fn test_styled_line_plain_text() {
+        let mut line = StyledLine::new();
+        line.push_raw("hello");
+        line.push_styled(" world", Style::new().bold());
+
+        assert_eq!(line.plain_text(), "hello world");
+    }
+
+    #[test]
+    fn test_styled_line_truncate_to_width_no_truncation() {
+        let mut line = StyledLine::new();
+        line.push_raw("hello");
+        let truncated = line.clone().truncate_to_width(100);
+        assert_eq!(truncated.plain_text(), "hello");
+    }
+
+    #[test]
+    fn test_styled_line_truncate_to_width_truncates() {
+        let mut line = StyledLine::new();
+        line.push_raw("hello world this is a long message");
+        let truncated = line.truncate_to_width(10);
+        assert!(truncated.width() <= 10);
+    }
+
+    #[test]
+    fn test_styled_line_default() {
+        let line = StyledLine::default();
+        assert!(line.segments.is_empty());
+        assert_eq!(line.width(), 0);
+    }
 }
