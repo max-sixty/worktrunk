@@ -29,7 +29,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[0m❌ [31mCannot create worktree for [1mfeature[22m at [1m[REPO].feature[22m: existing worktree, detached[39m
+[0m❌ [31mCannot create worktree for [1mfeature[22m: existing worktree at [1m[REPO].feature[22m, detached[39m
 
 💡 [2mSwitch the worktree at [90m[REPO].feature[39m to [90mfeature[39m[22m
 [107m [0m  cd [REPO].feature && git switch feature
