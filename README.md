@@ -14,7 +14,7 @@
 
 > **December 2025**: I've been using Worktrunk as my daily driver, and am releasing it as Open Source this week; I think folks will find it really helpful. It's built with love (there's no slop!). If social proof is helpful: I also created [PRQL](https://github.com/PRQL/prql) (10k stars) and am a maintainer of [Xarray](https://github.com/pydata/xarray) (4k stars), [Insta](https://github.com/mitsuhiko/insta), & [Numbagg](https://github.com/numbagg/numbagg).
 
-Worktrunk is a CLI for git worktree management, designed for parallel AI agent workflows. Git worktrees give each agent an isolated branch and directory; Worktrunk wraps them in a clean interface, plus hooks to extend. Scaling agents becomes as simple as scaling git branches.
+Worktrunk is a CLI for git worktree management, designed for parallel AI agent workflows. Git worktrees give each agent an isolated branch and directory; Worktrunk wraps them in a clean interface, plus extension points. Scaling agents becomes as simple as scaling git branches.
 
 Here's a quick demo:
 

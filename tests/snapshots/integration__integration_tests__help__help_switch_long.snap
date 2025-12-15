@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    GIT_FETCH_ARGS: ""
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -87,7 +88,7 @@ When the target branch has no worktree, worktrunk:
 3. Switches to new directory
 4. Spawns post-start hooks (background)
 
-The [2m--create[0m flag creates a new branch from [2m--base[0m (defaults to default branch). Without [2m--create[0m, the branch must already exist.
+The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
 
   [2mwt switch feature                        # Existing branch → creates worktree
   [2mwt switch --create feature               # New branch and worktree

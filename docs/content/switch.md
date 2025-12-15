@@ -30,7 +30,7 @@ When the target branch has no worktree, worktrunk:
 3. Switches to new directory
 4. Spawns [post-start hooks](@/hook.md#post-start) (background)
 
-The `--create` flag creates a new branch from `--base` (defaults to default branch). Without `--create`, the branch must already exist.
+The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
