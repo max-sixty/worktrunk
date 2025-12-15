@@ -258,10 +258,8 @@ fn test_state_clear_ci_status_branch_not_cached(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_marker(repo: TestRepo) {
-    // Set a marker first
-    repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
-        .status()
-        .unwrap();
+    // Set a marker first (using JSON format)
+    repo.set_marker("main", "🚧");
 
     let output = wt_state_cmd(&repo, "marker", "get", &[]).output().unwrap();
     assert!(output.status.success());
@@ -281,10 +279,8 @@ fn test_state_get_marker_empty(repo: TestRepo) {
 fn test_state_get_marker_specific_branch(repo: TestRepo) {
     repo.git_command(&["branch", "feature"]).status().unwrap();
 
-    // Set a marker for feature branch
-    repo.git_command(&["config", "worktrunk.marker.feature", "🔧"])
-        .status()
-        .unwrap();
+    // Set a marker for feature branch (using JSON format)
+    repo.set_marker("feature", "🔧");
 
     let output = wt_state_cmd(&repo, "marker", "get", &["--branch", "feature"])
         .output()
@@ -326,10 +322,8 @@ fn test_state_set_marker_branch_specific(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_marker_branch_default(repo: TestRepo) {
-    // Set a marker first
-    repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
-        .status()
-        .unwrap();
+    // Set a marker first (using JSON format)
+    repo.set_marker("main", "🚧");
 
     let output = wt_state_cmd(&repo, "marker", "clear", &[])
         .output()
@@ -347,10 +341,8 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_marker_branch_specific(repo: TestRepo) {
-    // Set a marker first
-    repo.git_command(&["config", "worktrunk.marker.feature", "🔧"])
-        .status()
-        .unwrap();
+    // Set a marker first (using JSON format)
+    repo.set_marker("feature", "🔧");
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
         .output()
@@ -368,16 +360,10 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
 
 #[rstest]
 fn test_state_clear_marker_all(repo: TestRepo) {
-    // Set multiple markers
-    repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
-        .status()
-        .unwrap();
-    repo.git_command(&["config", "worktrunk.marker.feature", "🔧"])
-        .status()
-        .unwrap();
-    repo.git_command(&["config", "worktrunk.marker.bugfix", "🐛"])
-        .status()
-        .unwrap();
+    // Set multiple markers (using JSON format)
+    repo.set_marker("main", "🚧");
+    repo.set_marker("feature", "🔧");
+    repo.set_marker("bugfix", "🐛");
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--all"])
         .output()
@@ -502,10 +488,8 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
         .status()
         .unwrap();
 
-    // Marker
-    repo.git_command(&["config", "worktrunk.marker.main", "🚧"])
-        .status()
-        .unwrap();
+    // Marker (using JSON format)
+    repo.set_marker("main", "🚧");
 
     // CI cache
     repo.git_command(&[

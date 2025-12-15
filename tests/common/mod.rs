@@ -1553,10 +1553,12 @@ exit /b 1
     ///
     /// This handles the branch name escaping required for git config keys,
     /// which only allow alphanumeric, `-`, and `.` characters.
+    /// Markers are stored as JSON with a timestamp.
     pub fn set_marker(&self, branch: &str, marker: &str) {
         let escaped = worktrunk::git::escape_branch_for_config(branch);
         let config_key = format!("worktrunk.marker.{}", escaped);
-        self.git_command(&["config", &config_key, marker])
+        let json_value = format!(r#"{{"marker":"{}","set_at":{}}}"#, marker, TEST_EPOCH);
+        self.git_command(&["config", &config_key, &json_value])
             .output()
             .unwrap();
     }
