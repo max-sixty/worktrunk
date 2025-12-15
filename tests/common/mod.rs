@@ -1661,6 +1661,14 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         "[REPO]$1",
     );
 
+    // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
+    // (metadata is handled via redactions below)
+    // IMPORTANT: These specific filters must come BEFORE the generic [PROJECT_ID] filters
+    settings.add_filter(r".*/\.tmp[^/]+/test-config\.toml", "[TEST_CONFIG]");
+
+    // Normalize GIT_CONFIG_GLOBAL temp paths
+    settings.add_filter(r".*/\.tmp[^/]+/test-gitconfig", "[TEST_GIT_CONFIG]");
+
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
     // Note: [^)'\s]+ stops at ), ', or whitespace to avoid matching too much
@@ -1670,13 +1678,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     );
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
     settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s]+", "[PROJECT_ID]");
-
-    // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
-    // (metadata is handled via redactions below)
-    settings.add_filter(r".*/\.tmp[^/]+/test-config\.toml", "[TEST_CONFIG]");
-
-    // Normalize GIT_CONFIG_GLOBAL temp paths
-    settings.add_filter(r".*/\.tmp[^/]+/test-gitconfig", "[TEST_GIT_CONFIG]");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
