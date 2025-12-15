@@ -745,3 +745,247 @@ pub fn find_unknown_keys(contents: &str) -> Vec<String> {
 
     config.unknown.into_keys().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_unknown_keys_empty() {
+        // Valid config with no unknown keys
+        let content = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+        let keys = find_unknown_keys(content);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_find_unknown_keys_with_unknown() {
+        // Config with unknown top-level keys
+        let content = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+unknown-key = "value"
+another-unknown = 42
+"#;
+        let keys = find_unknown_keys(content);
+        assert!(keys.contains(&"unknown-key".to_string()));
+        assert!(keys.contains(&"another-unknown".to_string()));
+    }
+
+    #[test]
+    fn test_find_unknown_keys_invalid_toml() {
+        // Invalid TOML should return empty
+        let content = "this is not valid toml {{{";
+        let keys = find_unknown_keys(content);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_find_unknown_keys_known_sections() {
+        // All known sections should not be reported
+        let content = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[commit-generation]
+command = "llm"
+
+[list]
+full = true
+
+[commit]
+stage = "all"
+
+[merge]
+squash = true
+
+[post-create]
+run = "npm install"
+
+[post-start]
+run = "npm run build"
+"#;
+        let keys = find_unknown_keys(content);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_commit_generation_config_is_configured_empty() {
+        let config = CommitGenerationConfig::default();
+        assert!(!config.is_configured());
+    }
+
+    #[test]
+    fn test_commit_generation_config_is_configured_with_command() {
+        let config = CommitGenerationConfig {
+            command: Some("llm".to_string()),
+            ..Default::default()
+        };
+        assert!(config.is_configured());
+    }
+
+    #[test]
+    fn test_commit_generation_config_is_configured_with_whitespace_only() {
+        let config = CommitGenerationConfig {
+            command: Some("   ".to_string()),
+            ..Default::default()
+        };
+        assert!(!config.is_configured());
+    }
+
+    #[test]
+    fn test_commit_generation_config_is_configured_with_empty_string() {
+        let config = CommitGenerationConfig {
+            command: Some("".to_string()),
+            ..Default::default()
+        };
+        assert!(!config.is_configured());
+    }
+
+    #[test]
+    fn test_stage_mode_default() {
+        assert_eq!(StageMode::default(), StageMode::All);
+    }
+
+    #[test]
+    fn test_stage_mode_serde() {
+        // Test serialization
+        let all_json = serde_json::to_string(&StageMode::All).unwrap();
+        assert_eq!(all_json, "\"all\"");
+
+        let tracked_json = serde_json::to_string(&StageMode::Tracked).unwrap();
+        assert_eq!(tracked_json, "\"tracked\"");
+
+        let none_json = serde_json::to_string(&StageMode::None).unwrap();
+        assert_eq!(none_json, "\"none\"");
+
+        // Test deserialization
+        let all: StageMode = serde_json::from_str("\"all\"").unwrap();
+        assert_eq!(all, StageMode::All);
+
+        let tracked: StageMode = serde_json::from_str("\"tracked\"").unwrap();
+        assert_eq!(tracked, StageMode::Tracked);
+
+        let none: StageMode = serde_json::from_str("\"none\"").unwrap();
+        assert_eq!(none, StageMode::None);
+    }
+
+    #[test]
+    fn test_user_project_config_default() {
+        let config = UserProjectConfig::default();
+        assert!(config.approved_commands.is_empty());
+    }
+
+    #[test]
+    fn test_list_config_serde() {
+        let config = ListConfig {
+            full: Some(true),
+            branches: Some(false),
+            remotes: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: ListConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.full, Some(true));
+        assert_eq!(parsed.branches, Some(false));
+        assert_eq!(parsed.remotes, None);
+    }
+
+    #[test]
+    fn test_commit_config_default() {
+        let config = CommitConfig::default();
+        assert!(config.stage.is_none());
+    }
+
+    #[test]
+    fn test_worktrunk_config_default() {
+        let config = WorktrunkConfig::default();
+        assert_eq!(config.worktree_path, "../{{ main_worktree }}.{{ branch }}");
+        assert!(config.projects.is_empty());
+        assert!(config.list.is_none());
+        assert!(config.commit.is_none());
+        assert!(config.merge.is_none());
+        assert!(!config.commit_generation.is_configured());
+    }
+
+    #[test]
+    fn test_worktrunk_config_is_command_approved_empty() {
+        let config = WorktrunkConfig::default();
+        assert!(!config.is_command_approved("some/project", "npm install"));
+    }
+
+    #[test]
+    fn test_worktrunk_config_is_command_approved_with_commands() {
+        let mut config = WorktrunkConfig::default();
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                approved_commands: vec!["npm install".to_string(), "npm test".to_string()],
+            },
+        );
+        assert!(config.is_command_approved("github.com/user/repo", "npm install"));
+        assert!(config.is_command_approved("github.com/user/repo", "npm test"));
+        assert!(!config.is_command_approved("github.com/user/repo", "rm -rf /"));
+        assert!(!config.is_command_approved("other/project", "npm install"));
+    }
+
+    #[test]
+    fn test_worktrunk_config_format_path() {
+        let config = WorktrunkConfig::default();
+        let path = config.format_path("myrepo", "feature/branch").unwrap();
+        assert_eq!(path, "../myrepo.feature-branch");
+    }
+
+    #[test]
+    fn test_worktrunk_config_format_path_custom_template() {
+        let config = WorktrunkConfig {
+            worktree_path: ".worktrees/{{ branch }}".to_string(),
+            ..Default::default()
+        };
+        let path = config.format_path("myrepo", "feature").unwrap();
+        assert_eq!(path, ".worktrees/feature");
+    }
+
+    #[test]
+    fn test_deserialize_string_or_vec_from_string() {
+        #[derive(serde::Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "deserialize_string_or_vec")]
+            args: Vec<String>,
+        }
+
+        let json = r#"{"args": "single"}"#;
+        let parsed: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.args, vec!["single".to_string()]);
+    }
+
+    #[test]
+    fn test_deserialize_string_or_vec_from_array() {
+        #[derive(serde::Deserialize)]
+        struct Test {
+            #[serde(deserialize_with = "deserialize_string_or_vec")]
+            args: Vec<String>,
+        }
+
+        let json = r#"{"args": ["one", "two", "three"]}"#;
+        let parsed: Test = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            parsed.args,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_merge_config_serde() {
+        let config = MergeConfig {
+            squash: Some(true),
+            commit: Some(true),
+            rebase: Some(false),
+            remove: Some(true),
+            verify: Some(true),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.squash, Some(true));
+        assert_eq!(parsed.rebase, Some(false));
+    }
+}
