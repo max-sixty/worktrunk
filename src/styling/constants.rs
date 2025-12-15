@@ -150,3 +150,134 @@ pub fn format_heading(title: &str, suffix: Option<&str>) -> String {
         None => cformat!("<cyan>{}</>", title),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================================
+    // Style Constants Tests
+    // ============================================================================
+
+    #[test]
+    fn test_addition_style() {
+        // ADDITION should be green foreground
+        let rendered = ADDITION.render().to_string();
+        // Green is ANSI 32
+        assert!(rendered.contains("32"));
+    }
+
+    #[test]
+    fn test_deletion_style() {
+        // DELETION should be red foreground
+        let rendered = DELETION.render().to_string();
+        // Red is ANSI 31
+        assert!(rendered.contains("31"));
+    }
+
+    #[test]
+    fn test_gutter_style() {
+        // GUTTER should have bright white background
+        let rendered = GUTTER.render().to_string();
+        // BrightWhite background is ANSI 107
+        assert!(rendered.contains("107"));
+    }
+
+    // ============================================================================
+    // Emoji Constants Tests
+    // ============================================================================
+
+    #[test]
+    fn test_emoji_constants() {
+        assert_eq!(PROGRESS_EMOJI, "🔄");
+        assert_eq!(SUCCESS_EMOJI, "✅");
+        assert_eq!(ERROR_EMOJI, "❌");
+        assert_eq!(WARNING_EMOJI, "🟡");
+        assert_eq!(HINT_EMOJI, "💡");
+        assert_eq!(INFO_EMOJI, "⚪");
+        assert_eq!(PROMPT_EMOJI, "❓");
+    }
+
+    // ============================================================================
+    // Message Formatting Functions Tests
+    // ============================================================================
+
+    #[test]
+    fn test_error_message() {
+        let msg = error_message("Something went wrong");
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("Something went wrong"));
+    }
+
+    #[test]
+    fn test_error_message_with_inner_styling() {
+        let name = "feature";
+        let msg = error_message(cformat!("Branch <bold>{name}</> not found"));
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("Branch"));
+        assert!(msg.contains("feature"));
+    }
+
+    #[test]
+    fn test_hint_message() {
+        let msg = hint_message("Try running --help");
+        assert!(msg.contains("💡"));
+        assert!(msg.contains("Try running --help"));
+    }
+
+    #[test]
+    fn test_warning_message() {
+        let msg = warning_message("Deprecated option");
+        assert!(msg.contains("🟡"));
+        assert!(msg.contains("Deprecated option"));
+    }
+
+    #[test]
+    fn test_success_message() {
+        let msg = success_message("Operation completed");
+        assert!(msg.contains("✅"));
+        assert!(msg.contains("Operation completed"));
+    }
+
+    #[test]
+    fn test_progress_message() {
+        let msg = progress_message("Loading data...");
+        assert!(msg.contains("🔄"));
+        assert!(msg.contains("Loading data..."));
+    }
+
+    #[test]
+    fn test_info_message() {
+        let msg = info_message("5 items found");
+        assert!(msg.contains("⚪"));
+        assert!(msg.contains("5 items found"));
+    }
+
+    // ============================================================================
+    // format_heading Tests
+    // ============================================================================
+
+    #[test]
+    fn test_format_heading_without_suffix() {
+        let heading = format_heading("BINARIES", None);
+        assert!(heading.contains("BINARIES"));
+        // Should NOT contain extra spacing for suffix
+        assert!(!heading.ends_with("  "));
+    }
+
+    #[test]
+    fn test_format_heading_with_suffix() {
+        let heading = format_heading("USER CONFIG", Some("~/.config/wt.toml"));
+        assert!(heading.contains("USER CONFIG"));
+        assert!(heading.contains("~/.config/wt.toml"));
+        // Should have double-space separator
+        assert!(heading.contains("  "));
+    }
+
+    #[test]
+    fn test_format_heading_empty_title() {
+        let heading = format_heading("", None);
+        // Empty string, still formatted
+        assert!(heading.is_empty() || heading.contains('\u{1b}'));
+    }
+}
