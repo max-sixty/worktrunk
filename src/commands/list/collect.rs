@@ -854,7 +854,7 @@ pub fn collect(
         let final_msg = super::format_summary_message(
             &all_items,
             show_branches || show_remotes,
-            layout.hidden_nonempty_count,
+            layout.hidden_column_count,
         );
 
         if table.is_tty() {
@@ -882,7 +882,7 @@ pub fn collect(
         let final_msg = super::format_summary_message(
             &all_items,
             show_branches || show_remotes,
-            layout.hidden_nonempty_count,
+            layout.hidden_column_count,
         );
 
         crate::output::table(layout.format_header_line())?;
