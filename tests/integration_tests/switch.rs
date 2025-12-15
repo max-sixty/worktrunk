@@ -571,6 +571,32 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
     );
 }
 
+/// Test switching to default branch when main worktree is on a different branch
+///
+/// When the main worktree (repo root) has been switched to a feature branch via
+/// `git checkout feature`, `wt switch main` should show the path-occupied error
+/// with helpful commands to switch it back.
+#[rstest]
+fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
+    use std::process::Command;
+
+    // Switch the main worktree to a different branch
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "-b", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Now try to switch to main - should error because main worktree is on feature
+    snapshot_switch_with_global_flags(
+        "switch_error_main_worktree_on_different_branch",
+        &repo,
+        &["main"],
+        &["--internal"],
+    );
+}
+
 // Internal mode with execute tests
 /// Test that --execute with exit code is emitted in directive mode shell script.
 /// The shell wrapper will eval this script and propagate the exit code.
