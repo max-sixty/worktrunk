@@ -1679,6 +1679,12 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
     settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s]+", "[PROJECT_ID]");
 
+    // Generic tilde-prefixed paths that aren't repo or worktree paths.
+    // On CI, HOME is a temp directory, so paths under HOME become ~/something.
+    // This catches paths like ~/wrong-path that don't follow the repo naming convention.
+    // MUST come AFTER specific ~/repo patterns so they match first.
+    settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
+
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)
     // Examples:
