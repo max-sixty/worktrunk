@@ -1668,6 +1668,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s]+",
         "[PROJECT_ID]",
     );
+    // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
+    settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s]+", "[PROJECT_ID]");
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
     // (metadata is handled via redactions below)
