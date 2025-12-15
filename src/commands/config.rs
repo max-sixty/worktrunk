@@ -132,29 +132,27 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     // Render shell integration status
     render_shell_status(&mut show_output)?;
 
-    // Display through pager (only if not in full mode, since full adds interactive output)
+    // Run full diagnostic checks if requested (includes slow network calls)
     if full {
-        worktrunk::styling::eprintln!("{}", show_output);
-    } else if let Err(e) = show_help_in_pager(&show_output) {
+        show_output.push('\n');
+        render_diagnostics(&mut show_output)?;
+    }
+
+    // Display through pager
+    if let Err(e) = show_help_in_pager(&show_output) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
         worktrunk::styling::eprintln!("{}", show_output);
     }
 
-    // Run full diagnostic checks if requested (includes slow network calls)
-    if full {
-        output::blank()?;
-        run_diagnostics()?;
-    }
-
     Ok(())
 }
 
-/// Run full diagnostic checks (CI tools, commit generation)
-fn run_diagnostics() -> anyhow::Result<()> {
+/// Run full diagnostic checks (CI tools, commit generation) and render to buffer
+fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     use super::list::ci_status::{CiPlatform, CiToolsStatus, get_platform_for_repo};
 
-    output::heading("DIAGNOSTICS", None)?;
+    writeln!(out, "{}", format_heading("DIAGNOSTICS", None))?;
 
     // Check CI tool based on detected platform
     let platform = Repository::current()
@@ -166,6 +164,7 @@ fn run_diagnostics() -> anyhow::Result<()> {
         Some(CiPlatform::GitHub) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
+                out,
                 "gh",
                 "GitHub",
                 ci_tools.gh_installed,
@@ -175,6 +174,7 @@ fn run_diagnostics() -> anyhow::Result<()> {
         Some(CiPlatform::GitLab) => {
             let ci_tools = CiToolsStatus::detect(None);
             render_ci_tool_status(
+                out,
                 "glab",
                 "GitLab",
                 ci_tools.glab_installed,
@@ -182,7 +182,11 @@ fn run_diagnostics() -> anyhow::Result<()> {
             )?;
         }
         None => {
-            output::print(hint_message("CI status requires GitHub or GitLab remote"))?;
+            writeln!(
+                out,
+                "{}",
+                hint_message("CI status requires GitHub or GitLab remote")
+            )?;
         }
     }
 
@@ -191,7 +195,7 @@ fn run_diagnostics() -> anyhow::Result<()> {
     let commit_config = &config.commit_generation;
 
     if !commit_config.is_configured() {
-        output::print(hint_message("Commit generation not configured"))?;
+        writeln!(out, "{}", hint_message("Commit generation not configured"))?;
         return Ok(());
     }
 
@@ -207,16 +211,24 @@ fn run_diagnostics() -> anyhow::Result<()> {
 
     match test_commit_generation(commit_config) {
         Ok(message) => {
-            output::print(success_message(cformat!(
-                "Commit generation working (<bold>{command_display}</>)"
-            )))?;
-            output::gutter(format_with_gutter(&message, "", None))?;
+            writeln!(
+                out,
+                "{}",
+                success_message(cformat!(
+                    "Commit generation working (<bold>{command_display}</>)"
+                ))
+            )?;
+            write!(out, "{}", format_with_gutter(&message, "", None))?;
         }
         Err(e) => {
-            output::print(error_message(cformat!(
-                "Commit generation failed (<bold>{command_display}</>)"
-            )))?;
-            output::gutter(format_with_gutter(&e.to_string(), "", None))?;
+            writeln!(
+                out,
+                "{}",
+                error_message(cformat!(
+                    "Commit generation failed (<bold>{command_display}</>)"
+                ))
+            )?;
+            write!(out, "{}", format_with_gutter(&e.to_string(), "", None))?;
         }
     }
 
@@ -448,6 +460,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 }
 
 fn render_ci_tool_status(
+    out: &mut String,
     tool: &str,
     platform: &str,
     installed: bool,
@@ -455,18 +468,28 @@ fn render_ci_tool_status(
 ) -> anyhow::Result<()> {
     if installed {
         if authenticated {
-            output::print(info_message(cformat!(
-                "<bold>{tool}</> installed & authenticated"
-            )))?;
+            writeln!(
+                out,
+                "{}",
+                success_message(cformat!("<bold>{tool}</> installed & authenticated"))
+            )?;
         } else {
-            output::print(warning_message(cformat!(
-                "<bold>{tool}</> installed but not authenticated; run <bright-black>{tool} auth login</>"
-            )))?;
+            writeln!(
+                out,
+                "{}",
+                warning_message(cformat!(
+                    "<bold>{tool}</> installed but not authenticated; run <bold>{tool} auth login</>"
+                ))
+            )?;
         }
     } else {
-        output::print(hint_message(cformat!(
-            "<bold>{tool}</> not found ({platform} CI status unavailable)"
-        )))?;
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "<bold>{tool}</> not found ({platform} CI status unavailable)"
+            ))
+        )?;
     }
     Ok(())
 }
