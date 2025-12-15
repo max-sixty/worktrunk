@@ -96,15 +96,6 @@ If your remote's default branch has changed (e.g., renamed from master to main),
 
 For full details on the detection mechanism, see `wt config cache --help`.
 
-## How does wt switch resolve branch names?
-
-Arguments resolve by checking the filesystem before git branches:
-
-1. Compute expected path from argument (using configured path template)
-2. If worktree exists at that path, switch to it
-3. Otherwise, look up as branch name
-4. If the path and branch resolve to different worktrees (e.g., `repo.foo/` tracks branch `bar`), the path takes precedence
-
 ## On Windows, `wt` conflicts with Windows Terminal
 
 Windows Terminal uses `wt` as its command-line launcher, so running `wt` invokes Terminal instead of Worktrunk.

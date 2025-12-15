@@ -1,11 +1,11 @@
 ---
-source: tests/integration_tests/internal_flag.rs
+source: tests/integration_tests/merge.rs
 info:
   program: wt
   args:
-    - "--internal"
-    - config
-    - show
+    - merge
+    - main
+    - "--no-rebase"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -29,13 +29,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
-
-[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
-💡 [2mNot found[22m
-
-[36mSHELL INTEGRATION[39m
-⚪ [2mSkipped bash; ~/.bashrc not found[22m
-⚪ [2mSkipped zsh; ~/.zshrc not found[22m
-⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
+[107m [0m  * [33mfc12499[m Add feature file
+[107m [0m   feature.txt | 1 [32m+[m
+[107m [0m   1 file changed, 1 insertion(+)
+✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (same commit as main)[39m[39m

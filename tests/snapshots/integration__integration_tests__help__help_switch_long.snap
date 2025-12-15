@@ -67,9 +67,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Switches to a worktree, creating one if needed.
-
-With [2m--create[0m, creates a new branch based off [2m--base[0m (defaults to default branch) and runs hooks.
+Switches to a worktree, creating one if needed. Creating a worktree runs hooks.
 
 [32mExamples
 
@@ -82,17 +80,18 @@ For interactive selection, use `wt select`.
 
 [32mCreating worktrees
 
-With [2m--create[0m, worktrunk:
+When the target branch has no worktree, worktrunk:
 
-1. Creates branch from [2m--base[0m (defaults to default branch)
-2. Creates worktree at configured path
-3. Runs post-create hooks (blocking)
-4. Switches to new directory
-5. Spawns post-start hooks (background)
+1. Creates worktree at configured path
+2. Runs post-create hooks (blocking)
+3. Switches to new directory
+4. Spawns post-start hooks (background)
 
-  [2mwt switch --create api-refactor
-  [2mwt switch --create fix --base release-2.0
-  [2mwt switch --create docs --execute "code ."
+The [2m--create[0m flag creates a new branch from [2m--base[0m (defaults to default branch). Without [2m--create[0m, the branch must already exist.
+
+  [2mwt switch feature                        # Existing branch → creates worktree
+  [2mwt switch --create feature               # New branch and worktree
+  [2mwt switch --create fix --base release    # New branch from release
   [2mwt switch --create temp --no-verify      # Skip hooks
 
 [32mShortcuts
@@ -106,6 +105,16 @@ With [2m--create[0m, worktrunk:
   [2mwt switch -                      # Back to previous
   [2mwt switch ^                      # Main worktree
   [2mwt switch --create fix --base=@  # Branch from current HEAD
+
+[32mArgument resolution
+
+Arguments resolve by checking the filesystem before git branches:
+
+1. Compute expected path from argument (using configured path template)
+2. If worktree exists at that path, switch to it
+3. Otherwise, look up as branch name
+
+If the path and branch resolve to different worktrees (e.g., [2mrepo.foo/[0m tracks branch [2mbar[0m), the path takes precedence.
 
 [32mSee also
 

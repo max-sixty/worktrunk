@@ -2,9 +2,16 @@ use crate::common::{TestRepo, repo, setup_temp_snapshot_settings, wait_for_file,
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+
+/// Canonicalize path without Windows `\\?\` prefix.
+/// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
+/// which cause issues with git worktree operations inside bare repos.
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
 
 /// Helper to create a bare repository test setup
 struct BareRepoTest {
@@ -44,8 +51,8 @@ impl BareRepoTest {
             );
         }
 
-        // Canonicalize path
-        test.bare_repo_path = test.bare_repo_path.canonicalize().unwrap();
+        // Canonicalize path (using dunce to avoid \\?\ prefix on Windows)
+        test.bare_repo_path = canonicalize(&test.bare_repo_path).unwrap();
 
         // Write config with template for worktrees inside bare repo
         // Template {{ branch }} creates worktrees as subdirectories: repo/main, repo/feature
@@ -96,7 +103,7 @@ impl BareRepoTest {
             );
         }
 
-        worktree_path.canonicalize().unwrap()
+        canonicalize(&worktree_path).unwrap()
     }
 
     /// Create a commit in the specified worktree

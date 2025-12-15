@@ -8,9 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
-Switches to a worktree, creating one if needed.
-
-With `--create`, creates a new branch based off `--base` (defaults to default branch) and runs [hooks](@/hook.md).
+Switches to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
 ## Examples
 
@@ -25,18 +23,19 @@ For interactive selection, use [`wt select`](@/select.md).
 
 ## Creating worktrees
 
-With `--create`, worktrunk:
+When the target branch has no worktree, worktrunk:
 
-1. Creates branch from `--base` (defaults to default branch)
-2. Creates worktree at configured path
-3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
-4. Switches to new directory
-5. Spawns [post-start hooks](@/hook.md#post-start) (background)
+1. Creates worktree at configured path
+2. Runs [post-create hooks](@/hook.md#post-create) (blocking)
+3. Switches to new directory
+4. Spawns [post-start hooks](@/hook.md#post-start) (background)
+
+The `--create` flag creates a new branch from `--base` (defaults to default branch). Without `--create`, the branch must already exist.
 
 ```bash
-wt switch --create api-refactor
-wt switch --create fix --base release-2.0
-wt switch --create docs --execute "code ."
+wt switch feature                        # Existing branch → creates worktree
+wt switch --create feature               # New branch and worktree
+wt switch --create fix --base release    # New branch from release
 wt switch --create temp --no-verify      # Skip hooks
 ```
 
@@ -53,6 +52,16 @@ wt switch -                      # Back to previous
 wt switch ^                      # Main worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
+
+## Argument resolution
+
+Arguments resolve by checking the filesystem before git branches:
+
+1. Compute expected path from argument (using configured path template)
+2. If worktree exists at that path, switch to it
+3. Otherwise, look up as branch name
+
+If the path and branch resolve to different worktrees (e.g., `repo.foo/` tracks branch `bar`), the path takes precedence.
 
 ## See also
 

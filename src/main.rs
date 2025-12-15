@@ -27,11 +27,11 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, RebaseResult, SquashResult, add_approvals, approve_hooks, clear_approvals,
-    compute_worktree_path, handle_config_create, handle_config_show, handle_configure_shell,
-    handle_hook_show, handle_init, handle_list, handle_merge, handle_rebase, handle_remove,
-    handle_remove_by_path, handle_remove_current, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    ConfigAction, MergeOptions, RebaseResult, SquashResult, add_approvals, approve_hooks,
+    clear_approvals, compute_worktree_path, handle_config_create, handle_config_show,
+    handle_configure_shell, handle_hook_show, handle_init, handle_list, handle_merge,
+    handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current, handle_show_theme,
+    handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
     handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_path_first,
     run_hook, step_commit, step_for_each,
 };
@@ -1447,6 +1447,8 @@ fn main() {
             no_squash,
             commit,
             no_commit,
+            rebase,
+            no_rebase,
             remove,
             no_remove,
             verify,
@@ -1469,12 +1471,14 @@ fn main() {
                 let merge_config = config.merge.as_ref();
                 let squash_default = merge_config.and_then(|m| m.squash).unwrap_or(true);
                 let commit_default = merge_config.and_then(|m| m.commit).unwrap_or(true);
+                let rebase_default = merge_config.and_then(|m| m.rebase).unwrap_or(true);
                 let remove_default = merge_config.and_then(|m| m.remove).unwrap_or(true);
                 let verify_default = merge_config.and_then(|m| m.verify).unwrap_or(true);
 
                 // CLI flags override config, config overrides defaults
                 let squash_final = flag_pair(squash, no_squash).unwrap_or(squash_default);
                 let commit_final = flag_pair(commit, no_commit).unwrap_or(commit_default);
+                let rebase_final = flag_pair(rebase, no_rebase).unwrap_or(rebase_default);
                 let remove_final = flag_pair(remove, no_remove).unwrap_or(remove_default);
                 let verify_final = flag_pair(verify, no_verify).unwrap_or(verify_default);
 
@@ -1483,15 +1487,16 @@ fn main() {
                     .or_else(|| config.commit.and_then(|c| c.stage))
                     .unwrap_or_default();
 
-                handle_merge(
-                    target.as_deref(),
-                    squash_final,
-                    commit_final,
-                    remove_final,
-                    verify_final,
+                handle_merge(MergeOptions {
+                    target: target.as_deref(),
+                    squash: squash_final,
+                    commit: commit_final,
+                    rebase: rebase_final,
+                    remove: remove_final,
+                    verify: verify_final,
                     force,
-                    stage_final,
-                )
+                    stage_mode: stage_final,
+                })
             }),
     };
 

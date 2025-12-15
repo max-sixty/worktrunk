@@ -99,7 +99,7 @@ Use [2m-D[0m to force-delete branches with unmerged changes. Use [2m--no-dele
 Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run
 in the foreground.
 
-Arguments resolve by path first, then branch name. Shortcuts: [2m@[0m (current), [2m-[0m (previous), [2m^[0m (main worktree).
+Arguments use path-first resolution—see wt switch. Shortcuts: [2m@[0m (current), [2m-[0m (previous), [2m^[0m (main worktree).
 
 [32mSee also
 
