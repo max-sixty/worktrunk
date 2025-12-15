@@ -37,7 +37,7 @@
 //! - Use case: call before `select` to ensure current tab is tracked
 //!
 //! **Request: `select|{display_name}|{path}`**
-//! - If path is tracked: focus tab by index, respond "focused"
+//! - If path is tracked: respond "focused:{N}" where N is the 1-based tab index
 //! - If not tracked: respond "not_found:{unique_name}" where unique_name may have
 //!   a hash suffix if the display_name collides with existing tabs
 //!
@@ -61,10 +61,6 @@ use zellij_tile::prelude::*;
 struct ZellijHost;
 
 impl Host for ZellijHost {
-    fn go_to_tab(&mut self, index: u32) {
-        go_to_tab(index);
-    }
-
     fn cli_pipe_output(&mut self, pipe_id: &str, msg: &str) {
         cli_pipe_output(pipe_id, msg);
     }

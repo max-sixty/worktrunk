@@ -36,7 +36,7 @@
 //! │  Tracks: worktree_path -> tab_index mapping                     │
 //! │  Protocol:                                                      │
 //! │    "sync|path" → "synced" (register current tab with path)      │
-//! │    "select|name|path" → "focused" or "not_found:unique_name"    │
+//! │    "select|name|path" → "focused:{N}" or "not_found:unique_name"│
 //! │    "register|name|path" → "registered"                          │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
@@ -89,9 +89,6 @@ const SESSION_PREFIX: &str = "wt:";
 
 /// Pipe name for wt-bridge plugin communication.
 const PIPE_NAME: &str = "wt";
-
-/// Plugin path for targeting pipe messages.
-const PLUGIN_PATH: &str = "file:~/.config/zellij/plugins/wt-bridge.wasm";
 
 /// Environment variable set by zellij when running inside a session.
 const ZELLIJ_ENV: &str = "ZELLIJ";
@@ -329,8 +326,12 @@ fn pipe_message(payload: &str) -> anyhow::Result<String> {
     use std::thread;
     use std::time::Duration;
 
+    // Note: We don't use --plugin here because we want to route to the EXISTING
+    // plugin instance loaded via load_plugins in config.kdl. Using --plugin would
+    // create a new instance each time. Without --plugin, zellij routes to all
+    // plugins listening on this pipe name.
     let mut child = Command::new("zellij")
-        .args(["pipe", "--plugin", PLUGIN_PATH, "--name", PIPE_NAME])
+        .args(["pipe", "--name", PIPE_NAME])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -447,12 +448,26 @@ fn sync_current_tab(current_worktree: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// Focus a tab by index using zellij action.
+fn focus_tab(tab_index: u32) -> anyhow::Result<()> {
+    let output = Command::new("zellij")
+        .args(["action", "go-to-tab", &tab_index.to_string()])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to focus tab {}: {}", tab_index, stderr.trim());
+    }
+
+    Ok(())
+}
+
 /// Focus or create a tab for a worktree.
 ///
 /// Uses the wt-bridge plugin protocol:
 /// 1. Sync the current tab with the plugin (register if not tracked)
 /// 2. Send "select|{name}|{path}" to plugin
-/// 3. If response is "focused", the plugin switched to the tab by index
+/// 3. If response is "focused:{N}", focus the tab using zellij action
 /// 4. If response is "not_found:{unique_name}", create a new tab with that name
 ///
 /// The plugin handles the "main/main collision" problem by tracking tabs by path
@@ -483,9 +498,13 @@ pub fn focus_or_create_tab(current_worktree: &Path, target_worktree: &Path) -> a
     let response = pipe_message(&select_payload)?;
     log::debug!("[zellij] focus_or_create_tab: response {:?}", response);
 
-    if response == "focused" {
-        // Plugin found the tab and focused it by index
-        Ok(())
+    if let Some(tab_index_str) = response.strip_prefix("focused:") {
+        // Plugin found the tab - focus it using zellij action
+        let tab_index: u32 = tab_index_str
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid tab index in response: {}", response))?;
+        log::debug!("[zellij] focus_or_create_tab: focusing tab {}", tab_index);
+        focus_tab(tab_index)
     } else if let Some(unique_name) = response.strip_prefix("not_found:") {
         // Tab doesn't exist - create with the unique name provided by plugin
         // (may have hash suffix if display_name collides with existing tabs)

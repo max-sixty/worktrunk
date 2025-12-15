@@ -54,7 +54,7 @@ impl Response {
     pub fn to_protocol(&self) -> String {
         match self {
             Response::Synced => "synced".to_string(),
-            Response::Focused { .. } => "focused".to_string(),
+            Response::Focused { tab_index } => format!("focused:{}", tab_index),
             Response::NotFound { unique_name } => format!("not_found:{}", unique_name),
             Response::Registered => "registered".to_string(),
             Response::Debug { tabs_len, tracked } => {
@@ -71,9 +71,6 @@ impl Response {
 
 /// Host trait abstracting zellij APIs for testing.
 pub trait Host {
-    /// Focus a tab by 1-based index.
-    fn go_to_tab(&mut self, index: u32);
-
     /// Send output to a CLI pipe.
     fn cli_pipe_output(&mut self, pipe_id: &str, msg: &str);
 
@@ -179,9 +176,6 @@ impl<H: Host> WtBridgePlugin<H> {
     /// Handle a message using the core logic.
     fn handle_message(&mut self, source: PipeSourceId, payload: String) {
         if let Some(response) = self.core.handle_message(&payload) {
-            if let Response::Focused { tab_index } = &response {
-                self.host.go_to_tab(*tab_index);
-            }
             self.respond(&source, &response.to_protocol());
         }
     }
@@ -196,8 +190,11 @@ impl<H: Host> WtBridgePlugin<H> {
 }
 
 /// Core plugin state and logic.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct WtBridgeCore {
+    /// Unique instance ID for debugging.
+    pub instance_id: u64,
+
     /// Mapping from worktree path to tab entry.
     pub path_to_tab: BTreeMap<String, TabEntry>,
 
@@ -206,6 +203,22 @@ pub struct WtBridgeCore {
 
     /// Counter to track pipe calls (for grace period calculation).
     pub pipe_call_count: usize,
+}
+
+impl Default for WtBridgeCore {
+    fn default() -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let instance_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        Self {
+            instance_id,
+            path_to_tab: BTreeMap::new(),
+            tabs: Vec::new(),
+            pipe_call_count: 0,
+        }
+    }
 }
 
 impl WtBridgeCore {
@@ -241,7 +254,22 @@ impl WtBridgeCore {
 
     /// Handle select: focus existing tab or respond with name for creation.
     pub fn handle_select(&self, display_name: &str, path: &str) -> Response {
+        #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+        eprintln!(
+            "wt-bridge[{}]: select display_name={} path={} tracked={:?}",
+            self.instance_id % 10000, // Short ID for readability
+            display_name,
+            path,
+            self.path_to_tab.keys().collect::<Vec<_>>()
+        );
         if let Some(entry) = self.path_to_tab.get(path) {
+            #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+            eprintln!(
+                "wt-bridge: found entry index={} name={} -> go_to_tab({})",
+                entry.index,
+                entry.name,
+                entry.index as u32 + 1
+            );
             // zellij uses 1-based tab indices for go_to_tab
             Response::Focused {
                 tab_index: entry.index as u32 + 1,
@@ -255,20 +283,58 @@ impl WtBridgeCore {
 
     /// Handle register: add a newly created tab to tracking.
     pub fn handle_register(&mut self, tab_name: &str, path: &str) -> Response {
-        // The new tab should be at the end (most recently created)
-        // We'll get the exact index on next TabUpdate
-        let index = self.tabs.len();
-
-        self.path_to_tab.insert(
-            path.to_string(),
-            TabEntry {
-                index,
-                name: tab_name.to_string(),
-                registered_at_pipe_call: self.pipe_call_count,
-            },
+        #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+        eprintln!(
+            "wt-bridge[{}]: register tab_name={} path={} tabs={:?}",
+            self.instance_id % 10000,
+            tab_name,
+            path,
+            self.tabs.iter().map(|t| &t.name).collect::<Vec<_>>()
         );
-
-        Response::Registered
+        // Find tab by name and use its position
+        if let Some(tab) = self.tabs.iter().find(|t| t.name == tab_name) {
+            #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+            eprintln!(
+                "wt-bridge: register found tab, using position={}",
+                tab.position
+            );
+            self.path_to_tab.insert(
+                path.to_string(),
+                TabEntry {
+                    index: tab.position, // Use tab.position for go_to_tab API
+                    name: tab.name.clone(),
+                    registered_at_pipe_call: self.pipe_call_count,
+                },
+            );
+            #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+            eprintln!(
+                "wt-bridge: register done, tracked={:?}",
+                self.path_to_tab.keys().collect::<Vec<_>>()
+            );
+            Response::Registered
+        } else {
+            #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+            eprintln!(
+                "wt-bridge: register tab not found, using estimated position={}",
+                self.tabs.len()
+            );
+            // Tab not found yet - store with estimated position
+            // (will be corrected on next TabUpdate)
+            self.path_to_tab.insert(
+                path.to_string(),
+                TabEntry {
+                    index: self.tabs.len(),
+                    name: tab_name.to_string(),
+                    registered_at_pipe_call: self.pipe_call_count,
+                },
+            );
+            #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+            eprintln!(
+                "wt-bridge: register done, tracked={:?}",
+                self.path_to_tab.keys().collect::<Vec<_>>()
+            );
+            Response::Registered
+        }
     }
 
     /// Handle sync: register the currently active tab with the given path.
@@ -279,13 +345,13 @@ impl WtBridgeCore {
         }
 
         // Find the active tab
-        let active_tab = self.tabs.iter().enumerate().find(|(_, t)| t.active);
+        let active_tab = self.tabs.iter().find(|t| t.active);
 
-        if let Some((index, tab)) = active_tab {
+        if let Some(tab) = active_tab {
             self.path_to_tab.insert(
                 path.to_string(),
                 TabEntry {
-                    index,
+                    index: tab.position, // Use tab.position for go_to_tab API
                     name: tab.name.clone(),
                     registered_at_pipe_call: self.pipe_call_count,
                 },
@@ -324,15 +390,30 @@ impl WtBridgeCore {
     }
 
     /// Reconcile our tab mapping with updated tab info.
+    ///
+    /// Matching strategy:
+    /// 1. First try to match by NAME (handles tab reordering)
+    /// 2. If name not found, check if tab still exists at the stored POSITION
+    ///    (handles rename by other plugins like zellij-tab-name)
+    /// 3. If neither found, remove (after grace period)
     fn reconcile_tabs(&mut self, new_tabs: Vec<TabInfo>) {
-        // Build a map of name -> positions for the new tabs
-        // Note: we use tab.position (the zellij tab position), not the vector index
+        #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+        eprintln!(
+            "wt-bridge[{}]: reconcile_tabs called with {} tabs, current tracked={:?}",
+            self.instance_id % 10000,
+            new_tabs.len(),
+            self.path_to_tab.keys().collect::<Vec<_>>()
+        );
+
+        // Build maps for both matching strategies
         let mut name_to_positions: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut position_to_name: BTreeMap<usize, String> = BTreeMap::new();
         for tab in new_tabs.iter() {
             name_to_positions
                 .entry(tab.name.clone())
                 .or_default()
                 .push(tab.position);
+            position_to_name.insert(tab.position, tab.name.clone());
         }
 
         // Collect paths to remove (can't modify during iteration)
@@ -341,7 +422,7 @@ impl WtBridgeCore {
 
         for (path, entry) in self.path_to_tab.iter_mut() {
             if let Some(positions) = name_to_positions.get(&entry.name) {
-                // Tab with this name still exists
+                // Tab with this name still exists - update index
                 if positions.len() == 1 {
                     entry.index = positions[0];
                 } else {
@@ -353,8 +434,19 @@ impl WtBridgeCore {
                         .unwrap_or(positions[0]);
                     entry.index = closest;
                 }
+            } else if let Some(new_name) = position_to_name.get(&entry.index) {
+                // Tab name changed but position is still valid - update name
+                #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+                eprintln!(
+                    "wt-bridge[{}]: reconcile_tabs tab renamed {:?} -> {:?} at position {}",
+                    self.instance_id % 10000,
+                    entry.name,
+                    new_name,
+                    entry.index
+                );
+                entry.name = new_name.clone();
             } else {
-                // Tab no longer exists - but give newly registered entries a grace period
+                // Tab no longer exists - give newly registered entries a grace period
                 if current_pipe_count.saturating_sub(entry.registered_at_pipe_call)
                     > GRACE_PERIOD_PIPE_CALLS
                 {
@@ -363,11 +455,27 @@ impl WtBridgeCore {
             }
         }
 
+        #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+        if !paths_to_remove.is_empty() {
+            eprintln!(
+                "wt-bridge[{}]: reconcile_tabs removing paths: {:?}",
+                self.instance_id % 10000,
+                paths_to_remove
+            );
+        }
+
         for path in paths_to_remove {
             self.path_to_tab.remove(&path);
         }
 
         self.tabs = new_tabs;
+
+        #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+        eprintln!(
+            "wt-bridge[{}]: reconcile_tabs done, tracked now={:?}",
+            self.instance_id % 10000,
+            self.path_to_tab.keys().collect::<Vec<_>>()
+        );
     }
 }
 
@@ -411,6 +519,22 @@ mod tests {
         let entry = &core.path_to_tab["/path/to/worktree"];
         assert_eq!(entry.index, 0);
         assert_eq!(entry.name, "main");
+    }
+
+    #[test]
+    fn sync_uses_position_not_enumerate_index() {
+        let mut core = WtBridgeCore::new();
+        // Tab at position 5, but it's the first element in the array.
+        // This catches the bug where we used enumerate index instead of tab.position.
+        core.tabs = vec![make_tab("feature", true, 5)];
+
+        core.handle_sync("/path/to/feature");
+
+        let entry = &core.path_to_tab["/path/to/feature"];
+        assert_eq!(
+            entry.index, 5,
+            "Should use tab.position (5), not enumerate index (0)"
+        );
     }
 
     #[test]
@@ -569,7 +693,7 @@ mod tests {
         core.path_to_tab.insert(
             "/path/old".to_string(),
             TabEntry {
-                index: 0,
+                index: 5, // Position 5 doesn't exist in new_tabs
                 name: "old".to_string(),
                 registered_at_pipe_call: 0,
             },
@@ -578,7 +702,7 @@ mod tests {
         // Simulate many pipe calls passing
         core.pipe_call_count = GRACE_PERIOD_PIPE_CALLS + 2;
 
-        // Tab "old" no longer exists
+        // Tab "old" no longer exists (neither by name nor position)
         core.update_tabs(vec![make_tab("new", true, 0)]);
 
         assert!(!core.path_to_tab.contains_key("/path/old"));
@@ -602,6 +726,32 @@ mod tests {
 
         // Should be preserved due to grace period
         assert!(core.path_to_tab.contains_key("/path/new"));
+    }
+
+    #[test]
+    fn reconcile_handles_tab_rename_by_other_plugin() {
+        // Simulates zellij-tab-name plugin renaming "worktrunk.release" to " release"
+        let mut core = WtBridgeCore::new();
+        core.path_to_tab.insert(
+            "/path/to/release".to_string(),
+            TabEntry {
+                index: 1,
+                name: "worktrunk.release".to_string(),
+                registered_at_pipe_call: 0,
+            },
+        );
+
+        // Tab was renamed by another plugin but position is the same
+        core.update_tabs(vec![
+            make_tab("main", true, 0),
+            make_tab(" release", false, 1), // Renamed, but still at position 1
+        ]);
+
+        // Entry should be preserved with updated name
+        assert!(core.path_to_tab.contains_key("/path/to/release"));
+        let entry = &core.path_to_tab["/path/to/release"];
+        assert_eq!(entry.name, " release"); // Name updated
+        assert_eq!(entry.index, 1); // Position unchanged
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -775,7 +925,10 @@ mod tests {
 
     #[test]
     fn response_to_protocol_focused() {
-        assert_eq!(Response::Focused { tab_index: 3 }.to_protocol(), "focused");
+        assert_eq!(
+            Response::Focused { tab_index: 3 }.to_protocol(),
+            "focused:3"
+        );
     }
 
     #[test]
@@ -832,6 +985,114 @@ mod tests {
         assert_eq!(select_resp, Some(Response::Focused { tab_index: 2 }));
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Full plugin integration tests (simulates test-wt-bridge.sh flow)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Full integration test simulating the test-wt-bridge.sh script flow.
+    /// This tests the complete plugin behavior through WtBridgePlugin wrapper.
+    #[test]
+    fn integration_test_wt_bridge_protocol() {
+        let mut plugin = WtBridgePlugin::new(FakeHost::default());
+        plugin.handle_event(PluginEvent::PermissionGranted);
+
+        // Initial state: 2 tabs, Tab1 is active
+        plugin.handle_event(PluginEvent::TabsUpdated(vec![
+            make_tab("Tab1", true, 0),
+            make_tab("Tab2", false, 1),
+        ]));
+
+        // Step 1: Sync pathA on Tab1 (active)
+        plugin.handle_pipe(
+            PipeSourceId::Cli("1".into()),
+            "wt",
+            Some("sync|/tmp/pathA".into()),
+        );
+        assert!(plugin.host.outputs[0].1.contains("synced"));
+        assert_eq!(plugin.core.path_to_tab["/tmp/pathA"].index, 0);
+
+        // Step 2: CLI switches to Tab2 - plugin receives TabUpdate
+        plugin.handle_event(PluginEvent::TabsUpdated(vec![
+            make_tab("Tab1", false, 0),
+            make_tab("Tab2", true, 1),
+        ]));
+
+        // Step 3: Sync pathB on Tab2 (now active)
+        plugin.handle_pipe(
+            PipeSourceId::Cli("2".into()),
+            "wt",
+            Some("sync|/tmp/pathB".into()),
+        );
+        assert!(plugin.host.outputs[1].1.contains("synced"));
+        assert_eq!(
+            plugin.core.path_to_tab["/tmp/pathB"].index, 1,
+            "pathB should be at position 1 (Tab2)"
+        );
+
+        // Step 4: Select pathA - should return focused:1
+        plugin.handle_pipe(
+            PipeSourceId::Cli("3".into()),
+            "wt",
+            Some("select|test|/tmp/pathA".into()),
+        );
+        assert!(
+            plugin.host.outputs[2].1.contains("focused:1"),
+            "pathA should return focused:1, got: {}",
+            plugin.host.outputs[2].1
+        );
+
+        // Step 5: Select pathB - should return focused:2
+        plugin.handle_pipe(
+            PipeSourceId::Cli("4".into()),
+            "wt",
+            Some("select|test|/tmp/pathB".into()),
+        );
+        assert!(
+            plugin.host.outputs[3].1.contains("focused:2"),
+            "pathB should return focused:2, got: {}",
+            plugin.host.outputs[3].1
+        );
+    }
+
+    /// Documents the race condition: if TabUpdate isn't received, sync uses stale tab.
+    #[test]
+    fn integration_race_condition_without_tabupdate() {
+        let mut plugin = WtBridgePlugin::new(FakeHost::default());
+        plugin.handle_event(PluginEvent::PermissionGranted);
+
+        // Initial state: 2 tabs, Tab1 is active
+        plugin.handle_event(PluginEvent::TabsUpdated(vec![
+            make_tab("Tab1", true, 0),
+            make_tab("Tab2", false, 1),
+        ]));
+
+        // Step 1: Sync pathA on Tab1
+        plugin.handle_pipe(
+            PipeSourceId::Cli("1".into()),
+            "wt",
+            Some("sync|/tmp/pathA".into()),
+        );
+        assert_eq!(plugin.core.path_to_tab["/tmp/pathA"].index, 0);
+
+        // Step 2: CLI switches to Tab2, but NO TabUpdate received (race condition)
+        // (we skip the TabsUpdated event here to simulate the race)
+
+        // Step 3: Sync pathB - plugin still thinks Tab1 is active
+        plugin.handle_pipe(
+            PipeSourceId::Cli("2".into()),
+            "wt",
+            Some("sync|/tmp/pathB".into()),
+        );
+
+        // BUG: pathB is incorrectly associated with Tab1 (index 0)
+        assert_eq!(
+            plugin.core.path_to_tab["/tmp/pathB"].index, 0,
+            "Without TabUpdate, sync incorrectly uses Tab1"
+        );
+
+        // This is why test-wt-bridge.sh needs sleep after go-to-tab
+    }
+
     #[test]
     fn scenario_switch_back_to_previous() {
         let mut core = WtBridgeCore::new();
@@ -870,16 +1131,11 @@ mod tests {
     /// Fake host that records all calls for testing.
     #[derive(Default)]
     struct FakeHost {
-        go_to_tab_calls: Vec<u32>,
         outputs: Vec<(String, String)>,
         unblocks: Vec<String>,
     }
 
     impl Host for FakeHost {
-        fn go_to_tab(&mut self, index: u32) {
-            self.go_to_tab_calls.push(index);
-        }
-
         fn cli_pipe_output(&mut self, pipe_id: &str, msg: &str) {
             self.outputs.push((pipe_id.to_string(), msg.to_string()));
         }
@@ -939,7 +1195,7 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_calls_go_to_tab_on_focus() {
+    fn wrapper_responds_with_tab_index_on_focus() {
         let mut plugin = WtBridgePlugin::new(FakeHost::default());
         plugin.handle_event(PluginEvent::PermissionGranted);
         plugin.handle_event(PluginEvent::TabsUpdated(vec![make_tab("main", true, 0)]));
@@ -951,14 +1207,16 @@ mod tests {
             Some("register|main|/path/main".into()),
         );
 
-        // Select it - should call go_to_tab
+        // Select it - should respond with focused:{tab_index}
         plugin.handle_pipe(
             PipeSourceId::Cli("2".into()),
             "wt",
             Some("select|main|/path/main".into()),
         );
 
-        assert_eq!(plugin.host.go_to_tab_calls, vec![2]); // 1-based: index 1 + 1
+        // Tab at position 0 → focused:1 (1-indexed)
+        assert_eq!(plugin.host.outputs.len(), 2);
+        assert!(plugin.host.outputs[1].1.contains("focused:1"));
     }
 
     #[test]
