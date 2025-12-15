@@ -19,6 +19,10 @@ default-run = "wt"
 allow-branch = ["*"]
 consolidate-commits = true
 
+[package.metadata.cargo-udeps.ignore]
+# Used only on Windows (#[cfg(windows)] in src/shell_exec.rs)
+normal = ["which"]
+
 [features]
 # Disabled: Enable testing for shells that require extra installation steps (nushell, powershell, elvish, xonsh, oil)
 # tier-2-integration-tests = []
