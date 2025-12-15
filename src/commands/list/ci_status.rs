@@ -927,14 +927,14 @@ impl PrStatus {
         }
     }
 
-    /// Format CI status as a colored indicator for statusline output.
+    /// Format CI status as a colored indicator.
     ///
     /// Returns a string like "●" with appropriate ANSI color.
-    /// If a PR URL is available, wraps in an OSC 8 hyperlink.
+    /// If a PR URL is available, adds underline and wraps in an OSC 8 hyperlink.
     pub fn format_indicator(&self) -> String {
-        let style = self.style();
         let indicator = self.indicator();
         if let Some(ref url) = self.url {
+            let style = self.style().underline();
             format!(
                 "{}{}{}{}{}",
                 style,
@@ -944,6 +944,7 @@ impl PrStatus {
                 style.render_reset()
             )
         } else {
+            let style = self.style();
             format!("{style}{indicator}{style:#}")
         }
     }
