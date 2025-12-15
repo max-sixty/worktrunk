@@ -1,7 +1,10 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
+assertion_line: 57
 expression: err.to_string()
 ---
 ❌ [31mCannot create worktree for [1mfeature-z[22m: target path already exists[39m
 
-💡 [2mReuse the existing worktree at /tmp/repo.feature-z (currently on [1mother-branch[22m) or remove the directory before retrying[22m
+💡 [2mWorktree exists at /tmp/repo.feature-z (currently on [1mother-branch[22m)[22m
+[107m [0m  cd /tmp/repo.feature-z
+[107m [0m  git switch feature-z

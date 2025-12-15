@@ -225,22 +225,27 @@ impl std::fmt::Display for GitError {
                 occupant,
             } => {
                 let path_display = format_path_for_display(path);
-                let hint = if let Some(occupant_branch) = occupant {
-                    hint_message(cformat!(
-                        "Reuse the existing worktree at {path_display} (currently on <bold>{occupant_branch}</>) or remove the directory before retrying"
-                    ))
+                let (hint, commands) = if let Some(occupant_branch) = occupant {
+                    let hint = hint_message(cformat!(
+                        "Worktree exists at {path_display} (currently on <bold>{occupant_branch}</>)"
+                    ));
+                    let commands = format!("cd {path_display}\ngit switch {branch}");
+                    (hint, commands)
                 } else {
-                    hint_message(format!(
-                        "Reuse the existing worktree at {path_display} or remove the directory before retrying"
-                    ))
+                    // Detached HEAD - can't suggest git switch
+                    let hint =
+                        hint_message(format!("Worktree exists at {path_display} (detached HEAD)"));
+                    let commands = format!("cd {path_display}");
+                    (hint, commands)
                 };
                 write!(
                     f,
-                    "{}\n\n{}",
+                    "{}\n\n{}\n{}",
                     error_message(cformat!(
                         "Cannot create worktree for <bold>{branch}</>: target path already exists"
                     )),
-                    hint
+                    hint,
+                    format_with_gutter(&commands, "", None)
                 )
             }
 

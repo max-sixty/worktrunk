@@ -324,8 +324,8 @@ pub struct SwitchBranchInfo {
     pub expected: String,
     /// The branch currently checked out (None = detached HEAD)
     pub current: Option<String>,
-    /// Whether the worktree is at the expected path (based on naming template)
-    pub path_at_expected: bool,
+    /// Expected path when there's a path mismatch (None = path matches template)
+    pub expected_path: Option<PathBuf>,
 }
 
 impl SwitchBranchInfo {
@@ -435,7 +435,11 @@ pub fn handle_switch(
 
             // Check if the actual path matches the expected path
             let canonical_expected = canonicalize(&expected_path).unwrap_or(expected_path.clone());
-            let path_at_expected = canonical_path == canonical_expected;
+            let path_mismatch = if canonical_path != canonical_expected {
+                Some(expected_path.clone())
+            } else {
+                None
+            };
 
             let result = if already_at_worktree {
                 SwitchResult::AlreadyAt(canonical_path)
@@ -445,7 +449,7 @@ pub fn handle_switch(
             let branch_info = SwitchBranchInfo {
                 expected: resolved_branch.clone(),
                 current: actual_branch,
-                path_at_expected,
+                expected_path: path_mismatch,
             };
             (result, branch_info)
         };
@@ -602,7 +606,7 @@ pub fn handle_switch(
         SwitchBranchInfo {
             expected: resolved_branch.clone(),
             current: Some(resolved_branch),
-            path_at_expected: true, // Created at expected path by definition
+            expected_path: None, // Created at expected path by definition
         },
     ))
 }

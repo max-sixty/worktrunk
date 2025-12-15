@@ -32,4 +32,6 @@ exit_code: 1
 ----- stderr -----
 [0m❌ [31mCannot create worktree for [1mfeature[22m: target path already exists[39m
 
-💡 [2mReuse the existing worktree at [REPO].feature (currently on [1mbugfix[22m) or remove the directory before retrying[22m
+💡 [2mWorktree exists at [REPO].feature (currently on [1mbugfix[22m)[22m
+[107m [0m  cd [REPO].feature
+[107m [0m  git switch feature

@@ -403,11 +403,12 @@ pub fn handle_switch_output(
     let branch = branch_info.branch();
 
     // Show path mismatch hint after the main message (info level, not warning)
-    let path_mismatch_hint = if !branch_info.path_at_expected {
-        Some(hint_message("Worktree path doesn't match naming template"))
-    } else {
-        None
-    };
+    let path_mismatch_hint = branch_info.expected_path.as_ref().map(|expected| {
+        let expected_display = format_path_for_display(expected);
+        hint_message(format!(
+            "Worktree path doesn't match naming template (expected {expected_display})"
+        ))
+    });
 
     match result {
         SwitchResult::AlreadyAt(_) => {
