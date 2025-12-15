@@ -394,3 +394,120 @@ fn snapshot_parse_worktree_list_unknown_attributes() {
     }
     "#);
 }
+
+// Tests for escape_branch_for_config and unescape_branch_from_config
+
+use super::{escape_branch_for_config, unescape_branch_from_config};
+
+#[test]
+fn test_escape_branch_simple() {
+    // Alphanumeric and dots should pass through unchanged
+    assert_eq!(escape_branch_for_config("main"), "main");
+    assert_eq!(escape_branch_for_config("feature.123"), "feature.123");
+    assert_eq!(escape_branch_for_config("AaBbZz0189"), "AaBbZz0189");
+}
+
+#[test]
+fn test_escape_branch_with_slash() {
+    // Slashes should be encoded as -2F
+    assert_eq!(
+        escape_branch_for_config("feature/branch"),
+        "feature-2Fbranch"
+    );
+    assert_eq!(escape_branch_for_config("a/b/c"), "a-2Fb-2Fc");
+}
+
+#[test]
+fn test_escape_branch_with_underscore() {
+    // Underscores should be encoded as -5F
+    assert_eq!(escape_branch_for_config("my_branch"), "my-5Fbranch");
+    assert_eq!(escape_branch_for_config("a_b_c"), "a-5Fb-5Fc");
+}
+
+#[test]
+fn test_escape_branch_with_hyphen() {
+    // Hyphens should be encoded as -2D
+    assert_eq!(escape_branch_for_config("my-branch"), "my-2Dbranch");
+    assert_eq!(escape_branch_for_config("a-b-c"), "a-2Db-2Dc");
+}
+
+#[test]
+fn test_escape_branch_mixed_special_chars() {
+    // Mix of special characters
+    assert_eq!(
+        escape_branch_for_config("feature/my-branch_test"),
+        "feature-2Fmy-2Dbranch-5Ftest"
+    );
+}
+
+#[test]
+fn test_unescape_branch_simple() {
+    // Simple strings should pass through unchanged
+    assert_eq!(unescape_branch_from_config("main"), "main");
+    assert_eq!(unescape_branch_from_config("feature.123"), "feature.123");
+}
+
+#[test]
+fn test_unescape_branch_with_encoded_slash() {
+    // -2F should become /
+    assert_eq!(
+        unescape_branch_from_config("feature-2Fbranch"),
+        "feature/branch"
+    );
+}
+
+#[test]
+fn test_unescape_branch_with_encoded_underscore() {
+    // -5F should become _
+    assert_eq!(unescape_branch_from_config("my-5Fbranch"), "my_branch");
+}
+
+#[test]
+fn test_unescape_branch_with_encoded_hyphen() {
+    // -2D should become -
+    assert_eq!(unescape_branch_from_config("my-2Dbranch"), "my-branch");
+}
+
+#[test]
+fn test_escape_unescape_roundtrip() {
+    // Test that escape followed by unescape returns original
+    let test_cases = vec![
+        "main",
+        "feature/branch",
+        "my-branch",
+        "my_branch",
+        "feature/my-branch_test",
+        "a/b/c-d_e.f",
+        "",
+    ];
+    for branch in test_cases {
+        let escaped = escape_branch_for_config(branch);
+        let unescaped = unescape_branch_from_config(&escaped);
+        assert_eq!(
+            unescaped, branch,
+            "Roundtrip failed for '{branch}': escaped='{}', unescaped='{}'",
+            escaped, unescaped
+        );
+    }
+}
+
+#[test]
+fn test_unescape_branch_invalid_escape() {
+    // Invalid escape sequences should be kept as-is
+    // -XX where XX is not valid hex
+    assert_eq!(unescape_branch_from_config("test-ZZ"), "test-ZZ");
+    // - at end without following chars
+    assert_eq!(unescape_branch_from_config("test-"), "test-");
+    // - followed by only one char
+    assert_eq!(unescape_branch_from_config("test-A"), "test-A");
+}
+
+#[test]
+fn test_escape_branch_empty() {
+    assert_eq!(escape_branch_for_config(""), "");
+}
+
+#[test]
+fn test_unescape_branch_empty() {
+    assert_eq!(unescape_branch_from_config(""), "");
+}
