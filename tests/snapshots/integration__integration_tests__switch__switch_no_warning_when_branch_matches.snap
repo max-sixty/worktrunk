@@ -1,14 +1,11 @@
 ---
-source: tests/integration_tests/for_each.rs
+source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - step
-    - for-each
-    - "--"
-    - git
-    - status
-    - "--short"
+    - "--internal"
+    - switch
+    - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -30,9 +27,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+cd '[REPO].feature'
 
 ----- stderr -----
-🔄 [36mRunning in [1mmain[22m...[39m
-🔄 [36mRunning in [1mrepo.detached-test[22m (detached)...[39m
-
-✅ [32mCompleted in 2 worktrees[39m
+✅ [32m[32mSwitched to worktree for [1mfeature[22m @ [1m[REPO].feature[39m[22m[39m

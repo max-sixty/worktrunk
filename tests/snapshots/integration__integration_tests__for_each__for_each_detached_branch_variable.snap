@@ -33,7 +33,7 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRunning in [1mmain[22m...[39m
 Branch: main
-🔄 [36mRunning in [1m(detached)[22m...[39m
+🔄 [36mRunning in [1mrepo.detached-test[22m (detached)...[39m
 Branch: HEAD
 
 ✅ [32mCompleted in 2 worktrees[39m

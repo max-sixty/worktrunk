@@ -11,8 +11,13 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Canonicalize path without Windows `\\?\` prefix.
+fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
+}
 
 fn main() {
     println!("Setting up test environment for `wt select`...\n");
@@ -26,7 +31,7 @@ fn main() {
 
     let root = temp_base.join("repo");
     fs::create_dir(&root).unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = canonicalize(&root).unwrap();
 
     // Initialize git repo
     git(&root, &["init", "-b", "main"]);
@@ -108,7 +113,7 @@ fn main() {
     }
 
     // Add uncommitted changes to feature worktree
-    let feature_wt = feature_wt.canonicalize().unwrap();
+    let feature_wt = canonicalize(&feature_wt).unwrap();
     fs::write(feature_wt.join("uncommitted.txt"), "uncommitted changes").unwrap();
 
     // Create some branches without worktrees

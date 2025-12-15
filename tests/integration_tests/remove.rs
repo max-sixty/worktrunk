@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd_with_global_flags, repo, repo_with_remote, setup_snapshot_settings,
-    setup_temp_snapshot_settings, wt_command,
+    TestRepo, canonicalize, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
+    setup_snapshot_settings, setup_temp_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -561,7 +561,7 @@ fn test_remove_default_branch_no_tautology() {
         .unwrap();
     assert!(output.status.success(), "Failed to init bare repo");
 
-    let bare_repo_path: PathBuf = bare_repo_path.canonicalize().unwrap();
+    let bare_repo_path: PathBuf = canonicalize(&bare_repo_path).unwrap();
 
     // Create worktree for main branch
     let main_worktree = temp_dir.path().join("repo.main");
@@ -583,7 +583,7 @@ fn test_remove_default_branch_no_tautology() {
         .unwrap();
     assert!(output.status.success(), "Failed to create main worktree");
 
-    let main_worktree = main_worktree.canonicalize().unwrap();
+    let main_worktree = canonicalize(&main_worktree).unwrap();
 
     // Create initial commit in main worktree
     std::fs::write(main_worktree.join("file.txt"), "initial").unwrap();
@@ -630,7 +630,7 @@ fn test_remove_default_branch_no_tautology() {
         .unwrap();
     assert!(output.status.success(), "Failed to create feature worktree");
 
-    let feature_worktree = feature_worktree.canonicalize().unwrap();
+    let feature_worktree = canonicalize(&feature_worktree).unwrap();
 
     // Remove main worktree by name from feature worktree (foreground for snapshot)
     // Should NOT show "(ancestor of main)" - that would be tautological

@@ -3,8 +3,9 @@ source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
+    - "--internal"
     - switch
-    - main
+    - feature
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -23,10 +24,12 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-✅ [32m[32mSwitched to worktree for [1mmain[22m @ [1m[REPO].main[39m[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[0m❌ [31mCannot create worktree for [1mfeature[22m at [1m[REPO].feature[22m: existing worktree, on [1mbugfix[22m[39m
+
+💡 [2mSwitch the worktree at [90m[REPO].feature[39m to [90mfeature[39m[22m
+[107m [0m  cd [REPO].feature && git switch feature

@@ -35,6 +35,7 @@ use worktrunk::styling::{
 };
 
 use crate::commands::command_executor::{CommandContext, build_hook_context};
+use crate::commands::worktree_display_name;
 use crate::output;
 
 /// Run a command in each worktree sequentially.
@@ -58,10 +59,8 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let repo_root = repo.worktree_base()?;
 
     for wt in &worktrees.worktrees {
-        let branch = wt.branch.as_deref().unwrap_or("(detached)");
-        output::print(progress_message(cformat!(
-            "Running in <bold>{branch}</>..."
-        )))?;
+        let display_name = worktree_display_name(wt, &repo, &config);
+        output::print(progress_message(format!("Running in {display_name}...")))?;
 
         // Open repository at worktree path to get worktree-specific context (commit, etc.)
         let wt_repo = Repository::at(&wt.path);
@@ -101,10 +100,10 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             Ok(()) => {}
             Err(CommandError::SpawnFailed(err)) => {
                 output::print(error_message(cformat!(
-                    "Failed in <bold>{branch}</> (spawn failed)"
+                    "Failed in <bold>{display_name}</> (spawn failed)"
                 )))?;
                 output::gutter(format_with_gutter(&err, "", None))?;
-                failed.push(branch.to_string());
+                failed.push(display_name.to_string());
             }
             Err(CommandError::ExitCode(exit_code)) => {
                 // stderr already streamed to terminal; just show failure message
@@ -112,9 +111,9 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
                     .map(|code| format!(" (exit code {code})"))
                     .unwrap_or_default();
                 output::print(error_message(cformat!(
-                    "Failed in <bold>{branch}</>{exit_info}"
+                    "Failed in <bold>{display_name}</>{exit_info}"
                 )))?;
-                failed.push(branch.to_string());
+                failed.push(display_name.to_string());
             }
         }
     }

@@ -1,4 +1,5 @@
 use anyhow::Context;
+use color_print::cformat;
 use skim::prelude::*;
 use std::borrow::Cow;
 use std::fs;
@@ -488,7 +489,7 @@ impl WorktreeSkimItem {
         let path = wt_info.path.display().to_string();
         self.render_diff_preview(
             &["-C", &path, "diff", "HEAD"],
-            &format!("{INFO_EMOJI} {branch} has no uncommitted changes"),
+            &cformat!("{INFO_EMOJI} <bold>{branch}</> has no uncommitted changes"),
             width,
         )
     }
@@ -501,16 +502,18 @@ impl WorktreeSkimItem {
         let branch = self.item.branch_name();
         let repo = Repository::current();
         let Ok(default_branch) = repo.default_branch() else {
-            return format!("{INFO_EMOJI} {branch} has no commits ahead of main\n");
+            return cformat!("{INFO_EMOJI} <bold>{branch}</> has no commits ahead of main\n");
         };
         if self.item.counts().ahead == 0 {
-            return format!("{INFO_EMOJI} {branch} has no commits ahead of {default_branch}\n");
+            return cformat!(
+                "{INFO_EMOJI} <bold>{branch}</> has no commits ahead of <bold>{default_branch}</>\n"
+            );
         }
 
         let merge_base = format!("{}...{}", default_branch, self.item.head());
         self.render_diff_preview(
             &["diff", &merge_base],
-            &format!("{INFO_EMOJI} {branch} has no changes vs {default_branch}"),
+            &cformat!("{INFO_EMOJI} <bold>{branch}</> has no changes vs <bold>{default_branch}</>"),
             width,
         )
     }
@@ -532,7 +535,7 @@ impl WorktreeSkimItem {
         let head = self.item.head();
         let branch = self.item.branch_name();
         let Ok(default_branch) = repo.default_branch() else {
-            output.push_str(&format!("{INFO_EMOJI} {branch} has no commits\n"));
+            output.push_str(&cformat!("{INFO_EMOJI} <bold>{branch}</> has no commits\n"));
             return output;
         };
 
@@ -547,7 +550,7 @@ impl WorktreeSkimItem {
         // running git commands. This would provide better diagnostics but adds latency to
         // every preview render. Trade-off: simplicity + speed vs. detailed error messages.
         let Ok(merge_base_output) = repo.run_command(&["merge-base", &default_branch, head]) else {
-            output.push_str(&format!("{INFO_EMOJI} {branch} has no commits\n"));
+            output.push_str(&cformat!("{INFO_EMOJI} <bold>{branch}</> has no commits\n"));
             return output;
         };
 
@@ -940,8 +943,7 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
 
         // Switch to the selected worktree
         // handle_switch can handle both branch names and worktree paths
-        let (result, resolved_branch) =
-            handle_switch(&identifier, false, None, false, false, &config)?;
+        let (result, branch_info) = handle_switch(&identifier, false, None, false, false, &config)?;
 
         // Clear the terminal screen after skim exits to prevent artifacts
         // Use stderr for terminal control sequences - in directive mode, stdout goes to a FIFO
@@ -952,7 +954,7 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
         // Show success message; emit cd directive if in directive mode
-        handle_switch_output(&result, &resolved_branch, false, is_directive_mode)?;
+        handle_switch_output(&result, &branch_info, false, is_directive_mode)?;
     }
 
     Ok(())

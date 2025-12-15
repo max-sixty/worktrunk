@@ -60,6 +60,8 @@ fn base_path() -> &'static PathBuf {
 struct RepositoryLayout {
     /// Base path for worktrees (repo root for normal repos, bare repo path for bare repos)
     worktree_base: PathBuf,
+    /// Whether this is a bare repository
+    is_bare: bool,
 }
 
 /// Repository context for git operations.
@@ -132,7 +134,10 @@ impl Repository {
                 .to_path_buf()
         };
 
-        let layout = RepositoryLayout { worktree_base };
+        let layout = RepositoryLayout {
+            worktree_base,
+            is_bare,
+        };
 
         // set() returns Err if already set, but we checked above, so ignore the result
         let _ = self.layout.set(layout);
@@ -538,6 +543,14 @@ impl Repository {
     /// This is the path that should be used when constructing worktree paths.
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
         Ok(self.layout()?.worktree_base.clone())
+    }
+
+    /// Check if this is a bare repository (no working tree).
+    ///
+    /// Bare repositories have no main worktree — all worktrees are linked
+    /// worktrees at templated paths, including the default branch.
+    pub fn is_bare(&self) -> anyhow::Result<bool> {
+        Ok(self.layout()?.is_bare)
     }
 
     /// Check if the working tree has uncommitted changes.

@@ -212,6 +212,27 @@ pub struct Worktree {
     pub prunable: Option<String>,
 }
 
+/// Extract the directory name from a path for display purposes.
+///
+/// Returns the last component of the path as a string, or "(unknown)" if
+/// the path has no filename or contains invalid UTF-8.
+pub fn path_dir_name(path: &std::path::Path) -> &str {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("(unknown)")
+}
+
+impl Worktree {
+    /// Returns the worktree directory name.
+    ///
+    /// This is the filesystem directory name (e.g., "repo.feature" from "/path/to/repo.feature").
+    /// For user-facing display with context (branch consistency, detached state),
+    /// use `worktree_display_name()` from the commands module instead.
+    pub fn dir_name(&self) -> &str {
+        path_dir_name(&self.path)
+    }
+}
+
 /// A list of worktrees with automatic bare worktree filtering.
 ///
 /// This type ensures:

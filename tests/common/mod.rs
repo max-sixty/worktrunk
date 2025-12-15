@@ -478,7 +478,7 @@ fn copy_fixture_template(dest: &Path) {
 /// On Windows, `std::fs::canonicalize()` returns verbatim paths like `\\?\C:\...`
 /// which git cannot handle. The `dunce` crate strips this prefix when safe.
 /// On Unix, this is equivalent to `std::fs::canonicalize()`.
-fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+pub fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
 }
 
@@ -1661,19 +1661,35 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         "[REPO]$1",
     );
 
-    // Normalize temp directory paths in project identifiers (approval prompts)
-    // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
-    settings.add_filter(
-        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)]+",
-        "[PROJECT_ID]",
-    );
-
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
     // (metadata is handled via redactions below)
+    // IMPORTANT: These specific filters must come BEFORE the generic [PROJECT_ID] filters
     settings.add_filter(r".*/\.tmp[^/]+/test-config\.toml", "[TEST_CONFIG]");
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
     settings.add_filter(r".*/\.tmp[^/]+/test-gitconfig", "[TEST_GIT_CONFIG]");
+
+    // Normalize temp directory paths in project identifiers (approval prompts)
+    // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]
+    // Note: [^)'\s\x1b]+ stops at ), ', whitespace, or ANSI escape to avoid matching too much
+    settings.add_filter(
+        r"/private/var/folders/[^/]+/[^/]+/T/\.[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+    // Linux: /tmp/.tmpXXXXXX/path -> [PROJECT_ID]
+    settings.add_filter(r"/tmp/\.tmp[^/]+/[^)'\s\x1b]+", "[PROJECT_ID]");
+    // Windows: C:/Users/user/AppData/Local/Temp/.tmpXXXXXX/path -> [PROJECT_ID]
+    // Handles Windows temp paths with drive letters (after backslash normalization)
+    settings.add_filter(
+        r"[A-Z]:/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/[^)'\s\x1b]+",
+        "[PROJECT_ID]",
+    );
+
+    // Generic tilde-prefixed paths that aren't repo or worktree paths.
+    // On CI, HOME is a temp directory, so paths under HOME become ~/something.
+    // This catches paths like ~/wrong-path that don't follow the repo naming convention.
+    // MUST come AFTER specific ~/repo patterns so they match first.
+    settings.add_filter(r"~/[a-zA-Z0-9_-]+", "[PROJECT_ID]");
 
     // Normalize HOME temp directory in snapshots (stdout/stderr content)
     // Matches any temp directory path (without trailing filename)

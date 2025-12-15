@@ -1220,14 +1220,14 @@ fn main() {
                 }
 
                 // Execute switch operation (creates worktree, runs post-create hooks if approved)
-                let (result, resolved_branch) =
+                let (result, branch_info) =
                     handle_switch(&branch, create, base.as_deref(), force, skip_hooks, &config)?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
                 // Pass cli.internal to indicate whether shell integration is active
                 handle_switch_output(
                     &result,
-                    &resolved_branch,
+                    &branch_info,
                     execute.is_some(),
                     cli.internal.is_some(),
                 )?;
@@ -1241,7 +1241,7 @@ fn main() {
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        Some(&resolved_branch),
+                        Some(branch_info.branch()),
                         path,
                         &repo_root,
                         force,

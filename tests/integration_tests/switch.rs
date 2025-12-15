@@ -439,13 +439,164 @@ fn test_create_with_base_main(repo: TestRepo) {
     );
 }
 
+/// Test that normal switch (branch matches) does NOT show warning
 #[rstest]
-fn test_switch_default_branch_missing_worktree(repo: TestRepo) {
-    // Move the primary worktree off the default branch so no worktree holds it
-    repo.switch_primary_to("develop");
+fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
+    // Create a worktree for "feature" branch (normal case)
+    repo.add_worktree("feature");
 
-    snapshot_switch("switch_default_branch_missing_worktree", &repo, &["main"]);
+    // Switch to feature with shell integration - should NOT show any warning
+    snapshot_switch_with_global_flags(
+        "switch_no_warning_when_branch_matches",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
 }
+
+/// Test switching to a worktree at an unexpected path shows a hint
+#[rstest]
+fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree at a non-standard path (sibling to repo, not following template)
+    let wrong_path = repo.root_path().parent().unwrap().join("wrong-path");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "worktree",
+        "add",
+        wrong_path.to_str().unwrap(),
+        "-b",
+        "feature",
+    ])
+    .current_dir(repo.root_path())
+    .output()
+    .unwrap();
+
+    // Switch to feature - should show hint about path mismatch
+    snapshot_switch_with_global_flags(
+        "switch_path_mismatch_shows_hint",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
+/// Test that switching to a branch errors when path is occupied by worktree on different branch
+///
+/// With branch-first lookup, if a worktree was created for "feature" but then switched to
+/// "bugfix", `wt switch feature` can't find it (since it looks by branch name). When it
+/// tries to create a new worktree, it fails because the path exists. The hint shows what
+/// branch currently occupies the path.
+#[rstest]
+fn test_switch_error_path_occupied_different_branch(repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch at expected path
+    let feature_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature",
+    ])
+    .current_dir(repo.root_path())
+    .output()
+    .unwrap();
+
+    // Switch that worktree to a different branch "bugfix"
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["switch", "-c", "bugfix"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Switch to feature - should error since path is occupied by bugfix worktree
+    snapshot_switch_with_global_flags(
+        "switch_error_path_occupied_different_branch",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
+/// Test that switching to a branch errors when path is occupied by detached HEAD worktree
+#[rstest]
+fn test_switch_error_path_occupied_detached(repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch at expected path
+    let feature_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature",
+    ])
+    .current_dir(repo.root_path())
+    .output()
+    .unwrap();
+
+    // Get the HEAD commit and detach
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "--detach", &commit])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Switch to feature - should error since path is occupied by detached worktree
+    snapshot_switch_with_global_flags(
+        "switch_error_path_occupied_detached",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
+/// Test switching to default branch when main worktree is on a different branch
+///
+/// When the main worktree (repo root) has been switched to a feature branch via
+/// `git checkout feature`, `wt switch main` should show the path-occupied error
+/// with helpful commands to switch it back.
+#[rstest]
+fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
+    use std::process::Command;
+
+    // Switch the main worktree to a different branch
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "-b", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Now try to switch to main - should error because main worktree is on feature
+    snapshot_switch_with_global_flags(
+        "switch_error_main_worktree_on_different_branch",
+        &repo,
+        &["main"],
+        &["--internal"],
+    );
+}
+
 // Internal mode with execute tests
 /// Test that --execute with exit code is emitted in directive mode shell script.
 /// The shell wrapper will eval this script and propagate the exit code.
