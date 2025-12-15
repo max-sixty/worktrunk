@@ -680,3 +680,95 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
         "Project post-start should have run"
     );
 }
+
+// ============================================================================
+// Standalone Hook Execution Tests (wt hook <type>)
+// ============================================================================
+
+/// Test `wt hook post-create` standalone execution
+#[rstest]
+fn test_standalone_hook_post_create(repo: TestRepo) {
+    // Write project config with post-create hook
+    repo.write_project_config(r#"post-create = "echo 'STANDALONE_POST_CREATE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-create", "--force"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-create should succeed"
+    );
+
+    // Hook should have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "post-create hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_POST_CREATE"));
+}
+
+/// Test `wt hook post-start` standalone execution
+#[rstest]
+fn test_standalone_hook_post_start(repo: TestRepo) {
+    // Write project config with post-start hook
+    repo.write_project_config(r#"post-start = "echo 'STANDALONE_POST_START' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--force"]);
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt hook post-start should succeed");
+
+    // Hook should have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "post-start hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_POST_START"));
+}
+
+/// Test `wt hook pre-commit` standalone execution
+#[rstest]
+fn test_standalone_hook_pre_commit(repo: TestRepo) {
+    // Write project config with pre-commit hook
+    repo.write_project_config(r#"pre-commit = "echo 'STANDALONE_PRE_COMMIT' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "pre-commit", "--force"]);
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt hook pre-commit should succeed");
+
+    // Hook should have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "pre-commit hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_PRE_COMMIT"));
+}
+
+/// Test `wt hook post-create` fails when no hooks configured
+#[rstest]
+fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
+    // No project config, no user config with hooks
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-create", "--force"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook should fail when no hooks configured"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No post-create hook configured"),
+        "Error should mention no hook configured, got: {stderr}"
+    );
+}
