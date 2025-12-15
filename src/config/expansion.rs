@@ -117,7 +117,10 @@ mod tests {
 
     #[test]
     fn test_sanitize_branch_name_mixed_slashes() {
-        assert_eq!(sanitize_branch_name("feature/user\\task"), "feature-user-task");
+        assert_eq!(
+            sanitize_branch_name("feature/user\\task"),
+            "feature-user-task"
+        );
     }
 
     #[test]
@@ -258,11 +261,7 @@ mod tests {
     fn test_expand_template_jinja_conditional() {
         let mut vars = HashMap::new();
         vars.insert("debug", "true");
-        let result = expand_template(
-            "{% if debug %}DEBUG MODE{% endif %}",
-            &vars,
-            false,
-        );
+        let result = expand_template("{% if debug %}DEBUG MODE{% endif %}", &vars, false);
         assert_eq!(result.unwrap(), "DEBUG MODE");
     }
 
@@ -270,11 +269,7 @@ mod tests {
     fn test_expand_template_jinja_conditional_false() {
         let mut vars = HashMap::new();
         vars.insert("debug", "");
-        let result = expand_template(
-            "{% if debug %}DEBUG MODE{% endif %}",
-            &vars,
-            false,
-        );
+        let result = expand_template("{% if debug %}DEBUG MODE{% endif %}", &vars, false);
         // Empty string is falsy in Jinja2
         assert_eq!(result.unwrap(), "");
     }
@@ -282,11 +277,7 @@ mod tests {
     #[test]
     fn test_expand_template_jinja_default_filter() {
         let vars = HashMap::new();
-        let result = expand_template(
-            "{{ missing | default('fallback') }}",
-            &vars,
-            false,
-        );
+        let result = expand_template("{{ missing | default('fallback') }}", &vars, false);
         assert_eq!(result.unwrap(), "fallback");
     }
 
@@ -332,11 +323,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
         vars.insert("branch", "feature-foo");
-        let result = expand_template(
-            "{{ main_worktree }}.{{ branch }}",
-            &vars,
-            false,
-        );
+        let result = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false);
         assert_eq!(result.unwrap(), "myrepo.feature-foo");
     }
 
@@ -345,11 +332,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("repo", "myrepo");
         vars.insert("branch", "feature");
-        let result = expand_template(
-            "cargo test --package {{ repo }}",
-            &vars,
-            true,
-        );
+        let result = expand_template("cargo test --package {{ repo }}", &vars, true);
         assert_eq!(result.unwrap(), "cargo test --package myrepo");
     }
 
@@ -358,11 +341,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("target", "main");
         vars.insert("branch", "feature");
-        let result = expand_template(
-            "git merge {{ target }}",
-            &vars,
-            true,
-        );
+        let result = expand_template("git merge {{ target }}", &vars, true);
         assert_eq!(result.unwrap(), "git merge main");
     }
 }
