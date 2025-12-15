@@ -116,16 +116,8 @@ fn exec_in_pty_with_input_expectations(
     }
     cmd.cwd(working_dir);
 
-    // Set minimal environment
-    cmd.env_clear();
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    );
+    // Set up isolated environment with coverage passthrough
+    crate::common::configure_pty_command(&mut cmd);
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("TERM", "xterm-256color");
 

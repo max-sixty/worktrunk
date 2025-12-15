@@ -11,6 +11,7 @@ pub mod approval_save;
 pub mod approval_ui;
 pub mod approvals;
 pub mod bare_repository;
+pub mod ci_status;
 pub mod column_alignment_verification;
 pub mod completion;
 pub mod completion_validation;

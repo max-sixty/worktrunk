@@ -108,6 +108,21 @@ When converting a README example test from `insta_cmd` to PTY-based:
 
 The PTY approach is specifically for **user-facing output documentation**. It's not a replacement for standard integration tests - both approaches serve different purposes and should coexist in the test suite.
 
+## Coverage in PTY Tests
+
+PTY tests use `cmd.env_clear()` for isolation. To enable coverage, pass through LLVM env vars:
+
+```rust
+// Standard setup (most PTY tests)
+crate::common::configure_pty_command(&mut cmd);
+
+// Custom env setup (shell tests needing USER, SHELL, ZDOTDIR)
+cmd.env_clear();
+cmd.env("HOME", ...);
+// ... custom env ...
+crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+```
+
 ## Deterministic Time in Tests
 
 Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is defined in `tests/common/mod.rs` and automatically set as `SOURCE_DATE_EPOCH` in the test environment.

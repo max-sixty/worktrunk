@@ -47,16 +47,8 @@ fn exec_in_pty_with_input(
     }
     cmd.cwd(working_dir);
 
-    // Set minimal environment
-    cmd.env_clear();
-    cmd.env(
-        "HOME",
-        home::home_dir().unwrap().to_string_lossy().to_string(),
-    );
-    cmd.env(
-        "PATH",
-        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
-    );
+    // Set up isolated environment with coverage passthrough
+    crate::common::configure_pty_command(&mut cmd);
 
     // Add test-specific environment variables
     for (key, value) in env_vars {

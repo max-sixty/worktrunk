@@ -411,6 +411,9 @@ fn exec_in_pty_interactive(
         cmd.env(key, value);
     }
 
+    // Pass through LLVM coverage env vars for subprocess coverage collection
+    crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
 
@@ -502,6 +505,9 @@ fn exec_bash_truly_interactive(
     for (key, value) in env_vars {
         cmd.env(key, value);
     }
+
+    // Pass through LLVM coverage env vars for subprocess coverage collection
+    crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
     let mut child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave); // Close slave in parent
@@ -2502,6 +2508,9 @@ test = "echo 'Running tests...'"
             cmd.env(key, value);
         }
 
+        // Pass through LLVM coverage env vars for subprocess coverage collection
+        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
 
@@ -2678,6 +2687,9 @@ fi
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
 
+        // Pass through LLVM coverage env vars for subprocess coverage collection
+        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
 
@@ -2832,6 +2844,9 @@ fi
         cmd.arg("-c");
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
+
+        // Pass through LLVM coverage env vars for subprocess coverage collection
+        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -3131,6 +3146,9 @@ echo "SCRIPT_COMPLETED"
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
 
+        // Pass through LLVM coverage env vars for subprocess coverage collection
+        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
+
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
 
@@ -3342,6 +3360,9 @@ echo "SCRIPT_COMPLETED"
         cmd.arg("-c");
         cmd.arg(&script);
         cmd.cwd(repo.root_path());
+
+        // Pass through LLVM coverage env vars for subprocess coverage collection
+        crate::common::pass_coverage_env_to_pty_cmd(&mut cmd);
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);

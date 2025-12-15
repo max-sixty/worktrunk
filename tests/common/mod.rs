@@ -594,6 +594,52 @@ pub fn configure_cli_command(cmd: &mut Command) {
     }
 }
 
+/// Configure a PTY CommandBuilder with isolated environment for testing.
+///
+/// This is the PTY equivalent of `configure_cli_command()`. It:
+/// 1. Clears all inherited environment variables
+/// 2. Sets minimal required vars (HOME, PATH)
+/// 3. Passes through LLVM coverage profiling vars so subprocess coverage works
+///
+/// Call this early in PTY test setup, then add any test-specific env vars after.
+pub fn configure_pty_command(cmd: &mut portable_pty::CommandBuilder) {
+    // Clear inherited environment for test isolation
+    cmd.env_clear();
+
+    // Minimal environment for shells/binaries to function
+    cmd.env(
+        "HOME",
+        home::home_dir().unwrap().to_string_lossy().to_string(),
+    );
+    cmd.env(
+        "PATH",
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+    );
+
+    // Pass through LLVM coverage profiling environment for subprocess coverage.
+    // Without this, spawned binaries can't write coverage data.
+    pass_coverage_env_to_pty_cmd(cmd);
+}
+
+/// Pass through LLVM coverage profiling environment to a portable_pty::CommandBuilder.
+///
+/// PTY tests use `cmd.env_clear()` for isolation, which removes LLVM_PROFILE_FILE.
+/// Without this, spawned binaries can't write coverage data.
+///
+/// Use `configure_pty_command()` for the full setup, or call this directly if you
+/// need custom env_clear handling (e.g., shell-specific env vars).
+pub fn pass_coverage_env_to_pty_cmd(cmd: &mut portable_pty::CommandBuilder) {
+    for key in [
+        "LLVM_PROFILE_FILE",
+        "CARGO_LLVM_COV",
+        "CARGO_LLVM_COV_TARGET_DIR",
+    ] {
+        if let Ok(val) = std::env::var(key) {
+            cmd.env(key, val);
+        }
+    }
+}
+
 /// Set home environment variables for commands that rely on isolated temp homes.
 ///
 /// Sets both Unix (`HOME`, `XDG_CONFIG_HOME`) and Windows (`USERPROFILE`) variables
@@ -1513,6 +1559,133 @@ exit /b 1
 "#,
             )
             .unwrap();
+        }
+
+        self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `gh` that returns configurable PR/CI data
+    ///
+    /// Use this for testing CI status parsing code. The mock returns JSON data
+    /// for `gh pr list` and `gh run list` commands.
+    ///
+    /// # Arguments
+    /// * `pr_json` - JSON string to return for `gh pr list --json ...`
+    /// * `run_json` - JSON string to return for `gh run list --json ...`
+    pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str, run_json: &str) {
+        let mock_bin = self.temp_dir.path().join("mock-bin");
+        std::fs::create_dir_all(&mock_bin).unwrap();
+
+        // Write JSON files to be read by the script
+        let pr_json_file = mock_bin.join("pr_data.json");
+        let run_json_file = mock_bin.join("run_data.json");
+        std::fs::write(&pr_json_file, pr_json).unwrap();
+        std::fs::write(&run_json_file, run_json).unwrap();
+
+        // Create mock gh script that returns JSON data
+        let gh_script = mock_bin.join("gh");
+        std::fs::write(
+            &gh_script,
+            format!(
+                r#"#!/bin/sh
+# Mock gh command that returns configured JSON data
+
+case "$1" in
+    --version)
+        echo "gh version 2.0.0 (mock)"
+        exit 0
+        ;;
+    auth)
+        # gh auth status - succeed immediately
+        exit 0
+        ;;
+    pr)
+        # gh pr list - return PR data from file
+        cat "{pr_json}"
+        exit 0
+        ;;
+    run)
+        # gh run list - return run data from file
+        cat "{run_json}"
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+"#,
+                pr_json = pr_json_file.display(),
+                run_json = run_json_file.display(),
+            ),
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // Create Windows batch file version of gh mock
+        #[cfg(windows)]
+        {
+            let gh_cmd = mock_bin.join("gh.cmd");
+            std::fs::write(
+                &gh_cmd,
+                format!(
+                    r#"@echo off
+if "%1"=="--version" goto version
+if "%1"=="auth" goto auth
+if "%1"=="pr" goto pr
+if "%1"=="run" goto run
+goto fail
+
+:version
+echo gh version 2.0.0 (mock)
+exit /b 0
+
+:auth
+exit /b 0
+
+:pr
+type "{pr_json}"
+exit /b 0
+
+:run
+type "{run_json}"
+exit /b 0
+
+:fail
+exit /b 1
+"#,
+                    pr_json = pr_json_file.display(),
+                    run_json = run_json_file.display(),
+                ),
+            )
+            .unwrap();
+        }
+
+        // Create mock glab script (fails immediately - no GitLab support in this mock)
+        let glab_script = mock_bin.join("glab");
+        std::fs::write(
+            &glab_script,
+            r#"#!/bin/sh
+# Mock glab command that fails fast
+exit 1
+"#,
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        #[cfg(windows)]
+        {
+            let glab_cmd = mock_bin.join("glab.cmd");
+            std::fs::write(&glab_cmd, "@echo off\nexit /b 1\n").unwrap();
         }
 
         self.mock_bin_path = Some(mock_bin);
