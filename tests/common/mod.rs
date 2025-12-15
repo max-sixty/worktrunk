@@ -1703,14 +1703,12 @@ esac
             std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        // Create Windows batch file version of gh mock
+        // Create Windows batch file versions of gh mock (.bat and .cmd)
+        // Both are needed because different resolution methods may prefer different extensions
         #[cfg(windows)]
         {
-            let gh_cmd = mock_bin.join("gh.cmd");
-            std::fs::write(
-                &gh_cmd,
-                format!(
-                    r#"@echo off
+            let batch_content = format!(
+                r#"@echo off
 if "%1"=="--version" goto version
 if "%1"=="auth" goto auth
 if "%1"=="pr" goto pr
@@ -1735,11 +1733,11 @@ exit /b 0
 :fail
 exit /b 1
 "#,
-                    pr_json = pr_json_file.display(),
-                    run_json = run_json_file.display(),
-                ),
-            )
-            .unwrap();
+                pr_json = pr_json_file.display(),
+                run_json = run_json_file.display(),
+            );
+            std::fs::write(mock_bin.join("gh.cmd"), &batch_content).unwrap();
+            std::fs::write(mock_bin.join("gh.bat"), &batch_content).unwrap();
         }
 
         // Create mock glab script (fails immediately - no GitLab support in this mock)
@@ -1761,8 +1759,9 @@ exit 1
 
         #[cfg(windows)]
         {
-            let glab_cmd = mock_bin.join("glab.cmd");
-            std::fs::write(&glab_cmd, "@echo off\nexit /b 1\n").unwrap();
+            let glab_content = "@echo off\nexit /b 1\n";
+            std::fs::write(mock_bin.join("glab.cmd"), glab_content).unwrap();
+            std::fs::write(mock_bin.join("glab.bat"), glab_content).unwrap();
         }
 
         self.mock_bin_path = Some(mock_bin);
@@ -1773,9 +1772,9 @@ exit 1
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
     /// so gh/glab commands are intercepted.
     ///
-    /// On Windows, this also removes directories containing real gh.exe/glab.exe from PATH.
-    /// This is necessary because Windows searches for .exe before .cmd in PATHEXT order,
-    /// so a real gh.exe would be found before our mock gh.cmd even with mock-bin first.
+    /// On Windows, this also removes directories containing real gh.exe/glab.exe
+    /// from PATH and sets PATHEXT to prefer .BAT/.CMD before .EXE. This ensures
+    /// our mock .bat/.cmd scripts are found instead of any real gh.exe.
     ///
     /// Metadata redactions keep PATH private in snapshots, so we can reuse the
     /// caller's PATH instead of a hardcoded minimal list.
@@ -1786,15 +1785,18 @@ exit 1
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
 
-            // On Windows, modify PATHEXT to prefer .CMD over .EXE so our mock gh.cmd
-            // is found before any real gh.exe on the system. Windows searches ALL
-            // directories for .EXE before ANY directory for .CMD by default, so just
-            // reordering PATH isn't enough - we need to change the extension priority.
+            // On Windows, Rust's Command::new looks for executables with .exe extension.
+            // We need a gh.exe in mock_bin, but creating real executables is complex.
+            // Instead, create a gh.bat (which Windows will execute for "gh" if .bat
+            // comes before .exe in PATHEXT) and modify PATHEXT accordingly.
+            // Also remove directories containing real gh.exe from PATH.
             #[cfg(windows)]
             {
+                paths.retain(|dir| !dir.join("gh.exe").exists() && !dir.join("glab.exe").exists());
+                // Put .BAT before .EXE so our gh.bat is found
                 cmd.env(
                     "PATHEXT",
-                    ".CMD;.COM;.EXE;.BAT;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC",
+                    ".BAT;.CMD;.COM;.EXE;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC",
                 );
             }
 
