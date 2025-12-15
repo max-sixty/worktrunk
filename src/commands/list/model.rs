@@ -1548,4 +1548,429 @@ mod tests {
             "Clean working tree should show as integrated"
         );
     }
+
+    // ============================================================================
+    // Divergence Tests
+    // ============================================================================
+
+    #[test]
+    fn test_divergence_from_counts_with_remote() {
+        assert_eq!(
+            Divergence::from_counts_with_remote(0, 0),
+            Divergence::InSync
+        );
+        assert_eq!(Divergence::from_counts_with_remote(5, 0), Divergence::Ahead);
+        assert_eq!(
+            Divergence::from_counts_with_remote(0, 3),
+            Divergence::Behind
+        );
+        assert_eq!(
+            Divergence::from_counts_with_remote(5, 3),
+            Divergence::Diverged
+        );
+    }
+
+    #[test]
+    fn test_divergence_symbol() {
+        assert_eq!(Divergence::None.symbol(DivergenceContext::Upstream), "");
+        assert_eq!(Divergence::InSync.symbol(DivergenceContext::Upstream), "|");
+        assert_eq!(Divergence::Ahead.symbol(DivergenceContext::Upstream), "⇡");
+        assert_eq!(Divergence::Behind.symbol(DivergenceContext::Upstream), "⇣");
+        assert_eq!(
+            Divergence::Diverged.symbol(DivergenceContext::Upstream),
+            "⇅"
+        );
+    }
+
+    #[test]
+    fn test_divergence_styled() {
+        // None returns None
+        assert!(
+            Divergence::None
+                .styled(DivergenceContext::Upstream)
+                .is_none()
+        );
+
+        // Other variants return styled strings
+        let styled = Divergence::InSync
+            .styled(DivergenceContext::Upstream)
+            .unwrap();
+        assert!(styled.contains("|"));
+
+        let styled = Divergence::Ahead
+            .styled(DivergenceContext::Upstream)
+            .unwrap();
+        assert!(styled.contains("⇡"));
+
+        let styled = Divergence::Behind
+            .styled(DivergenceContext::Upstream)
+            .unwrap();
+        assert!(styled.contains("⇣"));
+
+        let styled = Divergence::Diverged
+            .styled(DivergenceContext::Upstream)
+            .unwrap();
+        assert!(styled.contains("⇅"));
+    }
+
+    // ============================================================================
+    // WorktreeState Tests
+    // ============================================================================
+
+    #[test]
+    fn test_worktree_state_display() {
+        assert_eq!(format!("{}", WorktreeState::None), "");
+        assert_eq!(format!("{}", WorktreeState::PathMismatch), "⚑");
+        assert_eq!(format!("{}", WorktreeState::Prunable), "⊟");
+        assert_eq!(format!("{}", WorktreeState::Locked), "⊞");
+        assert_eq!(format!("{}", WorktreeState::Branch), "/");
+    }
+
+    #[test]
+    fn test_worktree_state_serialize() {
+        // Serialize to JSON and check the string representation
+        let json = serde_json::to_string(&WorktreeState::None).unwrap();
+        assert_eq!(json, "\"\"");
+
+        let json = serde_json::to_string(&WorktreeState::PathMismatch).unwrap();
+        assert_eq!(json, "\"⚑\"");
+
+        let json = serde_json::to_string(&WorktreeState::Branch).unwrap();
+        assert_eq!(json, "\"/\"");
+    }
+
+    // ============================================================================
+    // MainState Tests
+    // ============================================================================
+
+    #[test]
+    fn test_main_state_display() {
+        assert_eq!(format!("{}", MainState::None), "");
+        assert_eq!(format!("{}", MainState::IsMain), "^");
+        assert_eq!(format!("{}", MainState::WouldConflict), "✗");
+        assert_eq!(format!("{}", MainState::Empty), "_");
+        assert_eq!(format!("{}", MainState::SameCommit), "–"); // en-dash
+        assert_eq!(
+            format!("{}", MainState::Integrated(IntegrationReason::Ancestor)),
+            "⊂"
+        );
+        assert_eq!(format!("{}", MainState::Diverged), "↕");
+        assert_eq!(format!("{}", MainState::Ahead), "↑");
+        assert_eq!(format!("{}", MainState::Behind), "↓");
+    }
+
+    #[test]
+    fn test_main_state_styled() {
+        // None returns None
+        assert!(MainState::None.styled().is_none());
+
+        // WouldConflict is yellow
+        let styled = MainState::WouldConflict.styled().unwrap();
+        assert!(styled.contains("✗"));
+
+        // Other states are dimmed
+        let styled = MainState::IsMain.styled().unwrap();
+        assert!(styled.contains("^"));
+
+        let styled = MainState::Ahead.styled().unwrap();
+        assert!(styled.contains("↑"));
+    }
+
+    #[test]
+    fn test_main_state_serialize() {
+        let json = serde_json::to_string(&MainState::None).unwrap();
+        assert_eq!(json, "\"\"");
+
+        let json = serde_json::to_string(&MainState::IsMain).unwrap();
+        assert_eq!(json, "\"^\"");
+
+        let json = serde_json::to_string(&MainState::Diverged).unwrap();
+        assert_eq!(json, "\"↕\"");
+    }
+
+    // ============================================================================
+    // OperationState Tests
+    // ============================================================================
+
+    #[test]
+    fn test_operation_state_display() {
+        assert_eq!(format!("{}", OperationState::None), "");
+        assert_eq!(format!("{}", OperationState::Conflicts), "✘");
+        assert_eq!(format!("{}", OperationState::Rebase), "⤴");
+        assert_eq!(format!("{}", OperationState::Merge), "⤵");
+    }
+
+    #[test]
+    fn test_operation_state_styled() {
+        // None returns None
+        assert!(OperationState::None.styled().is_none());
+
+        // Conflicts is red
+        let styled = OperationState::Conflicts.styled().unwrap();
+        assert!(styled.contains("✘"));
+
+        // Rebase and Merge are yellow
+        let styled = OperationState::Rebase.styled().unwrap();
+        assert!(styled.contains("⤴"));
+
+        let styled = OperationState::Merge.styled().unwrap();
+        assert!(styled.contains("⤵"));
+    }
+
+    #[test]
+    fn test_operation_state_serialize() {
+        let json = serde_json::to_string(&OperationState::None).unwrap();
+        assert_eq!(json, "\"\"");
+
+        let json = serde_json::to_string(&OperationState::Conflicts).unwrap();
+        assert_eq!(json, "\"✘\"");
+    }
+
+    // ============================================================================
+    // StatusSymbols Tests
+    // ============================================================================
+
+    #[test]
+    fn test_status_symbols_is_empty() {
+        let symbols = StatusSymbols::default();
+        assert!(symbols.is_empty());
+
+        let symbols = StatusSymbols {
+            main_state: MainState::Ahead,
+            ..Default::default()
+        };
+        assert!(!symbols.is_empty());
+
+        let symbols = StatusSymbols {
+            operation_state: OperationState::Rebase,
+            ..Default::default()
+        };
+        assert!(!symbols.is_empty());
+
+        let symbols = StatusSymbols {
+            worktree_state: WorktreeState::Locked,
+            ..Default::default()
+        };
+        assert!(!symbols.is_empty());
+
+        let symbols = StatusSymbols {
+            upstream_divergence: Divergence::Ahead,
+            ..Default::default()
+        };
+        assert!(!symbols.is_empty());
+
+        let symbols = StatusSymbols {
+            working_tree: WorkingTreeStatus::new(true, false, false, false, false),
+            ..Default::default()
+        };
+        assert!(!symbols.is_empty());
+
+        let symbols = StatusSymbols {
+            user_marker: Some("🔥".to_string()),
+            ..Default::default()
+        };
+        assert!(!symbols.is_empty());
+    }
+
+    #[test]
+    fn test_status_symbols_format_compact() {
+        // Empty symbols
+        let symbols = StatusSymbols::default();
+        assert_eq!(symbols.format_compact(), "");
+
+        // Single symbol
+        let symbols = StatusSymbols {
+            main_state: MainState::Ahead,
+            ..Default::default()
+        };
+        let compact = symbols.format_compact();
+        assert!(compact.contains("↑"));
+
+        // Multiple symbols
+        let symbols = StatusSymbols {
+            working_tree: WorkingTreeStatus::new(true, true, false, false, false),
+            main_state: MainState::Ahead,
+            ..Default::default()
+        };
+        let compact = symbols.format_compact();
+        assert!(compact.contains("+"));
+        assert!(compact.contains("!"));
+        assert!(compact.contains("↑"));
+    }
+
+    #[test]
+    fn test_status_symbols_render_with_mask() {
+        let symbols = StatusSymbols {
+            main_state: MainState::Ahead,
+            ..Default::default()
+        };
+        let rendered = symbols.render_with_mask(&PositionMask::FULL);
+        // Should have fixed-width output with spacing
+        assert!(!rendered.is_empty());
+        assert!(rendered.contains("↑"));
+    }
+
+    // ============================================================================
+    // UpstreamStatus Tests
+    // ============================================================================
+
+    #[test]
+    fn test_upstream_status_active_with_remote() {
+        let status = UpstreamStatus::from_parts(Some("origin".to_string()), 3, 2);
+        let active = status.active().unwrap();
+        assert_eq!(active.remote, "origin");
+        assert_eq!(active.ahead, 3);
+        assert_eq!(active.behind, 2);
+    }
+
+    #[test]
+    fn test_upstream_status_active_no_remote() {
+        let status = UpstreamStatus::from_parts(None, 0, 0);
+        assert!(status.active().is_none());
+    }
+
+    // ============================================================================
+    // ListItem Tests
+    // ============================================================================
+
+    #[test]
+    fn test_list_item_branch_name() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert_eq!(item.branch_name(), "feature");
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.branch = None; // Simulate detached
+        assert_eq!(item.branch_name(), "(detached)");
+    }
+
+    #[test]
+    fn test_list_item_head() {
+        let item = ListItem::new_branch("abc123def".to_string(), "feature".to_string());
+        assert_eq!(item.head(), "abc123def");
+    }
+
+    #[test]
+    fn test_list_item_commit_details() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        let details = item.commit_details();
+        assert_eq!(details.timestamp, 0);
+        assert_eq!(details.commit_message, "");
+    }
+
+    #[test]
+    fn test_list_item_counts() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        let counts = item.counts();
+        assert_eq!(counts.ahead, 0);
+        assert_eq!(counts.behind, 0);
+
+        let mut item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        item.counts = Some(AheadBehind {
+            ahead: 5,
+            behind: 3,
+        });
+        let counts = item.counts();
+        assert_eq!(counts.ahead, 5);
+        assert_eq!(counts.behind, 3);
+    }
+
+    #[test]
+    fn test_list_item_branch_diff() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        let diff = item.branch_diff();
+        assert!(diff.diff.is_empty());
+    }
+
+    #[test]
+    fn test_list_item_upstream() {
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        let upstream = item.upstream();
+        assert!(upstream.remote.is_none());
+    }
+
+    #[test]
+    fn test_list_item_worktree_data() {
+        // Branch item has no worktree data
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert!(item.worktree_data().is_none());
+        assert!(item.worktree_path().is_none());
+    }
+
+    #[test]
+    fn test_list_item_should_dim() {
+        // No status_symbols = should NOT dim (data still loading)
+        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
+        assert!(!item.should_dim());
+    }
+
+    // ============================================================================
+    // PositionMask Tests
+    // ============================================================================
+
+    #[test]
+    fn test_position_mask_width() {
+        let mask = PositionMask::FULL;
+        // Check expected widths for each position
+        assert_eq!(mask.width(PositionMask::STAGED), 1);
+        assert_eq!(mask.width(PositionMask::MODIFIED), 1);
+        assert_eq!(mask.width(PositionMask::UNTRACKED), 1);
+        assert_eq!(mask.width(PositionMask::WORKTREE_STATE), 1);
+        assert_eq!(mask.width(PositionMask::MAIN_STATE), 1);
+        assert_eq!(mask.width(PositionMask::UPSTREAM_DIVERGENCE), 1);
+        assert_eq!(mask.width(PositionMask::USER_MARKER), 2);
+    }
+
+    #[test]
+    fn test_position_mask_default() {
+        let mask = PositionMask::default();
+        // Default has all widths at 0
+        for i in 0..7 {
+            assert_eq!(mask.width(i), 0);
+        }
+    }
+
+    // ============================================================================
+    // GitOperationState Tests
+    // ============================================================================
+
+    #[test]
+    fn test_git_operation_state_default() {
+        let state = GitOperationState::default();
+        assert_eq!(state, GitOperationState::None);
+    }
+
+    #[test]
+    fn test_git_operation_is_none() {
+        assert!(git_operation_is_none(&GitOperationState::None));
+        assert!(!git_operation_is_none(&GitOperationState::Rebase));
+        assert!(!git_operation_is_none(&GitOperationState::Merge));
+    }
+
+    // ============================================================================
+    // AheadBehind and BranchDiffTotals Tests
+    // ============================================================================
+
+    #[test]
+    fn test_ahead_behind_default() {
+        let ab = AheadBehind::default();
+        assert_eq!(ab.ahead, 0);
+        assert_eq!(ab.behind, 0);
+    }
+
+    #[test]
+    fn test_branch_diff_totals_default() {
+        let diff = BranchDiffTotals::default();
+        assert!(diff.diff.is_empty());
+    }
+
+    // ============================================================================
+    // CommitDetails Tests
+    // ============================================================================
+
+    #[test]
+    fn test_commit_details_default() {
+        let details = CommitDetails::default();
+        assert_eq!(details.timestamp, 0);
+        assert_eq!(details.commit_message, "");
+    }
 }
