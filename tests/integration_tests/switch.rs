@@ -483,6 +483,94 @@ fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
     );
 }
 
+/// Test that switching to a branch errors when path is occupied by worktree on different branch
+///
+/// With branch-first lookup, if a worktree was created for "feature" but then switched to
+/// "bugfix", `wt switch feature` can't find it (since it looks by branch name). When it
+/// tries to create a new worktree, it fails because the path exists. The hint shows what
+/// branch currently occupies the path.
+#[rstest]
+fn test_switch_error_path_occupied_different_branch(repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch at expected path
+    let feature_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature",
+    ])
+    .current_dir(repo.root_path())
+    .output()
+    .unwrap();
+
+    // Switch that worktree to a different branch "bugfix"
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["switch", "-c", "bugfix"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Switch to feature - should error since path is occupied by bugfix worktree
+    snapshot_switch_with_global_flags(
+        "switch_error_path_occupied_different_branch",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
+/// Test that switching to a branch errors when path is occupied by detached HEAD worktree
+#[rstest]
+fn test_switch_error_path_occupied_detached(repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a worktree for "feature" branch at expected path
+    let feature_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args([
+        "worktree",
+        "add",
+        feature_path.to_str().unwrap(),
+        "-b",
+        "feature",
+    ])
+    .current_dir(repo.root_path())
+    .output()
+    .unwrap();
+
+    // Get the HEAD commit and detach
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "--detach", &commit])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // Switch to feature - should error since path is occupied by detached worktree
+    snapshot_switch_with_global_flags(
+        "switch_error_path_occupied_detached",
+        &repo,
+        &["feature"],
+        &["--internal"],
+    );
+}
+
 // Internal mode with execute tests
 /// Test that --execute with exit code is emitted in directive mode shell script.
 /// The shell wrapper will eval this script and propagate the exit code.
