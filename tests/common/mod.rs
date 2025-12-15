@@ -1619,11 +1619,11 @@ esac
         }
 
         // Create Windows batch file versions of gh mock (.bat and .cmd)
-        // Both are needed because different resolution methods may prefer different extensions
+        // Both are needed because different resolution methods may prefer different extensions.
+        // Use %~dp0 (directory containing the batch file) for reliable relative paths.
         #[cfg(windows)]
         {
-            let batch_content = format!(
-                r#"@echo off
+            let batch_content = r#"@echo off
 if "%1"=="--version" goto version
 if "%1"=="auth" goto auth
 if "%1"=="pr" goto pr
@@ -1638,21 +1638,18 @@ exit /b 0
 exit /b 0
 
 :pr
-type "{pr_json}"
+type "%~dp0pr_data.json"
 exit /b 0
 
 :run
-type "{run_json}"
+type "%~dp0run_data.json"
 exit /b 0
 
 :fail
 exit /b 1
-"#,
-                pr_json = pr_json_file.display(),
-                run_json = run_json_file.display(),
-            );
-            std::fs::write(mock_bin.join("gh.cmd"), &batch_content).unwrap();
-            std::fs::write(mock_bin.join("gh.bat"), &batch_content).unwrap();
+"#;
+            std::fs::write(mock_bin.join("gh.cmd"), batch_content).unwrap();
+            std::fs::write(mock_bin.join("gh.bat"), batch_content).unwrap();
         }
 
         // Create mock glab script (fails immediately - no GitLab support in this mock)
