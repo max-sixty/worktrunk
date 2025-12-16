@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "worktrunk",
-      "description": "Complete Worktrunk integration for Claude Code. Provides: (1) configuration skill for setting up LLM integration, project hooks, and worktree automation, (2) automatic hooks that track AI activity per branch (🤖💬 indicators in wt list). Use when configuring Worktrunk, setting up hooks, or wanting visibility into which branches have active Claude sessions.",
+      "description": "Worktrunk is a git worktree management CLI that streamlines multi-branch development. This plugin provides Claude Code integration with two features: (1) A configuration skill guiding you through LLM-powered commit message generation, project automation hooks (post-create, pre-merge), and worktree path customization. (2) Automatic activity tracking that displays 🤖 (working) and 💬 (waiting) indicators in `wt list`, showing which branches have active Claude sessions. Use when setting up Worktrunk configuration, automating project workflows, or monitoring AI activity across branches.",
       "source": "./.claude-plugin",
       "strict": false,
       "skills": [
