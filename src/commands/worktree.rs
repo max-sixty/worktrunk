@@ -116,7 +116,7 @@ use normalize_path::NormalizePath;
 use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::git::{GitError, Repository, ResolvedWorktree};
+use worktrunk::git::{GitError, IntegrationReason, Repository, ResolvedWorktree};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
     warning_message,
@@ -352,6 +352,10 @@ pub enum RemoveResult {
         no_delete_branch: bool,
         force_delete: bool,
         target_branch: Option<String>,
+        /// Precomputed integration check result: (reason, effective_target).
+        /// Computed early to avoid race conditions when removing multiple worktrees.
+        /// None if no_delete_branch is true, force_delete is true, or branch_name is None.
+        integration_outcome: Option<(Option<IntegrationReason>, String)>,
     },
     /// Branch exists but has no worktree - attempt branch deletion only
     BranchOnly {
@@ -683,6 +687,7 @@ pub fn handle_remove_by_path(
         no_delete_branch: true, // Can't delete branch for detached worktree
         force_delete,
         target_branch: None,
+        integration_outcome: None, // No integration check for detached worktrees
     })
 }
 
@@ -1140,6 +1145,7 @@ mod tests {
             no_delete_branch: false,
             force_delete: false,
             target_branch: Some("main".to_string()),
+            integration_outcome: Some((Some(IntegrationReason::SameCommit), "main".to_string())),
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -1150,6 +1156,7 @@ mod tests {
                 no_delete_branch,
                 force_delete,
                 target_branch,
+                integration_outcome,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -1158,6 +1165,7 @@ mod tests {
                 assert!(!no_delete_branch);
                 assert!(!force_delete);
                 assert_eq!(target_branch.as_deref(), Some("main"));
+                assert!(integration_outcome.is_some());
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
@@ -1194,6 +1202,7 @@ mod tests {
             no_delete_branch: true,
             force_delete: true,
             target_branch: None,
+            integration_outcome: None, // No check for detached HEAD
         };
         match result {
             RemoveResult::RemovedWorktree {

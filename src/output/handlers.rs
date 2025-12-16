@@ -468,6 +468,7 @@ pub fn handle_remove_output(
             no_delete_branch,
             force_delete,
             target_branch,
+            integration_outcome,
         } => handle_removed_worktree_output(
             main_path,
             worktree_path,
@@ -476,6 +477,7 @@ pub fn handle_remove_output(
             *no_delete_branch,
             *force_delete,
             target_branch.as_deref(),
+            integration_outcome.as_ref(),
             branch,
             background,
             verify,
@@ -541,6 +543,7 @@ fn handle_removed_worktree_output(
     no_delete_branch: bool,
     force_delete: bool,
     target_branch: Option<&str>,
+    integration_outcome: Option<&(Option<IntegrationReason>, String)>,
     branch: Option<&str>,
     background: bool,
     verify: bool,
@@ -607,8 +610,9 @@ fn handle_removed_worktree_output(
     if background {
         // Background mode: spawn detached process
 
-        // Determine outcome upfront (check once, not in background script)
-        // Only show effective_target in message if we had a meaningful target (not tautological "HEAD" fallback)
+        // Use precomputed integration outcome to avoid race conditions.
+        // On Windows, spawning background processes can interfere with git operations,
+        // so the integration check was done earlier in remove_worktree_by_name.
         let (outcome, effective_target) = if no_delete_branch {
             (
                 BranchDeletionOutcome::NotDeleted,
@@ -619,21 +623,23 @@ fn handle_removed_worktree_output(
                 BranchDeletionOutcome::ForceDeleted,
                 target_branch.map(String::from),
             )
-        } else {
-            // Check if branch is integrated
-            let check_target = target_branch.unwrap_or("HEAD");
-            let deletion_repo = worktrunk::git::Repository::at(main_path);
-            let IntegrationResult {
-                reason,
-                effective_target,
-            } = get_integration_reason(&deletion_repo, branch_name, check_target);
+        } else if let Some((reason, eff_target)) = integration_outcome {
+            // Use the precomputed integration result
             // Only use effective_target for display if we had a real target (not "HEAD" fallback)
-            let display_target = target_branch.map(|_| effective_target);
+            let display_target = target_branch.map(|_| eff_target.clone());
             let outcome = match reason {
-                Some(r) => BranchDeletionOutcome::Integrated(r),
+                Some(r) => BranchDeletionOutcome::Integrated(*r),
                 None => BranchDeletionOutcome::NotDeleted,
             };
             (outcome, display_target)
+        } else {
+            // integration_outcome should always be precomputed by remove_worktree_by_name
+            // If we reach here, it's a programming error - fail fast rather than risk
+            // race conditions by computing integration here
+            anyhow::bail!(
+                "Internal error: integration_outcome not precomputed for branch '{}'",
+                branch_name
+            );
         };
 
         let should_delete_branch = matches!(

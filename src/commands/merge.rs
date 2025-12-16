@@ -232,6 +232,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
         // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
         let worktree_root = repo.worktree_root()?;
+        // After merge, the branch is integrated - compute integration reason for message
+        let destination_repo = Repository::at(&destination_path);
+        let effective_target = destination_repo.effective_integration_target(&target_branch);
+        let mut provider = worktrunk::git::LazyGitIntegration::new(
+            &destination_repo,
+            &current_branch,
+            &effective_target,
+        );
+        let reason = worktrunk::git::check_integration(&mut provider);
+
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -240,6 +250,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             no_delete_branch: false,
             force_delete: false,
             target_branch: Some(target_branch.clone()),
+            integration_outcome: Some((reason, effective_target)),
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (MergeCommandCollector)

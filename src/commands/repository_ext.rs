@@ -6,7 +6,7 @@ use super::worktree::RemoveResult;
 use anyhow::Context;
 use color_print::cformat;
 use worktrunk::config::ProjectConfig;
-use worktrunk::git::{GitError, Repository};
+use worktrunk::git::{GitError, LazyGitIntegration, Repository, check_integration};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{format_with_gutter, progress_message, warning_message};
 
@@ -146,6 +146,30 @@ impl RepositoryCliExt for Repository {
             _ => default_branch,
         };
 
+        // Precompute integration check to avoid race conditions when removing multiple worktrees.
+        // On Windows, background processes (`git worktree remove`, `git branch -D`) can hold
+        // locks on git refs/objects, causing subsequent `git rev-parse` calls to fail with
+        // "unable to read ref" errors. Computing this early (before spawning any background
+        // processes in the output handler) ensures accurate integration results.
+        let integration_outcome = if no_delete_branch || force_delete {
+            // No integration check needed for these cases
+            None
+        } else if let Some(ref target) = target_branch {
+            // Use main_path for the check - this is where we'll run git commands from
+            let check_repo = Repository::at(&main_path);
+            let effective_target = check_repo.effective_integration_target(target);
+            let mut provider = LazyGitIntegration::new(&check_repo, branch_name, &effective_target);
+            let reason = check_integration(&mut provider);
+            Some((reason, effective_target))
+        } else {
+            // No target branch (removing default branch itself) - check against HEAD
+            let check_repo = Repository::at(&main_path);
+            let effective_target = "HEAD".to_string();
+            let mut provider = LazyGitIntegration::new(&check_repo, branch_name, &effective_target);
+            let reason = check_integration(&mut provider);
+            Some((reason, effective_target))
+        };
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,
@@ -154,6 +178,7 @@ impl RepositoryCliExt for Repository {
             no_delete_branch,
             force_delete,
             target_branch,
+            integration_outcome,
         })
     }
 
@@ -194,6 +219,19 @@ impl RepositoryCliExt for Repository {
             _ => default_branch,
         };
 
+        // Precompute integration check (same logic as remove_worktree_by_name)
+        let integration_outcome = match (&branch_name, no_delete_branch || force_delete) {
+            (None, _) | (_, true) => None, // No branch or no check needed
+            (Some(bn), false) => {
+                let check_repo = Repository::at(&main_path);
+                let check_target = target_branch.as_deref().unwrap_or("HEAD");
+                let effective_target = check_repo.effective_integration_target(check_target);
+                let mut provider = LazyGitIntegration::new(&check_repo, bn, &effective_target);
+                let reason = check_integration(&mut provider);
+                Some((reason, effective_target))
+            }
+        };
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path: current_path,
@@ -202,6 +240,7 @@ impl RepositoryCliExt for Repository {
             no_delete_branch,
             force_delete,
             target_branch,
+            integration_outcome,
         })
     }
 
