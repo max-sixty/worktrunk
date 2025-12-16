@@ -19,7 +19,7 @@ cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps
 cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build target/debug/
 """
 # Fetch demo assets for docs development
-assets = "./scripts/fetch-assets"
+assets = "./dev/fetch-assets"
 
 # Post-merge hooks
 # These run in the main worktree after successful merge and push

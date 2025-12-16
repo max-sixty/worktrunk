@@ -261,7 +261,7 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
 
 **For local development:**
 ```bash
-./scripts/fetch-assets      # Download to docs/static/assets/ (gitignored)
+./dev/fetch-assets      # Download to docs/static/assets/ (gitignored)
 ```
 
 **To regenerate demos** (required after CLI output changes):
@@ -272,7 +272,7 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
    ./docs/demos/wt/build
    ./docs/demos/wt-select/build
    ```
-3. Publish: `./scripts/publish-assets`
+3. Publish: `./dev/publish-assets`
 
 Deploy runs `fetch-assets` before building.
 
