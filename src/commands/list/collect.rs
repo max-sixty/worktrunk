@@ -640,18 +640,12 @@ pub fn collect(
         use anstyle::Style;
         let dim = Style::new().dimmed();
 
-        // Build skeleton rows
+        // Build skeleton rows for both worktrees and branches
+        // All items need skeleton rendering since computed data (timestamp, ahead/behind, etc.)
+        // hasn't been loaded yet. Using format_list_item_line would show default values like "55y".
         let skeletons: Vec<String> = all_items
             .iter()
-            .map(|item| {
-                if item.worktree_data().is_some() {
-                    // Worktrees get skeleton rows (format_skeleton_row extracts is_current/is_previous internally)
-                    layout.format_skeleton_row(item)
-                } else {
-                    // Branches render immediately (no skeleton needed)
-                    layout.format_list_item_line(item, previous_branch.as_deref())
-                }
-            })
+            .map(|item| layout.format_skeleton_row(item))
             .collect();
 
         let initial_footer = format!("{INFO_EMOJI} {dim}{footer_base} (loading...){dim:#}");

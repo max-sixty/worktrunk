@@ -428,15 +428,17 @@ impl LayoutConfig {
             match col.kind {
                 ColumnKind::Gutter => {
                     // Show actual gutter symbol even in skeleton
-                    // Priority: @ (current) > ^ (main) > - (previous) > + (regular)
+                    // Priority: @ (current) > ^ (main) > - (previous) > + (regular worktree) > space (branch)
                     let symbol = if is_current {
                         "@ "
                     } else if is_main {
                         "^ "
                     } else if is_previous {
                         "- "
+                    } else if wt_data.is_some() {
+                        "+ " // Regular worktree
                     } else {
-                        "+ "
+                        "  " // Branch without worktree (two spaces to match width)
                     };
                     cell.push_raw(symbol.to_string());
                 }
@@ -593,8 +595,8 @@ impl ColumnLayout {
                 // Render status symbols (works for both worktrees and branches)
                 if let Some(ref status_symbols) = ctx.item.status_symbols {
                     cell.push_raw(status_symbols.render_with_mask(status_mask));
-                } else if ctx.worktree_data.is_some() {
-                    // Show spinner while status is being computed (worktrees only)
+                } else {
+                    // Show spinner while status is being computed (both worktrees and branches)
                     cell.push_styled("⋯", Style::new().dimmed());
                 }
 
@@ -662,8 +664,8 @@ impl ColumnLayout {
             ColumnKind::Time => {
                 let mut cell = StyledLine::new();
 
-                // Show spinner if commit details haven't loaded yet
-                if ctx.worktree_data.is_some() && ctx.item.commit.is_none() {
+                // Show spinner if commit details haven't loaded yet (for both worktrees and branches)
+                if ctx.item.commit.is_none() {
                     cell.push_styled("⋯", Style::new().dimmed());
                 } else {
                     let time_str = format_relative_time_short(ctx.commit.timestamp);
@@ -674,9 +676,8 @@ impl ColumnLayout {
             }
             ColumnKind::CiStatus => {
                 // Check display field first for pending indicators during progressive rendering
-                if ctx.worktree_data.is_some()
-                    && let Some(ref ci_display) = ctx.item.display.ci_status_display
-                {
+                // (works for both worktrees and branches)
+                if let Some(ref ci_display) = ctx.item.display.ci_status_display {
                     let mut cell = StyledLine::new();
                     // ci_status_display contains pre-formatted ANSI text (either actual status or "⋯")
                     cell.push_raw(ci_display.clone());
@@ -712,8 +713,8 @@ impl ColumnLayout {
             ColumnKind::Message => {
                 let mut cell = StyledLine::new();
 
-                // Show spinner if commit details haven't loaded yet
-                if ctx.worktree_data.is_some() && ctx.item.commit.is_none() {
+                // Show spinner if commit details haven't loaded yet (for both worktrees and branches)
+                if ctx.item.commit.is_none() {
                     cell.push_styled("⋯", Style::new().dimmed());
                 } else {
                     let msg =
