@@ -569,10 +569,10 @@ bugfix    🤖!↑⇡    ~/code/myproject.bugfix
 
 ## Storage
 
-Stored in git config as `worktrunk.marker.<branch>`. Set directly with:
+Stored in git config as `worktrunk.state.<branch>.marker`. Set directly with:
 
 ```console
-git config worktrunk.marker.feature "🚧"
+git config worktrunk.state.feature.marker '{"marker":"🚧","set_at":0}'
 ```
 
 Without a subcommand, runs `get` for the current branch. For `--branch`, use `get --branch=NAME`."#

@@ -649,10 +649,7 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             if refresh {
                 crate::output::print(progress_message("Fetching CI status..."))?;
                 // Clear cache to force refresh
-                let config_key = format!(
-                    "worktrunk.ci.{}",
-                    worktrunk::git::escape_branch_for_config(&branch_name)
-                );
+                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
                 let _ = repo.run_command(&["config", "--unset", &config_key]);
             }
 
@@ -763,8 +760,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
                 "set_at": now
             });
 
-            let escaped = worktrunk::git::escape_branch_for_config(&branch_name);
-            let config_key = format!("worktrunk.marker.{}", escaped);
+            let config_key = format!("worktrunk.state.{branch_name}.marker");
             repo.run_command(&["config", &config_key, &json.to_string()])?;
 
             crate::output::print(success_message(cformat!(
@@ -818,10 +814,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     Some(b) => b,
                     None => repo.require_current_branch("clear ci-status for current branch")?,
                 };
-                let config_key = format!(
-                    "worktrunk.ci.{}",
-                    worktrunk::git::escape_branch_for_config(&branch_name)
-                );
+                let config_key = format!("worktrunk.state.{branch_name}.ci-status");
                 if repo
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
@@ -839,7 +832,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
         "marker" => {
             if all {
                 let output = repo
-                    .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+                    .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
                     .unwrap_or_default();
 
                 let mut cleared_count = 0;
@@ -864,8 +857,7 @@ pub fn handle_state_clear(key: &str, branch: Option<String>, all: bool) -> anyho
                     None => repo.require_current_branch("clear marker for current branch")?,
                 };
 
-                let escaped = worktrunk::git::escape_branch_for_config(&branch_name);
-                let config_key = format!("worktrunk.marker.{}", escaped);
+                let config_key = format!("worktrunk.state.{branch_name}.marker");
                 if repo
                     .run_command(&["config", "--unset", &config_key])
                     .is_ok()
@@ -921,7 +913,7 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
 
     // Clear all markers
     let markers_output = repo
-        .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .unwrap_or_default();
     for line in markers_output.lines() {
         if let Some(config_key) = line.split_whitespace().next() {
@@ -1214,16 +1206,19 @@ struct MarkerEntry {
 /// Get all branch markers from git config with timestamps
 fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
     let output = repo
-        .run_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+        .run_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .unwrap_or_default();
 
     let mut markers = Vec::new();
     for line in output.lines() {
-        // Format: "worktrunk.marker.escaped_branch json_value"
+        // Format: "worktrunk.state.<branch>.marker json_value"
         let Some((key, value)) = line.split_once(' ') else {
             continue;
         };
-        let Some(escaped_branch) = key.strip_prefix("worktrunk.marker.") else {
+        let Some(branch) = key
+            .strip_prefix("worktrunk.state.")
+            .and_then(|s| s.strip_suffix(".marker"))
+        else {
             continue;
         };
         let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) else {
@@ -1233,9 +1228,8 @@ fn get_all_markers(repo: &Repository) -> Vec<MarkerEntry> {
             continue; // Skip if "marker" field is missing
         };
         let set_at = parsed.get("set_at").and_then(|v| v.as_u64()).unwrap_or(0);
-        let branch = worktrunk::git::unescape_branch_from_config(escaped_branch);
         markers.push(MarkerEntry {
-            branch,
+            branch: branch.to_string(),
             marker: marker.to_string(),
             set_at,
         });

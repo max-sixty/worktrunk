@@ -272,12 +272,11 @@ impl Repository {
         })
     }
 
-    /// Read a user-defined marker from `worktrunk.marker.<branch>` in git config.
+    /// Read a user-defined marker from `worktrunk.state.<branch>.marker` in git config.
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
     pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
-        let escaped = super::escape_branch_for_config(branch);
-        let config_key = format!("worktrunk.marker.{}", escaped);
+        let config_key = format!("worktrunk.state.{branch}.marker");
         let raw = self
             .run_command(&["config", "--get", &config_key])
             .ok()

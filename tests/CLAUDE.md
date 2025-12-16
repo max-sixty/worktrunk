@@ -184,7 +184,7 @@ Tests use `TEST_EPOCH` (2025-01-01) for reproducible timestamps. The constant is
 use crate::common::TEST_EPOCH;
 
 repo.git_command(&[
-    "config", "worktrunk.ci.feature",
+    "config", "worktrunk.state.feature.ci-status",
     &format!(r#"{{"checked_at":{TEST_EPOCH},"head":"abc123"}}"#),
 ]);
 ```

@@ -230,7 +230,7 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
     // Add CI cache entry
     repo.git_command(&[
         "config",
-        "worktrunk.ci.main",
+        "worktrunk.state.main.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
     ])
     .status()
@@ -333,7 +333,7 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
 
     // Verify it was unset
     let output = repo
-        .git_command(&["config", "--get", "worktrunk.marker.main"])
+        .git_command(&["config", "--get", "worktrunk.state.main.marker"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -352,7 +352,7 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
 
     // Verify it was unset
     let output = repo
-        .git_command(&["config", "--get", "worktrunk.marker.feature"])
+        .git_command(&["config", "--get", "worktrunk.state.feature.marker"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -373,7 +373,7 @@ fn test_state_clear_marker_all(repo: TestRepo) {
 
     // Verify all were unset
     let output = repo
-        .git_command(&["config", "--get-regexp", "^worktrunk\\.marker\\."])
+        .git_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
@@ -494,7 +494,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // CI cache
     repo.git_command(&[
         "config",
-        "worktrunk.ci.feature",
+        "worktrunk.state.feature.ci-status",
         r#"{"checked_at":1704067200,"head":"abc123"}"#,
     ])
     .status()
@@ -520,7 +520,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
             == Some(1)
     ); // Not found
     assert!(
-        repo.git_command(&["config", "--get", "worktrunk.marker.main"])
+        repo.git_command(&["config", "--get", "worktrunk.state.main.marker"])
             .output()
             .unwrap()
             .status
@@ -528,7 +528,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
             == Some(1)
     );
     assert!(
-        repo.git_command(&["config", "--get", "worktrunk.ci.feature"])
+        repo.git_command(&["config", "--get", "worktrunk.state.feature.ci-status"])
             .output()
             .unwrap()
             .status
@@ -580,7 +580,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
     // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
     repo.git_command(&[
         "config",
-        "worktrunk.ci.feature",
+        "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
     ])
     .status()
@@ -588,7 +588,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
 
     repo.git_command(&[
         "config",
-        "worktrunk.ci.bugfix",
+        "worktrunk.state.bugfix.ci-status",
         &format!(r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555"}}"#),
     ])
     .status()
@@ -596,7 +596,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
 
     repo.git_command(&[
         "config",
-        "worktrunk.ci.main",
+        "worktrunk.state.main.ci-status",
         &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678"}}"#),
     ])
     .status()
@@ -617,14 +617,14 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up branch markers (JSON format with timestamps for deterministic age)
     repo.git_command(&[
         "config",
-        "worktrunk.marker.feature",
+        "worktrunk.state.feature.marker",
         &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
     ])
     .status()
     .unwrap();
     repo.git_command(&[
         "config",
-        "worktrunk.marker.bugfix",
+        "worktrunk.state.bugfix.marker",
         &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
     ])
     .status()
@@ -633,7 +633,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up CI cache
     repo.git_command(&[
         "config",
-        "worktrunk.ci.feature",
+        "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
     ])
     .status()
@@ -676,7 +676,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up branch markers (JSON format with timestamps)
     repo.git_command(&[
         "config",
-        "worktrunk.marker.feature",
+        "worktrunk.state.feature.marker",
         &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
     ])
     .status()
@@ -685,7 +685,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up CI cache
     repo.git_command(&[
         "config",
-        "worktrunk.ci.feature",
+        "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
     ])
     .status()

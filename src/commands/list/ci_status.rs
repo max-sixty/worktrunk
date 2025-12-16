@@ -368,67 +368,6 @@ mod tests {
     }
 
     #[test]
-    fn test_escape_branch_round_trip() {
-        use worktrunk::git::{escape_branch_for_config, unescape_branch_from_config};
-
-        let cases = [
-            "main",
-            "feature/test",
-            "feature.test",
-            "feature-test",
-            "feature_test",
-            "a.b.c",
-            "a/b/c",
-            "feature-2Dtest", // Literal -2D in branch name
-            "-",
-            "--",
-            "feat/fix-bug",
-            // UTF-8 multi-byte sequences
-            "café",     // 2-byte UTF-8 (é = 0xC3 0xA9)
-            "日本語",   // 3-byte UTF-8 (CJK)
-            "emoji-🎉", // 4-byte UTF-8 (emoji)
-        ];
-
-        for branch in cases {
-            let escaped = escape_branch_for_config(branch);
-            let unescaped = unescape_branch_from_config(&escaped);
-            assert_eq!(
-                unescaped, branch,
-                "Round-trip failed for '{}': escaped='{}', unescaped='{}'",
-                branch, escaped, unescaped
-            );
-        }
-    }
-
-    #[test]
-    fn test_escape_branch_git_config_compatible() {
-        use worktrunk::git::escape_branch_for_config;
-
-        // Git config keys only allow alphanumeric, `-`, and `.`
-        let is_valid_config_char = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.';
-
-        let cases = [
-            "main",
-            "feature/test",
-            "feature_test",
-            "feature-test",
-            "a/b/c",
-            "user@host",
-            "100%",
-        ];
-
-        for branch in cases {
-            let escaped = escape_branch_for_config(branch);
-            assert!(
-                escaped.chars().all(is_valid_config_char),
-                "Escaped '{}' contains invalid git config chars: '{}'",
-                branch,
-                escaped
-            );
-        }
-    }
-
-    #[test]
     fn test_is_retriable_error() {
         // Rate limit errors
         assert!(is_retriable_error("API rate limit exceeded"));
@@ -1031,12 +970,11 @@ impl CachedCiStatus {
         self.head == current_head && now_secs.saturating_sub(self.checked_at) < ttl
     }
 
-    /// Read cached CI status from git config
+    /// Read cached CI status from git config.
+    ///
+    /// Key format: `worktrunk.state.<branch>.ci-status`
     fn read(branch: &str, repo_root: &str) -> Option<Self> {
-        let config_key = format!(
-            "worktrunk.ci.{}",
-            worktrunk::git::escape_branch_for_config(branch)
-        );
+        let config_key = format!("worktrunk.state.{branch}.ci-status");
         let mut cmd = Command::new("git");
         cmd.args(["config", "--get", &config_key])
             .current_dir(repo_root);
@@ -1050,12 +988,11 @@ impl CachedCiStatus {
         serde_json::from_str(json.trim()).ok()
     }
 
-    /// Write CI status to git config cache
+    /// Write CI status to git config cache.
+    ///
+    /// Key format: `worktrunk.state.<branch>.ci-status`
     fn write(&self, branch: &str, repo_root: &str) {
-        let config_key = format!(
-            "worktrunk.ci.{}",
-            worktrunk::git::escape_branch_for_config(branch)
-        );
+        let config_key = format!("worktrunk.state.{branch}.ci-status");
         let Ok(json) = serde_json::to_string(self) else {
             log::debug!("Failed to serialize CI cache for {}", branch);
             return;
@@ -1068,28 +1005,41 @@ impl CachedCiStatus {
         }
     }
 
-    /// List all cached CI statuses as (branch_name, cached_status) pairs
+    /// List all cached CI statuses as (branch_name, cached_status) pairs.
+    ///
+    /// Key format: `worktrunk.state.<branch>.ci-status`
     pub(crate) fn list_all(repo: &Repository) -> Vec<(String, Self)> {
         let output = repo
-            .run_command(&["config", "--get-regexp", r"^worktrunk\.ci\."])
+            .run_command(&[
+                "config",
+                "--get-regexp",
+                r"^worktrunk\.state\..+\.ci-status$",
+            ])
             .unwrap_or_default();
 
         output
             .lines()
             .filter_map(|line| {
                 let (key, json) = line.split_once(' ')?;
-                let escaped = key.strip_prefix("worktrunk.ci.")?;
-                let branch = worktrunk::git::unescape_branch_from_config(escaped);
+                let branch = key
+                    .strip_prefix("worktrunk.state.")?
+                    .strip_suffix(".ci-status")?;
                 let cached: Self = serde_json::from_str(json).ok()?;
-                Some((branch, cached))
+                Some((branch.to_string(), cached))
             })
             .collect()
     }
 
-    /// Clear all cached CI statuses, returns count cleared
+    /// Clear all cached CI statuses, returns count cleared.
+    ///
+    /// Key format: `worktrunk.state.<branch>.ci-status`
     pub(crate) fn clear_all(repo: &Repository) -> usize {
         let output = repo
-            .run_command(&["config", "--get-regexp", r"^worktrunk\.ci\."])
+            .run_command(&[
+                "config",
+                "--get-regexp",
+                r"^worktrunk\.state\..+\.ci-status$",
+            ])
             .unwrap_or_default();
 
         let mut cleared = 0;
@@ -1174,10 +1124,10 @@ impl PrStatus {
     /// Returns None if no CI found or CLI tools unavailable
     ///
     /// # Caching
-    /// Results (including None) are cached in git config (`worktrunk.ci.{branch}`) for 30-60
-    /// seconds to avoid hitting GitHub API rate limits. TTL uses deterministic jitter based on
-    /// repo path to spread cache expirations across concurrent statuslines. Invalidated when
-    /// HEAD changes.
+    /// Results (including None) are cached in git config (`worktrunk.state.<branch>.ci-status`)
+    /// for 30-60 seconds to avoid hitting GitHub API rate limits. TTL uses deterministic jitter
+    /// based on repo path to spread cache expirations across concurrent statuslines. Invalidated
+    /// when HEAD changes.
     ///
     /// # Fork Support
     /// Runs gh commands from the repository directory to enable auto-detection of

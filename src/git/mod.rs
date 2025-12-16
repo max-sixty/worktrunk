@@ -42,58 +42,6 @@ pub use error::{
     is_command_not_approved,
 };
 pub use repository::{Repository, ResolvedWorktree, set_base_path};
-
-/// Escape branch name for use in git config key.
-///
-/// Git config keys only allow alphanumeric, `-`, and `.` characters.
-/// Branch names commonly contain `/` and `_`, so we encode them as `-XX`
-/// where XX is the uppercase hex value. We also encode `-` itself to
-/// ensure round-trip safety.
-pub fn escape_branch_for_config(branch: &str) -> String {
-    let mut escaped = String::with_capacity(branch.len());
-    for ch in branch.chars() {
-        match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' => escaped.push(ch),
-            '-' => escaped.push_str("-2D"),
-            _ => {
-                // Encode as -XX where XX is uppercase hex
-                for byte in ch.to_string().bytes() {
-                    escaped.push_str(&format!("-{byte:02X}"));
-                }
-            }
-        }
-    }
-    escaped
-}
-
-/// Unescape branch name from git config key.
-pub fn unescape_branch_from_config(escaped: &str) -> String {
-    let mut bytes = Vec::with_capacity(escaped.len());
-    let mut chars = escaped.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '-' {
-            // Try to read two hex digits
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2
-                && let Ok(byte) = u8::from_str_radix(&hex, 16)
-            {
-                bytes.push(byte);
-                continue;
-            }
-            // Invalid escape sequence, keep as-is
-            bytes.push(b'-');
-            bytes.extend(hex.bytes());
-        } else {
-            // Unescaped char - encode as UTF-8 bytes
-            bytes.extend(ch.to_string().bytes());
-        }
-    }
-
-    // Decode collected bytes as UTF-8
-    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
-}
-
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).
@@ -595,34 +543,6 @@ mod tests {
             branches_owned,
             vec!["main".to_string(), "feature".to_string()]
         );
-    }
-
-    #[test]
-    fn test_escape_unescape_roundtrip() {
-        // Test escape
-        let cases = [
-            ("main", "main"),
-            ("feature/foo", "feature-2Ffoo"),
-            ("feature_foo", "feature-5Ffoo"),
-            ("feature-foo", "feature-2Dfoo"),
-            ("v1.0.0", "v1.0.0"), // Dots allowed
-            ("user/feature_name-v2", "user-2Ffeature-5Fname-2Dv2"),
-        ];
-        for (input, expected_escaped) in cases {
-            assert_eq!(
-                escape_branch_for_config(input),
-                expected_escaped,
-                "escape {input}"
-            );
-            assert_eq!(
-                unescape_branch_from_config(expected_escaped),
-                input,
-                "unescape {expected_escaped}"
-            );
-        }
-        // Invalid/truncated escape sequences kept as-is
-        assert_eq!(unescape_branch_from_config("foo-GGbar"), "foo-GGbar");
-        assert_eq!(unescape_branch_from_config("foo-2"), "foo-2");
     }
 
     #[test]

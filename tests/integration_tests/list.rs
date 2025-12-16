@@ -1678,11 +1678,8 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
         head
     );
 
-    // Write to git config (using escaped branch name)
-    let config_key = format!(
-        "worktrunk.ci.{}",
-        worktrunk::git::escape_branch_for_config(branch)
-    );
+    // Write to git config using subsection format (branch name is subsection, no escaping needed)
+    let config_key = format!("worktrunk.state.{branch}.ci-status");
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
     cmd.args(["config", &config_key, &cache_json])

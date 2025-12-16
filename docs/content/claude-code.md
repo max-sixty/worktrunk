@@ -44,7 +44,7 @@ Set status markers manually for any workflow:
 ```bash
 $ wt config var set marker "🚧"                   # Current branch
 $ wt config var set marker "✅" --branch feature  # Specific branch
-$ git config worktrunk.marker.feature "💬"        # Direct git config
+$ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
 ## Statusline

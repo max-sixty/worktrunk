@@ -39,7 +39,7 @@ The setup process:
 
 CI CACHE TRICK
 ==============
-The CI status is cached in git config (`worktrunk.ci.{branch}`). To show CI
+The CI status is cached in git config (`worktrunk.state.{branch}.ci-status`). To show CI
 status without actual GitHub/GitLab access, we:
 1. Write fake CI cache entries directly to git config
 2. Use a future timestamp (1 hour ahead) so the cache never expires during recording
@@ -347,7 +347,7 @@ fn validate_template(template: &str) -> Result<(), String> {
 def add_ci_status(env: DemoEnv):
     """Add fake CI status to git config for demo.
 
-    CI status is cached in git config as worktrunk.ci.{branch} with JSON value.
+    CI status is cached in git config as worktrunk.state.{branch}.ci-status with JSON value.
     The cache uses a future timestamp to prevent expiration during VHS recording.
     """
     import json
@@ -404,7 +404,7 @@ def add_ci_status(env: DemoEnv):
 
     print("Adding CI status cache...")
     for branch, config in ci_configs.items():
-        config_key = f"worktrunk.ci.{branch}"
+        config_key = f"worktrunk.state.{branch}.ci-status"
         config_json = json.dumps(config)
         git(["-C", str(env.repo), "config", config_key, config_json])
 
