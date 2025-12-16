@@ -60,7 +60,12 @@ pub struct TaskContext {
     pub repo_path: PathBuf,
     pub commit_sha: String,
     pub branch: Option<String>,
+    /// Local default branch for informational stats (ahead/behind, branch diff).
+    /// Always the local ref (e.g., "main"), providing stable comparisons.
     pub default_branch: Option<String>,
+    /// Effective target for integration checks (status symbols, safe deletion).
+    /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
+    pub target: Option<String>,
     pub item_idx: usize,
     pub verbose_errors: bool,
 }
@@ -158,13 +163,14 @@ impl Task for CommitDetailsTask {
     }
 }
 
-/// Task 2: Ahead/behind counts vs default branch
+/// Task 2: Ahead/behind counts vs local default branch (informational stats)
 pub struct AheadBehindTask;
 
 impl Task for AheadBehindTask {
     const KIND: TaskKind = TaskKind::AheadBehind;
 
     fn compute(ctx: TaskContext) -> TaskResult {
+        // Use default_branch (local default branch) for stable informational display
         let (ahead, behind) = if let Some(base) = ctx.default_branch.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
             match repo.ahead_behind(base, &ctx.commit_sha) {
@@ -190,14 +196,17 @@ impl Task for AheadBehindTask {
     }
 }
 
-/// Task 3: Tree identity check (does the item's commit tree match default branch's tree?)
+/// Task 3: Tree identity check (does the item's commit tree match integration target's tree?)
+///
+/// Uses target for integration detection (squash merge, rebase).
 pub struct CommittedTreesMatchTask;
 
 impl Task for CommittedTreesMatchTask {
     const KIND: TaskKind = TaskKind::CommittedTreesMatch;
 
     fn compute(ctx: TaskContext) -> TaskResult {
-        let committed_trees_match = if let Some(base) = ctx.default_branch.as_deref() {
+        // Use target for integration detection
+        let committed_trees_match = if let Some(base) = ctx.target.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
             // Use ctx.commit_sha (the item's commit) instead of HEAD,
             // since for branches without worktrees, HEAD is the main worktree's HEAD
@@ -215,20 +224,23 @@ impl Task for CommittedTreesMatchTask {
 
 /// Task 3b: File changes check (does branch have file changes beyond merge-base?)
 ///
-/// Uses three-dot diff (`main...branch`) to detect if the branch has any file
-/// changes relative to the merge-base with main. Returns false when the diff
-/// is empty, indicating the branch content is already integrated into main.
+/// Uses three-dot diff (`target...branch`) to detect if the branch has any file
+/// changes relative to the merge-base with target. Returns false when the diff
+/// is empty, indicating the branch content is already integrated.
 ///
 /// This catches branches where commits exist (ahead > 0) but those commits
 /// don't add any file changes - e.g., squash-merged branches, merge commits
 /// that pulled in main, or commits whose changes were reverted.
+///
+/// Uses target for integration detection.
 pub struct HasFileChangesTask;
 
 impl Task for HasFileChangesTask {
     const KIND: TaskKind = TaskKind::HasFileChanges;
 
     fn compute(ctx: TaskContext) -> TaskResult {
-        let has_file_changes = if let Some(base) = ctx.default_branch.as_deref() {
+        // Use target for integration detection
+        let has_file_changes = if let Some(base) = ctx.target.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
             if let Some(branch) = ctx.branch.as_deref() {
                 // Check if three-dot diff is empty
@@ -238,7 +250,7 @@ impl Task for HasFileChangesTask {
                 true
             }
         } else {
-            // No default branch - assume has changes
+            // No integration base - assume has changes
             true
         };
 
@@ -251,30 +263,33 @@ impl Task for HasFileChangesTask {
 
 /// Task 3b: Merge simulation
 ///
-/// Checks if merging the branch into main would add any changes by simulating
+/// Checks if merging the branch into target would add any changes by simulating
 /// the merge with `git merge-tree --write-tree`. Returns false when the merge
-/// result equals main's tree, indicating the branch is already integrated.
+/// result equals target's tree, indicating the branch is already integrated.
 ///
-/// This catches branches where main has advanced past the squash-merge point -
-/// the three-dot diff might show changes, but those changes are already in main
+/// This catches branches where target has advanced past the squash-merge point -
+/// the three-dot diff might show changes, but those changes are already in target
 /// via the squash merge.
+///
+/// Uses target for integration detection.
 pub struct WouldMergeAddTask;
 
 impl Task for WouldMergeAddTask {
     const KIND: TaskKind = TaskKind::WouldMergeAdd;
 
     fn compute(ctx: TaskContext) -> TaskResult {
-        let would_merge_add = if let Some(base) = ctx.default_branch.as_deref() {
+        // Use target for integration detection
+        let would_merge_add = if let Some(base) = ctx.target.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
             if let Some(branch) = ctx.branch.as_deref() {
-                // Simulate merging branch into main
+                // Simulate merging branch into target
                 repo.would_merge_add_to_target(branch, base).unwrap_or(true)
             } else {
                 // No branch name (detached HEAD) - assume would add changes
                 true
             }
         } else {
-            // No default branch - assume would add changes
+            // No integration base - assume would add changes
             true
         };
 
@@ -285,23 +300,27 @@ impl Task for WouldMergeAddTask {
     }
 }
 
-/// Task 3c: Ancestor check (is branch HEAD an ancestor of main?)
+/// Task 3c: Ancestor check (is branch HEAD an ancestor of integration target?)
 ///
-/// This is the cheapest integration check - just runs `git merge-base --is-ancestor`.
-/// Returns true when the branch HEAD is the same commit as main, or is an ancestor
-/// of main (already merged via fast-forward or rebase).
+/// Checks if branch is an ancestor of target - runs `git merge-base --is-ancestor`.
+/// Returns true when the branch HEAD is in target's history (merged via fast-forward
+/// or rebase).
+///
+/// Uses target (target) for the Ancestor integration reason in `⊂`.
+/// The `_` symbol uses ahead/behind counts (vs default_branch) instead.
 pub struct IsAncestorTask;
 
 impl Task for IsAncestorTask {
     const KIND: TaskKind = TaskKind::IsAncestor;
 
     fn compute(ctx: TaskContext) -> TaskResult {
-        let is_ancestor = if let Some(base) = ctx.default_branch.as_deref() {
+        // Use target (target) for Ancestor integration reason
+        let is_ancestor = if let Some(base) = ctx.target.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
-            // Check if branch HEAD is ancestor of main (or same commit)
+            // Check if branch HEAD is ancestor of target (or same commit)
             repo.is_ancestor(&ctx.commit_sha, base).unwrap_or(false)
         } else {
-            // No default branch - assume not ancestor
+            // No integration base - assume not ancestor
             false
         };
 
@@ -312,13 +331,14 @@ impl Task for IsAncestorTask {
     }
 }
 
-/// Task 4: Branch diff stats vs default branch
+/// Task 4: Branch diff stats vs local default branch (informational stats)
 pub struct BranchDiffTask;
 
 impl Task for BranchDiffTask {
     const KIND: TaskKind = TaskKind::BranchDiff;
 
     fn compute(ctx: TaskContext) -> TaskResult {
+        // Use default_branch (local default branch) for stable informational display
         let diff = if let Some(base) = ctx.default_branch.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
             match repo.branch_diff_stats(base, &ctx.commit_sha) {
@@ -375,6 +395,7 @@ impl Task for WorkingTreeDiffTask {
             LineDiff::default()
         };
 
+        // Use default_branch (local default branch) for informational display
         let working_tree_diff_with_main = repo
             .working_tree_diff_with_base(ctx.default_branch.as_deref(), is_dirty)
             .ok()
@@ -390,13 +411,17 @@ impl Task for WorkingTreeDiffTask {
     }
 }
 
-/// Task 6: Potential merge conflicts check (merge-tree vs default branch)
+/// Task 6: Potential merge conflicts check (merge-tree vs local main)
+///
+/// Uses default_branch (local main) for consistency with other Main subcolumn symbols.
+/// Shows whether merging to your local main would conflict.
 pub struct MergeTreeConflictsTask;
 
 impl Task for MergeTreeConflictsTask {
     const KIND: TaskKind = TaskKind::MergeTreeConflicts;
 
     fn compute(ctx: TaskContext) -> TaskResult {
+        // Use default_branch (local main) - consistent with other Main subcolumn symbols
         let has_merge_tree_conflicts = if let Some(base) = ctx.default_branch.as_deref() {
             let repo = Repository::at(&ctx.repo_path);
             repo.has_merge_conflicts(base, &ctx.commit_sha)
@@ -534,10 +559,15 @@ impl Task for CiStatusTask {
 ///
 /// Spawns parallel git operations (up to 10). Each task sends a TaskResult when it
 /// completes, enabling progressive UI updates. Tasks in `options.skip_tasks` are not spawned.
+///
+/// # Parameters
+/// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
+/// - `target`: Effective target for integration checks (may be upstream if ahead)
 pub fn collect_worktree_progressive(
     wt: &Worktree,
     item_idx: usize,
     default_branch: &str,
+    target: &str,
     options: &CollectOptions,
     tx: Sender<TaskResult>,
     expected_results: &Arc<ExpectedResults>,
@@ -549,6 +579,7 @@ pub fn collect_worktree_progressive(
         commit_sha: wt.head.clone(),
         branch: wt.branch.clone(),
         default_branch: Some(default_branch.to_string()),
+        target: Some(target.to_string()),
         item_idx,
         verbose_errors: true, // Worktrees show verbose errors
     };
@@ -588,6 +619,10 @@ pub fn collect_worktree_progressive(
 ///
 /// Spawns parallel git operations (up to 7, similar to worktrees but without working
 /// tree operations). Tasks in `options.skip_tasks` are not spawned.
+///
+/// # Parameters
+/// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
+/// - `target`: Effective target for integration checks (may be upstream if ahead)
 #[allow(clippy::too_many_arguments)]
 pub fn collect_branch_progressive(
     branch_name: &str,
@@ -595,6 +630,7 @@ pub fn collect_branch_progressive(
     repo_path: &std::path::Path,
     item_idx: usize,
     default_branch: &str,
+    target: &str,
     options: &CollectOptions,
     tx: Sender<TaskResult>,
     expected_results: &Arc<ExpectedResults>,
@@ -606,6 +642,7 @@ pub fn collect_branch_progressive(
         commit_sha: commit_sha.to_string(),
         branch: Some(branch_name.to_string()),
         default_branch: Some(default_branch.to_string()),
+        target: Some(target.to_string()),
         item_idx,
         verbose_errors: false, // Branches don't show verbose errors
     };
