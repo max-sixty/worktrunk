@@ -1479,6 +1479,21 @@ impl Repository {
         Ok(repo_name.to_string())
     }
 
+    /// Get a short display name for this repository, used in logging context.
+    ///
+    /// Returns "." for the current directory, or the directory name otherwise.
+    fn logging_context(&self) -> String {
+        if self.path.to_str() == Some(".") {
+            ".".to_string()
+        } else {
+            self.path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+                .to_string()
+        }
+    }
+
     /// Run a git command in this repository's context.
     ///
     /// Executes the git command with this repository's path as the working directory
@@ -1493,40 +1508,14 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
-        use std::time::Instant;
+        use crate::shell_exec::run;
 
         let mut cmd = Command::new("git");
         cmd.args(args);
         cmd.current_dir(&self.path);
 
-        // Log: $ git <args> [worktree]
-        // TODO: Guard with log::log_enabled! if args.join() overhead becomes measurable
-        let worktree_name = if self.path.to_str() == Some(".") {
-            log::debug!("$ git {}", args.join(" "));
-            ".".to_string()
-        } else {
-            let worktree = self
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
-            log::debug!("$ git {} [{}]", args.join(" "), worktree);
-            worktree.to_string()
-        };
-
-        let t0 = Instant::now();
-        let output = cmd
-            .output()
+        let output = run(&mut cmd, Some(&self.logging_context()))
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-        let duration = t0.elapsed();
-
-        // Performance tracing at debug level (enable with RUST_LOG=debug)
-        log::debug!(
-            "[wt-trace] worktree={} cmd=\"git {}\" dur={:.1}ms",
-            worktree_name,
-            args.join(" "),
-            duration.as_secs_f64() * 1e3
-        );
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1571,31 +1560,16 @@ impl Repository {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
+        use crate::shell_exec::run;
+
         let mut cmd = Command::new("git");
         cmd.args(args);
         cmd.current_dir(&self.path);
 
-        // Log: $ git <args> [worktree]
-        if self.path.to_str() == Some(".") {
-            log::debug!("$ git {}", args.join(" "));
-        } else {
-            let worktree = self
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
-            log::debug!("$ git {} [{}]", args.join(" "), worktree);
-        }
-
-        let output = cmd
-            .output()
+        let output = run(&mut cmd, Some(&self.logging_context()))
             .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
 
-        let success = output.status.success();
-        if !success {
-            log::debug!("  → exit code: non-zero");
-        }
-        Ok(success)
+        Ok(output.status.success())
     }
 }
 

@@ -178,6 +178,82 @@ fn find_git_bash() -> Option<PathBuf> {
     None
 }
 
+/// Execute a command with timing and debug logging.
+///
+/// This is the **only** way to run external commands in worktrunk. All command execution
+/// must go through this function to ensure consistent logging and tracing.
+///
+/// ```text
+/// $ git status [worktree-name]           # with context
+/// $ gh pr list                           # without context
+/// [wt-trace] context=worktree cmd="..." dur=12.3ms ok=true
+/// ```
+///
+/// The `context` parameter is typically the worktree name for git commands, or `None` for
+/// standalone CLI tools like `gh` and `glab`.
+pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::process::Output> {
+    use std::time::Instant;
+
+    // Build command string for logging
+    let program = cmd.get_program().to_string_lossy();
+    let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy()).collect();
+    let cmd_str = if args.is_empty() {
+        program.to_string()
+    } else {
+        format!("{} {}", program, args.join(" "))
+    };
+
+    // Log command with optional context
+    match context {
+        Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
+        None => log::debug!("$ {}", cmd_str),
+    }
+
+    let t0 = Instant::now();
+    let result = cmd.output();
+    let duration_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // Log trace with timing
+    match (&result, context) {
+        (Ok(output), Some(ctx)) => {
+            log::debug!(
+                "[wt-trace] context={} cmd=\"{}\" dur={:.1}ms ok={}",
+                ctx,
+                cmd_str,
+                duration_ms,
+                output.status.success()
+            );
+        }
+        (Ok(output), None) => {
+            log::debug!(
+                "[wt-trace] cmd=\"{}\" dur={:.1}ms ok={}",
+                cmd_str,
+                duration_ms,
+                output.status.success()
+            );
+        }
+        (Err(e), Some(ctx)) => {
+            log::debug!(
+                "[wt-trace] context={} cmd=\"{}\" dur={:.1}ms err=\"{}\"",
+                ctx,
+                cmd_str,
+                duration_ms,
+                e
+            );
+        }
+        (Err(e), None) => {
+            log::debug!(
+                "[wt-trace] cmd=\"{}\" dur={:.1}ms err=\"{}\"",
+                cmd_str,
+                duration_ms,
+                e
+            );
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

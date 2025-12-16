@@ -201,61 +201,72 @@ pub fn handle_list(
         }
     }
 
-    // Show hint if CI status was requested but no tools can fetch it
+    // Show hint if CI status was requested but no tools can fetch it.
+    // Skip the check if any items already have CI status (tools must be available).
     if show_full {
-        // Check auth status against the specific GitLab host for this repo
-        let gitlab_host = repo
-            .worktree_root()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .and_then(|p| ci_status::get_gitlab_host_for_repo(&p));
-        let ci_tools = ci_status::CiToolsStatus::detect(gitlab_host.as_deref());
-        if !ci_tools.any_available() {
-            use ci_status::{CiPlatform, get_platform_for_repo};
-            use color_print::cformat;
-            use worktrunk::git::Repository;
-            use worktrunk::styling::hint_message;
+        // pr_status semantics: None = not fetched, Some(None) = fetched but no PR,
+        // Some(Some(status)) = fetched with status. If any item is Some(_), we
+        // successfully communicated with CI tools, so they're available.
+        let any_ci_fetched = items.iter().any(|item| item.pr_status.is_some());
 
-            // Detect platform from repo's remote URL
-            let platform = Repository::current()
+        if any_ci_fetched {
+            log::debug!("Skipping CI tools detection - CI status already fetched");
+        } else {
+            // No CI was fetched - run full detection to show helpful hint
+            let gitlab_host = repo
                 .worktree_root()
                 .ok()
-                .and_then(|root| get_platform_for_repo(root.to_str()?));
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .and_then(|p| ci_status::get_gitlab_host_for_repo(&p));
+            let ci_tools = ci_status::CiToolsStatus::detect(gitlab_host.as_deref());
 
-            // Only show hint for the relevant platform's tool
-            let hint = match platform {
-                Some(CiPlatform::GitHub) => {
-                    if ci_tools.gh_installed && !ci_tools.gh_authenticated {
-                        Some(cformat!(
-                            "CI status unavailable; run <bright-black>gh auth login</> to authenticate"
-                        ))
-                    } else if !ci_tools.gh_installed {
-                        Some(cformat!(
-                            "CI status unavailable; install <bright-black>gh</>"
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                Some(CiPlatform::GitLab) => {
-                    if ci_tools.glab_installed && !ci_tools.glab_authenticated {
-                        Some(cformat!(
-                            "CI status unavailable; run <bright-black>glab auth login</> to authenticate"
-                        ))
-                    } else if !ci_tools.glab_installed {
-                        Some(cformat!(
-                            "CI status unavailable; install <bright-black>glab</>"
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                None => None, // Unknown platform - don't show any hint
-            };
+            if !ci_tools.any_available() {
+                use ci_status::{CiPlatform, get_platform_for_repo};
+                use color_print::cformat;
+                use worktrunk::git::Repository;
+                use worktrunk::styling::hint_message;
 
-            if let Some(message) = hint {
-                crate::output::blank()?;
-                crate::output::print(hint_message(message))?;
+                // Detect platform from repo's remote URL
+                let platform = Repository::current()
+                    .worktree_root()
+                    .ok()
+                    .and_then(|root| get_platform_for_repo(root.to_str()?));
+
+                // Only show hint for the relevant platform's tool
+                let hint = match platform {
+                    Some(CiPlatform::GitHub) => {
+                        if ci_tools.gh_installed && !ci_tools.gh_authenticated {
+                            Some(cformat!(
+                                "CI status unavailable; run <bright-black>gh auth login</> to authenticate"
+                            ))
+                        } else if !ci_tools.gh_installed {
+                            Some(cformat!(
+                                "CI status unavailable; install <bright-black>gh</>"
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    Some(CiPlatform::GitLab) => {
+                        if ci_tools.glab_installed && !ci_tools.glab_authenticated {
+                            Some(cformat!(
+                                "CI status unavailable; run <bright-black>glab auth login</> to authenticate"
+                            ))
+                        } else if !ci_tools.glab_installed {
+                            Some(cformat!(
+                                "CI status unavailable; install <bright-black>glab</>"
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    None => None, // Unknown platform - don't show any hint
+                };
+
+                if let Some(message) = hint {
+                    crate::output::blank()?;
+                    crate::output::print(hint_message(message))?;
+                }
             }
         }
     }

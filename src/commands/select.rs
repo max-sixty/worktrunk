@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::run;
 
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
@@ -38,19 +39,17 @@ fn get_diff_pager() -> Option<&'static String> {
             }
 
             // Fall back to core.pager config
-            Command::new("git")
-                .args(["config", "--get", "core.pager"])
-                .output()
-                .ok()
-                .and_then(|output| {
-                    if output.status.success() {
-                        String::from_utf8(output.stdout)
-                            .ok()
-                            .and_then(|s| parse_pager(&s))
-                    } else {
-                        None
-                    }
-                })
+            let mut cmd = Command::new("git");
+            cmd.args(["config", "--get", "core.pager"]);
+            run(&mut cmd, None).ok().and_then(|output| {
+                if output.status.success() {
+                    String::from_utf8(output.stdout)
+                        .ok()
+                        .and_then(|s| parse_pager(&s))
+                } else {
+                    None
+                }
+            })
         })
         .as_ref()
 }

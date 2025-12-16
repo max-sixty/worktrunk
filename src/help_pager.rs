@@ -22,7 +22,7 @@
 
 use std::io::{IsTerminal, Write};
 use std::process::{Command, Stdio};
-use worktrunk::shell_exec::ShellConfig;
+use worktrunk::shell_exec::{ShellConfig, run};
 
 fn validate_pager(s: &str) -> Option<String> {
     let trimmed = s.trim();
@@ -44,20 +44,17 @@ fn detect_help_pager() -> Option<String> {
         .and_then(|s| validate_pager(&s))
         .or_else(|| {
             // Try git config core.pager
-            Command::new("git")
-                .args(["config", "--get", "core.pager"])
-                .output()
-                .inspect_err(|e| log::debug!("Failed to run git config: {}", e))
-                .ok()
-                .and_then(|output| {
-                    if !output.status.success() {
-                        log::debug!("git config exited with status: {}", output.status);
-                    }
-                    String::from_utf8(output.stdout)
-                        .inspect_err(|e| log::debug!("git config output not UTF-8: {}", e))
-                        .ok()
-                        .and_then(|s| validate_pager(&s))
-                })
+            let mut cmd = Command::new("git");
+            cmd.args(["config", "--get", "core.pager"]);
+            run(&mut cmd, None).ok().and_then(|output| {
+                if !output.status.success() {
+                    return None;
+                }
+                String::from_utf8(output.stdout)
+                    .inspect_err(|e| log::debug!("git config output not UTF-8: {}", e))
+                    .ok()
+                    .and_then(|s| validate_pager(&s))
+            })
         })
         .or_else(|| std::env::var("PAGER").ok().and_then(|s| validate_pager(&s)));
 

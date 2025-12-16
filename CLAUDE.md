@@ -95,6 +95,25 @@ The pre-merge hook already sets `NEXTEST_NO_INPUT_HANDLER=1`.
 
 ## Command Execution Principles
 
+### All Commands Through `shell_exec::run`
+
+All external command execution must go through `shell_exec::run()`. This ensures consistent logging and tracing for every command:
+
+```rust
+use crate::shell_exec::run;
+
+let mut cmd = Command::new("git");
+cmd.args(["status", "--porcelain"]);
+let output = run(&mut cmd, Some("worktree-name"))?;  // context for git commands
+let output = run(&mut cmd, None)?;                   // None for standalone tools
+```
+
+Never use `cmd.output()` directly. The `run()` function provides:
+- Debug logging: `$ git status [worktree-name]`
+- Timing traces: `[wt-trace] cmd="..." dur=12.3ms ok=true`
+
+For git commands, use `Repository::run_command()` which wraps `shell_exec::run` with worktree context.
+
 ### Real-time Output Streaming
 
 Command output must stream in real-time. Never buffer external command output.

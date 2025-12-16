@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::process::Command;
 use worktrunk::git::Repository;
+use worktrunk::shell_exec::run;
 
 /// CI platform detected from remote URL
 // TODO: Add a `[ci] platform = "github" | "gitlab"` override in project config
@@ -31,11 +32,10 @@ pub fn get_platform_for_repo(repo_root: &str) -> Option<CiPlatform> {
 
 /// Get the origin remote URL for a repository.
 fn get_remote_url_for_repo(repo_root: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(repo_root)
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.args(["remote", "get-url", "origin"])
+        .current_dir(repo_root);
+    let output = run(&mut cmd, None).ok()?;
 
     if output.status.success() {
         String::from_utf8(output.stdout).ok()
@@ -772,11 +772,10 @@ const MAX_PRS_TO_FETCH: u8 = 20;
 /// Used for client-side filtering of PRs by source repository.
 /// See [`parse_remote_owner`] for details on why this is necessary.
 fn get_origin_owner(repo_root: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(repo_root)
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("git");
+    cmd.args(["remote", "get-url", "origin"])
+        .current_dir(repo_root);
+    let output = run(&mut cmd, None).ok()?;
     if output.status.success() {
         let url = String::from_utf8(output.stdout).ok()?;
         parse_remote_owner(&url).map(|s| s.to_string())
@@ -807,7 +806,7 @@ fn get_gitlab_project_id(repo_root: &str) -> Option<u64> {
     disable_color_output(&mut cmd);
     cmd.env("PAGER", "cat");
 
-    let output = cmd.output().ok()?;
+    let output = run(&mut cmd, None).ok()?;
 
     if !output.status.success() {
         return None;
@@ -838,28 +837,22 @@ fn disable_color_output(cmd: &mut Command) {
 /// that may be in PATH, since Rust's Command::new doesn't search PATHEXT.
 fn tool_available(tool: &str, args: &[&str]) -> bool {
     #[cfg(windows)]
-    {
-        // Build command string: "tool arg1 arg2..."
-        let mut cmd_str = tool.to_string();
-        for arg in args {
-            cmd_str.push(' ');
-            cmd_str.push_str(arg);
-        }
-
-        Command::new("cmd")
-            .args(["/c", &cmd_str])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
+    let mut cmd = {
+        let cmd_str = format!("{} {}", tool, args.join(" "));
+        let mut c = Command::new("cmd");
+        c.args(["/c", &cmd_str]);
+        c
+    };
     #[cfg(not(windows))]
-    {
-        Command::new(tool)
-            .args(args)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
+    let mut cmd = {
+        let mut c = Command::new(tool);
+        c.args(args);
+        c
+    };
+
+    run(&mut cmd, None)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Status of CI tools availability
@@ -1029,11 +1022,10 @@ impl CachedCiStatus {
             "worktrunk.ci.{}",
             worktrunk::git::escape_branch_for_config(branch)
         );
-        let output = Command::new("git")
-            .args(["config", "--get", &config_key])
-            .current_dir(repo_root)
-            .output()
-            .ok()?;
+        let mut cmd = Command::new("git");
+        cmd.args(["config", "--get", &config_key])
+            .current_dir(repo_root);
+        let output = run(&mut cmd, None).ok()?;
 
         if !output.status.success() {
             return None;
@@ -1053,11 +1045,10 @@ impl CachedCiStatus {
             log::debug!("Failed to serialize CI cache for {}", branch);
             return;
         };
-        if let Err(e) = Command::new("git")
-            .args(["config", &config_key, &json])
-            .current_dir(repo_root)
-            .output()
-        {
+        let mut cmd = Command::new("git");
+        cmd.args(["config", &config_key, &json])
+            .current_dir(repo_root);
+        if let Err(e) = run(&mut cmd, None) {
             log::debug!("Failed to write CI cache for {}: {}", branch, e);
         }
     }
@@ -1316,8 +1307,9 @@ impl PrStatus {
     /// - Multiple users with same branch name
     fn detect_github(branch: &str, local_head: &str, repo_root: &str) -> Option<Self> {
         // Check if gh is available and authenticated
-        let auth = Command::new("gh").args(["auth", "status"]).output();
-        match auth {
+        let mut auth_cmd = Command::new("gh");
+        auth_cmd.args(["auth", "status"]);
+        match run(&mut auth_cmd, None) {
             Err(e) => {
                 log::debug!("gh not available for {}: {}", branch, e);
                 return None;
@@ -1358,7 +1350,7 @@ impl PrStatus {
         disable_color_output(&mut cmd);
         cmd.current_dir(repo_root);
 
-        let output = match cmd.output() {
+        let output = match run(&mut cmd, None) {
             Ok(output) => output,
             Err(e) => {
                 log::warn!("gh pr list failed to execute for branch {}: {}", branch, e);
@@ -1368,7 +1360,6 @@ impl PrStatus {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!("gh pr list failed for {}: {}", branch, stderr.trim());
             if is_retriable_error(&stderr) {
                 return Some(Self::error());
             }
@@ -1466,7 +1457,7 @@ impl PrStatus {
         ]);
         cmd.current_dir(repo_root);
 
-        let output = match cmd.output() {
+        let output = match run(&mut cmd, None) {
             Ok(output) => output,
             Err(e) => {
                 log::warn!(
@@ -1480,7 +1471,6 @@ impl PrStatus {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!("glab mr list failed for {}: {}", branch, stderr.trim());
             // Return error status for retriable failures (rate limit, network) so they
             // surface as warnings instead of being cached as "no CI"
             if is_retriable_error(&stderr) {
@@ -1563,7 +1553,7 @@ impl PrStatus {
         disable_color_output(&mut cmd);
         cmd.current_dir(repo_root);
 
-        let output = match cmd.output() {
+        let output = match run(&mut cmd, None) {
             Ok(output) => output,
             Err(e) => {
                 log::warn!("gh run list failed to execute for branch {}: {}", branch, e);
@@ -1573,7 +1563,6 @@ impl PrStatus {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!("gh run list failed for {}: {}", branch, stderr.trim());
             if is_retriable_error(&stderr) {
                 return Some(Self::error());
             }
@@ -1607,11 +1596,11 @@ impl PrStatus {
         }
 
         // Get most recent pipeline for the branch using JSON output
-        let output = match Command::new("glab")
-            .args(["ci", "list", "--per-page", "1", "--output", "json"])
-            .env("BRANCH", branch) // glab ci list uses BRANCH env var
-            .output()
-        {
+        let mut cmd = Command::new("glab");
+        cmd.args(["ci", "list", "--per-page", "1", "--output", "json"])
+            .env("BRANCH", branch); // glab ci list uses BRANCH env var
+
+        let output = match run(&mut cmd, None) {
             Ok(output) => output,
             Err(e) => {
                 log::warn!(
@@ -1624,8 +1613,6 @@ impl PrStatus {
         };
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!("glab ci list failed for {}: {}", branch, stderr.trim());
             return None;
         }
 
