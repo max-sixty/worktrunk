@@ -117,11 +117,11 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⚑` | Path doesn't match template |
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
-| Main | `^` | Is the main branch |
+| Main | `^` | Is the default branch |
 | | `✗` | Would conflict if merged to main |
 | | `_` | Same commit as main, clean |
 | | `–` | Same commit as main, uncommitted changes |
-| | `⊂` | [Content integrated](@/remove.md#branch-cleanup) |
+| | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into main or target |
 | | `↕` | Diverged from main |
 | | `↑` | Ahead of main |
 | | `↓` | Behind main |

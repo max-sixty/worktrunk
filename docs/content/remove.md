@@ -39,16 +39,19 @@ wt remove -D experimental
 
 ## Branch cleanup
 
-Branches delete automatically when their content is already in the target branch (typically main). This works with squash-merge and rebase workflows where commit history differs but file changes match.
+Branches delete automatically when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
 
-A branch is safe to delete when its content is already reflected in the target. Worktrunk checks four conditions (in order of cost):
+Worktrunk checks five conditions (in order of cost):
 
-1. **Same commit** — Branch HEAD is literally the same commit as target.
-2. **No added changes** — Three-dot diff (`main...branch`) shows no files. The branch has no file changes beyond the merge-base (includes "branch is ancestor" case).
-3. **Tree contents match** — Branch tree SHA equals main tree SHA. Commit history differs but file contents are identical (e.g., after a revert or merge commit pulling in main).
-4. **Merge adds nothing** — Simulated merge (`git merge-tree`) produces the same tree as main. Handles squash-merged branches where main has since advanced.
+1. **Same commit** — Branch HEAD equals main. Shows `_` in `wt list`.
+2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
+3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
+4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
+5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-In `wt list`, `_` indicates same commit, and `⊂` indicates content is integrated. Branches showing either are dimmed as safe to delete.
+Check 1 compares against main. Checks 2-5 compare against **target** — main, or origin/main when it's strictly ahead (catching branches merged remotely before pulling).
+
+Branches showing `_` or `⊂` are dimmed as safe to delete.
 
 Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of status.
 

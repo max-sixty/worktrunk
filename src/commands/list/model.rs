@@ -509,12 +509,13 @@ impl ListItem {
 
                 // Separately detect SameCommit: same commit as main but with uncommitted work
                 // This is NOT an integration state (has work that would be lost on delete)
+                // Use ahead==0 && behind==0 (vs stats_base/main) to detect same commit
                 let has_tracked_changes = data
                     .working_tree_diff
                     .as_ref()
                     .is_some_and(|d| !d.is_empty());
-                let is_same_commit_dirty = self.is_ancestor == Some(true)
-                    && self.counts.as_ref().is_some_and(|c| c.behind == 0)
+                let is_same_commit_dirty = counts.ahead == 0
+                    && counts.behind == 0
                     && (has_tracked_changes || has_untracked);
 
                 // Compute main state: combines is_main, would_conflict, integration, and divergence
@@ -596,9 +597,12 @@ impl ListItem {
             return None;
         }
 
-        // Compute is_same_commit from is_ancestor and behind count
-        let is_same_commit =
-            self.is_ancestor == Some(true) && self.counts.as_ref().is_some_and(|c| c.behind == 0);
+        // Compute is_same_commit from ahead/behind counts (vs stats_base/main)
+        // This detects "same commit as main" for the _ symbol
+        let is_same_commit = self
+            .counts
+            .as_ref()
+            .is_some_and(|c| c.ahead == 0 && c.behind == 0);
 
         // Use the shared integration check (same logic as wt remove)
         let mut provider = PrecomputedIntegration {

@@ -131,11 +131,11 @@ The Status column has multiple subcolumns. Within each, only the first matching 
                     [31m⚑[0m       Path doesn't match template             
                     [33m⊟[0m       Prunable (directory missing)            
                     [33m⊞[0m       Locked worktree                         
-  Main              [2m^[0m       Is the main branch                      
+  Main              [2m^[0m       Is the default branch                   
                     [33m✗[0m       Would conflict if merged to main        
                     [2m_[0m       Same commit as main, clean              
                     [2m–[0m       Same commit as main, uncommitted changes
-                    [2m⊂[0m       Content integrated                      
+                    [2m⊂[0m       Content integrated into main or target  
                     [2m↕[0m       Diverged from main                      
                     [2m↑[0m       Ahead of main                           
                     [2m↓[0m       Behind main                             
