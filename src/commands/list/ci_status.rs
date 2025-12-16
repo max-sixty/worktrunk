@@ -84,24 +84,47 @@ pub fn get_gitlab_host_for_repo(repo_root: &str) -> Option<String> {
 /// - `git@<host>:<owner>/<repo>.git` → `owner`
 /// - `ssh://git@<host>/<owner>/<repo>.git` → `owner`
 fn parse_remote_owner(url: &str) -> Option<&str> {
+    parse_owner_repo(url).map(|(owner, _)| owner)
+}
+
+/// Extract owner and repository name from a git remote URL.
+///
+/// # Supported URL formats
+///
+/// - `https://<host>/<owner>/<repo>.git` → `(owner, repo)`
+/// - `git@<host>:<owner>/<repo>.git` → `(owner, repo)`
+/// - `ssh://git@<host>/<owner>/<repo>.git` → `(owner, repo)`
+fn parse_owner_repo(url: &str) -> Option<(&str, &str)> {
     let url = url.trim();
 
-    let owner = if let Some(rest) = url.strip_prefix("https://") {
-        // https://github.com/owner/repo.git -> owner
-        rest.split('/').nth(1)
+    let (owner, repo_with_suffix) = if let Some(rest) = url.strip_prefix("https://") {
+        // https://github.com/owner/repo.git -> (owner, repo.git)
+        let mut parts = rest.split('/').skip(1); // skip host
+        (parts.next()?, parts.next()?)
     } else if let Some(rest) = url.strip_prefix("ssh://") {
-        // ssh://git@github.com/owner/repo.git -> owner
-        // ssh://github.com/owner/repo.git -> owner (no user)
+        // ssh://git@github.com/owner/repo.git -> (owner, repo.git)
         let without_user = rest.split('@').next_back()?;
-        without_user.split('/').nth(1)
+        let mut parts = without_user.split('/').skip(1); // skip host
+        (parts.next()?, parts.next()?)
     } else if let Some(rest) = url.strip_prefix("git@") {
-        // git@github.com:owner/repo.git -> owner
-        rest.split(':').nth(1)?.split('/').next()
+        // git@github.com:owner/repo.git -> (owner, repo.git)
+        let path = rest.split(':').nth(1)?;
+        let mut parts = path.split('/');
+        (parts.next()?, parts.next()?)
     } else {
-        None
-    }?;
+        return None;
+    };
 
-    if owner.is_empty() { None } else { Some(owner) }
+    // Strip .git suffix from repo if present
+    let repo = repo_with_suffix
+        .strip_suffix(".git")
+        .unwrap_or(repo_with_suffix);
+
+    if owner.is_empty() || repo.is_empty() {
+        None
+    } else {
+        Some((owner, repo))
+    }
 }
 
 /// Extract hostname from a git remote URL.
@@ -539,52 +562,132 @@ mod tests {
     }
 
     #[test]
-    fn test_github_workflow_run_ci_status() {
-        // Running states
-        for status in ["in_progress", "queued", "pending", "waiting"] {
-            let run = GitHubWorkflowRun {
+    fn test_aggregate_github_checks() {
+        // Helper to create a check without state field (like check-runs API)
+        fn check(status: &str, conclusion: Option<&str>) -> GitHubCheck {
+            GitHubCheck {
                 status: Some(status.into()),
-                conclusion: None,
-                head_sha: None,
-            };
-            assert_eq!(run.ci_status(), CiStatus::Running, "status={status}");
+                conclusion: conclusion.map(|c| c.into()),
+                state: None,
+            }
         }
 
-        // Completed + success
-        let run = GitHubWorkflowRun {
-            status: Some("completed".into()),
-            conclusion: Some("success".into()),
-            head_sha: None,
-        };
-        assert_eq!(run.ci_status(), CiStatus::Passed);
+        // Empty checks = NoCI
+        assert_eq!(aggregate_github_checks(&[]), CiStatus::NoCI);
 
-        // Completed + failures
+        // All skipped = NoCI (skipped doesn't count as success)
+        let checks = vec![
+            check("completed", Some("skipped")),
+            check("completed", Some("neutral")),
+        ];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::NoCI);
+
+        // Any running = Running
+        for status in ["in_progress", "queued", "pending"] {
+            let checks = vec![check("completed", Some("success")), check(status, None)];
+            assert_eq!(
+                aggregate_github_checks(&checks),
+                CiStatus::Running,
+                "status={status}"
+            );
+        }
+
+        // Any failure among completed checks = Failed
         for conclusion in ["failure", "cancelled", "timed_out", "action_required"] {
-            let run = GitHubWorkflowRun {
-                status: Some("completed".into()),
-                conclusion: Some(conclusion.into()),
-                head_sha: None,
-            };
-            assert_eq!(run.ci_status(), CiStatus::Failed, "conclusion={conclusion}");
+            let checks = vec![
+                check("completed", Some("success")),
+                check("completed", Some(conclusion)),
+            ];
+            assert_eq!(
+                aggregate_github_checks(&checks),
+                CiStatus::Failed,
+                "conclusion={conclusion}"
+            );
         }
 
-        // Completed + skipped/neutral = NoCI
-        for conclusion in ["skipped", "neutral"] {
-            let run = GitHubWorkflowRun {
-                status: Some("completed".into()),
-                conclusion: Some(conclusion.into()),
-                head_sha: None,
-            };
-            assert_eq!(run.ci_status(), CiStatus::NoCI, "conclusion={conclusion}");
-        }
+        // Running takes priority over failure (build might still succeed)
+        let checks = vec![
+            check("in_progress", None),
+            check("completed", Some("failure")),
+        ];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Running);
 
-        // Unknown status = NoCI
-        let run = GitHubWorkflowRun {
-            status: Some("unknown".into()),
+        // All success = Passed
+        let checks = vec![
+            check("completed", Some("success")),
+            check("completed", Some("success")),
+        ];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Passed);
+
+        // Mix of success and skipped = Passed (skipped doesn't block)
+        let checks = vec![
+            check("completed", Some("success")),
+            check("completed", Some("skipped")),
+        ];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Passed);
+
+        // Case insensitivity (handles both PR uppercase and API lowercase)
+        let checks = vec![check("COMPLETED", Some("FAILURE"))];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Failed);
+
+        // StatusContext via state field (used by external CI like pre-commit.ci)
+        let checks = vec![GitHubCheck {
+            status: None,
             conclusion: None,
-            head_sha: None,
-        };
-        assert_eq!(run.ci_status(), CiStatus::NoCI);
+            state: Some("PENDING".into()),
+        }];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Running);
+
+        let checks = vec![GitHubCheck {
+            status: None,
+            conclusion: None,
+            state: Some("failure".into()),
+        }];
+        assert_eq!(aggregate_github_checks(&checks), CiStatus::Failed);
+    }
+
+    #[test]
+    fn test_parse_owner_repo() {
+        // GitHub HTTPS
+        assert_eq!(
+            parse_owner_repo("https://github.com/owner/repo.git"),
+            Some(("owner", "repo"))
+        );
+        assert_eq!(
+            parse_owner_repo("https://github.com/owner/repo"),
+            Some(("owner", "repo"))
+        );
+        assert_eq!(
+            parse_owner_repo("  https://github.com/owner/repo.git\n"),
+            Some(("owner", "repo"))
+        );
+
+        // GitHub SSH (git@ form)
+        assert_eq!(
+            parse_owner_repo("git@github.com:owner/repo.git"),
+            Some(("owner", "repo"))
+        );
+        assert_eq!(
+            parse_owner_repo("git@github.com:owner/repo"),
+            Some(("owner", "repo"))
+        );
+
+        // GitHub SSH (ssh:// form)
+        assert_eq!(
+            parse_owner_repo("ssh://git@github.com/owner/repo.git"),
+            Some(("owner", "repo"))
+        );
+
+        // GitLab
+        assert_eq!(
+            parse_owner_repo("https://gitlab.com/owner/repo.git"),
+            Some(("owner", "repo"))
+        );
+
+        // Malformed URLs
+        assert_eq!(parse_owner_repo("https://github.com/owner/"), None);
+        assert_eq!(parse_owner_repo("git@github.com:owner/"), None);
+        assert_eq!(parse_owner_repo(""), None);
     }
 
     #[test]
@@ -711,16 +814,17 @@ const MAX_PRS_TO_FETCH: u8 = 20;
 /// Used for client-side filtering of PRs by source repository.
 /// See [`parse_remote_owner`] for details on why this is necessary.
 fn get_origin_owner(repo_root: &str) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.args(["remote", "get-url", "origin"])
-        .current_dir(repo_root);
-    let output = run(&mut cmd, None).ok()?;
-    if output.status.success() {
-        let url = String::from_utf8(output.stdout).ok()?;
-        parse_remote_owner(&url).map(|s| s.to_string())
-    } else {
-        None
-    }
+    let url = get_remote_url_for_repo(repo_root)?;
+    parse_remote_owner(&url).map(|s| s.to_string())
+}
+
+/// Get the owner and repo name from the origin remote.
+///
+/// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
+fn get_owner_repo(repo_root: &str) -> Option<(String, String)> {
+    let url = get_remote_url_for_repo(repo_root)?;
+    let (owner, repo) = parse_owner_repo(&url)?;
+    Some((owner.to_string(), repo.to_string()))
 }
 
 /// Get the GitLab project ID for the current repository.
@@ -1232,7 +1336,7 @@ impl PrStatus {
             return Some(status);
         }
         if has_upstream {
-            return Self::detect_github_workflow(branch, local_head, repo_root);
+            return Self::detect_github_commit_checks(local_head, repo_root);
         }
         None
     }
@@ -1498,23 +1602,26 @@ impl PrStatus {
         })
     }
 
-    fn detect_github_workflow(branch: &str, local_head: &str, repo_root: &str) -> Option<Self> {
+    /// Detect CI status for a commit using GitHub's check-runs API.
+    ///
+    /// This queries all check runs for the commit SHA, giving us the same data
+    /// that `statusCheckRollup` provides for PRs. This correctly aggregates
+    /// status across multiple workflows (e.g., `ci` and `publish-docs`).
+    fn detect_github_commit_checks(local_head: &str, repo_root: &str) -> Option<Self> {
         // Note: We don't log auth failures here since detect_github already logged them
         if !tool_available("gh", &["auth", "status"]) {
             return None;
         }
 
-        // Get most recent workflow run for the branch
+        let (owner, repo) = get_owner_repo(repo_root)?;
+
+        // Use GitHub's check-runs API to get all checks for this commit
         let mut cmd = Command::new("gh");
         cmd.args([
-            "run",
-            "list",
-            "--branch",
-            branch,
-            "--limit",
-            "1",
-            "--json",
-            "status,conclusion,headSha",
+            "api",
+            &format!("repos/{owner}/{repo}/commits/{local_head}/check-runs"),
+            "--jq",
+            ".check_runs | map({status, conclusion})",
         ]);
 
         configure_non_interactive(&mut cmd);
@@ -1523,7 +1630,11 @@ impl PrStatus {
         let output = match run(&mut cmd, None) {
             Ok(output) => output,
             Err(e) => {
-                log::warn!("gh run list failed to execute for branch {}: {}", branch, e);
+                log::warn!(
+                    "gh api check-runs failed to execute for {}: {}",
+                    local_head,
+                    e
+                );
                 return None;
             }
         };
@@ -1536,24 +1647,20 @@ impl PrStatus {
             return None;
         }
 
-        let runs: Vec<GitHubWorkflowRun> = parse_json(&output.stdout, "gh run list", branch)?;
-        let run = runs.first()?;
+        let checks: Vec<GitHubCheck> = parse_json(&output.stdout, "gh api check-runs", local_head)?;
 
-        // Check if the workflow run matches our local HEAD commit
-        let is_stale = run
-            .head_sha
-            .as_ref()
-            .map(|run_sha| run_sha != local_head)
-            .unwrap_or(true); // If no SHA, consider it stale
+        if checks.is_empty() {
+            return None;
+        }
 
-        // Analyze workflow run status
-        let ci_status = run.ci_status();
+        // Aggregate status: any failed → Failed, any running → Running, else Passed
+        let ci_status = aggregate_github_checks(&checks);
 
         Some(PrStatus {
             ci_status,
             source: CiSource::Branch,
-            is_stale,
-            url: None, // Workflow runs don't have a PR URL
+            is_stale: false, // We're querying by SHA, so always current
+            url: None,
         })
     }
 
@@ -1658,71 +1765,73 @@ struct GitHubCheck {
     state: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct GitHubWorkflowRun {
-    status: Option<String>,
-    conclusion: Option<String>,
-    #[serde(rename = "headSha")]
-    head_sha: Option<String>,
+/// Aggregate CI status from multiple GitHub checks (case-insensitive).
+///
+/// Priority: running > failed > passed > no-ci.
+/// Handles both `statusCheckRollup` (uppercase) and check-runs API (lowercase).
+/// Skipped/neutral checks don't contribute to pass/fail.
+fn aggregate_github_checks(checks: &[GitHubCheck]) -> CiStatus {
+    let mut has_running = false;
+    let mut has_failure = false;
+    let mut has_success = false;
+
+    for check in checks {
+        // CheckRun: status field indicates in-progress states
+        if let Some(status) = &check.status {
+            let s = status.to_ascii_lowercase();
+            if matches!(
+                s.as_str(),
+                "in_progress" | "queued" | "pending" | "expected"
+            ) {
+                has_running = true;
+            }
+        }
+
+        // StatusContext: state field indicates pending
+        if let Some(state) = &check.state {
+            let s = state.to_ascii_lowercase();
+            if s == "pending" {
+                has_running = true;
+            } else if matches!(s.as_str(), "failure" | "error") {
+                has_failure = true;
+            } else if s == "success" {
+                has_success = true;
+            }
+        }
+
+        // CheckRun: conclusion field indicates final result
+        if let Some(conclusion) = &check.conclusion {
+            let c = conclusion.to_ascii_lowercase();
+            match c.as_str() {
+                "failure" | "error" | "cancelled" | "timed_out" | "action_required" => {
+                    has_failure = true;
+                }
+                "success" => {
+                    has_success = true;
+                }
+                // "skipped", "neutral" - ignored
+                _ => {}
+            }
+        }
+    }
+
+    if has_running {
+        CiStatus::Running
+    } else if has_failure {
+        CiStatus::Failed
+    } else if has_success {
+        CiStatus::Passed
+    } else {
+        CiStatus::NoCI
+    }
 }
 
 impl GitHubPrInfo {
     fn ci_status(&self) -> CiStatus {
-        let Some(checks) = &self.status_check_rollup else {
-            return CiStatus::NoCI;
-        };
-
-        if checks.is_empty() {
-            return CiStatus::NoCI;
-        }
-
-        // CheckRun uses `status` for in-progress states
-        let has_pending_checkrun = checks.iter().any(|c| {
-            matches!(
-                c.status.as_deref(),
-                Some("IN_PROGRESS" | "QUEUED" | "PENDING" | "EXPECTED")
-            )
-        });
-
-        // StatusContext uses `state` for pending
-        let has_pending_status = checks
-            .iter()
-            .any(|c| matches!(c.state.as_deref(), Some("PENDING")));
-
-        // CheckRun uses `conclusion` for final result
-        let has_failure_checkrun = checks.iter().any(|c| {
-            matches!(
-                c.conclusion.as_deref(),
-                Some("FAILURE" | "ERROR" | "CANCELLED")
-            )
-        });
-
-        // StatusContext uses `state` for final result
-        let has_failure_status = checks
-            .iter()
-            .any(|c| matches!(c.state.as_deref(), Some("FAILURE" | "ERROR")));
-
-        if has_pending_checkrun || has_pending_status {
-            CiStatus::Running
-        } else if has_failure_checkrun || has_failure_status {
-            CiStatus::Failed
-        } else {
-            CiStatus::Passed
-        }
-    }
-}
-
-impl GitHubWorkflowRun {
-    fn ci_status(&self) -> CiStatus {
-        match self.status.as_deref() {
-            Some("in_progress" | "queued" | "pending" | "waiting") => CiStatus::Running,
-            Some("completed") => match self.conclusion.as_deref() {
-                Some("success") => CiStatus::Passed,
-                Some("failure" | "cancelled" | "timed_out" | "action_required") => CiStatus::Failed,
-                Some("skipped" | "neutral") | None => CiStatus::NoCI,
-                _ => CiStatus::NoCI,
-            },
-            _ => CiStatus::NoCI,
+        match &self.status_check_rollup {
+            None => CiStatus::NoCI,
+            Some(checks) if checks.is_empty() => CiStatus::NoCI,
+            Some(checks) => aggregate_github_checks(checks),
         }
     }
 }
