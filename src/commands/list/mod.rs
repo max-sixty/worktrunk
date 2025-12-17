@@ -183,7 +183,7 @@ pub fn handle_list(
         config,
     )?;
 
-    let Some(ListData { items }) = list_data else {
+    let Some(ListData { items, .. }) = list_data else {
         return Ok(());
     };
 

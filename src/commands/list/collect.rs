@@ -184,6 +184,27 @@ struct MissingResult {
     missing_kinds: Vec<TaskKind>,
 }
 
+/// Error during task execution.
+///
+/// Tasks return this instead of swallowing errors. The drain layer
+/// applies defaults and collects errors for display after rendering.
+#[derive(Debug, Clone)]
+pub struct TaskError {
+    pub item_idx: usize,
+    pub kind: TaskKind,
+    pub message: String,
+}
+
+impl TaskError {
+    pub fn new(item_idx: usize, kind: TaskKind, message: impl Into<String>) -> Self {
+        Self {
+            item_idx,
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 /// Tracks expected result types per item for timeout diagnostics.
 ///
 /// Populated at spawn time so we know exactly which results to expect,
@@ -221,6 +242,69 @@ impl ExpectedResults {
     }
 }
 
+/// Apply default values for a failed task.
+///
+/// When a task fails, we still need to populate the item fields with sensible
+/// defaults so the UI can render. This centralizes all default logic in one place.
+fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], error: &TaskError) {
+    let idx = error.item_idx;
+    match error.kind {
+        TaskKind::CommitDetails => {
+            items[idx].commit = Some(CommitDetails::default());
+        }
+        TaskKind::AheadBehind => {
+            items[idx].counts = Some(AheadBehind::default());
+        }
+        TaskKind::CommittedTreesMatch => {
+            // Conservative: don't claim integrated if we couldn't check
+            items[idx].committed_trees_match = Some(false);
+        }
+        TaskKind::HasFileChanges => {
+            // Conservative: assume has changes if we couldn't check
+            items[idx].has_file_changes = Some(true);
+        }
+        TaskKind::WouldMergeAdd => {
+            // Conservative: assume would add changes if we couldn't check
+            items[idx].would_merge_add = Some(true);
+        }
+        TaskKind::IsAncestor => {
+            // Conservative: don't claim merged if we couldn't check
+            items[idx].is_ancestor = Some(false);
+        }
+        TaskKind::BranchDiff => {
+            items[idx].branch_diff = Some(BranchDiffTotals::default());
+        }
+        TaskKind::WorkingTreeDiff => {
+            if let ItemKind::Worktree(data) = &mut items[idx].kind {
+                data.working_tree_diff = Some(LineDiff::default());
+                data.working_tree_diff_with_main = Some(None);
+            } else {
+                debug_assert!(false, "WorkingTreeDiff task spawned for non-worktree item");
+            }
+            status_contexts[idx].working_tree_status = Some(WorkingTreeStatus::default());
+            status_contexts[idx].has_conflicts = false;
+        }
+        TaskKind::MergeTreeConflicts => {
+            // Don't show conflict symbol if we couldn't check
+            status_contexts[idx].has_merge_tree_conflicts = false;
+        }
+        TaskKind::GitOperation => {
+            // Already defaults to GitOperationState::None in WorktreeData
+        }
+        TaskKind::UserMarker => {
+            // Already defaults to None
+            status_contexts[idx].user_marker = None;
+        }
+        TaskKind::Upstream => {
+            items[idx].upstream = Some(UpstreamStatus::default());
+        }
+        TaskKind::CiStatus => {
+            // Some(None) means "loaded but no CI"
+            items[idx].pr_status = Some(None);
+        }
+    }
+}
+
 /// Drain task results from the channel and apply them to items.
 ///
 /// This is the shared logic between progressive and buffered collection modes.
@@ -231,12 +315,16 @@ impl ExpectedResults {
 /// Uses a 30-second deadline to prevent infinite hangs if git commands stall.
 /// When timeout occurs, returns `DrainOutcome::TimedOut` with diagnostic info.
 ///
+/// Errors are collected in the `errors` vec for display after rendering.
+/// Default values are applied for failed tasks so the UI can still render.
+///
 /// Callers decide how to handle timeout:
 /// - `collect()`: Shows user-facing diagnostic (interactive command)
 /// - `populate_items()`: Logs silently (used by statusline)
 fn drain_results(
-    rx: chan::Receiver<TaskResult>,
+    rx: chan::Receiver<Result<TaskResult, TaskError>>,
     items: &mut [ListItem],
+    errors: &mut Vec<TaskError>,
     expected_results: &ExpectedResults,
     mut on_result: impl FnMut(usize, &mut ListItem, &StatusContext),
 ) -> DrainOutcome {
@@ -309,17 +397,31 @@ fn drain_results(
             };
         }
 
-        let result = match rx.recv_timeout(remaining) {
-            Ok(result) => result,
+        let outcome = match rx.recv_timeout(remaining) {
+            Ok(outcome) => outcome,
             Err(chan::RecvTimeoutError::Timeout) => continue, // Check deadline in next iteration
             Err(chan::RecvTimeoutError::Disconnected) => break, // All senders dropped - done
         };
 
-        // Track this result for diagnostics (TaskKind derived via EnumDiscriminants)
-        let item_idx = result.item_idx();
-        let kind = TaskKind::from(&result);
+        // Handle success or error
+        let (item_idx, kind) = match outcome {
+            Ok(ref result) => (result.item_idx(), TaskKind::from(result)),
+            Err(ref error) => (error.item_idx, error.kind),
+        };
+
+        // Track this result for diagnostics (both success and error count as "received")
         received_by_item.entry(item_idx).or_default().push(kind);
 
+        // Handle error case: apply defaults and collect error
+        if let Err(error) = outcome {
+            apply_default(items, &mut status_contexts, &error);
+            errors.push(error);
+            on_result(item_idx, &mut items[item_idx], &status_contexts[item_idx]);
+            continue;
+        }
+
+        // Handle success case
+        let result = outcome.unwrap();
         match result {
             TaskResult::CommitDetails { item_idx, commit } => {
                 items[item_idx].commit = Some(commit);
@@ -367,6 +469,8 @@ fn drain_results(
                 if let ItemKind::Worktree(data) = &mut items[item_idx].kind {
                     data.working_tree_diff = Some(working_tree_diff);
                     data.working_tree_diff_with_main = Some(working_tree_diff_with_main);
+                } else {
+                    debug_assert!(false, "WorkingTreeDiff result for non-worktree item");
                 }
                 // Store for status_symbols computation
                 status_contexts[item_idx].working_tree_status = Some(working_tree_status);
@@ -385,6 +489,8 @@ fn drain_results(
             } => {
                 if let ItemKind::Worktree(data) = &mut items[item_idx].kind {
                     data.git_operation = git_operation;
+                } else {
+                    debug_assert!(false, "GitOperation result for non-worktree item");
                 }
             }
             TaskResult::UserMarker {
@@ -690,7 +796,10 @@ pub fn collect(
     let mut last_rendered_lines: Vec<String> = vec![String::new(); all_items.len()];
 
     // Create channel for task results
-    let (tx, rx) = chan::unbounded();
+    let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
+
+    // Collect errors for display after rendering
+    let mut errors: Vec<TaskError> = Vec::new();
 
     // Spawn worktree collection in background thread
     let sorted_worktrees_clone = sorted_worktrees.clone();
@@ -774,6 +883,7 @@ pub fn collect(
     let drain_outcome = drain_results(
         rx,
         &mut all_items,
+        &mut errors,
         &expected_results,
         |item_idx, item, ctx| {
             // Compute/recompute status symbols as data arrives (both modes)
@@ -892,6 +1002,17 @@ pub fn collect(
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
+
+    // Display collection errors as warnings (after table rendering)
+    if !errors.is_empty() {
+        let mut warning = String::from("Some git operations failed:");
+        for error in &errors {
+            let name = all_items[error.item_idx].branch_name();
+            let kind_str: &'static str = error.kind.into();
+            warning.push_str(&format!("\n  - {}: {} ({})", name, kind_str, error.message));
+        }
+        crate::output::print(warning_message(warning))?;
+    }
 
     // Populate display fields for all items (used by JSON output and statusline)
     for item in &mut all_items {
@@ -1016,10 +1137,13 @@ pub fn populate_items(
     }
 
     // Create channel for task results
-    let (tx, rx) = chan::unbounded();
+    let (tx, rx) = chan::unbounded::<Result<TaskResult, TaskError>>();
 
     // Track expected results per item (populated at spawn time)
     let expected_results = Arc::new(ExpectedResults::default());
+
+    // Collect errors (logged silently for statusline)
+    let mut errors: Vec<TaskError> = Vec::new();
 
     // Collect worktree info: (index, path, head, branch)
     let worktree_info: Vec<_> = items
@@ -1068,20 +1192,40 @@ pub fn populate_items(
     // Drain task results (blocking until all complete)
     // TODO: This callback duplicates logic from collect()'s drain_results callback.
     // Consider unifying by making collect() take options to skip progressive rendering.
-    let drain_outcome = drain_results(rx, items, &expected_results, |_item_idx, item, ctx| {
-        // Main worktree case is handled inside check_integration_state()
-        item.compute_status_symbols(
-            Some(target),
-            ctx.has_merge_tree_conflicts,
-            ctx.user_marker.clone(),
-            ctx.working_tree_status,
-            ctx.has_conflicts,
-        );
-    });
+    let drain_outcome = drain_results(
+        rx,
+        items,
+        &mut errors,
+        &expected_results,
+        |_item_idx, item, ctx| {
+            // Main worktree case is handled inside check_integration_state()
+            item.compute_status_symbols(
+                Some(target),
+                ctx.has_merge_tree_conflicts,
+                ctx.user_marker.clone(),
+                ctx.working_tree_status,
+                ctx.has_conflicts,
+            );
+        },
+    );
 
     // Handle timeout (silent for statusline - just log it)
     if let DrainOutcome::TimedOut { received_count, .. } = drain_outcome {
         log::warn!("populate_items timed out after 30s ({received_count} results received)");
+    }
+
+    // Log errors silently (statusline shouldn't spam warnings)
+    if !errors.is_empty() {
+        log::warn!("populate_items had {} task errors", errors.len());
+        for error in &errors {
+            let kind_str: &'static str = error.kind.into();
+            log::debug!(
+                "  - item {}: {} ({})",
+                error.item_idx,
+                kind_str,
+                error.message
+            );
+        }
     }
 
     // Populate display fields (including status_line for statusline command)
