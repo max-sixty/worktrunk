@@ -13,23 +13,14 @@
 //! - `define_task_suite!`: Generates spawn lists and expected sets from the same source
 //!
 //! This eliminates the "spawn but forget to register" failure mode from the old design.
-//!
-//! TODO(error-handling): Current implementation silently swallows git errors
-//! and logs warnings to stderr. Consider whether failures should:
-//! - Propagate to user (fail-fast)
-//! - Show error placeholder in UI
-//! - Continue silently (current behavior)
 
-use crate::output;
 use crossbeam_channel::Sender;
 use std::path::PathBuf;
 use std::sync::Arc;
 use worktrunk::git::{LineDiff, Repository, Worktree};
-use worktrunk::path::format_path_for_display;
-use worktrunk::styling::warning_message;
 
 use super::ci_status::PrStatus;
-use super::collect::{ExpectedResults, TaskKind, TaskResult, detect_git_operation};
+use super::collect::{ExpectedResults, TaskError, TaskKind, TaskResult, detect_git_operation};
 use super::model::{
     AheadBehind, BranchDiffTotals, CommitDetails, UpstreamStatus, WorkingTreeStatus,
 };
@@ -67,7 +58,6 @@ pub struct TaskContext {
     /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
     pub target: Option<String>,
     pub item_idx: usize,
-    pub verbose_errors: bool,
 }
 
 // ============================================================================
@@ -78,13 +68,17 @@ pub struct TaskContext {
 ///
 /// Each task type has a compile-time `KIND` that determines which `TaskResult`
 /// variant it produces. The `compute()` function receives a cloned context and
-/// returns the result.
+/// returns a Result - either the successful result or an error.
+///
+/// Tasks should propagate errors via `?` rather than swallowing them.
+/// The drain layer handles defaults and collects errors for display.
 pub trait Task: Send + Sync + 'static {
     /// The kind of result this task produces (compile-time constant).
     const KIND: TaskKind;
 
     /// Compute the task result. Called in a spawned thread.
-    fn compute(ctx: TaskContext) -> TaskResult;
+    /// Returns Ok(result) on success, Err(TaskError) on failure.
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError>;
 }
 
 /// Spawner that ties together registration + spawn + send.
@@ -92,12 +86,12 @@ pub trait Task: Send + Sync + 'static {
 /// Using `TaskSpawner::spawn<T>()` is the only way to run a task, and it
 /// automatically registers the expected result kind before spawning.
 pub struct TaskSpawner {
-    tx: Sender<TaskResult>,
+    tx: Sender<Result<TaskResult, TaskError>>,
     expected: Arc<ExpectedResults>,
 }
 
 impl TaskSpawner {
-    pub fn new(tx: Sender<TaskResult>, expected: Arc<ExpectedResults>) -> Self {
+    pub fn new(tx: Sender<Result<TaskResult, TaskError>>, expected: Arc<ExpectedResults>) -> Self {
         Self { tx, expected }
     }
 
@@ -105,7 +99,7 @@ impl TaskSpawner {
     ///
     /// This is the only way to run a `Task`. It guarantees:
     /// 1. The expected result is registered before the task runs
-    /// 2. Exactly one result is sent when the task completes
+    /// 2. Exactly one result (Ok or Err) is sent when the task completes
     pub fn spawn<'scope, T: Task>(
         &self,
         scope: &'scope std::thread::Scope<'scope, '_>,
@@ -121,7 +115,9 @@ impl TaskSpawner {
         // 3. Spawn the work
         scope.spawn(move || {
             let result = T::compute(ctx);
-            debug_assert_eq!(TaskKind::from(&result), T::KIND);
+            if let Ok(ref task_result) = result {
+                debug_assert_eq!(TaskKind::from(task_result), T::KIND);
+            }
             let _ = tx.send(result);
         });
     }
@@ -137,29 +133,21 @@ pub struct CommitDetailsTask;
 impl Task for CommitDetailsTask {
     const KIND: TaskKind = TaskKind::CommitDetails;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = Repository::at(&ctx.repo_path);
-        let timestamp = match repo.commit_timestamp(&ctx.commit_sha) {
-            Ok(ts) => ts,
-            Err(e) => {
-                log::warn!("commit_timestamp failed for {}: {}", ctx.commit_sha, e);
-                0
-            }
-        };
-        let commit_message = match repo.commit_message(&ctx.commit_sha) {
-            Ok(msg) => msg,
-            Err(e) => {
-                log::warn!("commit_message failed for {}: {}", ctx.commit_sha, e);
-                String::new()
-            }
-        };
-        TaskResult::CommitDetails {
+        let timestamp = repo
+            .commit_timestamp(&ctx.commit_sha)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        let commit_message = repo
+            .commit_message(&ctx.commit_sha)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::CommitDetails {
             item_idx: ctx.item_idx,
             commit: CommitDetails {
                 timestamp,
                 commit_message,
             },
-        }
+        })
     }
 }
 
@@ -169,30 +157,19 @@ pub struct AheadBehindTask;
 impl Task for AheadBehindTask {
     const KIND: TaskKind = TaskKind::AheadBehind;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use default_branch (local default branch) for stable informational display
-        let (ahead, behind) = if let Some(base) = ctx.default_branch.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            match repo.ahead_behind(base, &ctx.commit_sha) {
-                Ok((a, b)) => (a, b),
-                Err(e) => {
-                    log::warn!(
-                        "ahead_behind failed for {} vs {}: {}",
-                        ctx.commit_sha,
-                        base,
-                        e
-                    );
-                    (0, 0)
-                }
-            }
-        } else {
-            (0, 0)
-        };
-
-        TaskResult::AheadBehind {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let base = ctx
+            .default_branch
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no default branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        let (ahead, behind) = repo
+            .ahead_behind(base, &ctx.commit_sha)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
             counts: AheadBehind { ahead, behind },
-        }
+        })
     }
 }
 
@@ -204,21 +181,21 @@ pub struct CommittedTreesMatchTask;
 impl Task for CommittedTreesMatchTask {
     const KIND: TaskKind = TaskKind::CommittedTreesMatch;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use target for integration detection
-        let committed_trees_match = if let Some(base) = ctx.target.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            // Use ctx.commit_sha (the item's commit) instead of HEAD,
-            // since for branches without worktrees, HEAD is the main worktree's HEAD
-            repo.trees_match(&ctx.commit_sha, base).unwrap_or(false)
-        } else {
-            false
-        };
-
-        TaskResult::CommittedTreesMatch {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let base = ctx
+            .target
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no target branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        // Use ctx.commit_sha (the item's commit) instead of HEAD,
+        // since for branches without worktrees, HEAD is the main worktree's HEAD
+        let committed_trees_match = repo
+            .trees_match(&ctx.commit_sha, base)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::CommittedTreesMatch {
             item_idx: ctx.item_idx,
             committed_trees_match,
-        }
+        })
     }
 }
 
@@ -238,26 +215,26 @@ pub struct HasFileChangesTask;
 impl Task for HasFileChangesTask {
     const KIND: TaskKind = TaskKind::HasFileChanges;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use target for integration detection
-        let has_file_changes = if let Some(base) = ctx.target.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            if let Some(branch) = ctx.branch.as_deref() {
-                // Check if three-dot diff is empty
-                repo.has_added_changes(branch, base).unwrap_or(true)
-            } else {
-                // No branch name (detached HEAD) - assume has changes
-                true
-            }
-        } else {
-            // No integration base - assume has changes
-            true
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        // No branch name (detached HEAD) - return conservative default (assume has changes)
+        let Some(branch) = ctx.branch.as_deref() else {
+            return Ok(TaskResult::HasFileChanges {
+                item_idx: ctx.item_idx,
+                has_file_changes: true,
+            });
         };
-
-        TaskResult::HasFileChanges {
+        let base = ctx
+            .target
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no target branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        let has_file_changes = repo
+            .has_added_changes(branch, base)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::HasFileChanges {
             item_idx: ctx.item_idx,
             has_file_changes,
-        }
+        })
     }
 }
 
@@ -277,26 +254,26 @@ pub struct WouldMergeAddTask;
 impl Task for WouldMergeAddTask {
     const KIND: TaskKind = TaskKind::WouldMergeAdd;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use target for integration detection
-        let would_merge_add = if let Some(base) = ctx.target.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            if let Some(branch) = ctx.branch.as_deref() {
-                // Simulate merging branch into target
-                repo.would_merge_add_to_target(branch, base).unwrap_or(true)
-            } else {
-                // No branch name (detached HEAD) - assume would add changes
-                true
-            }
-        } else {
-            // No integration base - assume would add changes
-            true
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        // No branch name (detached HEAD) - return conservative default (assume would add)
+        let Some(branch) = ctx.branch.as_deref() else {
+            return Ok(TaskResult::WouldMergeAdd {
+                item_idx: ctx.item_idx,
+                would_merge_add: true,
+            });
         };
-
-        TaskResult::WouldMergeAdd {
+        let base = ctx
+            .target
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no target branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        let would_merge_add = repo
+            .would_merge_add_to_target(branch, base)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::WouldMergeAdd {
             item_idx: ctx.item_idx,
             would_merge_add,
-        }
+        })
     }
 }
 
@@ -313,21 +290,19 @@ pub struct IsAncestorTask;
 impl Task for IsAncestorTask {
     const KIND: TaskKind = TaskKind::IsAncestor;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use target (target) for Ancestor integration reason
-        let is_ancestor = if let Some(base) = ctx.target.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            // Check if branch HEAD is ancestor of target (or same commit)
-            repo.is_ancestor(&ctx.commit_sha, base).unwrap_or(false)
-        } else {
-            // No integration base - assume not ancestor
-            false
-        };
-
-        TaskResult::IsAncestor {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let base = ctx
+            .target
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no target branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        let is_ancestor = repo
+            .is_ancestor(&ctx.commit_sha, base)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::IsAncestor {
             item_idx: ctx.item_idx,
             is_ancestor,
-        }
+        })
     }
 }
 
@@ -337,30 +312,19 @@ pub struct BranchDiffTask;
 impl Task for BranchDiffTask {
     const KIND: TaskKind = TaskKind::BranchDiff;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use default_branch (local default branch) for stable informational display
-        let diff = if let Some(base) = ctx.default_branch.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            match repo.branch_diff_stats(base, &ctx.commit_sha) {
-                Ok(d) => d,
-                Err(e) => {
-                    log::warn!(
-                        "branch_diff_stats failed for {} vs {}: {}",
-                        ctx.commit_sha,
-                        base,
-                        e
-                    );
-                    LineDiff::default()
-                }
-            }
-        } else {
-            LineDiff::default()
-        };
-
-        TaskResult::BranchDiff {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let base = ctx
+            .default_branch
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no default branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        let diff = repo
+            .branch_diff_stats(base, &ctx.commit_sha)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::BranchDiff {
             item_idx: ctx.item_idx,
             branch_diff: BranchDiffTotals { diff },
-        }
+        })
     }
 }
 
@@ -370,27 +334,18 @@ pub struct WorkingTreeDiffTask;
 impl Task for WorkingTreeDiffTask {
     const KIND: TaskKind = TaskKind::WorkingTreeDiff;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = Repository::at(&ctx.repo_path);
-        let status_output = match repo.run_command(&["status", "--porcelain"]) {
-            Ok(output) => output,
-            Err(e) => {
-                log::warn!("git status failed for {}: {}", ctx.repo_path.display(), e);
-                return TaskResult::WorkingTreeDiff {
-                    item_idx: ctx.item_idx,
-                    working_tree_diff: LineDiff::default(),
-                    working_tree_diff_with_main: None,
-                    working_tree_status: WorkingTreeStatus::default(),
-                    has_conflicts: false,
-                };
-            }
-        };
+        let status_output = repo
+            .run_command(&["status", "--porcelain"])
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
             parse_working_tree_status(&status_output);
 
         let working_tree_diff = if is_dirty {
-            repo.working_tree_diff_stats().unwrap_or_default()
+            repo.working_tree_diff_stats()
+                .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?
         } else {
             LineDiff::default()
         };
@@ -398,16 +353,15 @@ impl Task for WorkingTreeDiffTask {
         // Use default_branch (local default branch) for informational display
         let working_tree_diff_with_main = repo
             .working_tree_diff_with_base(ctx.default_branch.as_deref(), is_dirty)
-            .ok()
-            .flatten();
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
 
-        TaskResult::WorkingTreeDiff {
+        Ok(TaskResult::WorkingTreeDiff {
             item_idx: ctx.item_idx,
             working_tree_diff,
             working_tree_diff_with_main,
             working_tree_status,
             has_conflicts,
-        }
+        })
     }
 }
 
@@ -420,20 +374,19 @@ pub struct MergeTreeConflictsTask;
 impl Task for MergeTreeConflictsTask {
     const KIND: TaskKind = TaskKind::MergeTreeConflicts;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
-        // Use default_branch (local main) - consistent with other Main subcolumn symbols
-        let has_merge_tree_conflicts = if let Some(base) = ctx.default_branch.as_deref() {
-            let repo = Repository::at(&ctx.repo_path);
-            repo.has_merge_conflicts(base, &ctx.commit_sha)
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
-        TaskResult::MergeTreeConflicts {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let base = ctx
+            .default_branch
+            .as_deref()
+            .ok_or_else(|| TaskError::new(ctx.item_idx, Self::KIND, "no default branch"))?;
+        let repo = Repository::at(&ctx.repo_path);
+        let has_merge_tree_conflicts = repo
+            .has_merge_conflicts(base, &ctx.commit_sha)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+        Ok(TaskResult::MergeTreeConflicts {
             item_idx: ctx.item_idx,
             has_merge_tree_conflicts,
-        }
+        })
     }
 }
 
@@ -443,13 +396,13 @@ pub struct GitOperationTask;
 impl Task for GitOperationTask {
     const KIND: TaskKind = TaskKind::GitOperation;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = Repository::at(&ctx.repo_path);
         let git_operation = detect_git_operation(&repo);
-        TaskResult::GitOperation {
+        Ok(TaskResult::GitOperation {
             item_idx: ctx.item_idx,
             git_operation,
-        }
+        })
     }
 }
 
@@ -459,13 +412,13 @@ pub struct UserMarkerTask;
 impl Task for UserMarkerTask {
     const KIND: TaskKind = TaskKind::UserMarker;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = Repository::at(&ctx.repo_path);
         let user_marker = repo.user_marker(ctx.branch.as_deref());
-        TaskResult::UserMarker {
+        Ok(TaskResult::UserMarker {
             item_idx: ctx.item_idx,
             user_marker,
-        }
+        })
     }
 }
 
@@ -475,50 +428,42 @@ pub struct UpstreamTask;
 impl Task for UpstreamTask {
     const KIND: TaskKind = TaskKind::Upstream;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = Repository::at(&ctx.repo_path);
-        let upstream = ctx
-            .branch
-            .as_deref()
-            .and_then(|branch| match repo.upstream_branch(branch) {
-                Ok(Some(upstream_branch)) => {
-                    let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
-                    match repo.ahead_behind(&upstream_branch, &ctx.commit_sha) {
-                        Ok((ahead, behind)) => Some(UpstreamStatus {
-                            remote,
-                            ahead,
-                            behind,
-                        }),
-                        Err(e) => {
-                            if ctx.verbose_errors {
-                                let _ = output::print(warning_message(format!(
-                                    "ahead_behind failed for {}: {}",
-                                    format_path_for_display(&ctx.repo_path),
-                                    e
-                                )));
-                            }
-                            None
-                        }
-                    }
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    if ctx.verbose_errors {
-                        let _ = output::print(warning_message(format!(
-                            "upstream_branch failed for {}: {}",
-                            format_path_for_display(&ctx.repo_path),
-                            e
-                        )));
-                    }
-                    None
-                }
-            })
-            .unwrap_or_default();
 
-        TaskResult::Upstream {
+        // No branch means no upstream
+        let Some(branch) = ctx.branch.as_deref() else {
+            return Ok(TaskResult::Upstream {
+                item_idx: ctx.item_idx,
+                upstream: UpstreamStatus::default(),
+            });
+        };
+
+        // Get upstream branch (None is valid - just means no upstream configured)
+        let upstream_branch = match repo.upstream_branch(branch) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                return Ok(TaskResult::Upstream {
+                    item_idx: ctx.item_idx,
+                    upstream: UpstreamStatus::default(),
+                });
+            }
+            Err(e) => return Err(TaskError::new(ctx.item_idx, Self::KIND, e.to_string())),
+        };
+
+        let remote = upstream_branch.split_once('/').map(|(r, _)| r.to_string());
+        let (ahead, behind) = repo
+            .ahead_behind(&upstream_branch, &ctx.commit_sha)
+            .map_err(|e| TaskError::new(ctx.item_idx, Self::KIND, e.to_string()))?;
+
+        Ok(TaskResult::Upstream {
             item_idx: ctx.item_idx,
-            upstream,
-        }
+            upstream: UpstreamStatus {
+                remote,
+                ahead,
+                behind,
+            },
+        })
     }
 }
 
@@ -532,7 +477,7 @@ pub struct CiStatusTask;
 impl Task for CiStatusTask {
     const KIND: TaskKind = TaskKind::CiStatus;
 
-    fn compute(ctx: TaskContext) -> TaskResult {
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = Repository::at(&ctx.repo_path);
         let repo_path = repo
             .worktree_root()
@@ -544,10 +489,10 @@ impl Task for CiStatusTask {
             PrStatus::detect(branch, &ctx.commit_sha, &repo_path, has_upstream)
         });
 
-        TaskResult::CiStatus {
+        Ok(TaskResult::CiStatus {
             item_idx: ctx.item_idx,
             pr_status,
-        }
+        })
     }
 }
 
@@ -569,7 +514,7 @@ pub fn collect_worktree_progressive(
     default_branch: &str,
     target: &str,
     options: &CollectOptions,
-    tx: Sender<TaskResult>,
+    tx: Sender<Result<TaskResult, TaskError>>,
     expected_results: &Arc<ExpectedResults>,
 ) {
     use super::collect::TaskKind;
@@ -581,7 +526,6 @@ pub fn collect_worktree_progressive(
         default_branch: Some(default_branch.to_string()),
         target: Some(target.to_string()),
         item_idx,
-        verbose_errors: true, // Worktrees show verbose errors
     };
 
     let spawner = TaskSpawner::new(tx, expected_results.clone());
@@ -632,7 +576,7 @@ pub fn collect_branch_progressive(
     default_branch: &str,
     target: &str,
     options: &CollectOptions,
-    tx: Sender<TaskResult>,
+    tx: Sender<Result<TaskResult, TaskError>>,
     expected_results: &Arc<ExpectedResults>,
 ) {
     use super::collect::TaskKind;
@@ -644,7 +588,6 @@ pub fn collect_branch_progressive(
         default_branch: Some(default_branch.to_string()),
         target: Some(target.to_string()),
         item_idx,
-        verbose_errors: false, // Branches don't show verbose errors
     };
 
     let spawner = TaskSpawner::new(tx, expected_results.clone());
