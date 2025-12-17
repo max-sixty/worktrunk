@@ -23,21 +23,21 @@ wt config show - Show configuration files & locations
 Usage: [1m[36mwt config show[0m [36m[OPTIONS]
 
 [1m[32mOptions:
-      [1m[36m--full
-          Test commit generation pipeline
+[1m[36m--full
+Test commit generation pipeline
 
-  [1m[36m-h[0m, [1m[36m--help
-          Print help (see a summary with '-h')
+[1m[36m-h[0m, [1m[36m--help
+Print help (see a summary with '-h')
 
 [1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
-          Working directory for this command
+[1m[36m-C[0m[36m [0m[36m<path>
+Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
-          User config file path
+[1m[36m--config[0m[36m [0m[36m<path>
+User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose
-          Show commands and debug info
+[1m[36m-v[0m, [1m[36m--verbose
+Show commands and debug info
 
 Shows location and contents of user config ([2m~/.config/worktrunk/config.toml[0m)
 and project config ([2m.config/wt.toml[0m).

@@ -28,7 +28,7 @@ pub use anstyle::Style as AnstyleStyle;
 pub use constants::*;
 #[cfg(all(test, feature = "syntax-highlighting"))]
 pub(crate) use format::format_bash_with_gutter_at_width;
-pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter};
+pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, wrap_styled_text};
 pub use highlighting::format_toml;
 pub use line::{StyledLine, StyledString, truncate_visible};
 
@@ -79,8 +79,6 @@ pub fn fix_dim_after_color_reset(s: &str) -> String {
 }
 
 // Re-export for tests
-#[cfg(test)]
-use format::wrap_styled_text;
 #[cfg(test)]
 use format::wrap_text_at_width;
 // ============================================================================

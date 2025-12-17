@@ -7,7 +7,7 @@ info:
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "80"
     GIT_EDITOR: ""
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -43,7 +43,8 @@ Show CI and [1mmain[0m diffstat
 [1m[36m--progressive
 Show fast info immediately, update with slow info
 
-Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+Displays local data (branches, paths, status) first, then updates with remote
+data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
 [1m[36m-h[0m, [1m[36m--help
 Print help (see a summary with '-h')
@@ -58,10 +59,13 @@ User config file path
 [1m[36m-v[0m, [1m[36m--verbose
 Show commands and debug info
 
-Show all worktrees with their status. The table includes uncommitted changes, divergence from main and remote, and optional CI status.
+Show all worktrees with their status. The table includes uncommitted changes,
+divergence from main and remote, and optional CI status.
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as
-background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
+The table renders progressively: branch names, paths, and commit hashes appear
+immediately, then status, divergence, and other columns fill in as background
+git operations complete. With [2m--full[0m, CI status fetches from the network — the
+table displays instantly and CI fills in as results arrive.
 
 [32mExamples
 
@@ -110,13 +114,16 @@ The CI column shows GitHub/GitLab pipeline status:
   [90m●[0m gray     No checks configured
   (blank)    No upstream or no PR/MR
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs
-are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60
-seconds; use [2mwt config state[0m to view or clear.
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears
+dimmed when there are unpushed local changes (stale status). PRs/MRs are checked
+first, then branch workflows/pipelines for branches with an upstream. Local-only
+branches show blank. Results are cached for 30-60 seconds; use [2mwt config state
+to view or clear.
 
 [32mStatus symbols
 
-The Status column has multiple subcolumns. Within each, only the first matching symbol is shown (listed in priority order):
+The Status column has multiple subcolumns. Within each, only the first matching
+symbol is shown (listed in priority order):
 
   Subcolumn         Symbol  Meaning
   ────────────────  ──────  ────────────────────────────────────────
@@ -143,7 +150,8 @@ The Status column has multiple subcolumns. Within each, only the first matching 
                     [2m⇡[0m       Ahead of remote
                     [2m⇣[0m       Behind remote
 
-Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
+Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂
+content integrated).
 
 [32mJSON output
 
@@ -167,24 +175,29 @@ Query structured data with [2m--format=json[0m:
 [1mFields:
 
   Field               Type         Description
-  ──────────────────  ───────────  ────────────────────────────────────────────────────────────
+  ──────────────────  ───────────  ─────────────────────────────────────────────
   [2mbranch[0m              string/null  Branch name (null for detached HEAD)
-  [2mpath[0m                string       Worktree path (absent for branches without worktrees)
+  [2mpath[0m                string       Worktree path (absent for branches without   
+                                   worktrees)
   [2mkind[0m                string       [2m"worktree"[0m or [2m"branch"
   [2mcommit[0m              object       Commit info (see below)
   [2mworking_tree[0m        object       Working tree state (see below)
   [2mmain_state[0m          string       Relation to main (see below)
   [2mintegration_reason[0m  string       Why branch is integrated (see below)
-  [2moperation_state[0m     string       [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (absent when clean)
-  [2mmain[0m                object       Relationship to main branch (see below, absent when is_main)
-  [2mremote[0m              object       Tracking branch info (see below, absent when no tracking)
+  [2moperation_state[0m     string       [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (absent    
+                                   when clean)
+  [2mmain[0m                object       Relationship to main branch (see below,      
+                                   absent when is_main)
+  [2mremote[0m              object       Tracking branch info (see below, absent when 
+                                   no tracking)
   [2mworktree[0m            object       Worktree metadata (see below)
   [2mis_main[0m             boolean      Is the main worktree
   [2mis_current[0m          boolean      Is the current worktree
   [2mis_previous[0m         boolean      Previous worktree from wt switch
   [2mci[0m                  object       CI status (see below, absent when no CI)
   [2mstatusline[0m          string       Pre-formatted status with ANSI colors
-  [2msymbols[0m             string       Raw status symbols without colors (e.g., [2m"!?↓"[0m)
+  [2msymbols[0m             string       Raw status symbols without colors (e.g.,     
+                                   [2m"!?↓"[0m)
 
 [1mcommit object
 
@@ -244,11 +257,13 @@ Query structured data with [2m--format=json[0m:
 
 [1mmain_state values
 
-[2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"[0m [2m"behind"
+[2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"
+[2m"behind"
 
 [1mintegration_reason values
 
-When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"[0m [2m"merge_adds_nothing"
+When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"
+[2m"merge_adds_nothing"
 
 [1mci.status values
 

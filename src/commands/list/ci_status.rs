@@ -1016,6 +1016,16 @@ pub enum CiSource {
     Branch,
 }
 
+impl CiSource {
+    /// Returns short JSON value for the source field
+    pub fn json_value(self) -> &'static str {
+        match self {
+            CiSource::PullRequest => "pr",
+            CiSource::Branch => "branch",
+        }
+    }
+}
+
 /// CI status from PR/MR or branch workflow
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrStatus {

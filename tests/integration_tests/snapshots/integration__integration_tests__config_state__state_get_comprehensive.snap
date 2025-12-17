@@ -15,12 +15,12 @@ bugfix   🐛 debugging  now
 feature  🚧 WIP        now
 
 [36mCI STATUS CACHE[39m
-Branch   Status  Age  Head    
+Branch   Status  Age  Head
 ───────  ──────  ───  ────────
 feature  passed  now  abc12345
 
 [36mLOG FILES[39m  @ .git/wt-logs
-File                        Size  Age   
+File                        Size  Age
 ──────────────────────────  ────  ──────
 bugfix-remove.log           13B   future
 feature-post-start-npm.log  10B   future

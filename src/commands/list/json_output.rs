@@ -82,7 +82,7 @@ pub struct JsonItem {
 
     /// CI status from PR or branch workflow
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pr: Option<JsonPr>,
+    pub ci: Option<JsonCi>,
 
     /// Pre-formatted statusline for statusline tools (tmux, starship)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,11 +202,11 @@ pub struct JsonWorktree {
 
 /// CI status from PR or branch workflow
 #[derive(Debug, Clone, Serialize)]
-pub struct JsonPr {
-    /// CI status: "passed", "running", "failed", "conflicts", "no_ci", "error"
-    pub ci: &'static str,
+pub struct JsonCi {
+    /// CI status: "passed", "running", "failed", "conflicts", "no-ci", "error"
+    pub status: &'static str,
 
-    /// Source: "pull_request" or "branch"
+    /// Source: "pr" or "branch"
     pub source: &'static str,
 
     /// True if local HEAD differs from remote HEAD (unpushed changes)
@@ -317,12 +317,12 @@ impl JsonItem {
         // Path
         let path = worktree_data.map(|d| d.path.clone());
 
-        // PR status
-        let pr = item
+        // CI status
+        let ci = item
             .pr_status
             .as_ref()
             .and_then(|opt| opt.as_ref())
-            .map(pr_status_to_json);
+            .map(ci_status_to_json);
 
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.display.statusline.clone();
@@ -347,7 +347,7 @@ impl JsonItem {
             is_main,
             is_current,
             is_previous,
-            pr,
+            ci,
             statusline,
             symbols,
         }
@@ -398,11 +398,11 @@ fn worktree_state_to_json(
     (None, None)
 }
 
-/// Convert PrStatus to JsonPr
-fn pr_status_to_json(pr: &PrStatus) -> JsonPr {
-    JsonPr {
-        ci: pr.ci_status.into(),
-        source: pr.source.into(),
+/// Convert PrStatus to JsonCi
+fn ci_status_to_json(pr: &PrStatus) -> JsonCi {
+    JsonCi {
+        status: pr.ci_status.into(),
+        source: pr.source.json_value(),
         stale: pr.is_stale,
         url: pr.url.clone(),
     }
@@ -493,20 +493,20 @@ mod tests {
     }
 
     // ============================================================================
-    // pr_status_to_json Tests
+    // ci_status_to_json Tests
     // ============================================================================
 
     #[test]
-    fn test_pr_status_to_json_passed() {
+    fn test_ci_status_to_json_passed() {
         let pr = PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
         };
-        let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "passed");
-        assert_eq!(json.source, "pull-request");
+        let json = ci_status_to_json(&pr);
+        assert_eq!(json.status, "passed");
+        assert_eq!(json.source, "pr");
         assert!(!json.stale);
         assert_eq!(
             json.url,
@@ -515,66 +515,66 @@ mod tests {
     }
 
     #[test]
-    fn test_pr_status_to_json_failed_branch() {
+    fn test_ci_status_to_json_failed_branch() {
         let pr = PrStatus {
             ci_status: CiStatus::Failed,
             source: CiSource::Branch,
             is_stale: true,
             url: None,
         };
-        let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "failed");
+        let json = ci_status_to_json(&pr);
+        assert_eq!(json.status, "failed");
         assert_eq!(json.source, "branch");
         assert!(json.stale);
         assert!(json.url.is_none());
     }
 
     #[test]
-    fn test_pr_status_to_json_running() {
+    fn test_ci_status_to_json_running() {
         let pr = PrStatus {
             ci_status: CiStatus::Running,
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
         };
-        let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "running");
+        let json = ci_status_to_json(&pr);
+        assert_eq!(json.status, "running");
     }
 
     #[test]
-    fn test_pr_status_to_json_conflicts() {
+    fn test_ci_status_to_json_conflicts() {
         let pr = PrStatus {
             ci_status: CiStatus::Conflicts,
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
         };
-        let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "conflicts");
+        let json = ci_status_to_json(&pr);
+        assert_eq!(json.status, "conflicts");
     }
 
     #[test]
-    fn test_pr_status_to_json_no_ci() {
+    fn test_ci_status_to_json_no_ci() {
         let pr = PrStatus {
             ci_status: CiStatus::NoCI,
             source: CiSource::Branch,
             is_stale: false,
             url: None,
         };
-        let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "no-ci");
+        let json = ci_status_to_json(&pr);
+        assert_eq!(json.status, "no-ci");
     }
 
     #[test]
-    fn test_pr_status_to_json_error() {
+    fn test_ci_status_to_json_error() {
         let pr = PrStatus {
             ci_status: CiStatus::Error,
             source: CiSource::Branch,
             is_stale: false,
             url: None,
         };
-        let json = pr_status_to_json(&pr);
-        assert_eq!(json.ci, "error");
+        let json = ci_status_to_json(&pr);
+        assert_eq!(json.status, "error");
     }
 
     // ============================================================================
@@ -878,15 +878,15 @@ mod tests {
     }
 
     #[test]
-    fn test_json_pr_serialization() {
-        let pr = JsonPr {
-            ci: "passed",
-            source: "pull_request",
+    fn test_json_ci_serialization() {
+        let ci = JsonCi {
+            status: "passed",
+            source: "pr",
             stale: false,
             url: Some("https://example.com".to_string()),
         };
-        let json = serde_json::to_string(&pr).unwrap();
-        assert!(json.contains("\"ci\":\"passed\""));
-        assert!(json.contains("\"source\":\"pull_request\""));
+        let json = serde_json::to_string(&ci).unwrap();
+        assert!(json.contains("\"status\":\"passed\""));
+        assert!(json.contains("\"source\":\"pr\""));
     }
 }

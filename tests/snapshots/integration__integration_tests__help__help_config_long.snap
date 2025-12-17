@@ -22,33 +22,33 @@ wt config - Manage configuration and shell integration
 Usage: [1m[36mwt config[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36mshell[0m   Shell integration setup
-  [1m[36mcreate[0m  Create configuration file
-  [1m[36mshow[0m    Show configuration files & locations
-  [1m[36mstate[0m   Get, set, or clear stored state
+[1m[36mshell[0m   Shell integration setup
+[1m[36mcreate[0m  Create configuration file
+[1m[36mshow[0m    Show configuration files & locations
+[1m[36mstate[0m   Get, set, or clear stored state
 
 [1m[32mOptions:
-  [1m[36m-h[0m, [1m[36m--help
-          Print help (see a summary with '-h')
+[1m[36m-h[0m, [1m[36m--help
+Print help (see a summary with '-h')
 
 [1m[32mGlobal Options:
-  [1m[36m-C[0m[36m [0m[36m<path>
-          Working directory for this command
+[1m[36m-C[0m[36m [0m[36m<path>
+Working directory for this command
 
-      [1m[36m--config[0m[36m [0m[36m<path>
-          User config file path
+[1m[36m--config[0m[36m [0m[36m<path>
+User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose
-          Show commands and debug info
+[1m[36m-v[0m, [1m[36m--verbose
+Show commands and debug info
 
 Manages configuration, shell integration, and runtime settings.
 
 Worktrunk uses two configuration files:
 
-  File            Location                         Purpose                                                       
+  File            Location                         Purpose
   ──────────────  ───────────────────────────────  ──────────────────────────────────────────────────────────────
   [1mUser config[0m     [2m~/.config/worktrunk/config.toml[0m  Personal settings, command defaults, approved project commands
-  [1mProject config[0m  [2m.config/wt.toml[0m                  Lifecycle hooks, checked into version control                 
+  [1mProject config[0m  [2m.config/wt.toml[0m                  Lifecycle hooks, checked into version control
 
 [32mExamples
 
@@ -198,16 +198,15 @@ All user config options can be overridden with environment variables using the 
 
 [1mNaming convention
 
-Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens
-automatically.
+Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens automatically.
 
 For nested config sections, use double underscores to separate levels:
 
-  Config                     Environment Variable                
+  Config                     Environment Variable
   ─────────────────────────  ────────────────────────────────────
-  [2mworktree-path[0m              [2mWORKTRUNK_WORKTREE_PATH[0m             
+  [2mworktree-path[0m              [2mWORKTRUNK_WORKTREE_PATH
   [2mcommit-generation.command[0m  [2mWORKTRUNK_COMMIT_GENERATION__COMMAND
-  [2mcommit-generation.args[0m     [2mWORKTRUNK_COMMIT_GENERATION__ARGS[0m   
+  [2mcommit-generation.args[0m     [2mWORKTRUNK_COMMIT_GENERATION__ARGS
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
@@ -227,9 +226,9 @@ Override the LLM command in CI to use a mock:
 
 [1mOther environment variables
 
-  Variable                           Purpose                                                                   
+  Variable                           Purpose
   ─────────────────────────────────  ──────────────────────────────────────────────────────────────────────────
-  [2mWORKTRUNK_CONFIG_PATH[0m              Override user config file location                                        
+  [2mWORKTRUNK_CONFIG_PATH[0m              Override user config file location
   [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m  Max parallel git commands (default: 32). Lower if hitting resource limits.
-  [2mNO_COLOR[0m                           Disable colored output (standard)                                         
+  [2mNO_COLOR[0m                           Disable colored output (standard)
   [2mCLICOLOR_FORCE[0m                     Force colored output even when not a TTY

@@ -168,3 +168,23 @@ fn test_help_page_unknown_command() {
         assert_cmd_snapshot!("help_page_unknown", cmd);
     });
 }
+
+/// Test help output at narrow terminal width (80 columns)
+///
+/// Verifies that markdown tables remain intact (no mid-row breaks) even when
+/// table width exceeds terminal width. Tables should extend past 80 columns
+/// rather than wrap incorrectly.
+#[test]
+fn test_help_list_narrow_terminal() {
+    let mut settings = Settings::clone_current();
+    settings.set_snapshot_path("../snapshots");
+    // Remove trailing ANSI reset codes for cross-platform consistency
+    settings.add_filter(r"\x1b\[0m$", "");
+    settings.add_filter(r"\x1b\[0m\n", "\n");
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        cmd.env("COLUMNS", "80");
+        cmd.args(["list", "--help"]);
+        assert_cmd_snapshot!("help_list_narrow_80", cmd);
+    });
+}

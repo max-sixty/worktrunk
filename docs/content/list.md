@@ -155,25 +155,93 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 
 **Fields:**
 
-| Field | Description |
-|-------|-------------|
-| `branch` | Branch name (null for detached HEAD) |
-| `path` | Worktree path (absent for branches without worktrees) |
-| `kind` | `"worktree"` or `"branch"` |
-| `commit` | `{sha, short_sha, message, timestamp}` |
-| `working_tree` | `{staged, modified, untracked, renamed, deleted, diff, diff_vs_main}` |
-| `main_state` | `"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"` |
-| `integration_reason` | `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"` (when `main_state == "integrated"`) |
-| `operation_state` | `"conflicts"` `"rebase"` `"merge"` (absent when no operation in progress) |
-| `main` | `{ahead, behind, diff}` (absent when `is_main`) |
-| `remote` | `{name, branch, ahead, behind}` (absent when no tracking branch) |
-| `worktree` | `{state, reason, detached, bare}` |
-| `is_main` | Main worktree |
-| `is_current` | Current worktree |
-| `is_previous` | Previous worktree from [wt switch](@/switch.md) |
-| `pr` | `{ci, source, stale, url}` — CI status from PR or branch (absent when no CI) |
-| `statusline` | Pre-formatted status with ANSI colors |
-| `symbols` | Raw status symbols without colors (e.g., `"!?↓"`) |
+| Field | Type | Description |
+|-------|------|-------------|
+| `branch` | string/null | Branch name (null for detached HEAD) |
+| `path` | string | Worktree path (absent for branches without worktrees) |
+| `kind` | string | `"worktree"` or `"branch"` |
+| `commit` | object | Commit info (see below) |
+| `working_tree` | object | Working tree state (see below) |
+| `main_state` | string | Relation to main (see below) |
+| `integration_reason` | string | Why branch is integrated (see below) |
+| `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"` (absent when clean) |
+| `main` | object | Relationship to main branch (see below, absent when is_main) |
+| `remote` | object | Tracking branch info (see below, absent when no tracking) |
+| `worktree` | object | Worktree metadata (see below) |
+| `is_main` | boolean | Is the main worktree |
+| `is_current` | boolean | Is the current worktree |
+| `is_previous` | boolean | Previous worktree from wt switch |
+| `ci` | object | CI status (see below, absent when no CI) |
+| `statusline` | string | Pre-formatted status with ANSI colors |
+| `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
+
+### commit object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sha` | string | Full commit SHA (40 chars) |
+| `short_sha` | string | Short commit SHA (7 chars) |
+| `message` | string | Commit message (first line) |
+| `timestamp` | number | Unix timestamp |
+
+### working_tree object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `staged` | boolean | Has staged files |
+| `modified` | boolean | Has modified files (unstaged) |
+| `untracked` | boolean | Has untracked files |
+| `renamed` | boolean | Has renamed files |
+| `deleted` | boolean | Has deleted files |
+| `diff` | object | Lines changed vs HEAD: `{added, deleted}` |
+| `diff_vs_main` | object | Lines changed vs main: `{added, deleted}` |
+
+### main object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ahead` | number | Commits ahead of main |
+| `behind` | number | Commits behind main |
+| `diff` | object | Lines changed vs main: `{added, deleted}` |
+
+### remote object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Remote name (e.g., `"origin"`) |
+| `branch` | string | Remote branch name |
+| `ahead` | number | Commits ahead of remote |
+| `behind` | number | Commits behind remote |
+
+### worktree object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | string | `"path_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
+| `reason` | string | Reason for locked/prunable state |
+| `detached` | boolean | HEAD is detached |
+| `bare` | boolean | Bare repository |
+
+### ci object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | CI status (see below) |
+| `source` | string | `"pr"` (PR/MR) or `"branch"` (branch workflow) |
+| `stale` | boolean | Local HEAD differs from remote (unpushed changes) |
+| `url` | string | URL to the PR/MR page |
+
+### main_state values
+
+`"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
+
+### integration_reason values
+
+When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_changes"` `"merge_adds_nothing"`
+
+### ci.status values
+
+`"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
 
 ## See also
 
@@ -208,8 +276,7 @@ Options:
       --progressive
           Show fast info immediately, update with slow info
 
-          Displays local data (branches, paths, status) first, then updates with
-          remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+          Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
   -h, --help
           Print help (see a summary with '-h')

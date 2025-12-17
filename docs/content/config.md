@@ -750,13 +750,14 @@ Caches GitHub/GitLab CI status for display in [wt list](@/list.md#ci-status).
 
 ### Status values
 
-| Status | Meaning |
-|--------|---------|
-| `passed` | All checks passed |
-| `running` | Checks in progress |
-| `failed` | Checks failed |
-| `conflicts` | PR has merge conflicts |
-| `noci` | No checks configured |
+```table
+Status | Meaning
+`passed` | All checks passed
+`running` | Checks in progress
+`failed` | Checks failed
+`conflicts` | PR has merge conflicts
+`noci` | No checks configured
+```
 
 See [wt list CI status](@/list.md#ci-status) for display symbols and colors.
 

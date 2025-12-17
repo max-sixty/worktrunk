@@ -91,12 +91,9 @@ Options:
   -x, --execute <EXECUTE>
           Command to run after switch
 
-          Replaces the wt process with the command after switching, giving it
-          full terminal control. Useful for launching editors, AI agents, or
-          other interactive tools.
+          Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other interactive tools.
 
-          Especially useful in shell aliases to create a worktree and start
-          working in one command:
+          Especially useful in shell aliases to create a worktree and start working in one command:
 
             alias wsc='wt switch --create --execute=claude'
 

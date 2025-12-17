@@ -142,7 +142,10 @@ pub fn format_with_gutter(content: &str, left_margin: &str, max_width: Option<us
 /// at line ends to make each line "self-contained". We strip these because:
 /// 1. We never emit [39m/[49m ourselves - all our resets use [0m (full reset)
 /// 2. These injected codes create visual discontinuity when styled text wraps
-pub(super) fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
+///
+/// Additionally, wrap_ansi may split between styled content and its reset code,
+/// leaving [0m at the start of continuation lines. We move these to line ends.
+pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![styled.to_string()];
     }
@@ -160,7 +163,16 @@ pub(super) fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
         .replace("\x1b[39m", "") // reset foreground to default
         .replace("\x1b[49m", ""); // reset background to default
 
-    cleaned.lines().map(|s| s.to_owned()).collect()
+    // Fix reset codes that got separated from their content by wrapping.
+    // When wrap happens between styled text and its [0m reset, the reset
+    // ends up at the start of the next line. Strip leading resets.
+    cleaned
+        .lines()
+        .map(|line| {
+            let trimmed = line.strip_prefix("\x1b[0m").unwrap_or(line);
+            trimmed.to_owned()
+        })
+        .collect()
 }
 
 #[cfg(feature = "syntax-highlighting")]

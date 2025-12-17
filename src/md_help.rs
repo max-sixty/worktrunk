@@ -3,8 +3,19 @@
 use anstyle::{AnsiColor, Color, Style};
 use unicode_width::UnicodeWidthStr;
 
+use worktrunk::styling::wrap_styled_text;
+
+/// Render markdown in help text to ANSI without prose wrapping
+#[cfg(test)]
+fn render_markdown_in_help(help: &str) -> String {
+    render_markdown_in_help_with_width(help, None)
+}
+
 /// Render markdown in help text to ANSI with minimal styling (green headers only)
-pub fn render_markdown_in_help(help: &str) -> String {
+///
+/// If `width` is provided, prose text is wrapped to that width. Tables, code blocks,
+/// and headers are never wrapped (tables need full-width rows for alignment).
+pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> String {
     let green = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)));
     let dimmed = Style::new().dimmed();
 
@@ -25,11 +36,46 @@ pub fn render_markdown_in_help(help: &str) -> String {
             continue;
         }
 
-        // Track code block state
+        // Handle code fences - check for ```table specially
         if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-            i += 1;
-            continue;
+            if trimmed == "```table" || trimmed.starts_with("```table ") {
+                // Table code fence - collect lines until closing ```
+                i += 1; // Skip opening fence
+                let mut table_content: Vec<String> = Vec::new();
+                while i < lines.len() {
+                    let tl = lines[i].trim();
+                    if tl == "```" {
+                        i += 1; // Skip closing fence
+                        break;
+                    }
+                    table_content.push(lines[i].to_string());
+                    i += 1;
+                }
+                // Convert pipe-delimited format to markdown table format
+                let md_lines: Vec<String> = table_content
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(idx, line)| {
+                        let md_line = format!("|{}|", line.replace(" | ", "|"));
+                        if idx == 0 {
+                            // Add separator row after header
+                            let cols = line.split(" | ").count();
+                            let sep = format!("|{}|", vec!["---"; cols].join("|"));
+                            vec![md_line, sep]
+                        } else {
+                            vec![md_line]
+                        }
+                    })
+                    .collect();
+                let md_refs: Vec<&str> = md_lines.iter().map(|s| s.as_str()).collect();
+                result.push_str(&render_table(&md_refs, width));
+                continue;
+            } else {
+                // Regular code block
+                in_code_block = !in_code_block;
+                i += 1;
+                continue;
+            }
         }
 
         // Inside code blocks, render dimmed with indent
@@ -39,7 +85,7 @@ pub fn render_markdown_in_help(help: &str) -> String {
             continue;
         }
 
-        // Detect markdown table rows
+        // Detect markdown table rows (legacy format, still supported)
         if trimmed.starts_with('|') && trimmed.ends_with('|') {
             // Collect all consecutive table lines
             table_lines.clear();
@@ -52,12 +98,12 @@ pub fn render_markdown_in_help(help: &str) -> String {
                     break;
                 }
             }
-            // Render the table
-            result.push_str(&render_table(&table_lines));
+            // Render the table, wrapping to fit terminal width if specified
+            result.push_str(&render_table(&table_lines, width));
             continue;
         }
 
-        // Outside code blocks, render markdown headers
+        // Outside code blocks, render markdown headers (never wrapped)
         if let Some(header_text) = trimmed.strip_prefix("### ") {
             let bold = Style::new().bold();
             result.push_str(&format!("{bold}{header_text}{bold:#}\n"));
@@ -66,9 +112,17 @@ pub fn render_markdown_in_help(help: &str) -> String {
         } else if let Some(header_text) = trimmed.strip_prefix("# ") {
             result.push_str(&format!("{green}{header_text}{green:#}\n"));
         } else {
+            // Prose text - wrap if width is specified
             let formatted = render_inline_formatting(line);
-            result.push_str(&formatted);
-            result.push('\n');
+            if let Some(w) = width {
+                for wrapped_line in wrap_styled_text(&formatted, w) {
+                    result.push_str(&wrapped_line);
+                    result.push('\n');
+                }
+            } else {
+                result.push_str(&formatted);
+                result.push('\n');
+            }
         }
         i += 1;
     }
@@ -78,8 +132,8 @@ pub fn render_markdown_in_help(help: &str) -> String {
 }
 
 /// Render a markdown table with proper column alignment (for help text, adds 2-space indent)
-fn render_table(lines: &[&str]) -> String {
-    render_markdown_table_impl(lines, "  ")
+fn render_table(lines: &[&str], max_width: Option<usize>) -> String {
+    render_markdown_table_impl(lines, "  ", max_width)
 }
 
 /// Render a markdown table from markdown source string (no indent)
@@ -88,11 +142,14 @@ pub fn render_markdown_table(markdown: &str) -> String {
         .lines()
         .filter(|l| l.trim().starts_with('|') && l.trim().ends_with('|'))
         .collect();
-    render_markdown_table_impl(&lines, "")
+    render_markdown_table_impl(&lines, "", None)
 }
 
-/// Core table rendering with configurable indent
-fn render_markdown_table_impl(lines: &[&str], indent: &str) -> String {
+/// Core table rendering with configurable indent and optional width constraint
+///
+/// If `max_width` is specified and the table exceeds it, the last column wraps
+/// to fit. Continuation lines are indented to align with the column start.
+fn render_markdown_table_impl(lines: &[&str], indent: &str, max_width: Option<usize>) -> String {
     // Parse table cells
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut separator_idx: Option<usize> = None;
@@ -141,31 +198,99 @@ fn render_markdown_table_impl(lines: &[&str], indent: &str) -> String {
         }
     }
 
+    // Calculate total table width and adjust last column if needed
+    let indent_width = indent.width();
+    let separators_width = (num_cols.saturating_sub(1)) * 2; // 2 spaces between columns
+    let total_width: usize = indent_width + col_widths.iter().sum::<usize>() + separators_width;
+
+    // If we have a width constraint and table exceeds it, shrink last column
+    let last_col_wrap_width = if let Some(max_w) = max_width {
+        if total_width > max_w && num_cols > 0 {
+            let overflow = total_width - max_w;
+            let last_col_natural = col_widths[num_cols - 1];
+            // Minimum width for last column (don't go below 20 chars)
+            let min_last_col = 20;
+            let new_last_col = last_col_natural.saturating_sub(overflow).max(min_last_col);
+            col_widths[num_cols - 1] = new_last_col;
+            Some(new_last_col)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Calculate continuation indent (for wrapped last column)
+    // This is the position where the last column starts
+    let continuation_indent: usize = indent_width
+        + col_widths[..num_cols.saturating_sub(1)]
+            .iter()
+            .sum::<usize>()
+        + separators_width;
+
     // Render rows
     let mut result = String::new();
     let has_header = separator_idx.is_some();
 
     for (row_idx, row) in rows.iter().enumerate() {
-        result.push_str(indent);
+        // Format all cells and potentially wrap the last one
+        let mut formatted_cells: Vec<Vec<String>> = Vec::new();
 
         for (col_idx, cell) in row.iter().enumerate() {
-            if col_idx > 0 {
-                result.push_str("  "); // Column separator
-            }
-
             let formatted = render_inline_formatting(cell);
-            let display_width = strip_ansi(&formatted).width();
-            let padding = col_widths
-                .get(col_idx)
-                .unwrap_or(&0)
-                .saturating_sub(display_width);
+            let is_last_col = col_idx == num_cols - 1;
 
-            result.push_str(&formatted);
-            for _ in 0..padding {
-                result.push(' ');
+            if let (true, Some(wrap_width)) = (is_last_col, last_col_wrap_width) {
+                // Wrap the last column if needed
+                let wrapped = wrap_styled_text(&formatted, wrap_width);
+                formatted_cells.push(wrapped);
+            } else {
+                formatted_cells.push(vec![formatted]);
             }
         }
-        result.push('\n');
+
+        // Determine the maximum number of lines in any cell (for multi-line rows)
+        let max_lines = formatted_cells.iter().map(|c| c.len()).max().unwrap_or(1);
+
+        for line_idx in 0..max_lines {
+            if line_idx == 0 {
+                result.push_str(indent);
+            } else {
+                // Continuation line: indent to last column position
+                for _ in 0..continuation_indent {
+                    result.push(' ');
+                }
+            }
+
+            for (col_idx, cell_lines) in formatted_cells.iter().enumerate() {
+                let is_last_col = col_idx == num_cols - 1;
+
+                if line_idx == 0 && col_idx > 0 {
+                    result.push_str("  "); // Column separator
+                }
+
+                // Skip non-last columns on continuation lines
+                if line_idx > 0 && !is_last_col {
+                    continue;
+                }
+
+                let cell_content = cell_lines.get(line_idx).map(|s| s.as_str()).unwrap_or("");
+                let display_width = strip_ansi(cell_content).width();
+                let col_width = col_widths.get(col_idx).unwrap_or(&0);
+                let padding = col_width.saturating_sub(display_width);
+
+                result.push_str(cell_content);
+
+                // Add padding (except for last column on last line of cell)
+                let is_last_line_of_cell = line_idx == cell_lines.len().saturating_sub(1);
+                if !is_last_col || !is_last_line_of_cell {
+                    for _ in 0..padding {
+                        result.push(' ');
+                    }
+                }
+            }
+            result.push('\n');
+        }
 
         // Add visual separator after header row
         if has_header && row_idx == 0 {
@@ -418,7 +543,7 @@ mod tests {
             "| --- | --- | --- |",
             "| Remote | `\\|` | In sync |",
         ];
-        let result = render_table(&lines);
+        let result = render_table(&lines, None);
         // The \| should be rendered as | (pipe character)
         assert!(result.contains("|"), "Escaped pipe should render as |");
         assert!(
@@ -517,6 +642,20 @@ mod tests {
         assert!(result.contains("B"));
         assert!(result.contains("1"));
         assert!(result.contains("2"));
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_table_code_fence() {
+        // New ```table format - simpler than markdown tables
+        let md = "```table\nA | B\n1 | 2\n```";
+        let result = render_markdown_in_help(md);
+        // Table should be rendered the same as markdown format
+        assert!(result.contains("A"));
+        assert!(result.contains("B"));
+        assert!(result.contains("1"));
+        assert!(result.contains("2"));
+        // Should have separator line
+        assert!(result.contains("─"));
     }
 
     // ============================================================================
@@ -667,7 +806,7 @@ mod tests {
             "| ----- | ------------ |",
             "| A | B |",
         ];
-        let result = render_table(&lines);
+        let result = render_table(&lines, None);
         // Should have proper column alignment
         assert!(result.contains("Short"));
         assert!(result.contains("LongerHeader"));
@@ -678,7 +817,7 @@ mod tests {
     #[test]
     fn test_render_table_uneven_columns() {
         let lines = vec!["| A | B | C |", "| --- | --- | --- |", "| 1 | 2 |"];
-        let result = render_table(&lines);
+        let result = render_table(&lines, None);
         // Should handle rows with different column counts
         assert!(result.contains("A"));
         assert!(result.contains("1"));
@@ -688,7 +827,7 @@ mod tests {
     fn test_render_table_no_separator() {
         // Table without separator row
         let lines = vec!["| A | B |", "| 1 | 2 |"];
-        let result = render_table(&lines);
+        let result = render_table(&lines, None);
         // Should still render, just without separator line
         assert!(result.contains("A"));
         assert!(result.contains("1"));
