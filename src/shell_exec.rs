@@ -19,6 +19,27 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
+use crate::sync::Semaphore;
+
+/// Semaphore to limit concurrent command execution.
+/// Prevents resource exhaustion when spawning many parallel git commands.
+static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+/// Default concurrent external commands. Tuned to avoid hitting OS limits
+/// (file descriptors, process limits) while maintaining good parallelism.
+const DEFAULT_CONCURRENT_COMMANDS: usize = 32;
+
+fn max_concurrent_commands() -> usize {
+    std::env::var("WT_MAX_CONCURRENT_COMMANDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_CONCURRENT_COMMANDS)
+}
+
+fn get_semaphore() -> &'static Semaphore {
+    CMD_SEMAPHORE.get_or_init(|| Semaphore::new(max_concurrent_commands()))
+}
+
 /// Cached shell configuration for the current platform
 static SHELL_CONFIG: OnceLock<ShellConfig> = OnceLock::new();
 
@@ -208,6 +229,10 @@ pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::pro
         Some(ctx) => log::debug!("$ {} [{}]", cmd_str, ctx),
         None => log::debug!("$ {}", cmd_str),
     }
+
+    // Acquire semaphore to limit concurrent commands (prevents resource exhaustion)
+    // RAII guard ensures release even on panic
+    let _guard = get_semaphore().acquire();
 
     let t0 = Instant::now();
     let result = cmd.output();

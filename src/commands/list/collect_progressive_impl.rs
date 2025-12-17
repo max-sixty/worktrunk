@@ -142,14 +142,22 @@ impl Task for CommitDetailsTask {
         let timestamp = match repo.commit_timestamp(&ctx.commit_sha) {
             Ok(ts) => ts,
             Err(e) => {
-                log::warn!("commit_timestamp failed for {}: {}", ctx.commit_sha, e);
+                log::warn!(
+                    "commit_timestamp failed for {}: {}",
+                    &ctx.commit_sha[..8.min(ctx.commit_sha.len())],
+                    e
+                );
                 0
             }
         };
         let commit_message = match repo.commit_message(&ctx.commit_sha) {
             Ok(msg) => msg,
             Err(e) => {
-                log::warn!("commit_message failed for {}: {}", ctx.commit_sha, e);
+                log::warn!(
+                    "commit_message failed for {}: {}",
+                    &ctx.commit_sha[..8.min(ctx.commit_sha.len())],
+                    e
+                );
                 String::new()
             }
         };
@@ -178,7 +186,7 @@ impl Task for AheadBehindTask {
                 Err(e) => {
                     log::warn!(
                         "ahead_behind failed for {} vs {}: {}",
-                        ctx.commit_sha,
+                        &ctx.commit_sha[..8.min(ctx.commit_sha.len())],
                         base,
                         e
                     );

@@ -226,6 +226,7 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | Variable | Purpose |
 |----------|---------|
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location (not a config key) |
+| `WT_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting resource limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 

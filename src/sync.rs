@@ -1,17 +1,20 @@
-//! Simple semaphore for limiting concurrent git operations.
-//!
-//! Used to prevent mmap thrash when many parallel git commands access shared
-//! resources like commit-graph and pack files.
+//! Synchronization primitives for worktrunk.
 
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A counting semaphore for limiting concurrency.
+///
+/// Used to prevent resource exhaustion when many parallel operations need
+/// to run. Provides RAII-based permit management through [`SemaphoreGuard`].
 #[derive(Clone)]
 pub struct Semaphore {
     state: Arc<(Mutex<usize>, Condvar)>,
 }
 
 /// RAII guard that releases a semaphore permit on drop.
+///
+/// Created by [`Semaphore::acquire`]. The permit is automatically released
+/// when this guard is dropped, even if the code panics.
 pub struct SemaphoreGuard {
     state: Arc<(Mutex<usize>, Condvar)>,
 }
