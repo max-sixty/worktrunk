@@ -2455,3 +2455,23 @@ fn test_list_warns_when_default_branch_missing_worktree(repo: TestRepo) {
 
     snapshot_list("default_branch_missing_worktree", &repo);
 }
+
+/// Test that git errors during task execution are collected and displayed as warnings.
+///
+/// Corrupts a branch ref to point to a non-existent commit, which causes
+/// ahead_behind and other git operations to fail. Verifies the warning
+/// message appears after the table.
+#[rstest]
+fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+
+    // Corrupt the feature branch ref to point to a non-existent commit.
+    // Branch refs are stored in the main repo's .git/refs/heads, not the worktree.
+    let git_dir = repo.root_path().join(".git");
+    let ref_path = git_dir.join("refs/heads/feature");
+
+    // Write an invalid SHA that doesn't exist in the repo
+    std::fs::write(&ref_path, "0000000000000000000000000000000000000000\n").unwrap();
+
+    snapshot_list("git_error_warning", &repo);
+}
