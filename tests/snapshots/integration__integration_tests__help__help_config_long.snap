@@ -225,10 +225,11 @@ Override the LLM command in CI to use a mock:
   [2mWORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
   [2m  wt merge
 
-[1mSpecial variables
+[1mOther environment variables
 
-  Variable               Purpose                                              
-  ─────────────────────  ─────────────────────────────────────────────────────
-  [2mWORKTRUNK_CONFIG_PATH[0m  Override user config file location (not a config key)
-  [2mNO_COLOR[0m               Disable colored output (standard)                    
-  [2mCLICOLOR_FORCE[0m         Force colored output even when not a TTY
+  Variable                           Purpose                                                                   
+  ─────────────────────────────────  ──────────────────────────────────────────────────────────────────────────
+  [2mWORKTRUNK_CONFIG_PATH[0m              Override user config file location                                        
+  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m  Max parallel git commands (default: 32). Lower if hitting resource limits.
+  [2mNO_COLOR[0m                           Disable colored output (standard)                                         
+  [2mCLICOLOR_FORCE[0m                     Force colored output even when not a TTY

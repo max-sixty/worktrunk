@@ -254,7 +254,6 @@ def record_text(demo_env: DemoEnv):
         "PATH": f"{REPO_ROOT}/target/debug:{demo_env.home}/bin:{os.environ['PATH']}",
         "STARSHIP_CONFIG": str(STARSHIP_CONFIG),
         "STARSHIP_CACHE": str(demo_env.root / "starship-cache"),
-        "WT_PROGRESSIVE": "false",
         "NO_COLOR": "1",
         "CLICOLOR": "0",
         "NEXTEST_STATUS_LEVEL": "none",

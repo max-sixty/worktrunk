@@ -30,7 +30,7 @@ static CMD_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 const DEFAULT_CONCURRENT_COMMANDS: usize = 32;
 
 fn max_concurrent_commands() -> usize {
-    std::env::var("WT_MAX_CONCURRENT_COMMANDS")
+    std::env::var("WORKTRUNK_MAX_CONCURRENT_COMMANDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_CONCURRENT_COMMANDS)

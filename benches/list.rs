@@ -251,7 +251,7 @@ fn add_worktree_with_divergence(
 
 /// Benchmark time to render skeleton (before cell filling starts).
 ///
-/// Uses WT_SKELETON_ONLY=1 to exit after skeleton is rendered.
+/// Uses WORKTRUNK_SKELETON_ONLY=1 to exit after skeleton is rendered.
 /// This measures the actual worktrunk code path: git I/O, parsing, layout, render skeleton.
 fn bench_skeleton(c: &mut Criterion) {
     let mut group = c.benchmark_group("skeleton");
@@ -292,7 +292,7 @@ fn bench_skeleton(c: &mut Criterion) {
                 b.iter(|| {
                     Command::new(&binary)
                         .arg("list")
-                        .env("WT_SKELETON_ONLY", "1")
+                        .env("WORKTRUNK_SKELETON_ONLY", "1")
                         .current_dir(&repo_path)
                         .output()
                         .unwrap();
@@ -354,7 +354,7 @@ fn bench_skeleton_cold(c: &mut Criterion) {
                     |_| {
                         Command::new(&binary)
                             .arg("list")
-                            .env("WT_SKELETON_ONLY", "1")
+                            .env("WORKTRUNK_SKELETON_ONLY", "1")
                             .current_dir(&repo_path)
                             .output()
                             .unwrap();
@@ -711,22 +711,6 @@ fn bench_sequential_vs_parallel(c: &mut Criterion) {
                 b.iter(|| {
                     Command::new(&binary)
                         .arg("list")
-                        .current_dir(&repo_path)
-                        .output()
-                        .unwrap();
-                });
-            },
-        );
-
-        // Benchmark sequential implementation (via WT_SEQUENTIAL env var)
-        group.bench_with_input(
-            BenchmarkId::new("sequential", num_worktrees),
-            &num_worktrees,
-            |b, _| {
-                b.iter(|| {
-                    Command::new(&binary)
-                        .arg("list")
-                        .env("WT_SEQUENTIAL", "1")
                         .current_dir(&repo_path)
                         .output()
                         .unwrap();

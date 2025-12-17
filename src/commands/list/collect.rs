@@ -663,7 +663,7 @@ pub fn collect(
     };
 
     // Early exit for benchmarking skeleton render time
-    if std::env::var("WT_SKELETON_ONLY").is_ok() {
+    if std::env::var("WORKTRUNK_SKELETON_ONLY").is_ok() {
         return Ok(None);
     }
 
