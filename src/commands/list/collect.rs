@@ -1011,7 +1011,9 @@ pub fn collect(
         for error in &errors {
             let name = all_items[error.item_idx].branch_name();
             let kind_str: &'static str = error.kind.into();
-            warning.push_str(&format!("\n  - {}: {} ({})", name, kind_str, error.message));
+            // Take first line only - git errors can be multi-line with usage hints
+            let msg = error.message.lines().next().unwrap_or(&error.message);
+            warning.push_str(&format!("\n  - {}: {} ({})", name, kind_str, msg));
         }
         crate::output::print(warning_message(warning))?;
     }

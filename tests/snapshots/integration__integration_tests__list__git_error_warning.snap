@@ -36,9 +36,6 @@ exit_code: 0
 🟡 [33mSome git operations failed:
   - feature: commit-details (fatal: bad object 0000000000000000000000000000000000000000)
   - feature: ahead-behind (fatal: Invalid symmetric difference expression main...0000000000000000000000000000000000000000)
-  - feature: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000000^{tree}': unknown revision or path not in the working tree.
-Use '--' to separate paths from revisions, like this:
-'git <command> [<revision>...] -- [<file>...]'
-0000000000000000000000000000000000000000^{tree})
+  - feature: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000000^{tree}': unknown revision or path not in the working tree.)
   - feature: has-file-changes (fatal: Invalid symmetric difference expression main...feature)
   - feature: working-tree-diff (fatal: bad object HEAD)[39m

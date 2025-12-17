@@ -41,6 +41,36 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
+/// Check if a line contains shell integration for the given command.
+///
+/// Returns true if the line:
+/// - Is not a comment (doesn't start with #)
+/// - Contains `{cmd} config shell init`
+/// - Contains an execution context (eval, source, Invoke-Expression, or conditional)
+///
+/// Used by both detection (is shell integration configured?) and
+/// uninstall (which lines to remove?).
+pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
+    let trimmed = line.trim();
+
+    // Skip comments (# for POSIX shells, <# #> for PowerShell)
+    if trimmed.starts_with('#') {
+        return false;
+    }
+
+    // Must contain the init pattern for this command
+    let init_pattern = format!("{cmd} config shell init");
+    if !trimmed.contains(&init_pattern) {
+        return false;
+    }
+
+    // Must be in an execution context
+    trimmed.contains("eval")
+        || trimmed.contains("source")
+        || trimmed.contains("Invoke-Expression")
+        || trimmed.contains("if ")
+}
+
 /// Supported shells
 ///
 /// Currently supported: bash, fish, zsh, powershell
@@ -182,14 +212,15 @@ impl Shell {
         }
     }
 
-    /// Check if shell integration is configured in any shell's config file
+    /// Check if shell integration is configured for the given command name.
     ///
     /// Returns the path to the first config file with integration if found.
     /// This helps detect the "configured but not restarted shell" state.
     ///
-    /// This function is prefix-agnostic - it detects integration patterns regardless
-    /// of what cmd was used during configuration (wt, worktree, etc).
-    pub fn is_integration_configured() -> Result<Option<PathBuf>, std::io::Error> {
+    /// The `cmd` parameter specifies the command name to look for (e.g., "wt" or "git-wt").
+    /// This ensures we only consider integration "configured" if it uses the same binary
+    /// we're running as - prevents confusion when users have multiple installs.
+    pub fn is_integration_configured(cmd: &str) -> Result<Option<PathBuf>, std::io::Error> {
         use std::fs;
         use std::io::{BufRead, BufReader};
 
@@ -209,7 +240,6 @@ impl Shell {
                 .join(".zshrc"),
         ];
 
-        // Check standard config files for eval pattern (any prefix)
         for path in config_files {
             if !path.exists() {
                 continue;
@@ -218,54 +248,39 @@ impl Shell {
             if let Ok(file) = fs::File::open(&path) {
                 let reader = BufReader::new(file);
                 for line in reader.lines().map_while(Result::ok) {
-                    let trimmed = line.trim();
-                    // Skip comments
-                    if trimmed.starts_with('#') {
-                        continue;
-                    }
-                    // Match lines containing: eval "$(... init ...)" or eval '$(... init ...)'
-                    // This catches both the direct pattern and the guarded pattern:
-                    //   eval "$(wt config shell init bash)"
-                    //   if command -v wt ...; then eval "$(command wt config shell init zsh)"; fi
-                    if (trimmed.contains("eval \"$(") || trimmed.contains("eval '$("))
-                        && trimmed.contains(" init ")
-                    {
+                    if is_shell_integration_line(&line, cmd) {
                         return Ok(Some(path));
                     }
                 }
             }
         }
 
-        // Check Fish conf.d directory for any .fish files (Fish integration)
+        // Check Fish conf.d directory - look for {cmd}.fish file specifically
         let fish_conf_d = home.join(".config/fish/conf.d");
-        if fish_conf_d.exists()
-            && let Ok(entries) = fs::read_dir(&fish_conf_d)
+        let fish_config = fish_conf_d.join(format!("{cmd}.fish"));
+        if fish_config.exists()
+            && let Ok(file) = fs::File::open(&fish_config)
         {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("fish")
-                    && let Ok(content) = fs::read_to_string(&path)
-                {
-                    // Look for wt shell integration (new protocol uses wt_exec + eval)
-                    if content.contains("function wt_exec")
-                        && content.contains("--internal")
-                        && content.contains("eval")
-                    {
-                        return Ok(Some(path));
-                    }
+            let reader = BufReader::new(file);
+            for line in reader.lines().map_while(Result::ok) {
+                if is_shell_integration_line(&line, cmd) {
+                    return Ok(Some(fish_config));
                 }
             }
         }
 
         // Check PowerShell profiles for integration (both Core and 5.1)
         for profile_path in powershell_profile_paths(&home) {
-            if profile_path.exists()
-                && let Ok(content) = fs::read_to_string(&profile_path)
-            {
-                // Look for PowerShell integration pattern:
-                // Invoke-Expression (& wt config shell init powershell)
-                if content.contains("Invoke-Expression") && content.contains("shell init") {
-                    return Ok(Some(profile_path));
+            if !profile_path.exists() {
+                continue;
+            }
+
+            if let Ok(file) = fs::File::open(&profile_path) {
+                let reader = BufReader::new(file);
+                for line in reader.lines().map_while(Result::ok) {
+                    if is_shell_integration_line(&line, cmd) {
+                        return Ok(Some(profile_path));
+                    }
                 }
             }
         }
@@ -454,6 +469,7 @@ pub fn is_current_shell_zsh() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn test_shell_from_str() {
@@ -678,6 +694,22 @@ mod tests {
         assert!(
             output.contains("custom"),
             "Output should contain custom prefix"
+        );
+    }
+
+    /// Verify that `config_line_with_prefix()` generates lines that
+    /// `is_shell_integration_line()` can detect.
+    ///
+    /// This prevents install and detection from drifting out of sync.
+    #[rstest]
+    fn test_config_line_detected_by_is_shell_integration_line(
+        #[values(Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell)] shell: Shell,
+        #[values("wt", "git-wt")] prefix: &str,
+    ) {
+        let line = shell.config_line_with_prefix(prefix);
+        assert!(
+            is_shell_integration_line(&line, prefix),
+            "{shell} config_line_with_prefix({prefix:?}) not detected:\n  {line}"
         );
     }
 }

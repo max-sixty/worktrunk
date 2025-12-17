@@ -344,7 +344,8 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("SHELL INTEGRATION", None))?;
 
     // Use the same detection logic as `wt config shell install`
-    let scan_result = match scan_shell_configs(None, true, "wt") {
+    let cmd = crate::binary_name();
+    let scan_result = match scan_shell_configs(None, true, &cmd) {
         Ok(r) => r,
         Err(e) => {
             writeln!(
@@ -399,7 +400,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 
                 // For fish, check completions file separately
                 if matches!(shell, Shell::Fish)
-                    && let Ok(completion_path) = shell.completion_path()
+                    && let Ok(completion_path) = shell.completion_path_with_prefix(&cmd)
                 {
                     let completion_display = format_path_for_display(&completion_path);
                     if completion_path.exists() {

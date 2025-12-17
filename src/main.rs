@@ -826,7 +826,7 @@ fn main() {
                     }
                     ConfigShellCommand::Uninstall { shell, force } => {
                         let explicit_shell = shell.is_some();
-                        handle_unconfigure_shell(shell, force)
+                        handle_unconfigure_shell(shell, force, &binary_name())
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
                                 let shell_count = scan_result.results.len();

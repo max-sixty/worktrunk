@@ -314,7 +314,11 @@ pub fn handle_switch_output(
                 if let Some(warning) = path_mismatch_warning {
                     super::print(warning)?;
                 }
-            } else if Shell::is_integration_configured().ok().flatten().is_some() {
+            } else if Shell::is_integration_configured(&crate::binary_name())
+                .ok()
+                .flatten()
+                .is_some()
+            {
                 // Shell wrapper is configured but user ran binary directly
                 super::print(warning_message(cformat!(
                     "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — shell integration not active"

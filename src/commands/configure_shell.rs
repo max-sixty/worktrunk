@@ -664,25 +664,13 @@ pub fn process_shell_completions(
     Ok(results)
 }
 
-// Pattern detection for shell integration
-fn has_integration_pattern(content: &str) -> bool {
-    let lower = content.to_lowercase();
-    lower.contains("wt init") || lower.contains("wt config shell init")
-}
-
-fn is_integration_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    !trimmed.starts_with('#')
-        && has_integration_pattern(trimmed)
-        && (trimmed.contains("eval") || trimmed.contains("source") || trimmed.contains("if "))
-}
-
 pub fn handle_unconfigure_shell(
     shell_filter: Option<Shell>,
     skip_confirmation: bool,
+    cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     // First, do a dry-run to see what would be changed
-    let preview = scan_for_uninstall(shell_filter, true)?;
+    let preview = scan_for_uninstall(shell_filter, true, cmd)?;
 
     // If nothing to do, return early
     if preview.results.is_empty() && preview.completion_results.is_empty() {
@@ -697,12 +685,13 @@ pub fn handle_unconfigure_shell(
     }
 
     // User confirmed (or --force flag was used), now actually apply the changes
-    scan_for_uninstall(shell_filter, false)
+    scan_for_uninstall(shell_filter, false, cmd)
 }
 
 fn scan_for_uninstall(
     shell_filter: Option<Shell>,
     dry_run: bool,
+    cmd: &str,
 ) -> Result<UninstallScanResult, String> {
     #[cfg(windows)]
     let default_shells = vec![Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
@@ -716,10 +705,10 @@ fn scan_for_uninstall(
 
     for &shell in &shells {
         let paths = shell
-            .config_paths()
+            .config_paths_with_prefix(cmd)
             .map_err(|e| format!("Failed to get config paths for {}: {}", shell, e))?;
 
-        // For Fish, check for wt.fish specifically (delete entire file)
+        // For Fish, delete entire {cmd}.fish file
         if matches!(shell, Shell::Fish) {
             if let Some(fish_path) = paths.first() {
                 if fish_path.exists() {
@@ -758,7 +747,7 @@ fn scan_for_uninstall(
                 continue;
             }
 
-            match uninstall_from_file(shell, path, dry_run) {
+            match uninstall_from_file(shell, path, dry_run, cmd) {
                 Ok(Some(result)) => {
                     results.push(result);
                     found = true;
@@ -784,7 +773,7 @@ fn scan_for_uninstall(
         }
 
         let completion_path = shell
-            .completion_path()
+            .completion_path_with_prefix(cmd)
             .map_err(|e| format!("Failed to get completion path for {}: {}", shell, e))?;
 
         if completion_path.exists() {
@@ -821,6 +810,7 @@ fn uninstall_from_file(
     shell: Shell,
     path: &Path,
     dry_run: bool,
+    cmd: &str,
 ) -> Result<Option<UninstallResult>, String> {
     let content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {}", format_path_for_display(path), e))?;
@@ -829,7 +819,7 @@ fn uninstall_from_file(
     let integration_lines: Vec<(usize, &str)> = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| is_integration_line(line))
+        .filter(|(_, line)| shell::is_shell_integration_line(line, cmd))
         .map(|(i, line)| (i, *line))
         .collect();
 
@@ -1024,31 +1014,50 @@ mod tests {
     }
 
     #[test]
-    fn test_has_integration_pattern() {
-        assert!(has_integration_pattern("wt init bash"));
-        assert!(has_integration_pattern("WT INIT zsh")); // Case insensitive
-        assert!(has_integration_pattern("wt config shell init"));
-        assert!(!has_integration_pattern("echo hello"));
-        assert!(!has_integration_pattern("wt merge"));
-    }
-
-    #[test]
-    fn test_is_integration_line() {
-        // Valid integration lines
-        assert!(is_integration_line("eval \"$(wt init bash)\""));
-        assert!(is_integration_line("  eval \"$(wt init zsh)\"  "));
-        assert!(is_integration_line(
-            "if [ -n \"$BASH_VERSION\" ]; then eval \"$(wt init bash)\"; fi"
+    fn test_is_shell_integration_line() {
+        // Valid integration lines for "wt"
+        assert!(shell::is_shell_integration_line(
+            "eval \"$(wt config shell init bash)\"",
+            "wt"
         ));
-        assert!(is_integration_line("source <(wt init fish)"));
+        assert!(shell::is_shell_integration_line(
+            "  eval \"$(wt config shell init zsh)\"  ",
+            "wt"
+        ));
+        assert!(shell::is_shell_integration_line(
+            "if command -v wt; then eval \"$(wt config shell init bash)\"; fi",
+            "wt"
+        ));
+        assert!(shell::is_shell_integration_line(
+            "source <(wt config shell init fish)",
+            "wt"
+        ));
+
+        // Valid integration lines for "git-wt"
+        assert!(shell::is_shell_integration_line(
+            "eval \"$(git-wt config shell init bash)\"",
+            "git-wt"
+        ));
+        assert!(!shell::is_shell_integration_line(
+            "eval \"$(wt config shell init bash)\"",
+            "git-wt"
+        ));
 
         // Not integration lines (comments)
-        assert!(!is_integration_line("# eval \"$(wt init bash)\""));
-        assert!(!is_integration_line("  # wt init zsh"));
+        assert!(!shell::is_shell_integration_line(
+            "# eval \"$(wt config shell init bash)\"",
+            "wt"
+        ));
 
         // Not integration lines (no eval/source/if)
-        assert!(!is_integration_line("wt init bash"));
-        assert!(!is_integration_line("echo wt init bash"));
+        assert!(!shell::is_shell_integration_line(
+            "wt config shell init bash",
+            "wt"
+        ));
+        assert!(!shell::is_shell_integration_line(
+            "echo wt config shell init bash",
+            "wt"
+        ));
     }
 
     #[test]
