@@ -29,5 +29,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36m[36mRemoving [1mfeature-unmerged[22m worktree in background; retaining unmerged branch[39m[39m
+🔄 [36mRemoving [1mfeature-unmerged[22m worktree in background; retaining unmerged branch[39m
 💡 [2mTo delete the unmerged branch, run [90mwt remove feature-unmerged -D[39m[22m
