@@ -70,7 +70,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Switches to a worktree, creating one if needed. Creating a worktree runs hooks.
+Change directory to a worktree, creating one if needed. Creating a worktree runs hooks.
 
 [32mExamples
 
@@ -79,19 +79,20 @@ Switches to a worktree, creating one if needed. Creating a worktree runs hooks.
   [2mwt switch --create new-feature   # Create new branch and worktree
   [2mwt switch --create hotfix --base production
 
-For interactive selection, use [2mwt select[0m.
+[32mCreating a branch
+
+The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
 
 [32mCreating worktrees
 
-When the target branch has no worktree, worktrunk:
+If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one.
+
+When creating a worktree, worktrunk:
 
 1. Creates worktree at configured path
 2. Switches to new directory
 3. Runs post-create hooks (blocking)
 4. Spawns post-start hooks (background)
-
-The [2m--create[0m flag creates a new branch from [2m--base[0m (defaults to the repository's default branch). Without [2m--create[0m, the branch must already
-exist.
 
   [2mwt switch feature                        # Existing branch → creates worktree
   [2mwt switch --create feature               # New branch and worktree
@@ -109,12 +110,6 @@ exist.
   [2mwt switch -                      # Back to previous
   [2mwt switch ^                      # Main worktree
   [2mwt switch --create fix --base=@  # Branch from current HEAD
-
-[32mArgument resolution
-
-Switches to the branch's worktree if one exists, otherwise creates one at the expected path.
-
-If the expected path is occupied by a different branch's worktree, an error is raised.
 
 [32mSee also
 

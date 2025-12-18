@@ -2079,7 +2079,7 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
 
     /// Switch to a worktree
     #[command(
-        after_long_help = r#"Switches to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
+        after_long_help = r#"Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
 ## Examples
 
@@ -2090,18 +2090,20 @@ wt switch --create new-feature   # Create new branch and worktree
 wt switch --create hotfix --base production
 ```
 
-For interactive selection, use [`wt select`](@/select.md).
+## Creating a branch
+
+The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
 
 ## Creating worktrees
 
-When the target branch has no worktree, worktrunk:
+If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one.
+
+When creating a worktree, worktrunk:
 
 1. Creates worktree at configured path
 2. Switches to new directory
 3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
 4. Spawns [post-start hooks](@/hook.md#post-start) (background)
-
-The `--create` flag creates a new branch from `--base` (defaults to the repository's default branch). Without `--create`, the branch must already exist.
 
 ```console
 wt switch feature                        # Existing branch → creates worktree
@@ -2123,12 +2125,6 @@ wt switch -                      # Back to previous
 wt switch ^                      # Main worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
-
-## Argument resolution
-
-Switches to the branch's worktree if one exists, otherwise creates one at the expected path.
-
-If the expected path is occupied by a different branch's worktree, an error is raised.
 
 ## See also
 
