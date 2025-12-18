@@ -1185,6 +1185,7 @@ fn main() {
             base,
             execute,
             force,
+            clobber,
             verify,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
@@ -1221,8 +1222,15 @@ fn main() {
                 }
 
                 // Execute switch operation (creates worktree, runs post-create hooks if approved)
-                let (result, branch_info) =
-                    handle_switch(&branch, create, base.as_deref(), force, skip_hooks, &config)?;
+                let (result, branch_info) = handle_switch(
+                    &branch,
+                    create,
+                    base.as_deref(),
+                    force,
+                    clobber,
+                    skip_hooks,
+                    &config,
+                )?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
                 // Pass cli.internal to indicate whether shell integration is active

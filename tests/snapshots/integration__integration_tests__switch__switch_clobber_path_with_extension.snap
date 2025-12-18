@@ -5,7 +5,8 @@ info:
   args:
     - switch
     - "--create"
-    - occupied-branch
+    - "--clobber"
+    - clobber-ext.txt
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -25,11 +26,11 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mDirectory already exists: [1m[REPO].occupied-branch[22m[39m
-
-💡 [2mUse [90m--clobber[39m to remove, or [90mrm -rf [REPO].occupied-branch[39m[22m
+🟡 [33mMoving [1m[REPO].clobber-ext.txt[22m to [1m[REPO].clobber-ext.txt.bak.20250102-000000[22m ([90m--clobber[39m)[39m
+✅ [32m[32mCreated new worktree for [1mclobber-ext.txt[22m from [1mmain[22m @ [1m[REPO].clobber-ext.txt[39m[22m[39m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

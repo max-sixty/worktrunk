@@ -16,7 +16,7 @@ pub fn format_relative_time_short(timestamp: i64) -> String {
 }
 
 /// Get current time, respecting SOURCE_DATE_EPOCH for reproducible builds/tests
-fn get_now() -> i64 {
+pub fn get_now() -> i64 {
     std::env::var("SOURCE_DATE_EPOCH")
         .ok()
         .and_then(|val| val.parse::<i64>().ok())

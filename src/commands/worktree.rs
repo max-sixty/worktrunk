@@ -126,6 +126,28 @@ use super::command_executor::CommandContext;
 use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
 use super::repository_ext::RepositoryCliExt;
 
+/// Generate a backup path for the given path with a timestamp suffix.
+///
+/// For paths with extensions: `file.txt` → `file.txt.bak.TIMESTAMP`
+/// For paths without extensions: `foo` → `foo.bak.TIMESTAMP`
+fn generate_backup_path(path: &std::path::Path, suffix: &str) -> PathBuf {
+    if path.extension().is_none() {
+        // Path has no extension (e.g., /repo/feature)
+        path.with_file_name(format!(
+            "{}.bak.{suffix}",
+            path.file_name().unwrap().to_string_lossy()
+        ))
+    } else {
+        // Path has an extension (e.g., /repo.feature or /file.txt)
+        path.with_extension(format!(
+            "{}.bak.{suffix}",
+            path.extension()
+                .map(|e| e.to_string_lossy().to_string())
+                .unwrap_or_default()
+        ))
+    }
+}
+
 /// Context for worktree resolution - determines which checks are performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionContext {
@@ -413,6 +435,7 @@ pub fn handle_switch(
     create: bool,
     base: Option<&str>,
     force: bool,
+    clobber: bool,
     no_verify: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
@@ -533,12 +556,40 @@ pub fn handle_switch(
     let worktree_path = expected_path;
 
     // If the target path already exists but is NOT a worktree (e.g., stale directory),
-    // surface a helpful error instead of letting git fail with "already exists".
+    // either move it to .bak (with --clobber) or surface a helpful error.
     if worktree_path.exists() {
-        return Err(GitError::WorktreePathExists {
-            path: worktree_path,
+        if clobber {
+            use anyhow::Context;
+
+            // Generate timestamped backup path
+            let timestamp = crate::display::get_now();
+            let datetime =
+                chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
+            let suffix = datetime.format("%Y%m%d-%H%M%S").to_string();
+            let backup_path = generate_backup_path(&worktree_path, &suffix);
+
+            // Error if backup path already exists
+            if backup_path.exists() {
+                anyhow::bail!(
+                    "Backup path already exists: {}",
+                    worktrunk::path::format_path_for_display(&backup_path)
+                );
+            }
+
+            let path_display = worktrunk::path::format_path_for_display(&worktree_path);
+            let backup_display = worktrunk::path::format_path_for_display(&backup_path);
+            crate::output::print(warning_message(cformat!(
+                "Moving <bold>{path_display}</> to <bold>{backup_display}</> (<bright-black>--clobber</>)"
+            )))?;
+
+            std::fs::rename(&worktree_path, &backup_path)
+                .with_context(|| format!("Failed to move {path_display} to {backup_display}"))?;
+        } else {
+            return Err(GitError::WorktreePathExists {
+                path: worktree_path,
+            }
+            .into());
         }
-        .into());
     }
 
     // Create the worktree
@@ -1182,5 +1233,35 @@ mod tests {
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
+    }
+
+    #[test]
+    fn test_generate_backup_path_with_extension() {
+        // Paths with extensions: file.txt -> file.txt.bak.TIMESTAMP
+        let path = PathBuf::from("/tmp/repo.feature");
+        let backup = super::generate_backup_path(&path, "20250101-000000");
+        assert_eq!(
+            backup,
+            PathBuf::from("/tmp/repo.feature.bak.20250101-000000")
+        );
+
+        let path = PathBuf::from("/tmp/file.txt");
+        let backup = super::generate_backup_path(&path, "20250101-000000");
+        assert_eq!(backup, PathBuf::from("/tmp/file.txt.bak.20250101-000000"));
+    }
+
+    #[test]
+    fn test_generate_backup_path_without_extension() {
+        // Paths without extensions: foo -> foo.bak.TIMESTAMP
+        let path = PathBuf::from("/tmp/repo/feature");
+        let backup = super::generate_backup_path(&path, "20250101-000000");
+        assert_eq!(
+            backup,
+            PathBuf::from("/tmp/repo/feature.bak.20250101-000000")
+        );
+
+        let path = PathBuf::from("/tmp/mydir");
+        let backup = super::generate_backup_path(&path, "20250101-000000");
+        assert_eq!(backup, PathBuf::from("/tmp/mydir.bak.20250101-000000"));
     }
 }

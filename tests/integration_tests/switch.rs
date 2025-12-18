@@ -808,3 +808,169 @@ fn test_switch_outside_git_repo(temp_home: TempDir) {
         assert_cmd_snapshot!(cmd);
     });
 }
+
+// Clobber flag path backup tests
+
+/// Test --clobber moves stale directory to .bak and creates worktree
+#[rstest]
+fn test_switch_clobber_backs_up_stale_directory(repo: TestRepo) {
+    // Calculate where the worktree would be created
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let expected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.clobber-dir-test", repo_name));
+
+    // Create a stale directory at that path (not a worktree)
+    std::fs::create_dir_all(&expected_path).unwrap();
+    std::fs::write(expected_path.join("stale_file.txt"), "stale content").unwrap();
+
+    // With --clobber, should move the directory to .bak and create the worktree
+    snapshot_switch(
+        "switch_clobber_removes_stale_dir",
+        &repo,
+        &["--create", "--clobber", "clobber-dir-test"],
+    );
+
+    // Verify the worktree was created
+    assert!(expected_path.exists());
+    assert!(expected_path.is_dir());
+
+    // Verify the backup was created (SOURCE_DATE_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC)
+    let backup_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.clobber-dir-test.bak.20250102-000000",
+        repo_name
+    ));
+    assert!(
+        backup_path.exists(),
+        "Backup should exist at {:?}",
+        backup_path
+    );
+    assert!(backup_path.is_dir(), "Backup should be a directory");
+
+    // Verify stale content is preserved in backup
+    let stale_file = backup_path.join("stale_file.txt");
+    assert!(stale_file.exists(), "Stale file should be in backup");
+    assert_eq!(
+        std::fs::read_to_string(&stale_file).unwrap(),
+        "stale content"
+    );
+}
+
+/// Test --clobber moves stale file to .bak and creates worktree
+#[rstest]
+fn test_switch_clobber_backs_up_stale_file(repo: TestRepo) {
+    // Calculate where the worktree would be created
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let expected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.clobber-file-test", repo_name));
+
+    // Create a file (not directory) at that path
+    std::fs::write(&expected_path, "stale file content").unwrap();
+
+    // With --clobber, should move the file to .bak and create the worktree
+    snapshot_switch(
+        "switch_clobber_removes_stale_file",
+        &repo,
+        &["--create", "--clobber", "clobber-file-test"],
+    );
+
+    // Verify the worktree was created (should be a directory now)
+    assert!(expected_path.is_dir());
+
+    // Verify the backup was created (SOURCE_DATE_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC)
+    let backup_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.clobber-file-test.bak.20250102-000000",
+        repo_name
+    ));
+    assert!(
+        backup_path.exists(),
+        "Backup should exist at {:?}",
+        backup_path
+    );
+    assert!(backup_path.is_file(), "Backup should be a file");
+    assert_eq!(
+        std::fs::read_to_string(&backup_path).unwrap(),
+        "stale file content"
+    );
+}
+
+/// Test --clobber errors when backup path already exists
+#[rstest]
+fn test_switch_clobber_error_backup_exists(repo: TestRepo) {
+    // Calculate where the worktree would be created
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let expected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.clobber-backup-exists", repo_name));
+
+    // Create a stale directory at the target path
+    std::fs::create_dir_all(&expected_path).unwrap();
+
+    // Also create the backup path that would be generated
+    // SOURCE_DATE_EPOCH=1735776000 -> 2025-01-02 00:00:00 UTC
+    let backup_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.clobber-backup-exists.bak.20250102-000000",
+        repo_name
+    ));
+    std::fs::create_dir_all(&backup_path).unwrap();
+
+    // With --clobber, should error because backup path exists
+    snapshot_switch(
+        "switch_clobber_error_backup_exists",
+        &repo,
+        &["--create", "--clobber", "clobber-backup-exists"],
+    );
+
+    // Both paths should still exist (nothing was moved)
+    assert!(expected_path.exists());
+    assert!(backup_path.exists());
+}
+
+/// Test --clobber handles paths with extensions correctly
+#[rstest]
+fn test_switch_clobber_path_with_extension(repo: TestRepo) {
+    // Calculate where the worktree would be created
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let expected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.clobber-ext.txt", repo_name));
+
+    // Create a file with an extension at that path
+    std::fs::write(&expected_path, "file with extension").unwrap();
+
+    // With --clobber, should move the file preserving extension in backup name
+    snapshot_switch(
+        "switch_clobber_path_with_extension",
+        &repo,
+        &["--create", "--clobber", "clobber-ext.txt"],
+    );
+
+    // Verify the worktree was created
+    assert!(expected_path.is_dir());
+
+    // Verify backup path includes the original extension
+    // file.txt -> file.txt.bak.TIMESTAMP
+    let backup_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join(format!("{}.clobber-ext.txt.bak.20250102-000000", repo_name));
+    assert!(
+        backup_path.exists(),
+        "Backup should exist at {:?}",
+        backup_path
+    );
+    assert_eq!(
+        std::fs::read_to_string(&backup_path).unwrap(),
+        "file with extension"
+    );
+}

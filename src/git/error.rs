@@ -258,7 +258,7 @@ impl std::fmt::Display for GitError {
                         "Directory already exists: <bold>{path_display}</>"
                     )),
                     hint_message(cformat!(
-                        "Remove with <bright-black>rm -rf {path_display}</> or use a different branch name"
+                        "Use <bright-black>--clobber</> to remove, or <bright-black>rm -rf {path_display}</>"
                     ))
                 )
             }
@@ -705,7 +705,7 @@ mod tests {
         assert_snapshot!(err.to_string(), @r"
         ❌ [31mDirectory already exists: [1m/some/path[22m[39m
 
-        💡 [2mRemove with [90mrm -rf /some/path[39m or use a different branch name[22m
+        💡 [2mUse [90m--clobber[39m to remove, or [90mrm -rf /some/path[39m[22m
         ");
     }
 

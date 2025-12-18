@@ -1,8 +1,7 @@
 ---
-source: tests/git_error_display.rs
-assertion_line: 66
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mDirectory already exists: [1m/tmp/repo.feature[22m[39m
 
-💡 [2mRemove with [90mrm -rf /tmp/repo.feature[39m or use a different branch name[22m
+💡 [2mUse [90m--clobber[39m to remove, or [90mrm -rf /tmp/repo.feature[39m[22m

@@ -974,7 +974,8 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
 
         // Switch to the selected worktree
         // handle_switch can handle both branch names and worktree paths
-        let (result, branch_info) = handle_switch(&identifier, false, None, false, false, &config)?;
+        let (result, branch_info) =
+            handle_switch(&identifier, false, None, false, false, false, &config)?;
 
         // Clear the terminal screen after skim exits to prevent artifacts
         // Use stderr for terminal control sequences - in directive mode, stdout goes to a FIFO

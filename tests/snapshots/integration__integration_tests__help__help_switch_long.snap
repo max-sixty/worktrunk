@@ -9,7 +9,6 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
-    GIT_FETCH_ARGS: ""
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -51,6 +50,9 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
 
   [1m[36m-f[0m, [1m[36m--force
           Skip approval prompts
+
+      [1m[36m--clobber
+          Remove stale paths at target
 
       [1m[36m--no-verify
           Skip hooks

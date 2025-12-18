@@ -2109,6 +2109,10 @@ If the expected path is occupied by a different branch's worktree, an error is r
         #[arg(short = 'f', long)]
         force: bool,
 
+        /// Remove stale paths at target
+        #[arg(long)]
+        clobber: bool,
+
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
