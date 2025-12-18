@@ -34,7 +34,7 @@ fn test_config_init_already_exists(temp_home: TempDir) {
         ----- stderr -----
         ⚪ User config already exists: [1m~/.config/worktrunk/config.toml[22m
 
-        💡 [2mUse [90mwt config show[39m to view, or [90mwt config create --help[39m for format reference[22m
+        💡 [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
         ");
     });
 }
@@ -121,7 +121,7 @@ run = "echo hello"
         ----- stderr -----
         ⚪ Project config already exists: [1m[REPO]/.config/wt.toml[22m
 
-        💡 [2mUse [90mwt config show[39m to view, or [90mwt config create --help[39m for format reference[22m
+        💡 [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
         ");
     });
 }

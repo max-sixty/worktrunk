@@ -14,6 +14,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -40,4 +41,4 @@ exit_code: 0
 ⚪ Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc
 ⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
-💡 [2m[90mwt config shell install[39m enables shell integration[22m
+💡 [2mTo enable shell integration, run [90mwt config shell install[39m[22m

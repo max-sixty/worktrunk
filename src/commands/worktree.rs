@@ -119,7 +119,7 @@ use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
-    warning_message,
+    suggest_command, warning_message,
 };
 
 use super::command_executor::CommandContext;
@@ -474,8 +474,9 @@ pub fn handle_switch(
             crate::output::print(warning_message(cformat!(
                 "Branch <bold>{resolved_branch}</> exists on remote ({remote_ref}); creating new branch from base instead"
             )))?;
+            let cmd = suggest_command("switch", &[&resolved_branch], &[]);
             crate::output::print(hint_message(cformat!(
-                "Use <bright-black>wt switch {resolved_branch}</> (without <bright-black>--create</>) to switch to the remote branch"
+                "To switch to the remote branch, remove <bright-black>--create</>; run <bright-black>{cmd}</>"
             )))?;
         }
     }

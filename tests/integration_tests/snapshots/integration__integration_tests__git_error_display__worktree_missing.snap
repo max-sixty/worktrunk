@@ -1,7 +1,7 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mWorktree directory missing for [1mstale-branch[22m[39m
 
-💡 [2mRun [90mgit worktree prune[39m to clean up[22m
+💡 [2mTo clean up, run [90mgit worktree prune[39m[22m

@@ -89,7 +89,7 @@ fn create_config_file(
         )))?;
         output::blank()?;
         output::print(hint_message(cformat!(
-            "Use <bright-black>wt config show</> to view, or <bright-black>wt config create --help</> for format reference"
+            "For format reference, run <bright-black>wt config create --help</>; to view, run <bright-black>wt config show</>"
         )))?;
         return Ok(());
     }
@@ -251,7 +251,7 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(cformat!(
-                "Not found (using defaults); <bright-black>wt config create</> creates one"
+                "Not found (using defaults); to create one, run <bright-black>wt config create</>"
             ))
         )?;
         writeln!(out)?;
@@ -453,7 +453,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(cformat!(
-                "<bright-black>wt config shell install</> enables shell integration"
+                "To enable shell integration, run <bright-black>wt config shell install</>"
             ))
         )?;
     }

@@ -1,8 +1,8 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
 [107m [0m  abc1234 New commit on main
 
-💡 [2mRun [90mwt merge[39m again to incorporate these changes[22m
+💡 [2mTo incorporate these changes, run [90mwt merge main[39m again[22m

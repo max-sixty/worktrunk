@@ -17,6 +17,7 @@ mod constants;
 mod format;
 mod highlighting;
 mod line;
+mod suggest;
 
 // Re-exports from anstream (auto-detecting output)
 pub use anstream::{eprint, eprintln, print, println, stderr, stdout};
@@ -31,6 +32,7 @@ pub(crate) use format::format_bash_with_gutter_at_width;
 pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter};
 pub use highlighting::format_toml;
 pub use line::{StyledLine, StyledString, truncate_visible};
+pub use suggest::suggest_command;
 
 /// Default terminal width fallback if detection fails
 const DEFAULT_TERMINAL_WIDTH: usize = 80;

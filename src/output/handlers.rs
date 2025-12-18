@@ -16,7 +16,7 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
     FormattedMessage, PROGRESS_EMOJI, error_message, format_with_gutter, hint_message,
-    info_message, progress_message, success_message, warning_message,
+    info_message, progress_message, success_message, suggest_command, warning_message,
 };
 
 /// Format a switch message with a consistent location phrase
@@ -174,8 +174,9 @@ fn handle_branch_deletion_result(
                 super::print(info_message(cformat!(
                     "Branch <bold>{branch_name}</> retained; has unmerged changes"
                 )))?;
+                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
                 super::print(hint_message(cformat!(
-                    "<bright-black>wt remove -D</> deletes unmerged branches"
+                    "To delete the unmerged branch, run <bright-black>{cmd}</>"
                 )))?;
             }
             Ok((r, defer_output))
@@ -620,8 +621,9 @@ fn handle_removed_worktree_output(
 
         // Show hint for unmerged branches (same as synchronous path)
         if !deletion_mode.should_keep() && !should_delete_branch {
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
             super::print(hint_message(cformat!(
-                "<bright-black>wt remove -D</> deletes unmerged branches"
+                "To delete the unmerged branch, run <bright-black>{cmd}</>"
             )))?;
         }
 
@@ -695,8 +697,9 @@ fn handle_removed_worktree_output(
 
         // Show hint for unmerged branches (after success message)
         if show_hint {
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
             super::print(hint_message(cformat!(
-                "<bright-black>wt remove -D</> deletes unmerged branches"
+                "To delete the unmerged branch, run <bright-black>{cmd}</>"
             )))?;
         }
 

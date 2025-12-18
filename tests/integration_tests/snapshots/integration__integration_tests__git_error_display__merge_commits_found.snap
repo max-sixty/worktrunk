@@ -1,7 +1,7 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mFound merge commits in push range[39m
 
-💡 [2mUse [90m--allow-merge-commits[39m to push non-linear history[22m
+💡 [2mTo push non-linear history, add [90m--allow-merge-commits[39m[22m

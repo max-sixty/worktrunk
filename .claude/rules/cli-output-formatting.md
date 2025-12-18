@@ -171,6 +171,30 @@ a hint. If it's acknowledging what happened (including flag effects), it's info.
 | "Use `--force` to override"   | "Skipping hooks (--no-verify)"        |
 | "Branch can be deleted"       | "Worktree preserved (main worktree)"  |
 
+**Command suggestions in hints:** When suggesting a command the user should run,
+use the pattern "To X, run Y" where X describes the goal and Y is the command.
+**Always end with the command** so users can easily copy it:
+
+```rust
+// GOOD - "To X, run Y" pattern, command at end for easy copying
+"To delete the unmerged branch, run wt remove feature -D"
+"To rebase onto main, run wt step rebase or wt merge"
+"To create a new branch, run wt switch feature --create; to list branches, run wt list --branches"
+
+// GOOD - when user needs to modify their command, instruction then command
+"To switch to the remote branch, remove --create; run wt switch feature"
+
+// BAD - command without context
+"wt remove feature -D deletes unmerged branches"
+
+// BAD - command not at end (hard to copy)
+"Run wt switch feature (without --create) to switch to the remote branch"
+```
+
+Use `suggest_command()` from `worktrunk::styling` to build commands with proper
+shell escaping. Include the branch name or other specific arguments so users can
+copy-paste.
+
 **Message formatting functions** add emoji AND semantic color. Callers provide
 content with optional inner styling (like `<bold>`), then pass to
 `output::print()`:

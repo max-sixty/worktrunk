@@ -7,6 +7,7 @@ info:
     - push
     - main
   env:
+    APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
@@ -14,10 +15,15 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
+    PATH: "[PATH]"
     SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
 exit_code: 1
@@ -26,4 +32,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mFound merge commits in push range[39m
 
-💡 [2mUse [90m--allow-merge-commits[39m to push non-linear history[22m
+💡 [2mTo push non-linear history, add [90m--allow-merge-commits[39m[22m
