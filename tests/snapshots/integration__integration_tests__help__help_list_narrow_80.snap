@@ -20,44 +20,45 @@ exit_code: 0
 wt list - List worktrees and optionally branches
 
 Usage: [1m[36mwt list[0m [36m[OPTIONS]
-[1m[36mwt list[0m [36m<COMMAND>
+       [1m[36mwt list[0m [36m<COMMAND>
 
 [1m[32mCommands:
-[1m[36mstatusline[0m  Single-line status for shell prompts
+  [1m[36mstatusline
+          Single-line status for shell prompts
 
 [1m[32mOptions:
-[1m[36m--format[0m[36m [0m[36m<FORMAT>
-Output format (table, json)
+      [1m[36m--format[0m[36m [0m[36m<FORMAT>
+          Output format (table, json)
+          
+          [default: table]
 
-[default: table]
+      [1m[36m--branches
+          Include branches without worktrees
 
-[1m[36m--branches
-Include branches without worktrees
+      [1m[36m--remotes
+          Include remote branches
 
-[1m[36m--remotes
-Include remote branches
+      [1m[36m--full
+          Show CI and [1mmain[0m diffstat
 
-[1m[36m--full
-Show CI and [1mmain[0m diffstat
+      [1m[36m--progressive
+          Show fast info immediately, update with slow info
+          
+          Displays local data (branches, paths, status) first, then updates with
+          remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
-[1m[36m--progressive
-Show fast info immediately, update with slow info
-
-Displays local data (branches, paths, status) first, then updates with remote
-data (CI, upstream) as it arrives. Auto-enabled for TTY.
-
-[1m[36m-h[0m, [1m[36m--help
-Print help (see a summary with '-h')
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
 
 [1m[32mGlobal Options:
-[1m[36m-C[0m[36m [0m[36m<path>
-Working directory for this command
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
 
-[1m[36m--config[0m[36m [0m[36m<path>
-User config file path
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
 
-[1m[36m-v[0m, [1m[36m--verbose
-Show commands and debug info
+  [1m[36m-v[0m, [1m[36m--verbose
+          Show commands and debug info
 
 Show all worktrees with their status. The table includes uncommitted changes,
 divergence from main and remote, and optional CI status.
@@ -151,8 +152,8 @@ symbol is shown (listed in priority order):
                     ⇡      Ahead of remote                          
                     ⇣      Behind remote                            
 
-Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂
-content integrated).
+Rows are dimmed when safe to delete ([2m_[0m same
+commit with clean working tree or [2m⊂[0m content integrated).
 
 [32mJSON output
 
@@ -171,7 +172,8 @@ Query structured data with [2m--format=json[0m:
   [2mwt list --format=json | jq '.[] | select(.main.ahead > 0)'
   [2m
   [2m# Integrated branches (ready to clean up)
-  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
+  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or
+  [2m.main_state == "empty")'
 
 [1mFields:
 
@@ -185,20 +187,19 @@ Query structured data with [2m--format=json[0m:
    working_tree       object      Working tree state (see below)                
    main_state         string      Relation to main (see below)                  
    integration_reason string      Why branch is integrated (see below)          
-   operation_state    string      "conflicts", "rebase", or "merge" (absent     
-                                  when clean)                                   
-   main               object      Relationship to main branch (see below,       
-                                  absent when is_main)                          
-   remote             object      Tracking branch info (see below, absent when  
-                                  no tracking)                                  
-   worktree           object      Worktree metadata (see below)                 
-   is_main            boolean     Is the main worktree                          
-   is_current         boolean     Is the current worktree                       
-   is_previous        boolean     Previous worktree from wt switch              
-   ci                 object      CI status (see below, absent when no CI)      
-   statusline         string      Pre-formatted status with ANSI colors         
-   symbols            string      Raw status symbols without colors (e.g.,      
-                                  "!?↓")                                        
+| [2moperation_state[0m | string | [2m"conflicts"[0m, [2m"rebase"[0m, or [2m"merge"[0m (absent
+when clean) |
+| [2mmain[0m | object | Relationship to main branch (see below, absent when is_main)
+    
+| [2mremote[0m | object | Tracking branch info (see below, absent when no tracking)
+   ─────────── ─────── ─────────────────────────────────────────────── 
+   worktree    object  Worktree metadata (see below)                   
+   is_main     boolean Is the main worktree                            
+   is_current  boolean Is the current worktree                         
+   is_previous boolean Previous worktree from wt switch                
+   ci          object  CI status (see below, absent when no CI)        
+   statusline  string  Pre-formatted status with ANSI colors           
+   symbols     string  Raw status symbols without colors (e.g., "!?↓") 
 
 [1mcommit object
 
@@ -240,11 +241,12 @@ Query structured data with [2m--format=json[0m:
 
 [1mworktree object
 
-    Field    Type                          Description                         
-   ──────── ─────── ────────────────────────────────────────────────────────── 
-   state    string  "path_mismatch", "prunable", "locked" (absent when normal) 
-   reason   string  Reason for locked/prunable state                           
-   detached boolean HEAD is detached                                           
+   Field Type Description 
+   ───── ──── ─────────── 
+| [2mstate[0m | string | [2m"path_mismatch"[0m, [2m"prunable"[0m, [2m"locked"[0m (absent when
+normal) |
+    reason  string  Reason for locked/prunable state 
+   detached boolean         HEAD is detached         
 
 [1mci object
 
@@ -257,13 +259,13 @@ Query structured data with [2m--format=json[0m:
 
 [1mmain_state values
 
-[2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"[0m [2m"diverged"[0m [2m"ahead"
-[2m"behind"
+[2m"is_main"[0m [2m"would_conflict"[0m [2m"empty"[0m [2m"same_commit"[0m [2m"integrated"
+[2m"diverged"[0m [2m"ahead"[0m [2m"behind"
 
 [1mintegration_reason values
 
-When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"[0m [2m"no_added_changes"
-[2m"merge_adds_nothing"
+When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"
+[2m"no_added_changes"[0m [2m"merge_adds_nothing"
 
 [1mci.status values
 

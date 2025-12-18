@@ -22,37 +22,37 @@ wt remove - Remove worktree and branch
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[WORKTREES]...
 
 [1m[32mArguments:
-[36m[WORKTREES]...
-Worktree or branch (@ for current)
+  [36m[WORKTREES]...
+          Worktree or branch (@ for current)
 
 [1m[32mOptions:
-[1m[36m--no-delete-branch
-Keep branch after removal
+      [1m[36m--no-delete-branch
+          Keep branch after removal
 
-[1m[36m-D[0m, [1m[36m--force-delete
-Delete unmerged branches
+  [1m[36m-D[0m, [1m[36m--force-delete
+          Delete unmerged branches
 
-[1m[36m--no-background
-Run removal in foreground
+      [1m[36m--no-background
+          Run removal in foreground
 
-[1m[36m--no-verify
-Skip hooks
+      [1m[36m--no-verify
+          Skip hooks
 
-[1m[36m--force
-Skip approval prompts
+      [1m[36m--force
+          Skip approval prompts
 
-[1m[36m-h[0m, [1m[36m--help
-Print help (see a summary with '-h')
+  [1m[36m-h[0m, [1m[36m--help
+          Print help (see a summary with '-h')
 
 [1m[32mGlobal Options:
-[1m[36m-C[0m[36m [0m[36m<path>
-Working directory for this command
+  [1m[36m-C[0m[36m [0m[36m<path>
+          Working directory for this command
 
-[1m[36m--config[0m[36m [0m[36m<path>
-User config file path
+      [1m[36m--config[0m[36m [0m[36m<path>
+          User config file path
 
-[1m[36m-v[0m, [1m[36m--verbose
-Show commands and debug info
+  [1m[36m-v[0m, [1m[36m--verbose
+          Show commands and debug info
 
 Removes worktrees and their branches. Without arguments, removes the current worktree and returns to the main worktree.
 
@@ -88,8 +88,8 @@ Worktrunk checks five conditions (in order of cost):
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
 
-Check 1 compares against main. Checks 2-5 compare against [1mtarget[0m — main, or origin/main when it's strictly ahead (catching branches merged remotely
-before pulling).
+Check 1 compares against main. Checks 2-5 compare against [1mtarget[0m — main, or origin/main when it's strictly ahead (catching branches merged
+remotely before pulling).
 
 Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
 
@@ -97,8 +97,8 @@ Use [2m-D[0m to force-delete branches with unmerged changes. Use [2m--no-dele
 
 [32mBackground removal
 
-Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run in
-the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run
+in the foreground.
 
 [32mShortcuts
 

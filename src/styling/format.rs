@@ -150,8 +150,13 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
         return vec![styled.to_string()];
     }
 
+    // Preserve leading whitespace (wrap_ansi's default trims it)
+    let options = wrap_ansi::WrapOptions::builder()
+        .trim_whitespace(false)
+        .build();
+
     // wrap_ansi returns a string with '\n' at wrap points, preserving ANSI styles
-    let wrapped = wrap_ansi::wrap_ansi(styled, max_width, None);
+    let wrapped = wrap_ansi::wrap_ansi(styled, max_width, Some(options));
 
     if wrapped.is_empty() {
         return vec![String::new()];
@@ -397,6 +402,18 @@ mod tests {
     fn test_wrap_styled_text_empty_input() {
         let result = wrap_styled_text("", 20);
         assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn test_wrap_styled_text_preserves_leading_whitespace() {
+        let result = wrap_styled_text("          Print help", 80);
+        assert_eq!(result, vec!["          Print help"]);
+    }
+
+    #[test]
+    fn test_wrap_styled_text_only_whitespace() {
+        let result = wrap_styled_text("          ", 80);
+        assert_eq!(result, vec!["          "]);
     }
 
     #[test]

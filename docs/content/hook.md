@@ -351,14 +351,22 @@ wt hook - Run hooks independently
 Usage: wt hook [OPTIONS] <COMMAND>
 
 Commands:
-  show         Show configured hooks
-  post-create  Run post-create hooks
-  post-start   Run post-start hooks
-  pre-commit   Run pre-commit hooks
-  pre-merge    Run pre-merge hooks
-  post-merge   Run post-merge hooks
-  pre-remove   Run pre-remove hooks
-  approvals    Manage command approvals
+  show
+          Show configured hooks
+  post-create
+          Run post-create hooks
+  post-start
+          Run post-start hooks
+  pre-commit
+          Run pre-commit hooks
+  pre-merge
+          Run pre-merge hooks
+  post-merge
+          Run post-merge hooks
+  pre-remove
+          Run pre-remove hooks
+  approvals
+          Manage command approvals
 
 Options:
   -h, --help
@@ -421,8 +429,10 @@ wt hook approvals - Manage command approvals
 Usage: wt hook approvals [OPTIONS] <COMMAND>
 
 Commands:
-  add    Store approvals in config
-  clear  Clear approved commands from config
+  add
+          Store approvals in config
+  clear
+          Clear approved commands from config
 
 Options:
   -h, --help
