@@ -86,8 +86,8 @@ For interactive selection, use [2mwt select[0m.
 When the target branch has no worktree, worktrunk:
 
 1. Creates worktree at configured path
-2. Runs post-create hooks (blocking)
-3. Switches to new directory
+2. Switches to new directory
+3. Runs post-create hooks (blocking)
 4. Spawns post-start hooks (background)
 
 The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (defaults to default branch). Without [2m--create[0m, the branch must already exist.
