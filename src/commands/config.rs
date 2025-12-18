@@ -12,6 +12,7 @@ use worktrunk::styling::{
     error_message, format_heading, format_toml, format_with_gutter, hint_message, info_message,
     progress_message, success_message, warning_message,
 };
+use worktrunk::utils::get_now;
 
 use super::configure_shell::{ConfigAction, scan_shell_configs};
 use super::list::ci_status::CachedCiStatus;
@@ -752,10 +753,7 @@ pub fn handle_state_set(key: &str, value: String, branch: Option<String>) -> any
             };
 
             // Store as JSON with timestamp
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system clock before Unix epoch")
-                .as_secs();
+            let now = get_now();
             let json = serde_json::json!({
                 "marker": value,
                 "set_at": now

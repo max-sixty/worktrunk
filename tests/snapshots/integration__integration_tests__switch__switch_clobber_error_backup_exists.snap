@@ -5,7 +5,8 @@ info:
   args:
     - switch
     - "--create"
-    - occupied-branch
+    - "--clobber"
+    - clobber-backup-exists
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -30,6 +31,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mDirectory already exists: [1m[REPO].occupied-branch[22m[39m
-
-💡 [2mUse [90m--clobber[39m to remove, or [90mrm -rf [REPO].occupied-branch[39m[22m
+❌ [31mBackup path already exists: [REPO].clobber-backup-exists.bak.20250102-000000[39m

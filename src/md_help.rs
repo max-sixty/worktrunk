@@ -332,6 +332,11 @@ fn colorize_status_symbols(text: &str) -> String {
         .replace(
             &format!("{dimmed_bullet} gray"),
             &format!("{disabled}●{disabled:#} gray"),
+        )
+        // CI error indicator: ⚠ symbol (also rendered dimmed initially)
+        .replace(
+            &format!("{dim}⚠{dim:#} yellow"),
+            &format!("{warning}⚠{warning:#} yellow"),
         );
 
     // Legacy CI status circles (for statusline format)

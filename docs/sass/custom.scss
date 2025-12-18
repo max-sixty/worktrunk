@@ -543,7 +543,8 @@ main {
 .content > table {
     display: block;
     overflow-x: auto;
-    width: 100%;
+    width: fit-content;
+    max-width: 100%;
     border-collapse: separate;
     border-spacing: 0;
     margin: 1rem 0;

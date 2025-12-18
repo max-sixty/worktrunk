@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::process::Command;
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::run;
+use worktrunk::utils::get_now;
 
 /// CI platform detected from remote URL
 // TODO: Add a `[ci] platform = "github" | "gitlab"` override in project config
@@ -1263,8 +1264,7 @@ impl PrStatus {
         let repo_root = repo_path.to_str()?;
 
         // Check cache first to avoid hitting API rate limits
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+        let now_secs = get_now();
 
         if let Some(cached) = CachedCiStatus::read(branch, repo_root) {
             if cached.is_valid(local_head, now_secs, repo_root) {

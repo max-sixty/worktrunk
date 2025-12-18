@@ -7,25 +7,13 @@
 //! - Terminal width detection
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 use worktrunk::path::format_path_for_display;
+use worktrunk::utils::get_now;
 
 /// Format timestamp as abbreviated relative time (e.g., "2h")
 pub fn format_relative_time_short(timestamp: i64) -> String {
-    format_relative_time_impl(timestamp, get_now(), true)
-}
-
-/// Get current time, respecting SOURCE_DATE_EPOCH for reproducible builds/tests
-fn get_now() -> i64 {
-    std::env::var("SOURCE_DATE_EPOCH")
-        .ok()
-        .and_then(|val| val.parse::<i64>().ok())
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-        })
+    // Cast to i64 for signed arithmetic (handles future timestamps)
+    format_relative_time_impl(timestamp, get_now() as i64, true)
 }
 
 fn format_relative_time_impl(timestamp: i64, now: i64, short: bool) -> String {

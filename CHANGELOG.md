@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.1
+
+### Improved
+
+- **Integration status in removal messages**: Shows integration symbols (`_` for same commit, `⊂` for integrated) when removing worktrees, matching `wt list` display.
+- **Concurrent command limiting**: Limits concurrent git processes to 32 (configurable via `WORKTRUNK_MAX_CONCURRENT_COMMANDS`), preventing resource exhaustion on repos with many branches.
+- **Better error display for `wt list`**: Task errors are now collected and displayed as warnings after the table renders, instead of being silently swallowed.
+- **Remove continues on partial failures**: `wt remove` continues removing other worktrees when some fail, reporting all errors at the end.
+- **Bash syntax highlighting**: Shell commands in error gutters now have syntax highlighting.
+- **Shell integration is command-aware**: Detection and removal works correctly when installed as `git-wt` or other names.
+- **CI fetch error documentation**: Yellow warning symbol (⚠) in CI column is now documented in help text.
+
+### Fixed
+
+- **CI status with multiple workflows**: Fixed incorrect status when multiple workflows exist (e.g., `ci` and `publish-docs`). Now uses GitHub's check-runs API to aggregate all workflow statuses.
+- **State storage unification**: Unified branch-keyed state under `worktrunk.state.<branch>.*`. Numeric branch names now work. (Existing CI cache and markers regenerate on first access)
+
+### Internal
+
+- **Environment variable prefix**: Standardized to `WORKTRUNK_` prefix (e.g., `WORKTRUNK_MAX_CONCURRENT_COMMANDS`).
+- Automatic winget package publishing on releases.
+
 ## 0.5.0
 
 ### Improved

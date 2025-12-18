@@ -348,6 +348,7 @@ fn colorize_ci_status_for_html(text: &str) -> String {
         .replace("`●` blue", "<span style='color:#00a'>●</span> blue")
         .replace("`●` red", "<span style='color:#a00'>●</span> red")
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
+        .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
 }
 
@@ -1186,6 +1187,7 @@ fn main() {
             base,
             execute,
             force,
+            clobber,
             verify,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
@@ -1222,8 +1224,15 @@ fn main() {
                 }
 
                 // Execute switch operation (creates worktree, runs post-create hooks if approved)
-                let (result, branch_info) =
-                    handle_switch(&branch, create, base.as_deref(), force, skip_hooks, &config)?;
+                let (result, branch_info) = handle_switch(
+                    &branch,
+                    create,
+                    base.as_deref(),
+                    force,
+                    clobber,
+                    skip_hooks,
+                    &config,
+                )?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
                 // Pass cli.internal to indicate whether shell integration is active

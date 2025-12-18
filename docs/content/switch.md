@@ -102,6 +102,9 @@ Options:
   -f, --force
           Skip approval prompts
 
+      --clobber
+          Remove stale paths at target
+
       --no-verify
           Skip hooks
 

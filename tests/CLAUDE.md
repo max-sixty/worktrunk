@@ -189,4 +189,4 @@ repo.git_command(&[
 ]);
 ```
 
-**For production code** that calculates age/duration, check `SOURCE_DATE_EPOCH` (see `src/display.rs::get_now()` for pattern). Using `SystemTime::now()` directly causes flaky tests.
+**For production code** that needs timestamps, use `worktrunk::utils::get_now()` which respects `SOURCE_DATE_EPOCH`. Using `SystemTime::now()` directly causes flaky tests.
