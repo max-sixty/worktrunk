@@ -2030,8 +2030,8 @@ For interactive selection, use [`wt select`](@/select.md).
 When the target branch has no worktree, worktrunk:
 
 1. Creates worktree at configured path
-2. Runs [post-create hooks](@/hook.md#post-create) (blocking)
-3. Switches to new directory
+2. Switches to new directory
+3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
 4. Spawns [post-start hooks](@/hook.md#post-start) (background)
 
 The `--create` flag creates a new branch from the `--base` branch (defaults to default branch). Without `--create`, the branch must already exist.
