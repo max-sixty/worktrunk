@@ -4,7 +4,7 @@ use anstyle::{AnsiColor, Color, Style};
 use termimad::{MadSkin, TableBorderChars};
 use unicode_width::UnicodeWidthStr;
 
-use worktrunk::styling::wrap_styled_text;
+use worktrunk::styling::{DEFAULT_HELP_WIDTH, wrap_styled_text};
 
 /// Table border style matching our help text format:
 /// - Horizontal lines under headers with spaces between column segments
@@ -153,7 +153,7 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
     // Determine width for termimad (subtract indent)
     let width = max_width
         .map(|w| w.saturating_sub(indent.width()))
-        .unwrap_or(120); // Default width if none specified
+        .unwrap_or(DEFAULT_HELP_WIDTH);
 
     let skin = help_table_skin();
     let rendered = skin.text(&markdown, Some(width)).to_string();
@@ -171,7 +171,7 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
     }
 }
 
-/// Strip markdown links, keeping only the link text: [text](url) -> text
+/// Strip markdown links, keeping only the link text: `[text](url)` -> `text`
 fn strip_markdown_links(line: &str) -> String {
     let mut result = String::new();
     let mut chars = line.chars().peekable();
