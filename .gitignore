@@ -12,3 +12,4 @@ test-concurrent.sh
 *.snap.pending
 logo-variant-*.png
 docs/demos/wt-select/vhs-keystrokes/
+test-results/

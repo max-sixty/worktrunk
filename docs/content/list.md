@@ -276,7 +276,8 @@ Options:
       --progressive
           Show fast info immediately, update with slow info
 
-          Displays local data (branches, paths, status) first, then updates with remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
+          Displays local data (branches, paths, status) first, then updates with
+          remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
   -h, --help
           Print help (see a summary with '-h')
