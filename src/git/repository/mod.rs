@@ -276,6 +276,11 @@ impl Repository {
     ///
     /// Markers are stored as JSON: `{"marker": "text", "set_at": unix_timestamp}`.
     pub fn branch_keyed_marker(&self, branch: &str) -> Option<String> {
+        #[derive(serde::Deserialize)]
+        struct MarkerValue {
+            marker: Option<String>,
+        }
+
         let config_key = format!("worktrunk.state.{branch}.marker");
         let raw = self
             .run_command(&["config", "--get", &config_key])
@@ -283,11 +288,8 @@ impl Repository {
             .map(|output| output.trim().to_string())
             .filter(|s| !s.is_empty())?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
-        parsed
-            .get("marker")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        let parsed: MarkerValue = serde_json::from_str(&raw).ok()?;
+        parsed.marker
     }
 
     /// Read user-defined branch-keyed marker.

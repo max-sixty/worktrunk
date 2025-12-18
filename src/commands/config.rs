@@ -501,7 +501,8 @@ fn render_ci_tool_status(
 /// Returns true if compinit is NOT enabled (i.e., user needs to add it).
 /// Returns false if compinit is enabled or we can't determine (fail-safe: don't warn).
 fn check_zsh_compinit_missing() -> bool {
-    use std::process::{Command, Stdio};
+    use std::process::Command;
+    use worktrunk::shell_exec::run;
 
     // Allow tests to bypass this check since zsh subprocess behavior varies across CI envs
     if std::env::var("WORKTRUNK_TEST_COMPINIT_CONFIGURED").is_ok() {
@@ -518,17 +519,14 @@ fn check_zsh_compinit_missing() -> bool {
     // This ensures we're checking the USER's configuration, not system defaults
     // Suppress stderr to avoid noise like "can't change option: zle"
     // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
-    let status = Command::new("zsh")
-        .args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok();
+    let mut cmd = Command::new("zsh");
+    cmd.args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"]);
+    let Ok(output) = run(&mut cmd, None) else {
+        return false; // Can't determine, don't warn
+    };
 
-    match status {
-        Some(s) => !s.success(), // compdef NOT found = need to warn
-        None => false,           // Can't determine, don't warn
-    }
+    // compdef NOT found = need to warn
+    !output.status.success()
 }
 
 /// Core logic for determining user config path from env var values
@@ -984,11 +982,10 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
     let ci_status: Vec<serde_json::Value> = ci_entries
         .into_iter()
         .map(|(branch, cached)| {
-            let status = cached.status.as_ref().map(|s| {
-                serde_json::to_string(&s.ci_status)
-                    .map(|s| s.trim_matches('"').to_string())
-                    .unwrap_or_else(|_| "unknown".to_string())
-            });
+            let status = cached
+                .status
+                .as_ref()
+                .map(|s| -> &'static str { s.ci_status.into() });
             serde_json::json!({
                 "branch": branch,
                 "status": status,
@@ -1110,9 +1107,10 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
         table.push_str("|--------|--------|-----|------|\n");
         for (branch, cached) in entries {
             let status = match &cached.status {
-                Some(pr_status) => serde_json::to_string(&pr_status.ci_status)
-                    .map(|s| s.trim_matches('"').to_string())
-                    .unwrap_or_else(|_| "unknown".to_string()),
+                Some(pr_status) => {
+                    let status: &'static str = pr_status.ci_status.into();
+                    status.to_string()
+                }
                 None => "none".to_string(),
             };
             let age = format_relative_time_short(cached.checked_at as i64);

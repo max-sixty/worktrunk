@@ -219,6 +219,100 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     });
 }
 
+/// Smoke-test the actual zsh probe path (no WORKTRUNK_TEST_COMPINIT_* overrides).
+///
+/// This is behind shell-integration-tests because it requires `zsh` to be installed.
+#[rstest]
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+fn test_config_show_zsh_compinit_real_probe_warns_when_missing(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Create .zshrc with the canonical integration line (exact match required for config show),
+    // plus an explicit removal of compdef so the probe is deterministic.
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        r#"unset -f compdef 2>/dev/null
+if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
+        cmd.env("PATH", "/usr/bin:/bin");
+        cmd.env("ZDOTDIR", temp_home.path());
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Completions won't work; add to"),
+            "Expected compinit warning, got:\n{stderr}"
+        );
+    });
+}
+
+/// Smoke-test the actual zsh probe path when compdef exists.
+///
+/// This is behind shell-integration-tests because it requires `zsh` to be installed.
+#[rstest]
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+fn test_config_show_zsh_compinit_real_probe_no_warning_when_present(
+    mut repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(global_config_dir.join("config.toml"), "").unwrap();
+
+    // Define compdef directly to avoid relying on compinit behavior (which can warn
+    // about insecure directories in CI). The probe checks for compdef presence.
+    fs::write(
+        temp_home.path().join(".zshrc"),
+        r#"compdef() { :; }
+if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
+        cmd.env("PATH", "/usr/bin:/bin");
+        cmd.env("ZDOTDIR", temp_home.path());
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        let output = cmd.output().unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("Completions won't work; add to"),
+            "Expected no compinit warning, got:\n{stderr}"
+        );
+    });
+}
+
 /// Test `wt config show` warns about unknown/misspelled keys in project config
 #[rstest]
 fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: TempDir) {
