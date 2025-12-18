@@ -92,9 +92,9 @@ Git TUIs operate on a single repository. Worktrunk manages multiple worktrees, r
 
 Worktrunk checks the local git cache first, queries the remote if needed, and falls back to local inference when no remote exists. The result is cached for fast subsequent lookups.
 
-If your remote's default branch has changed (e.g., renamed from master to main), refresh with `wt config cache refresh`.
+If the remote's default branch has changed (e.g., renamed from master to main), refresh with `wt config state default-branch get --refresh`.
 
-For full details on the detection mechanism, see `wt config cache --help`.
+For full details on the detection mechanism, see `wt config state default-branch --help`.
 
 ## On Windows, `wt` conflicts with Windows Terminal
 

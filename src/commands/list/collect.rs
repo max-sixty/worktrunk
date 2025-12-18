@@ -19,6 +19,7 @@
 //! - Within worktrees: Git operations (ahead/behind, diffs, CI) run concurrently via scoped threads
 //!
 //! This ensures fast operations don't wait for slow ones (e.g., CI doesn't block ahead/behind counts)
+use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
 use dunce::canonicalize;
@@ -590,12 +591,14 @@ pub fn collect(
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
 
-    let worktrees = repo.list_worktrees()?;
+    let worktrees = repo.list_worktrees().context("Failed to list worktrees")?;
     if worktrees.worktrees.is_empty() {
         return Ok(None);
     }
 
-    let default_branch = repo.default_branch()?;
+    let default_branch = repo
+        .default_branch()
+        .context("Failed to determine default branch")?;
     // Effective target for integration checks: upstream if ahead of local, else local.
     // This handles the case where a branch was merged remotely but user hasn't pulled yet.
     let integration_target = repo.effective_integration_target(&default_branch);

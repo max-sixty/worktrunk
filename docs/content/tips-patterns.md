@@ -39,7 +39,7 @@ See [Worktrunk's own `.config/wt.toml`](https://github.com/max-sixty/worktrunk/b
 "test" = "uv run pytest"
 ```
 
-This catches issues locally before pushing — like having CI run on your machine.
+This catches issues locally before pushing — like running CI locally.
 
 ## Track agent status
 

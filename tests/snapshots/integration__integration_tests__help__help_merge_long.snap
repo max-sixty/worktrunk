@@ -69,8 +69,6 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-When already on the target branch or in the main worktree, the worktree is preserved automatically.
-
 [32mExamples
 
 Basic merge to main:
@@ -99,12 +97,13 @@ Skip git operations, only run hooks and push:
 
 1. [1mSquash[0m — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use [2m--stage[0m to
 control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, uncommitted
-changes are committed separately and individual commits are preserved.
+changes become a separate commit and individual commits are preserved.
 2. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. [1mPre-merge hooks[0m — Project commands run after rebase, before merge. Failures abort. See wt hook.
 4. [1mMerge[0m — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
 5. [1mPre-remove hooks[0m — Project commands run before removing worktree. Failures abort.
-6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree.
+6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the main worktree,
+the worktree is preserved.
 7. [1mPost-merge hooks[0m — Project commands run after cleanup. Failures are logged but don't abort.
 
 Use [2m--no-commit[0m to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with [2mwt step[0m.
