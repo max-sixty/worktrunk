@@ -1,4 +1,4 @@
-use crate::display::{format_relative_time_short, shorten_path, truncate_at_word_boundary};
+use crate::display::{format_relative_time_short, shorten_path, truncate_to_width};
 use anstyle::Style;
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
@@ -717,8 +717,7 @@ impl ColumnLayout {
                 if ctx.item.commit.is_none() {
                     cell.push_styled("⋯", Style::new().dimmed());
                 } else {
-                    let msg =
-                        truncate_at_word_boundary(&ctx.commit.commit_message, max_message_len);
+                    let msg = truncate_to_width(&ctx.commit.commit_message, max_message_len);
                     cell.push_styled(msg, Style::new().dimmed());
                 }
 

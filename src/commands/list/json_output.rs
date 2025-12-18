@@ -316,7 +316,7 @@ impl JsonItem {
             .pr_status
             .as_ref()
             .and_then(|opt| opt.as_ref())
-            .map(ci_status_to_json);
+            .map(JsonCi::from);
 
         // Statusline and symbols (raw, without ANSI codes)
         let statusline = item.display.statusline.clone();
@@ -392,13 +392,14 @@ fn worktree_state_to_json(
     (None, None)
 }
 
-/// Convert PrStatus to JsonCi
-fn ci_status_to_json(pr: &PrStatus) -> JsonCi {
-    JsonCi {
-        status: pr.ci_status.into(),
-        source: pr.source.json_value(),
-        stale: pr.is_stale,
-        url: pr.url.clone(),
+impl From<&PrStatus> for JsonCi {
+    fn from(pr: &PrStatus) -> Self {
+        Self {
+            status: pr.ci_status.into(),
+            source: pr.source.json_value(),
+            stale: pr.is_stale,
+            url: pr.url.clone(),
+        }
     }
 }
 
@@ -487,18 +488,18 @@ mod tests {
     }
 
     // ============================================================================
-    // ci_status_to_json Tests
+    // JsonCi::from Tests
     // ============================================================================
 
     #[test]
-    fn test_ci_status_to_json_passed() {
+    fn test_json_ci_from_passed() {
         let pr = PrStatus {
             ci_status: CiStatus::Passed,
             source: CiSource::PullRequest,
             is_stale: false,
             url: Some("https://github.com/org/repo/pull/123".to_string()),
         };
-        let json = ci_status_to_json(&pr);
+        let json = JsonCi::from(&pr);
         assert_eq!(json.status, "passed");
         assert_eq!(json.source, "pr");
         assert!(!json.stale);
@@ -509,14 +510,14 @@ mod tests {
     }
 
     #[test]
-    fn test_ci_status_to_json_failed_branch() {
+    fn test_json_ci_from_failed_branch() {
         let pr = PrStatus {
             ci_status: CiStatus::Failed,
             source: CiSource::Branch,
             is_stale: true,
             url: None,
         };
-        let json = ci_status_to_json(&pr);
+        let json = JsonCi::from(&pr);
         assert_eq!(json.status, "failed");
         assert_eq!(json.source, "branch");
         assert!(json.stale);
@@ -524,50 +525,50 @@ mod tests {
     }
 
     #[test]
-    fn test_ci_status_to_json_running() {
+    fn test_json_ci_from_running() {
         let pr = PrStatus {
             ci_status: CiStatus::Running,
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
         };
-        let json = ci_status_to_json(&pr);
+        let json = JsonCi::from(&pr);
         assert_eq!(json.status, "running");
     }
 
     #[test]
-    fn test_ci_status_to_json_conflicts() {
+    fn test_json_ci_from_conflicts() {
         let pr = PrStatus {
             ci_status: CiStatus::Conflicts,
             source: CiSource::PullRequest,
             is_stale: false,
             url: None,
         };
-        let json = ci_status_to_json(&pr);
+        let json = JsonCi::from(&pr);
         assert_eq!(json.status, "conflicts");
     }
 
     #[test]
-    fn test_ci_status_to_json_no_ci() {
+    fn test_json_ci_from_no_ci() {
         let pr = PrStatus {
             ci_status: CiStatus::NoCI,
             source: CiSource::Branch,
             is_stale: false,
             url: None,
         };
-        let json = ci_status_to_json(&pr);
+        let json = JsonCi::from(&pr);
         assert_eq!(json.status, "no-ci");
     }
 
     #[test]
-    fn test_ci_status_to_json_error() {
+    fn test_json_ci_from_error() {
         let pr = PrStatus {
             ci_status: CiStatus::Error,
             source: CiSource::Branch,
             is_stale: false,
             url: None,
         };
-        let json = ci_status_to_json(&pr);
+        let json = JsonCi::from(&pr);
         assert_eq!(json.status, "error");
     }
 
