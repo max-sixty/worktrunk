@@ -24,12 +24,9 @@ wt config state default-branch - Default branch setting
 Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
-  [1m[36mget
-          Get the default branch
-  [1m[36mset
-          Set the default branch
-  [1m[36mclear
-          Clear the default branch cache
+  [1m[36mget[0m    Get the default branch
+  [1m[36mset[0m    Set the default branch
+  [1m[36mclear[0m  Clear the default branch cache
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

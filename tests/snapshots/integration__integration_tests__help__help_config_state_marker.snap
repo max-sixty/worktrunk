@@ -24,12 +24,9 @@ wt config state marker - Branch markers
 Usage: [1m[36mwt config state marker[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
-  [1m[36mget
-          Get marker for a branch
-  [1m[36mset
-          Set marker for a branch
-  [1m[36mclear
-          Clear marker for a branch
+  [1m[36mget[0m    Get marker for a branch
+  [1m[36mset[0m    Set marker for a branch
+  [1m[36mclear[0m  Clear marker for a branch
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

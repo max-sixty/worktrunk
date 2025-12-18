@@ -24,12 +24,9 @@ wt config state previous-branch - Previous branch (for [1mwt switch -[0m)
 Usage: [1m[36mwt config state previous-branch[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
-  [1m[36mget
-          Get the previous branch
-  [1m[36mset
-          Set the previous branch
-  [1m[36mclear
-          Clear the previous branch
+  [1m[36mget[0m    Get the previous branch
+  [1m[36mset[0m    Set the previous branch
+  [1m[36mclear[0m  Clear the previous branch
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

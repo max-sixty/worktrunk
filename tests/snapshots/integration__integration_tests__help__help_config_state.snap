@@ -23,20 +23,13 @@ wt config state - Get, set, or clear stored state
 Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36mdefault-branch
-          Default branch setting
-  [1m[36mprevious-branch
-          Previous branch (for [1mwt switch -[0m)
-  [1m[36mci-status
-          CI status cache
-  [1m[36mmarker
-          Branch markers
-  [1m[36mlogs
-          Background operation logs
-  [1m[36mget
-          Get all stored state
-  [1m[36mclear
-          Clear all stored state
+  [1m[36mdefault-branch[0m   Default branch setting
+  [1m[36mprevious-branch[0m  Previous branch (for [1mwt switch -[0m)
+  [1m[36mci-status[0m        CI status cache
+  [1m[36mmarker[0m           Branch markers
+  [1m[36mlogs[0m             Background operation logs
+  [1m[36mget[0m              Get all stored state
+  [1m[36mclear[0m            Clear all stored state
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

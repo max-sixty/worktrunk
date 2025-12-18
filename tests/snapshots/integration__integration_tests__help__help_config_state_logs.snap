@@ -24,10 +24,8 @@ wt config state logs - Background operation logs
 Usage: [1m[36mwt config state logs[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
-  [1m[36mget
-          List background operation log files
-  [1m[36mclear
-          Clear background operation logs
+  [1m[36mget[0m    List background operation log files
+  [1m[36mclear[0m  Clear background operation logs
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

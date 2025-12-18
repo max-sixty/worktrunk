@@ -49,16 +49,11 @@ wt step - Run individual workflow operations
 Usage: wt step [OPTIONS] <COMMAND>
 
 Commands:
-  commit
-          Commit changes with LLM commit message
-  squash
-          Squash commits down to target
-  push
-          Push changes to local target branch
-  rebase
-          Rebase onto target
-  for-each
-          [experimental] Run command in each worktree
+  commit    Commit changes with LLM commit message
+  squash    Squash commits down to target
+  push      Push changes to local target branch
+  rebase    Rebase onto target
+  for-each  [experimental] Run command in each worktree
 
 Options:
   -h, --help

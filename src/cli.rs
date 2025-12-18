@@ -100,10 +100,7 @@ pub fn build_command() -> Command {
 }
 
 fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
-    cmd = cmd
-        .help_template(HELP_TEMPLATE)
-        .display_name(path)
-        .next_line_help(true);
+    cmd = cmd.help_template(HELP_TEMPLATE).display_name(path);
 
     for sub in cmd.get_subcommands_mut() {
         let sub_cmd = std::mem::take(sub);
@@ -143,7 +140,6 @@ pub enum OutputFormat {
 #[command(disable_help_subcommand = true)]
 #[command(styles = help_styles())]
 #[command(arg_required_else_help = true)]
-#[command(next_line_help = true)]
 #[command(after_long_help = "\
 Getting started
 

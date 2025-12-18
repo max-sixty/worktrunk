@@ -23,10 +23,8 @@ wt hook approvals - Manage command approvals
 Usage: [1m[36mwt hook approvals[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36madd
-          Store approvals in config
-  [1m[36mclear
-          Clear approved commands from config
+  [1m[36madd[0m    Store approvals in config
+  [1m[36mclear[0m  Clear approved commands from config
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

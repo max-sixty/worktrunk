@@ -19,22 +19,14 @@ wt - Git worktree management
 Usage: wt [OPTIONS] [COMMAND]
 
 Commands:
-  config
-          Manage configuration and shell integration
-  step
-          Run individual workflow operations
-  hook
-          Run hooks independently
-  select
-          Interactive worktree selector
-  list
-          List worktrees and optionally branches
-  switch
-          Switch to a worktree
-  remove
-          Remove worktree and branch
-  merge
-          Merge worktree into target branch
+  config  Manage configuration and shell integration
+  step    Run individual workflow operations
+  hook    Run hooks independently
+  select  Interactive worktree selector
+  list    List worktrees and optionally branches
+  switch  Switch to a worktree
+  remove  Remove worktree and branch
+  merge   Merge worktree into target branch
 
 Options:
   -h, --help

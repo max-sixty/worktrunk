@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use worktrunk::git::LineDiff;
 
-use super::ci_status::PrStatus;
+use super::ci_status::{CiSource, PrStatus};
 use super::model::{DivergenceContext, ItemKind, ListItem, UpstreamStatus};
 
 /// JSON output for a single list item
@@ -202,7 +202,7 @@ pub struct JsonCi {
     pub status: &'static str,
 
     /// Source: "pr" or "branch"
-    pub source: &'static str,
+    pub source: CiSource,
 
     /// True if local HEAD differs from remote HEAD (unpushed changes)
     pub stale: bool,
@@ -396,7 +396,7 @@ impl From<&PrStatus> for JsonCi {
     fn from(pr: &PrStatus) -> Self {
         Self {
             status: pr.ci_status.into(),
-            source: pr.source.json_value(),
+            source: pr.source,
             stale: pr.is_stale,
             url: pr.url.clone(),
         }
@@ -501,7 +501,7 @@ mod tests {
         };
         let json = JsonCi::from(&pr);
         assert_eq!(json.status, "passed");
-        assert_eq!(json.source, "pr");
+        assert_eq!(json.source, CiSource::PullRequest);
         assert!(!json.stale);
         assert_eq!(
             json.url,
@@ -519,7 +519,7 @@ mod tests {
         };
         let json = JsonCi::from(&pr);
         assert_eq!(json.status, "failed");
-        assert_eq!(json.source, "branch");
+        assert_eq!(json.source, CiSource::Branch);
         assert!(json.stale);
         assert!(json.url.is_none());
     }
@@ -874,7 +874,7 @@ mod tests {
     fn test_json_ci_serialization() {
         let ci = JsonCi {
             status: "passed",
-            source: "pr",
+            source: CiSource::PullRequest,
             stale: false,
             url: Some("https://example.com".to_string()),
         };

@@ -256,8 +256,7 @@ Usage: wt list [OPTIONS]
        wt list <COMMAND>
 
 Commands:
-  statusline
-          Single-line status for shell prompts
+  statusline  Single-line status for shell prompts
 
 Options:
       --format <FORMAT>

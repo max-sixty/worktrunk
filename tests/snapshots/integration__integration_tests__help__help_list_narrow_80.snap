@@ -23,8 +23,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
        [1m[36mwt list[0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36mstatusline
-          Single-line status for shell prompts
+  [1m[36mstatusline[0m  Single-line status for shell prompts
 
 [1m[32mOptions:
       [1m[36m--format[0m[36m [0m[36m<FORMAT>

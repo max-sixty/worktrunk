@@ -24,10 +24,8 @@ wt config state ci-status - CI status cache
 Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND]
 
 [1m[32mCommands:
-  [1m[36mget
-          Get CI status for a branch
-  [1m[36mclear
-          Clear CI status cache
+  [1m[36mget[0m    Get CI status for a branch
+  [1m[36mclear[0m  Clear CI status cache
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help

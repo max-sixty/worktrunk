@@ -238,14 +238,10 @@ wt config - Manage configuration and shell integration
 Usage: wt config [OPTIONS] <COMMAND>
 
 Commands:
-  shell
-          Shell integration setup
-  create
-          Create configuration file
-  show
-          Show configuration files & locations
-  state
-          Get, set, or clear stored state
+  shell   Shell integration setup
+  create  Create configuration file
+  show    Show configuration files & locations
+  state   Get, set, or clear stored state
 
 Options:
   -h, --help
@@ -661,20 +657,13 @@ wt config state - Get, set, or clear stored state
 Usage: wt config state [OPTIONS] <COMMAND>
 
 Commands:
-  default-branch
-          Default branch setting
-  previous-branch
-          Previous branch (for wt switch -)
-  ci-status
-          CI status cache
-  marker
-          Branch markers
-  logs
-          Background operation logs
-  get
-          Get all stored state
-  clear
-          Clear all stored state
+  default-branch   Default branch setting
+  previous-branch  Previous branch (for wt switch -)
+  ci-status        CI status cache
+  marker           Branch markers
+  logs             Background operation logs
+  get              Get all stored state
+  clear            Clear all stored state
 
 Options:
   -h, --help
@@ -728,12 +717,9 @@ wt config state default-branch - Default branch setting
 Usage: wt config state default-branch [OPTIONS] [COMMAND]
 
 Commands:
-  get
-          Get the default branch
-  set
-          Set the default branch
-  clear
-          Clear the default branch cache
+  get    Get the default branch
+  set    Set the default branch
+  clear  Clear the default branch cache
 
 Options:
   -h, --help
@@ -790,10 +776,8 @@ wt config state ci-status - CI status cache
 Usage: wt config state ci-status [OPTIONS] [COMMAND]
 
 Commands:
-  get
-          Get CI status for a branch
-  clear
-          Clear CI status cache
+  get    Get CI status for a branch
+  clear  Clear CI status cache
 
 Options:
   -h, --help
@@ -850,12 +834,9 @@ wt config state marker - Branch markers
 Usage: wt config state marker [OPTIONS] [COMMAND]
 
 Commands:
-  get
-          Get marker for a branch
-  set
-          Set marker for a branch
-  clear
-          Clear marker for a branch
+  get    Get marker for a branch
+  set    Set marker for a branch
+  clear  Clear marker for a branch
 
 Options:
   -h, --help
@@ -921,10 +902,8 @@ wt config state logs - Background operation logs
 Usage: wt config state logs [OPTIONS] [COMMAND]
 
 Commands:
-  get
-          List background operation log files
-  clear
-          Clear background operation logs
+  get    List background operation log files
+  clear  Clear background operation logs
 
 Options:
   -h, --help
