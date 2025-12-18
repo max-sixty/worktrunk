@@ -45,10 +45,10 @@ Manages configuration, shell integration, and runtime settings.
 
 Worktrunk uses two configuration files:
 
-  File            Location                         Purpose
-  ──────────────  ───────────────────────────────  ──────────────────────────────────────────────────────────────
-  [1mUser config[0m     [2m~/.config/worktrunk/config.toml[0m  Personal settings, command defaults, approved project commands
-  [1mProject config[0m  [2m.config/wt.toml[0m                  Lifecycle hooks, checked into version control
+        File                 Location                                        Purpose                             
+   ────────────── ─────────────────────────────── ────────────────────────────────────────────────────────────── 
+   User config    ~/.config/worktrunk/config.toml Personal settings, command defaults, approved project commands 
+   Project config .config/wt.toml                 Lifecycle hooks, checked into version control                  
 
 [32mExamples
 
@@ -202,11 +202,11 @@ Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING
 
 For nested config sections, use double underscores to separate levels:
 
-  Config                     Environment Variable
-  ─────────────────────────  ────────────────────────────────────
-  [2mworktree-path[0m              [2mWORKTRUNK_WORKTREE_PATH
-  [2mcommit-generation.command[0m  [2mWORKTRUNK_COMMIT_GENERATION__COMMAND
-  [2mcommit-generation.args[0m     [2mWORKTRUNK_COMMIT_GENERATION__ARGS
+            Config                   Environment Variable         
+   ───────────────────────── ──────────────────────────────────── 
+   worktree-path             WORKTRUNK_WORKTREE_PATH              
+   commit-generation.command WORKTRUNK_COMMIT_GENERATION__COMMAND 
+   commit-generation.args    WORKTRUNK_COMMIT_GENERATION__ARGS    
 
 Note the single underscore after [2mWORKTRUNK[0m and double underscores between nested keys.
 
@@ -226,9 +226,9 @@ Override the LLM command in CI to use a mock:
 
 [1mOther environment variables
 
-  Variable                           Purpose
-  ─────────────────────────────────  ──────────────────────────────────────────────────────────────────────────
-  [2mWORKTRUNK_CONFIG_PATH[0m              Override user config file location
-  [2mWORKTRUNK_MAX_CONCURRENT_COMMANDS[0m  Max parallel git commands (default: 32). Lower if hitting resource limits.
-  [2mNO_COLOR[0m                           Disable colored output (standard)
-  [2mCLICOLOR_FORCE[0m                     Force colored output even when not a TTY
+               Variable                                               Purpose                                   
+   ───────────────────────────────── ────────────────────────────────────────────────────────────────────────── 
+   WORKTRUNK_CONFIG_PATH             Override user config file location                                         
+   WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting resource limits. 
+   NO_COLOR                          Disable colored output (standard)                                          
+   CLICOLOR_FORCE                    Force colored output even when not a TTY

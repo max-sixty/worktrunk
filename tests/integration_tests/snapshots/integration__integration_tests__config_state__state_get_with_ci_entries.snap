@@ -12,11 +12,11 @@ expression: "String::from_utf8_lossy(&output.stderr)"
 [107m [0m  (none)
 
 [36mCI STATUS CACHE[39m
-Branch   Status  Age  Head
-───────  ──────  ───  ────────
-bugfix   failed  now  11122233
-feature  passed  now  abc12345
-main     none    now  deadbeef
+ Branch  Status Age   Head   
+ ─────── ────── ─── ──────── 
+ bugfix  failed now 11122233 
+ feature passed now abc12345 
+ main    none   now deadbeef
 
 [36mLOG FILES[39m  @ .git/wt-logs
 [107m [0m  (none)

@@ -96,11 +96,11 @@ The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (d
 
 [32mShortcuts
 
-  Shortcut  Meaning
-  ────────  ─────────────────────────────
-  [2m^[0m         Default branch (main/master)
-  [2m@[0m         Current branch/worktree
-  [2m-[0m         Previous worktree (like [2mcd -[0m)
+   Shortcut            Meaning            
+   ──────── ───────────────────────────── 
+   ^        Default branch (main/master)  
+   @        Current branch/worktree       
+   -        Previous worktree (like cd -) 
 
   [2mwt switch -                      # Back to previous
   [2mwt switch ^                      # Main worktree

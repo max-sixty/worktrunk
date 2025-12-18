@@ -52,13 +52,13 @@ Caches GitHub/GitLab CI status for display in wt list.
 
 [32mStatus values
 
-  Status     Meaning
-  ─────────  ──────────────────────
-  [2mpassed[0m     All checks passed
-  [2mrunning[0m    Checks in progress
-  [2mfailed[0m     Checks failed
-  [2mconflicts[0m  PR has merge conflicts
-  [2mnoci[0m       No checks configured
+    Status          Meaning         
+   ───────── ────────────────────── 
+   passed    All checks passed      
+   running   Checks in progress     
+   failed    Checks failed          
+   conflicts PR has merge conflicts 
+   noci      No checks configured   
 
 See wt list CI status for display symbols and colors.
 

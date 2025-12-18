@@ -45,10 +45,10 @@ View and manage logs from background operations.
 
 [32mWhat's logged
 
-  Operation           Log file
-  ──────────────────  ───────────────────────────────────────
-  post-start hooks    [2m{branch}-{source}-post-start-{name}.log
-  Background removal  [2m{branch}-remove.log
+       Operation                     Log file                 
+   ────────────────── ─────────────────────────────────────── 
+   post-start hooks   {branch}-{source}-post-start-{name}.log 
+   Background removal {branch}-remove.log                     
 
 Source is [2muser[0m or [2mproject[0m depending on where the hook is defined.
 
