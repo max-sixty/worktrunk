@@ -17,7 +17,7 @@ use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
     ERROR_EMOJI, HINT_EMOJI, error_message, format_bash_with_gutter, format_with_gutter,
-    hint_message, info_message,
+    hint_message, info_message, suggest_command,
 };
 
 /// Domain errors for git and worktree operations.
@@ -184,12 +184,14 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::InvalidReference { reference } => {
+                let create_cmd = suggest_command("switch", &[reference], &["--create"]);
+                let list_cmd = suggest_command("list", &[], &["--branches", "--remotes"]);
                 write!(
                     f,
                     "{}\n\n{}",
                     error_message(cformat!("Branch <bold>{reference}</> not found")),
                     hint_message(cformat!(
-                        "Use <bright-black>--create</> to create a new branch, or <bright-black>wt list --branches --remotes</> for available branches"
+                        "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
                     ))
                 )
             }
@@ -200,7 +202,7 @@ impl std::fmt::Display for GitError {
                     "{}\n\n{}",
                     error_message(cformat!("Worktree directory missing for <bold>{branch}</>")),
                     hint_message(cformat!(
-                        "Run <bright-black>git worktree prune</> to clean up"
+                        "To clean up, run <bright-black>git worktree prune</>"
                     ))
                 )
             }
@@ -214,9 +216,10 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::RemoteOnlyBranch { branch, remote } => {
+                let cmd = suggest_command("switch", &[branch], &[]);
                 cwrite!(
                     f,
-                    "{ERROR_EMOJI} <red>Branch <bold>{branch}</> exists only on remote ({remote}/{branch})</>\n\n{HINT_EMOJI} <dim>Use <bright-black>wt switch {branch}</> to create a local worktree</>"
+                    "{ERROR_EMOJI} <red>Branch <bold>{branch}</> exists only on remote ({remote}/{branch})</>\n\n{HINT_EMOJI} <dim>To create a local worktree, run <bright-black>{cmd}</></>"
                 )
             }
 
@@ -337,20 +340,22 @@ impl std::fmt::Display for GitError {
                     write!(f, "\n{}", format_with_gutter(commits_formatted, "", None))?;
                 }
                 // Context-appropriate hint
+                let merge_cmd = suggest_command("merge", &[target_branch], &[]);
                 if *in_merge_context {
                     write!(
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "Run <bright-black>wt merge</> again to incorporate these changes"
+                            "To incorporate these changes, run <bright-black>{merge_cmd}</> again"
                         ))
                     )
                 } else {
+                    let rebase_cmd = suggest_command("step", &["rebase", target_branch], &[]);
                     write!(
                         f,
                         "\n{}",
                         hint_message(cformat!(
-                            "Use <bright-black>wt step rebase</> or <bright-black>wt merge</> to rebase onto <bold>{target_branch}</>"
+                            "To rebase onto <bold>{target_branch}</>, run <bright-black>{rebase_cmd}</>"
                         ))
                     )
                 }
@@ -362,7 +367,7 @@ impl std::fmt::Display for GitError {
                     "{}\n\n{}",
                     error_message("Found merge commits in push range"),
                     hint_message(cformat!(
-                        "Use <bright-black>--allow-merge-commits</> to push non-linear history"
+                        "To push non-linear history, add <bright-black>--allow-merge-commits</>"
                     ))
                 )
             }
@@ -393,12 +398,13 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::NotRebased { target_branch } => {
+                let rebase_cmd = suggest_command("step", &["rebase", target_branch], &[]);
                 write!(
                     f,
                     "{}\n\n{}",
                     error_message(cformat!("Branch not rebased onto <bold>{target_branch}</>")),
                     hint_message(cformat!(
-                        "Run <bright-black>wt rebase</> first or remove <bright-black>--no-rebase</>"
+                        "Remove <bright-black>--no-rebase</>; or to rebase first, run <bright-black>{rebase_cmd}</>"
                     ))
                 )
             }
@@ -615,7 +621,7 @@ impl std::fmt::Display for HookErrorWithHint {
             f,
             "\n\n{}",
             hint_message(cformat!(
-                "Use <bright-black>--no-verify</> to skip {} commands",
+                "To skip {} commands, add <bright-black>--no-verify</>",
                 self.hook_type
             ))
         )

@@ -60,4 +60,4 @@ All checks passed!
 [107m [0m   tests/test_auth.py | 14 [32m++++++++++++++[m
 [107m [0m   2 files changed, 45 insertions(+)
 ✅ [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+45[39m[39m[90m)[39m[39m
-🔄 [36m[36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m, [2m_[22m)[39m[39m
+🔄 [36mRemoving [1mfeature-auth[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)

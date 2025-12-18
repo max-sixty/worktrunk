@@ -1,7 +1,7 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mBranch [1mnonexistent-branch[22m not found[39m
 
-💡 [2mUse [90m--create[39m to create a new branch, or [90mwt list --branches --remotes[39m for available branches[22m
+💡 [2mTo create a new branch, run [90mwt switch nonexistent-branch --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m

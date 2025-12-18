@@ -2,4 +2,4 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-✅ [32m[32mSwitched to worktree for [1mfeature-api[22m @ [1m[TMPDIR]/repo.feature-api[39m[22m[39m
+⚪ Switched to worktree for [1mfeature-api[22m @ [1m[TMPDIR]/repo.feature-api[22m

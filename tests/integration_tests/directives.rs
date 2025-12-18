@@ -108,7 +108,7 @@ fn test_switch_internal_directive(repo: TestRepo) {
         ----- stderr -----
         [0m❌ [31mBranch [1mmy-feature[22m not found[39m
 
-        💡 [2mUse [90m--create[39m to create a new branch, or [90mwt list --branches --remotes[39m for available branches[22m
+        💡 [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
         ");
     });
 }
@@ -134,7 +134,7 @@ fn test_switch_without_internal(repo: TestRepo) {
         ----- stderr -----
         ❌ [31mBranch [1mmy-feature[22m not found[39m
 
-        💡 [2mUse [90m--create[39m to create a new branch, or [90mwt list --branches --remotes[39m for available branches[22m
+        💡 [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
         ");
     });
 }

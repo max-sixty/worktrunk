@@ -37,4 +37,4 @@ exit_code: 0
 [107m [0m   file2.txt | 1 [32m+[m
 [107m [0m   2 files changed, 2 insertions(+)
 ✅ [32mMerged to [1mmain[22m [90m(2 commits, 2 files, [32m+2[39m[39m[90m)[39m[39m
-🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m, [2m_[22m)[39m[39m
+🔄 [36mRemoving [1mfeature[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)

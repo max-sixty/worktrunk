@@ -34,8 +34,10 @@ exit_code: 0
 
 ⚪ [2mShowing 2 worktrees
 🟡 [33mSome git operations failed:
-  - feature: commit-details (fatal: bad object 0000000000000000000000000000000000000000)
-  - feature: ahead-behind (fatal: Invalid symmetric difference expression main...0000000000000000000000000000000000000000)
-  - feature: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000000^{tree}': unknown revision or path not in the working tree.)
-  - feature: has-file-changes (fatal: Invalid symmetric difference expression main...feature)
-  - feature: working-tree-diff (fatal: bad object HEAD)[39m
+[107m [0m  [1mfeature[22m: commit-details (fatal: bad object 0000000000000000000000000000000000000000)
+[107m [0m  [1mfeature[22m: ahead-behind (fatal: Invalid symmetric difference expression main...0000000000000000000000000000000000000000)
+[107m [0m  [1mfeature[22m: committed-trees-match (fatal: ambiguous argument '0000000000000000000000000000000000000000^{tree}': unknown revision or path not in the
+[107m [0m  working tree.)
+[107m [0m  [1mfeature[22m: has-file-changes (fatal: Invalid symmetric difference expression main...feature)
+[107m [0m  [1mfeature[22m: working-tree-diff (fatal: bad object HEAD)
+[39m

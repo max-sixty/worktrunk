@@ -89,15 +89,27 @@ behavior:
 ```rust
 // GOOD - parallel structure with integration reason explaining branch deletion
 // Both wt merge and wt remove show integration reason when branch is deleted
-// Target branch is bold; trailing dim symbol references wt list: _ (same commit), ⊂ (content integrated)
+// Target branch is bold; symbol uses its standard styling (dim for _ and ⊂)
 "Removing feature worktree & branch in background (same commit as <bold>main</>, <dim>_</>)"        // SameCommit
 "Removing feature worktree & branch in background (ancestor of <bold>main</>, <dim>⊂</>)"           // Ancestor (main moved past)
 "Removing feature worktree & branch in background (no added changes on <bold>main</>, <dim>⊂</>)"   // NoAddedChanges (empty 3-dot diff)
 "Removing feature worktree & branch in background (tree matches <bold>main</>, <dim>⊂</>)"          // TreesMatch (squash/rebase)
 "Removing feature worktree & branch in background (all changes in <bold>main</>, <dim>⊂</>)"        // MergeAddsNothing (squash + main advanced)
-"Removing feature worktree in background; retaining unmerged branch"                                 // Unmerged (system keeps)
-"Removing feature worktree in background; retaining branch (--no-delete-branch)"                     // User flag (user keeps)
+"Removing feature worktree in background; retaining unmerged branch"                         // Unmerged (system keeps)
+"Removing feature worktree in background; retaining branch (--no-delete-branch)"             // User flag (user keeps)
 ```
+
+**Symbol styling:** Status symbols should use their standard styling consistently
+across all contexts (messages, tables, etc.). Each symbol has a defined
+appearance:
+
+- `_` and `⊂` — dim (integration/safe-to-delete indicators)
+- Other symbols may have colors (e.g., diff indicators)
+
+Symbols should match their `wt list` appearance when referenced in messages.
+When a symbol appears in a progress/success message, ensure the message's color
+(e.g., cyan for progress) is closed BEFORE the symbol so the symbol renders in
+its standard styling, not tinted by the message color.
 
 **Comma + "but" + em-dash for limitations:** When stating an outcome with a
 limitation and its reason:
@@ -134,12 +146,21 @@ spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 Seven canonical message patterns with their emojis:
 
 1. **Progress**: 🔄 (operations in progress)
-2. **Success**: ✅ (successful completion)
+2. **Success**: ✅ (something was created or changed)
 3. **Errors**: ❌ (failures, invalid states)
 4. **Warnings**: 🟡 (non-blocking issues)
 5. **Hints**: 💡 (actionable — user could/should do something)
 6. **Info**: ⚪ (status — acknowledging state or user choices, no action needed)
 7. **Prompts**: ❓ (questions requiring user input)
+
+**Success vs Info decision:** Success (✅) means something was created or
+changed. Info (⚪) means acknowledging state without creating/changing anything.
+
+| Success ✅                              | Info ⚪                               |
+| --------------------------------------- | ------------------------------------- |
+| "Created worktree for feature"          | "Switched to worktree for feature"    |
+| "Created new worktree for feature"      | "Already on worktree for feature"     |
+| "Commands approved & saved"             | "All commands already approved"       |
 
 **Hint vs Info decision:** If the message suggests the user take an action, it's
 a hint. If it's acknowledging what happened (including flag effects), it's info.
@@ -149,6 +170,30 @@ a hint. If it's acknowledging what happened (including flag effects), it's info.
 | "Run `wt merge` to continue"  | "Already up to date with main"        |
 | "Use `--force` to override"   | "Skipping hooks (--no-verify)"        |
 | "Branch can be deleted"       | "Worktree preserved (main worktree)"  |
+
+**Command suggestions in hints:** When suggesting a command the user should run,
+use the pattern "To X, run Y" where X describes the goal and Y is the command.
+**Always end with the command** so users can easily copy it:
+
+```rust
+// GOOD - "To X, run Y" pattern, command at end for easy copying
+"To delete the unmerged branch, run wt remove feature -D"
+"To rebase onto main, run wt step rebase or wt merge"
+"To create a new branch, run wt switch feature --create; to list branches, run wt list --branches"
+
+// GOOD - when user needs to modify their command, instruction then command
+"To switch to the remote branch, remove --create; run wt switch feature"
+
+// BAD - command without context
+"wt remove feature -D deletes unmerged branches"
+
+// BAD - command not at end (hard to copy)
+"Run wt switch feature (without --create) to switch to the remote branch"
+```
+
+Use `suggest_command()` from `worktrunk::styling` to build commands with proper
+shell escaping. Include the branch name or other specific arguments so users can
+copy-paste.
 
 **Message formatting functions** add emoji AND semantic color. Callers provide
 content with optional inner styling (like `<bold>`), then pass to
@@ -398,6 +443,34 @@ output::gutter(format_with_gutter(&log, "", None))?;
 // BAD - trailing \n creates blank line
 output::print(progress_message("Merging...\n"))?;
 ```
+
+**Avoid bullets in messages:** Use gutter formatting instead of bullet lists
+(`- item`) for multi-line content. Bullets add visual noise and don't provide
+the same clear separation as gutter formatting.
+
+```rust
+// BAD - bullet list in warning
+let mut warning = String::from("Some git operations failed:");
+for error in &errors {
+    warning.push_str(&format!("\n  - {}: {}", name, msg));
+}
+output::print(warning_message(warning))?;
+
+// GOOD - gutter formatting with bold branch names
+let error_lines: Vec<String> = errors
+    .iter()
+    .map(|e| cformat!("<bold>{}</>: {}", e.name, e.msg))
+    .collect();
+let warning = format!(
+    "Some git operations failed:\n{}",
+    format_with_gutter(&error_lines.join("\n"), "", None)
+);
+output::print(warning_message(warning))?;
+```
+
+The gutter provides consistent visual structure. Branch names should be bolded
+for emphasis. If we find cases where bullets are genuinely better than gutter
+formatting, we can reconsider this policy.
 
 ## Error Message Formatting
 

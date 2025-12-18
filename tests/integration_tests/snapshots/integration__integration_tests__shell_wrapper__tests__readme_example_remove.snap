@@ -2,4 +2,4 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36m[36mRemoving [1mfeature-api[22m worktree & branch in background (same commit as [1mmain[22m, [2m_[22m)[39m[39m
+🔄 [36mRemoving [1mfeature-api[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)

@@ -936,7 +936,7 @@ pub fn handle_show_theme() -> Result<(), String> {
 
     // Hint
     crate::output::print(hint_message(cformat!(
-        "Run <bright-black>wt merge</> to rebase onto main"
+        "To rebase onto main, run <bright-black>wt merge</>"
     )))
     .map_err(|e| e.to_string())?;
 

@@ -15,16 +15,19 @@ use worktrunk::git::path_dir_name;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
-    error_message, format_with_gutter, hint_message, info_message, progress_message,
-    success_message, warning_message,
+    FormattedMessage, PROGRESS_EMOJI, error_message, format_with_gutter, hint_message,
+    info_message, progress_message, success_message, suggest_command, warning_message,
 };
 
-/// Format a switch success message with a consistent location phrase
+/// Format a switch message with a consistent location phrase
 ///
 /// Both interactive and directive modes now use the human-friendly
 /// `"Created new worktree for {branch} from {base} @ {path}"` wording so
 /// users see the same message regardless of how worktrunk is invoked.
-fn format_switch_success_message(
+///
+/// Returns unstyled text - callers wrap in success_message() for Created
+/// or info_message() for Switched (existing worktree).
+fn format_switch_message(
     branch: &str,
     path: &Path,
     created_branch: bool,
@@ -43,11 +46,11 @@ fn format_switch_success_message(
 
     match source {
         Some(src) => cformat!(
-            "<green>{action} <bold>{branch}</> from <bold>{src}</> @ <bold>{}</></>",
+            "{action} <bold>{branch}</> from <bold>{src}</> @ <bold>{}</>",
             format_path_for_display(path)
         ),
         None => cformat!(
-            "<green>{action} <bold>{branch}</> @ <bold>{}</></>",
+            "{action} <bold>{branch}</> @ <bold>{}</>",
             format_path_for_display(path)
         ),
     }
@@ -171,8 +174,9 @@ fn handle_branch_deletion_result(
                 super::print(info_message(cformat!(
                     "Branch <bold>{branch_name}</> retained; has unmerged changes"
                 )))?;
+                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
                 super::print(hint_message(cformat!(
-                    "<bright-black>wt remove -D</> deletes unmerged branches"
+                    "To delete the unmerged branch, run <bright-black>{cmd}</>"
                 )))?;
             }
             Ok((r, defer_output))
@@ -308,7 +312,7 @@ pub fn handle_switch_output(
         }
         SwitchResult::Existing(_) => {
             if is_directive_mode || has_execute_command {
-                super::print(success_message(format_switch_success_message(
+                super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
                 if let Some(warning) = path_mismatch_warning {
@@ -342,7 +346,7 @@ pub fn handle_switch_output(
             from_remote,
             ..
         } => {
-            super::print(success_message(format_switch_success_message(
+            super::print(success_message(format_switch_message(
                 branch,
                 path,
                 *created_branch,
@@ -597,25 +601,29 @@ fn handle_removed_worktree_output(
         let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
 
         // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
+        // Note: We use FormattedMessage directly instead of progress_message() to control
+        // where cyan styling ends. The flag_note (integration reason) should use standard
+        // colors so the symbol appears in its canonical dim styling, not cyan.
         let action = if deletion_mode.should_keep() {
             cformat!(
-                "<cyan>Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_note}</>"
+                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree in background; retaining branch</>{flag_note}"
             )
         } else if should_delete_branch {
             cformat!(
-                "<cyan>Removing <bold>{branch_name}</> worktree & branch in background{flag_note}</>"
+                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree & branch in background</>{flag_note}"
             )
         } else {
             cformat!(
-                "<cyan>Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
+                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
             )
         };
-        super::print(progress_message(action))?;
+        super::print(FormattedMessage::new(action))?;
 
         // Show hint for unmerged branches (same as synchronous path)
         if !deletion_mode.should_keep() && !should_delete_branch {
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
             super::print(hint_message(cformat!(
-                "<bright-black>wt remove -D</> deletes unmerged branches"
+                "To delete the unmerged branch, run <bright-black>{cmd}</>"
             )))?;
         }
 
@@ -689,8 +697,9 @@ fn handle_removed_worktree_output(
 
         // Show hint for unmerged branches (after success message)
         if show_hint {
+            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
             super::print(hint_message(cformat!(
-                "<bright-black>wt remove -D</> deletes unmerged branches"
+                "To delete the unmerged branch, run <bright-black>{cmd}</>"
             )))?;
         }
 
@@ -881,23 +890,22 @@ mod tests {
     use worktrunk::git::IntegrationReason;
 
     #[test]
-    fn test_format_switch_success_message() {
+    fn test_format_switch_message() {
         let path = PathBuf::from("/tmp/test");
 
         // Switched to existing worktree (no creation, no remote)
-        let msg = format_switch_success_message("feature", &path, false, None, None);
+        let msg = format_switch_message("feature", &path, false, None, None);
         assert!(msg.contains("Switched to worktree for"));
         assert!(msg.contains("feature"));
 
         // Created new worktree from base branch
-        let msg = format_switch_success_message("feature", &path, true, Some("main"), None);
+        let msg = format_switch_message("feature", &path, true, Some("main"), None);
         assert!(msg.contains("Created new worktree for"));
         assert!(msg.contains("from"));
         assert!(msg.contains("main"));
 
         // Created worktree from remote (DWIM)
-        let msg =
-            format_switch_success_message("feature", &path, false, None, Some("origin/feature"));
+        let msg = format_switch_message("feature", &path, false, None, Some("origin/feature"));
         assert!(msg.contains("Created worktree for"));
         assert!(msg.contains("origin/feature"));
     }

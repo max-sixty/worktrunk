@@ -14,6 +14,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -28,5 +29,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32m[32mSwitched to worktree for [1mbranch-a[22m @ [1m[REPO].branch-a[39m[22m[39m
+✅ [32mSwitched to worktree for [1mbranch-a[22m @ [1m[REPO].branch-a[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

@@ -22,7 +22,7 @@ exit_code: 0
 ✅ [32mCreated worktree for [1mfeature[22m @ [1m/path/to/worktree[22m[39m
 ❌ [31mBranch [1mfeature[22m not found[39m
 🟡 [33mBranch [1mfeature[22m has uncommitted changes[39m
-💡 [2mRun [90mwt merge[39m to rebase onto main[22m
+💡 [2mTo rebase onto main, run [90mwt merge[39m[22m
 ⚪ Showing [1m5[22m worktrees
 
 ⚪ Gutter formatting (quoted content):

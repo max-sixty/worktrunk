@@ -30,5 +30,5 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m, [2m_[22m)[39m[39m
+🔄 [36mRemoving [1mfeature[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)
 ❌ [31mNo worktree found for branch [1mnonexistent[22m[39m

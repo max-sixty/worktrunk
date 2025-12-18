@@ -19,11 +19,12 @@
 //! - Within worktrees: Git operations (ahead/behind, diffs, CI) run concurrently via scoped threads
 //!
 //! This ensures fast operations don't wait for slow ones (e.g., CI doesn't block ahead/behind counts)
+use color_print::cformat;
 use crossbeam_channel as chan;
 use dunce::canonicalize;
 use rayon::prelude::*;
 use worktrunk::git::{LineDiff, Repository, Worktree};
-use worktrunk::styling::{INFO_EMOJI, warning_message};
+use worktrunk::styling::{INFO_EMOJI, format_with_gutter, warning_message};
 
 use crate::commands::is_worktree_at_expected_path;
 
@@ -938,15 +939,18 @@ pub fn collect(
 
         if !items_with_missing.is_empty() {
             diag.push_str("\nMissing results:");
-            for result in &items_with_missing {
-                let missing_names: Vec<&str> =
-                    result.missing_kinds.iter().map(|k| k.into()).collect();
-                diag.push_str(&format!(
-                    "\n  - {}: {}",
-                    result.name,
-                    missing_names.join(", ")
-                ));
-            }
+            let missing_lines: Vec<String> = items_with_missing
+                .iter()
+                .map(|result| {
+                    let missing_names: Vec<&str> =
+                        result.missing_kinds.iter().map(|k| k.into()).collect();
+                    cformat!("<bold>{}</>: {}", result.name, missing_names.join(", "))
+                })
+                .collect();
+            diag.push_str(&format!(
+                "\n{}",
+                format_with_gutter(&missing_lines.join("\n"), "", None)
+            ));
         }
 
         diag.push_str(
@@ -1007,14 +1011,20 @@ pub fn collect(
     if !errors.is_empty() {
         // Sort for deterministic output (tasks complete in arbitrary order)
         errors.sort_by_key(|e| (e.item_idx, e.kind));
-        let mut warning = String::from("Some git operations failed:");
-        for error in &errors {
-            let name = all_items[error.item_idx].branch_name();
-            let kind_str: &'static str = error.kind.into();
-            // Take first line only - git errors can be multi-line with usage hints
-            let msg = error.message.lines().next().unwrap_or(&error.message);
-            warning.push_str(&format!("\n  - {}: {} ({})", name, kind_str, msg));
-        }
+        let error_lines: Vec<String> = errors
+            .iter()
+            .map(|error| {
+                let name = all_items[error.item_idx].branch_name();
+                let kind_str: &'static str = error.kind.into();
+                // Take first line only - git errors can be multi-line with usage hints
+                let msg = error.message.lines().next().unwrap_or(&error.message);
+                cformat!("<bold>{}</>: {} ({})", name, kind_str, msg)
+            })
+            .collect();
+        let warning = format!(
+            "Some git operations failed:\n{}",
+            format_with_gutter(&error_lines.join("\n"), "", None)
+        );
         crate::output::print(warning_message(warning))?;
     }
 

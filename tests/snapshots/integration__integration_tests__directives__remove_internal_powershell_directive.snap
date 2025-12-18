@@ -30,4 +30,4 @@ exit_code: 0
 Set-Location '[PATH]'
 
 ----- stderr -----
-🔄 [36m[36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m, [2m_[22m)[39m[39m
+🔄 [36mRemoving [1mfeature[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)

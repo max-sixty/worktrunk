@@ -31,4 +31,4 @@ exit_code: 0
 ----- stderr -----
 ✅ [32mFast-forwarded to [1mmain[22m[39m
 ⚪ Already up to date with [1mmain[22m (no new commits)
-🔄 [36m[36mRemoving [1mfast-forward-test[22m worktree & branch in background (same commit as [1mmain[22m, [2m_[22m)[39m[39m
+🔄 [36mRemoving [1mfast-forward-test[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)

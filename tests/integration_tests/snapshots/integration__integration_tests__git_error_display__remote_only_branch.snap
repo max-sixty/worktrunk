@@ -1,7 +1,7 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mBranch [1mfeature[22m exists only on remote (origin/feature)[39m
 
-💡 [2mUse [90mwt switch feature[39m to create a local worktree[22m
+💡 [2mTo create a local worktree, run [90mwt switch feature[39m[22m
