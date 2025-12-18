@@ -1,2 +1,17 @@
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }
+
+# The ci_status tests spawn many parallel threads and processes (~30 threads, ~34
+# child processes each). Mark them as "heavy" so nextest limits how many run
+# concurrently. threads-required=4 means on an 8-core machine, only 2 of these
+# tests run at once instead of 8.
+[[profile.default.overrides]]
+filter = 'test(/integration_tests::ci_status::test_list_full/)'
+threads-required = 4
+
+# Windows has stricter file locking than macOS/Linux. The list tests run many parallel
+# git operations that can race for .git/config access, causing transient "Permission
+# denied" errors. Retry flaky list tests.
+[[profile.default.overrides]]
+filter = 'test(/integration_tests::list::/)'
+retries = { backoff = "exponential", count = 2, delay = "100ms" }
