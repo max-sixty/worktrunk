@@ -220,7 +220,6 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `state` | string | `"path_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
-| `bare` | boolean | Bare repository |
 
 ### ci object
 

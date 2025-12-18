@@ -66,7 +66,6 @@ impl DisplayFields {
 #[derive(Clone, serde::Serialize, Default)]
 pub struct WorktreeData {
     pub path: PathBuf,
-    pub bare: bool,
     pub detached: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locked: Option<String>,
@@ -110,7 +109,6 @@ impl WorktreeData {
         Self {
             // Identity fields (known immediately from worktree list)
             path: wt.path.clone(),
-            bare: wt.bare,
             detached: wt.detached,
             locked: wt.locked.clone(),
             prunable: wt.prunable.clone(),

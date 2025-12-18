@@ -73,11 +73,9 @@ pub struct JsonItem {
     pub is_main: bool,
 
     /// This is the current worktree (matches $PWD)
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_current: bool,
 
     /// This was the previous worktree (from wt switch)
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_previous: bool,
 
     /// CI status from PR or branch workflow
@@ -195,9 +193,6 @@ pub struct JsonWorktree {
 
     /// HEAD is detached (not on a branch)
     pub detached: bool,
-
-    /// Bare repository
-    pub bare: bool,
 }
 
 /// CI status from PR or branch workflow
@@ -310,7 +305,6 @@ impl JsonItem {
                 state,
                 reason,
                 detached: data.detached,
-                bare: data.bare,
             }
         });
 
@@ -622,7 +616,6 @@ mod tests {
             is_main: false,
             is_current: false,
             is_previous: false,
-            bare: false,
             detached: false,
             locked: None,
             prunable: None,
@@ -870,7 +863,6 @@ mod tests {
             state: Some("locked"),
             reason: Some("manual".to_string()),
             detached: false,
-            bare: false,
         };
         let json = serde_json::to_string(&wt).unwrap();
         assert!(json.contains("\"state\":\"locked\""));

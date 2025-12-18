@@ -76,7 +76,7 @@ Switches to a worktree, creating one if needed. Creating a worktree runs hooks.
   [2mwt switch --create new-feature   # Create new branch and worktree
   [2mwt switch --create hotfix --base production
 
-For interactive selection, use `wt select`.
+For interactive selection, use [2mwt select[0m.
 
 [32mCreating worktrees
 

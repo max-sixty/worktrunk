@@ -61,46 +61,11 @@ pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> S
             continue;
         }
 
-        // Handle code fences - check for ```table specially
+        // Handle code fences
         if trimmed.starts_with("```") {
-            if trimmed == "```table" || trimmed.starts_with("```table ") {
-                // Table code fence - collect lines until closing ```
-                i += 1; // Skip opening fence
-                let mut table_content: Vec<String> = Vec::new();
-                while i < lines.len() {
-                    let tl = lines[i].trim();
-                    if tl == "```" {
-                        i += 1; // Skip closing fence
-                        break;
-                    }
-                    table_content.push(lines[i].to_string());
-                    i += 1;
-                }
-                // Convert pipe-delimited format to markdown table format
-                let md_lines: Vec<String> = table_content
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(idx, line)| {
-                        let md_line = format!("|{}|", line.replace(" | ", "|"));
-                        if idx == 0 {
-                            // Add separator row after header
-                            let cols = line.split(" | ").count();
-                            let sep = format!("|{}|", vec!["---"; cols].join("|"));
-                            vec![md_line, sep]
-                        } else {
-                            vec![md_line]
-                        }
-                    })
-                    .collect();
-                let md_refs: Vec<&str> = md_lines.iter().map(|s| s.as_str()).collect();
-                result.push_str(&render_table(&md_refs, width));
-                continue;
-            } else {
-                // Regular code block
-                in_code_block = !in_code_block;
-                i += 1;
-                continue;
-            }
+            in_code_block = !in_code_block;
+            i += 1;
+            continue;
         }
 
         // Inside code blocks, render dimmed with indent
@@ -110,7 +75,7 @@ pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> S
             continue;
         }
 
-        // Detect markdown table rows (legacy format, still supported)
+        // Detect markdown table rows
         if trimmed.starts_with('|') && trimmed.ends_with('|') {
             // Collect all consecutive table lines
             table_lines.clear();
@@ -179,7 +144,10 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
     }
 
     // Preprocess lines to strip markdown links (termimad doesn't handle them)
-    let processed: Vec<String> = lines.iter().map(|line| strip_markdown_links(line)).collect();
+    let processed: Vec<String> = lines
+        .iter()
+        .map(|line| strip_markdown_links(line))
+        .collect();
     let markdown = processed.join("\n");
 
     // Determine width for termimad (subtract indent)
@@ -259,6 +227,9 @@ fn strip_markdown_links(line: &str) -> String {
 
 /// Render inline markdown formatting (bold, inline code, links)
 fn render_inline_formatting(line: &str) -> String {
+    // First strip links, preserving link text (which may contain bold/code)
+    let line = strip_markdown_links(line);
+
     let bold = Style::new().bold();
     let code = Style::new().dimmed();
 
@@ -288,45 +259,6 @@ fn render_inline_formatting(line: &str) -> String {
                 bold_content.push(c);
             }
             result.push_str(&format!("{bold}{bold_content}{bold:#}"));
-        } else if ch == '[' {
-            // Markdown link: [text](url) -> render just text
-            // Non-links like [text] or [text are preserved literally
-            let mut link_text = String::new();
-            let mut found_close = false;
-            let mut bracket_depth = 0;
-            for c in chars.by_ref() {
-                if c == '[' {
-                    bracket_depth += 1;
-                    link_text.push(c);
-                } else if c == ']' {
-                    if bracket_depth == 0 {
-                        found_close = true;
-                        break;
-                    }
-                    bracket_depth -= 1;
-                    link_text.push(c);
-                } else {
-                    link_text.push(c);
-                }
-            }
-            if found_close && chars.peek() == Some(&'(') {
-                chars.next(); // consume '('
-                // Skip URL until closing ')'
-                for c in chars.by_ref() {
-                    if c == ')' {
-                        break;
-                    }
-                }
-                // Render just the link text
-                result.push_str(&link_text);
-            } else {
-                // Not a valid link, output literally
-                result.push('[');
-                result.push_str(&link_text);
-                if found_close {
-                    result.push(']');
-                }
-            }
         } else {
             result.push(ch);
         }
@@ -543,20 +475,6 @@ mod tests {
         assert!(result.contains("B"));
         assert!(result.contains("1"));
         assert!(result.contains("2"));
-    }
-
-    #[test]
-    fn test_render_markdown_in_help_table_code_fence() {
-        // New ```table format - simpler than markdown tables
-        let md = "```table\nA | B\n1 | 2\n```";
-        let result = render_markdown_in_help(md);
-        // Table should be rendered the same as markdown format
-        assert!(result.contains("A"));
-        assert!(result.contains("B"));
-        assert!(result.contains("1"));
-        assert!(result.contains("2"));
-        // Should have separator line
-        assert!(result.contains("─"));
     }
 
     // ============================================================================

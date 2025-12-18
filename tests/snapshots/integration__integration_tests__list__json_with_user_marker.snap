@@ -14,6 +14,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
@@ -54,11 +55,11 @@ exit_code: 0
     },
     "main_state": "is_main",
     "worktree": {
-      "detached": false,
-      "bare": false
+      "detached": false
     },
     "is_main": true,
     "is_current": true,
+    "is_previous": false,
     "statusline": "main  /u001b[2m^/u001b[22m",
     "symbols": "^"
   },
@@ -93,10 +94,11 @@ exit_code: 0
       "behind": 0
     },
     "worktree": {
-      "detached": false,
-      "bare": false
+      "detached": false
     },
     "is_main": false,
+    "is_current": false,
+    "is_previous": false,
     "statusline": "with-status  /u001b[2m_/u001b[22m🔧",
     "symbols": "_🔧"
   },
@@ -131,10 +133,11 @@ exit_code: 0
       "behind": 0
     },
     "worktree": {
-      "detached": false,
-      "bare": false
+      "detached": false
     },
     "is_main": false,
+    "is_current": false,
+    "is_previous": false,
     "statusline": "without-status  /u001b[2m_/u001b[22m",
     "symbols": "_"
   }

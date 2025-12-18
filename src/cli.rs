@@ -99,13 +99,10 @@ pub fn build_command() -> Command {
     })
 }
 
-/// Disable clap's text wrapping - our markdown renderer handles all wrapping.
-/// Tables use ```table code fences which clap won't break.
-/// Prose wraps at terminal width via render_markdown_in_help_with_width().
+/// Disable clap's text wrapping (our markdown renderer handles wrapping).
 const HELP_TERM_WIDTH: usize = usize::MAX;
 
 fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
-    // Disable clap's wrapping - our markdown renderer handles all formatting.
     cmd = cmd
         .help_template(HELP_TEMPLATE)
         .display_name(path)
@@ -532,14 +529,13 @@ Without a subcommand, runs `get`."#
 
 ## Status values
 
-```table
-Status | Meaning
-`passed` | All checks passed
-`running` | Checks in progress
-`failed` | Checks failed
-`conflicts` | PR has merge conflicts
-`noci` | No checks configured
-```
+| Status | Meaning |
+|--------|---------|
+| `passed` | All checks passed |
+| `running` | Checks in progress |
+| `failed` | Checks failed |
+| `conflicts` | PR has merge conflicts |
+| `noci` | No checks configured |
 
 See [wt list CI status](@/list.md#ci-status) for display symbols and colors.
 
@@ -2022,7 +2018,6 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `state` | string | `"path_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
-| `bare` | boolean | Bare repository |
 
 ### ci object
 

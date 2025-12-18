@@ -1089,7 +1089,6 @@ mod tests {
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test/path"),
-                bare: false,
                 detached: false,
                 locked: None,
                 prunable: None,
@@ -1182,7 +1181,6 @@ mod tests {
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
                 path: PathBuf::from("/test"),
-                bare: false,
                 detached: false,
                 locked: None,
                 prunable: None,
