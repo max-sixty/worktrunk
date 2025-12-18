@@ -1510,8 +1510,6 @@ fn main() {
     let _ = output::terminate_output();
 
     if let Err(e) = result {
-        use worktrunk::styling::ERROR_EMOJI;
-
         // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
             let _ = output::print(err.to_string());
@@ -1526,14 +1524,25 @@ fn main() {
             // - Empty error: skip (errors already printed elsewhere)
             let msg = e.to_string();
             if !msg.is_empty() {
-                let root_cause = e.root_cause().to_string();
-                if msg != root_cause {
-                    // Has context: msg is context, root_cause is underlying error
+                // Collect the error chain (skipping the first which is in msg)
+                let chain: Vec<String> = e.chain().skip(1).map(|e| e.to_string()).collect();
+                if !chain.is_empty() {
+                    // Has context: msg is context, chain contains intermediate + root cause
                     let _ = output::print(error_message(&msg));
-                    let _ = output::gutter(format_with_gutter(&root_cause, "", None));
+                    let chain_text = chain.join("\n");
+                    let _ = output::gutter(format_with_gutter(&chain_text, "", None));
+                } else if msg.contains('\n') {
+                    // Multiline error without context - this shouldn't happen if all
+                    // errors have proper context. Fail in tests, log in production.
+                    if cfg!(test) {
+                        panic!("Multiline error without context: {msg}");
+                    }
+                    log::warn!("Multiline error without context: {msg}");
+                    let _ = output::print(error_message("Command failed"));
+                    let _ = output::gutter(format_with_gutter(&msg, "", None));
                 } else {
-                    // Simple error: inline with emoji
-                    let _ = output::print(cformat!("{ERROR_EMOJI} <red>{msg}</>"));
+                    // Single-line error without context: inline with emoji
+                    let _ = output::print(error_message(&msg));
                 }
             }
         }

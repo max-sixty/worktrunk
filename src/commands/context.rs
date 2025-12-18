@@ -34,7 +34,9 @@ impl CommandEnv {
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         let branch = repo.require_current_branch(action)?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let repo_root = repo.worktree_base()?;
+        let repo_root = repo
+            .worktree_base()
+            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
@@ -57,7 +59,9 @@ impl CommandEnv {
             .current_branch()
             .context("Failed to determine current branch")?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
-        let repo_root = repo.worktree_base()?;
+        let repo_root = repo
+            .worktree_base()
+            .context("Failed to determine repository root")?;
 
         Ok(Self {
             repo,
