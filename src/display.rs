@@ -88,7 +88,10 @@ pub fn shorten_path(path: &Path, prefix: &Path) -> String {
     }
 }
 
-/// Truncate text at word boundary with ellipsis, respecting terminal width
+/// Truncate text with ellipsis at exact width limit.
+///
+/// Truncates at character boundary (mid-word if needed) to fill the allocated
+/// column width exactly. This ensures consistent table output width.
 pub fn truncate_at_word_boundary(text: &str, max_width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     use worktrunk::styling::visual_width;
@@ -100,7 +103,6 @@ pub fn truncate_at_word_boundary(text: &str, max_width: usize) -> String {
     // Build up string until we hit the width limit (accounting for "…" = 1 width)
     let target_width = max_width.saturating_sub(1);
     let mut current_width = 0;
-    let mut last_space_idx = None;
     let mut last_idx = 0;
 
     for (idx, ch) in text.char_indices() {
@@ -108,19 +110,12 @@ pub fn truncate_at_word_boundary(text: &str, max_width: usize) -> String {
         if current_width + char_width > target_width {
             break;
         }
-        if ch.is_whitespace() {
-            last_space_idx = Some(idx);
-        }
         current_width += char_width;
         last_idx = idx + ch.len_utf8();
     }
 
-    // Use last space if found, otherwise truncate at last character that fits
-    let truncate_at = last_space_idx.unwrap_or(last_idx);
-
-    // Truncate and trim trailing whitespace before adding ellipsis
-    // This prevents "text …" with space before ellipsis
-    let truncated = text[..truncate_at].trim_end();
+    // Truncate at exact character boundary (mid-word if needed)
+    let truncated = text[..last_idx].trim_end();
     format!("{}…", truncated)
 }
 
@@ -166,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_word_boundary() {
+    fn test_truncate_exact_width() {
         let text = "This is a very long message that needs truncation";
         let result = truncate_at_word_boundary(text, 30);
         assert!(result.ends_with('…'), "Should end with ellipsis");
@@ -174,11 +169,9 @@ mod tests {
             !result.contains(" …"),
             "Should not have space before ellipsis"
         );
-        // Should truncate at word boundary
-        assert!(
-            !result.contains("truncate"),
-            "Should not break word 'truncation'"
-        );
+        // Should truncate at exact width (mid-word if needed)
+        use unicode_width::UnicodeWidthStr;
+        assert_eq!(result.width(), 30, "Should fill exact width");
     }
 
     #[test]

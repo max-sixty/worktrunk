@@ -25,8 +25,8 @@ pub fn command(repo: &TestRepo, cwd: &Path) -> Command {
     cmd
 }
 
-/// Width for README examples - fits in doc site terminal blocks (~90 visible chars)
-pub const README_COLUMNS: &str = "90";
+/// Width for README examples - fits doc site terminal blocks
+pub const README_COLUMNS: &str = "98";
 
 pub fn command_readme(repo: &TestRepo, cwd: &Path) -> Command {
     let mut cmd = command(repo, cwd);
