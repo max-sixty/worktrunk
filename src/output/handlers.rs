@@ -19,12 +19,15 @@ use worktrunk::styling::{
     info_message, progress_message, success_message, warning_message,
 };
 
-/// Format a switch success message with a consistent location phrase
+/// Format a switch message with a consistent location phrase
 ///
 /// Both interactive and directive modes now use the human-friendly
 /// `"Created new worktree for {branch} from {base} @ {path}"` wording so
 /// users see the same message regardless of how worktrunk is invoked.
-fn format_switch_success_message(
+///
+/// Returns unstyled text - callers wrap in success_message() for Created
+/// or info_message() for Switched (existing worktree).
+fn format_switch_message(
     branch: &str,
     path: &Path,
     created_branch: bool,
@@ -43,11 +46,11 @@ fn format_switch_success_message(
 
     match source {
         Some(src) => cformat!(
-            "<green>{action} <bold>{branch}</> from <bold>{src}</> @ <bold>{}</></>",
+            "{action} <bold>{branch}</> from <bold>{src}</> @ <bold>{}</>",
             format_path_for_display(path)
         ),
         None => cformat!(
-            "<green>{action} <bold>{branch}</> @ <bold>{}</></>",
+            "{action} <bold>{branch}</> @ <bold>{}</>",
             format_path_for_display(path)
         ),
     }
@@ -308,7 +311,7 @@ pub fn handle_switch_output(
         }
         SwitchResult::Existing(_) => {
             if is_directive_mode || has_execute_command {
-                super::print(success_message(format_switch_success_message(
+                super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
                 if let Some(warning) = path_mismatch_warning {
@@ -342,7 +345,7 @@ pub fn handle_switch_output(
             from_remote,
             ..
         } => {
-            super::print(success_message(format_switch_success_message(
+            super::print(success_message(format_switch_message(
                 branch,
                 path,
                 *created_branch,
@@ -884,23 +887,22 @@ mod tests {
     use worktrunk::git::IntegrationReason;
 
     #[test]
-    fn test_format_switch_success_message() {
+    fn test_format_switch_message() {
         let path = PathBuf::from("/tmp/test");
 
         // Switched to existing worktree (no creation, no remote)
-        let msg = format_switch_success_message("feature", &path, false, None, None);
+        let msg = format_switch_message("feature", &path, false, None, None);
         assert!(msg.contains("Switched to worktree for"));
         assert!(msg.contains("feature"));
 
         // Created new worktree from base branch
-        let msg = format_switch_success_message("feature", &path, true, Some("main"), None);
+        let msg = format_switch_message("feature", &path, true, Some("main"), None);
         assert!(msg.contains("Created new worktree for"));
         assert!(msg.contains("from"));
         assert!(msg.contains("main"));
 
         // Created worktree from remote (DWIM)
-        let msg =
-            format_switch_success_message("feature", &path, false, None, Some("origin/feature"));
+        let msg = format_switch_message("feature", &path, false, None, Some("origin/feature"));
         assert!(msg.contains("Created worktree for"));
         assert!(msg.contains("origin/feature"));
     }

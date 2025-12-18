@@ -146,12 +146,21 @@ spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 Seven canonical message patterns with their emojis:
 
 1. **Progress**: 🔄 (operations in progress)
-2. **Success**: ✅ (successful completion)
+2. **Success**: ✅ (something was created or changed)
 3. **Errors**: ❌ (failures, invalid states)
 4. **Warnings**: 🟡 (non-blocking issues)
 5. **Hints**: 💡 (actionable — user could/should do something)
 6. **Info**: ⚪ (status — acknowledging state or user choices, no action needed)
 7. **Prompts**: ❓ (questions requiring user input)
+
+**Success vs Info decision:** Success (✅) means something was created or
+changed. Info (⚪) means acknowledging state without creating/changing anything.
+
+| Success ✅                              | Info ⚪                               |
+| --------------------------------------- | ------------------------------------- |
+| "Created worktree for feature"          | "Switched to worktree for feature"    |
+| "Created new worktree for feature"      | "Already on worktree for feature"     |
+| "Commands approved & saved"             | "All commands already approved"       |
 
 **Hint vs Info decision:** If the message suggests the user take an action, it's
 a hint. If it's acknowledging what happened (including flag effects), it's info.

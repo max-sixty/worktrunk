@@ -2,6 +2,6 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-✅ [32m[32mCreated new worktree for [1mfeature-bg[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-bg[39m[22m[39m
+✅ [32mCreated new worktree for [1mfeature-bg[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-bg[22m[39m
 🔄 [36mRunning project post-start:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'background task'[0m[2m[0m
