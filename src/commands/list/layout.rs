@@ -170,7 +170,7 @@
 //! - `fit_header()`: Ensures column width ≥ header width to prevent overflow
 //! - `try_allocate()`: Attempts to allocate space, returns 0 if insufficient
 
-use crate::display::{find_common_prefix, get_terminal_width};
+use crate::display::get_terminal_width;
 use anstyle::Style;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -391,7 +391,7 @@ pub struct ColumnLayout {
 
 pub struct LayoutConfig {
     pub columns: Vec<ColumnLayout>,
-    pub common_prefix: PathBuf,
+    pub main_worktree_path: PathBuf,
     pub max_message_len: usize,
     pub hidden_column_count: usize,
     pub status_position_mask: super::model::PositionMask,
@@ -535,7 +535,7 @@ fn allocate_columns_with_priority(
     max_path_width: usize,
     commit_width: usize,
     terminal_width: usize,
-    common_prefix: PathBuf,
+    main_worktree_path: PathBuf,
 ) -> LayoutConfig {
     let spacing = 2;
     let mut remaining = terminal_width;
@@ -694,7 +694,7 @@ fn allocate_columns_with_priority(
 
     LayoutConfig {
         columns,
-        common_prefix,
+        main_worktree_path,
         max_message_len,
         hidden_column_count,
         status_position_mask: metadata.status_position_mask,
@@ -709,7 +709,7 @@ fn allocate_columns_with_priority(
 ///
 /// Fast to compute from actual data:
 /// - Branch names (from worktrees and standalone branches)
-/// - Paths (with common prefix removed)
+/// - Paths (relative to main worktree)
 ///
 /// Pre-allocated estimates (generous to minimize truncation):
 /// - Status: 8 chars (PositionMask::FULL, 7 positions)
@@ -723,8 +723,9 @@ fn allocate_columns_with_priority(
 pub fn calculate_layout_from_basics(
     items: &[super::model::ListItem],
     skip_tasks: &HashSet<TaskKind>,
+    main_worktree_path: &Path,
 ) -> LayoutConfig {
-    calculate_layout_with_width(items, skip_tasks, get_safe_list_width())
+    calculate_layout_with_width(items, skip_tasks, get_safe_list_width(), main_worktree_path)
 }
 
 /// Calculate layout with explicit width (for contexts like skim where available width differs)
@@ -732,15 +733,8 @@ pub fn calculate_layout_with_width(
     items: &[super::model::ListItem],
     skip_tasks: &HashSet<TaskKind>,
     terminal_width: usize,
+    main_worktree_path: &Path,
 ) -> LayoutConfig {
-    // Calculate common prefix from worktree paths
-    let paths: Vec<&Path> = items
-        .iter()
-        .filter_map(|item| item.worktree_path())
-        .map(|p| p.as_path())
-        .collect();
-    let common_prefix = find_common_prefix(&paths);
-
     // Calculate actual widths for things we know
     // Include branch names from both worktrees and standalone branches
     let max_branch = items
@@ -757,7 +751,7 @@ pub fn calculate_layout_with_width(
         .filter_map(|item| item.worktree_path())
         .map(|path| {
             use crate::display::shorten_path;
-            shorten_path(path.as_path(), &common_prefix).width()
+            shorten_path(path.as_path(), main_worktree_path).width()
         })
         .max()
         .unwrap_or(0);
@@ -781,7 +775,7 @@ pub fn calculate_layout_with_width(
         max_path_width,
         commit_width,
         terminal_width,
-        common_prefix,
+        main_worktree_path.to_path_buf(),
     )
 }
 
@@ -1119,7 +1113,8 @@ mod tests {
         let skip_tasks: HashSet<TaskKind> = [TaskKind::BranchDiff, TaskKind::CiStatus]
             .into_iter()
             .collect();
-        let layout = calculate_layout_from_basics(&items, &skip_tasks);
+        let main_worktree_path = PathBuf::from("/test");
+        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path);
 
         assert!(
             !layout.columns.is_empty(),
@@ -1214,7 +1209,8 @@ mod tests {
         let skip_tasks: HashSet<TaskKind> = [TaskKind::BranchDiff, TaskKind::CiStatus]
             .into_iter()
             .collect();
-        let layout = calculate_layout_from_basics(&items, &skip_tasks);
+        let main_worktree_path = PathBuf::from("/home/user/project");
+        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path);
 
         assert!(
             layout

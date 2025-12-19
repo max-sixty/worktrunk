@@ -97,6 +97,7 @@ osc8 = "0.1.0"
 home = "0.5.12"
 dirs = "6.0"
 normalize-path = "0.2.1"
+pathdiff = "0.2"
 which = "8.0"
 # Cross-platform path canonicalization that avoids Windows verbatim paths (\\?\)
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.

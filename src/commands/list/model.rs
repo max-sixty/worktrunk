@@ -250,6 +250,10 @@ pub struct ListItem {
 
 pub struct ListData {
     pub items: Vec<ListItem>,
+    /// Path to the main worktree, used for computing relative paths in display.
+    /// Currently only read by `select` command (unix-only).
+    #[cfg_attr(windows, allow(dead_code))]
+    pub main_worktree_path: std::path::PathBuf,
 }
 
 impl ListItem {

@@ -6,7 +6,7 @@
 //! - Text truncation with word boundaries
 //! - Terminal width detection
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use worktrunk::path::format_path_for_display;
 use worktrunk::utils::get_now;
 
@@ -58,33 +58,32 @@ fn format_relative_time_impl(timestamp: i64, now: i64, short: bool) -> String {
     if short { "now" } else { "just now" }.to_string()
 }
 
-/// Find the common prefix among all paths
-pub fn find_common_prefix<P: AsRef<Path>>(paths: &[P]) -> PathBuf {
-    if paths.is_empty() {
-        return PathBuf::new();
+/// Shorten a path relative to the main worktree.
+///
+/// Returns paths relative to main worktree using `..` components where needed:
+/// - Main worktree itself: `.`
+/// - Child of main: `./subdir`
+/// - Sibling: `../sibling`
+/// - Unrelated paths fall back to `~/...` or absolute
+pub fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
+    // Same path = main worktree
+    if path == main_worktree_path {
+        return ".".to_string();
     }
 
-    let first = paths[0].as_ref();
-    let mut prefix = PathBuf::new();
-
-    for component in first.components() {
-        let candidate = prefix.join(component);
-        if paths.iter().all(|p| p.as_ref().starts_with(&candidate)) {
-            prefix = candidate;
+    // Try to compute relative path
+    if let Some(relative) = pathdiff::diff_paths(path, main_worktree_path) {
+        let rel_str = relative.display().to_string();
+        // If relative path starts with "..", it's a sibling/ancestor
+        // Otherwise prefix with "./" (or ".\" on Windows) for clarity
+        if rel_str.starts_with("..") {
+            rel_str
         } else {
-            break;
+            format!(".{}{}", std::path::MAIN_SEPARATOR, rel_str)
         }
-    }
-
-    prefix
-}
-
-/// Shorten a path relative to a common prefix
-pub fn shorten_path(path: &Path, prefix: &Path) -> String {
-    match path.strip_prefix(prefix) {
-        Ok(rel) if rel.as_os_str().is_empty() => ".".to_string(),
-        Ok(rel) => format!("./{}", rel.display()),
-        Err(_) => format_path_for_display(path),
+    } else {
+        // Can't compute relative path (e.g., different drives on Windows)
+        format_path_for_display(path)
     }
 }
 
@@ -125,6 +124,7 @@ pub use worktrunk::styling::{get_terminal_width, truncate_visible};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_truncate_normal_case() {
@@ -265,53 +265,55 @@ mod tests {
     }
 
     #[test]
-    fn test_find_common_prefix() {
-        // Empty input
-        let empty: Vec<PathBuf> = vec![];
-        assert_eq!(find_common_prefix(&empty), PathBuf::new());
+    #[cfg(unix)] // Uses Unix-style paths
+    fn test_shorten_path() {
+        let main_worktree = PathBuf::from("/home/user/project");
 
-        // Single path
-        let single = vec![PathBuf::from("/home/user/projects")];
-        assert_eq!(
-            find_common_prefix(&single),
-            PathBuf::from("/home/user/projects")
+        // Path is main worktree
+        assert_eq!(shorten_path(&main_worktree, &main_worktree), ".");
+
+        // Path is child of main worktree
+        let child = PathBuf::from("/home/user/project/subdir");
+        assert_eq!(shorten_path(&child, &main_worktree), "./subdir");
+
+        // Path is sibling of main worktree
+        let sibling = PathBuf::from("/home/user/project.feature");
+        assert_eq!(shorten_path(&sibling, &main_worktree), "../project.feature");
+
+        // Path is parent's sibling
+        let cousin = PathBuf::from("/home/user/other-project");
+        assert_eq!(shorten_path(&cousin, &main_worktree), "../other-project");
+
+        // Path in completely different location
+        let other = PathBuf::from("/var/log/syslog");
+        let result = shorten_path(&other, &main_worktree);
+        // Should fall back to format_path_for_display or relative with many ../
+        // Either way, it shouldn't start with "./" since it's not a child
+        assert!(
+            result.starts_with("..") || result.starts_with("/"),
+            "Expected relative or absolute path for distant location, got: {}",
+            result
         );
-
-        // Common prefix exists
-        let paths = vec![
-            PathBuf::from("/home/user/projects/foo"),
-            PathBuf::from("/home/user/projects/bar"),
-            PathBuf::from("/home/user/projects/baz"),
-        ];
-        assert_eq!(
-            find_common_prefix(&paths),
-            PathBuf::from("/home/user/projects")
-        );
-
-        // No common prefix beyond root
-        let paths = vec![
-            PathBuf::from("/home/user/projects"),
-            PathBuf::from("/var/log"),
-        ];
-        assert_eq!(find_common_prefix(&paths), PathBuf::from("/"));
     }
 
     #[test]
-    fn test_shorten_path() {
-        let prefix = PathBuf::from("/home/user/projects");
+    #[cfg(windows)]
+    fn test_shorten_path_windows() {
+        let main_worktree = PathBuf::from(r"C:\Users\user\project");
 
-        // Path within prefix
-        let path = PathBuf::from("/home/user/projects/foo/bar");
-        assert_eq!(shorten_path(&path, &prefix), "./foo/bar");
+        // Path is main worktree
+        assert_eq!(shorten_path(&main_worktree, &main_worktree), ".");
 
-        // Path equals prefix
-        assert_eq!(shorten_path(&prefix, &prefix), ".");
+        // Path is child of main worktree
+        let child = PathBuf::from(r"C:\Users\user\project\subdir");
+        assert_eq!(shorten_path(&child, &main_worktree), r".\subdir");
 
-        // Path outside prefix (falls back to full path)
-        let other = PathBuf::from("/var/log/syslog");
-        // The result includes tilde expansion, so just check it doesn't start with "./"
-        let result = shorten_path(&other, &prefix);
-        assert!(!result.starts_with("./"));
+        // Path is sibling of main worktree
+        let sibling = PathBuf::from(r"C:\Users\user\project.feature");
+        assert_eq!(
+            shorten_path(&sibling, &main_worktree),
+            r"..\project.feature"
+        );
     }
 
     #[test]
@@ -351,11 +353,5 @@ mod tests {
         // Just over width
         let result = truncate_to_width("123456", 5);
         assert!(result.ends_with('…'));
-    }
-
-    #[test]
-    fn test_find_common_prefix_relative_paths() {
-        let paths = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
-        assert_eq!(find_common_prefix(&paths), PathBuf::from("src"));
     }
 }

@@ -702,7 +702,8 @@ pub fn collect(
     );
 
     // Calculate layout from items (worktrees, local branches, and remote branches)
-    let layout = super::layout::calculate_layout_from_basics(&all_items, skip_tasks);
+    let layout =
+        super::layout::calculate_layout_from_basics(&all_items, skip_tasks, &main_worktree.path);
 
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = super::layout::get_safe_list_width();
@@ -1029,7 +1030,10 @@ pub fn collect(
     // - Buffered: rendered final table (no progress bars)
     // JSON mode (render_table=false): no rendering, data returned for serialization
 
-    Ok(Some(super::model::ListData { items }))
+    Ok(Some(super::model::ListData {
+        items,
+        main_worktree_path: main_worktree.path.clone(),
+    }))
 }
 
 /// Sort items by timestamp descending (most recent first).

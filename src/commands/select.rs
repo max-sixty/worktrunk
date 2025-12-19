@@ -847,6 +847,7 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
         &list_data.items,
         &skip_tasks,
         skim_list_width,
+        &list_data.main_worktree_path,
     );
 
     // Render header using layout system (need both plain and styled text for skim)

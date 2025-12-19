@@ -397,7 +397,7 @@ impl LayoutConfig {
             column.render_cell(
                 &ctx,
                 &self.status_position_mask,
-                &self.common_prefix,
+                &self.main_worktree_path,
                 self.max_message_len,
             )
         })
@@ -416,7 +416,7 @@ impl LayoutConfig {
         let is_previous = wt_data.is_some_and(|d| d.is_previous);
         let shortened_path = item
             .worktree_path()
-            .map(|p| shorten_path(p, &self.common_prefix))
+            .map(|p| shorten_path(p, &self.main_worktree_path))
             .unwrap_or_default();
 
         let dim = Style::new().dimmed();
@@ -556,7 +556,7 @@ impl ColumnLayout {
         &self,
         ctx: &ListRowContext,
         status_mask: &PositionMask,
-        common_prefix: &Path,
+        main_worktree_path: &Path,
         max_message_len: usize,
     ) -> StyledLine {
         match self.kind {
@@ -636,7 +636,7 @@ impl ColumnLayout {
                     return StyledLine::new();
                 };
                 let mut cell = StyledLine::new();
-                let path_str = shorten_path(&data.path, common_prefix);
+                let path_str = shorten_path(&data.path, main_worktree_path);
                 if let Some(style) = ctx.text_style {
                     cell.push_styled(path_str, style);
                 } else {
