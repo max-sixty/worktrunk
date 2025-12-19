@@ -33,4 +33,4 @@ exit_code: 1
 ----- stderr -----
 [31m✗[39m [31mNo project configuration found[39m
 
-[2m↳[22m [2mCreate a config file at: [1m[REPO]/.config/wt.toml[22m[22m
+[2m↳[22m [2mCreate a config file at: [REPO]/.config/wt.toml[22m[22m

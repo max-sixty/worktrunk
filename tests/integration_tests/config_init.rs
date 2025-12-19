@@ -75,13 +75,13 @@ fn test_config_create_project_creates_file(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
-        [32m✓[39m [32mCreated project config: [1m[REPO]/.config/wt.toml[22m[39m
+        [32m✓[39m [32mCreated project config: [REPO]/.config/wt.toml[22m[39m
 
         [2m↳[22m [2mEdit this file to configure hooks for this repository[22m
         [2m↳[22m [2mSee https://worktrunk.dev/hooks/ for hook documentation[22m
@@ -113,13 +113,13 @@ run = "echo hello"
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
-        [2m○[22m Project config already exists: [1m[REPO]/.config/wt.toml[22m
+        [2m○[22m Project config already exists: [REPO]/.config/wt.toml[22m
 
         [2m↳[22m [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
         ");

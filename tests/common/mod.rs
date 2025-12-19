@@ -1820,13 +1820,16 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         }
     }
 
-    // Handle shell-escaped paths: when shell_escape quotes a path like '/path/to/repo',
-    // the filter replaces the path portion leaving '[REPO]' with quotes. Remove them.
-    settings.add_filter(r"'\[REPO\]'", "[REPO]");
-    settings.add_filter(r"'\[REPO\](\.[a-zA-Z0-9_-]+)'", "[REPO]$1");
-    // Also handle syntax-highlighted quoted strings (green color for single-quoted strings)
-    settings.add_filter(r"\x1b\[32m\[REPO\]\x1b\[0m", "[REPO]");
-    settings.add_filter(r"\x1b\[32m\[REPO\](\.[a-zA-Z0-9_-]+)\x1b\[0m", "[REPO]$1");
+    // Normalize ANSI codes around [REPO] placeholder (result of path redaction).
+    // Strip any ANSI codes immediately before or after [REPO].
+    settings.add_filter(r"(?:\x1b\[[0-9;]*m)+(\[REPO\](?:\.[a-zA-Z0-9_-]+)?)", "$1");
+    settings.add_filter(r"(\[REPO\](?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[[0-9;]*m)+", "$1");
+    // On CI, syntax highlighting wraps quoted paths in ANSI codes: [32m'[REPO]'[0m
+    // Strip the quotes AND surrounding ANSI codes together.
+    settings.add_filter(
+        r"(?:\x1b\[[0-9;]*m)+'(\[REPO\](?:\.[a-zA-Z0-9_-]+)?)'(?:\x1b\[[0-9;]*m)+",
+        "$1",
+    );
 
     // Normalize backslashes for Windows compatibility
     settings.add_filter(r"\\", "/");

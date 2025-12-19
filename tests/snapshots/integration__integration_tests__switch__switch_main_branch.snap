@@ -30,4 +30,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Already on worktree for [1mmain[22m @ [1m[REPO][22m
+[2m○[22m Already on worktree for [1mmain[22m @ [REPO]

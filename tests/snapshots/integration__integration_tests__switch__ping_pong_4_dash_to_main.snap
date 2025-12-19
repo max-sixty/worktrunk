@@ -30,5 +30,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mWorktree for [1mmain[22m @ [1m[REPO][22m, but cannot change directory — shell integration not installed[39m
+[33m▲[39m [33mWorktree for [1mmain[22m @ [REPO], but cannot change directory — shell integration not installed[39m
 [2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m

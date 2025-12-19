@@ -31,5 +31,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m[REPO].feature[22m[39m
+[32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [REPO].feature
 [2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m

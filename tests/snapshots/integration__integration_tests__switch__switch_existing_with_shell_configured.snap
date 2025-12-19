@@ -30,4 +30,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m[REPO].shell-configured[22m, but cannot change directory — shell integration not active[39m
+[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [REPO].shell-configured, but cannot change directory — shell integration not active[39m
