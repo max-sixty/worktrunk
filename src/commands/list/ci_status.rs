@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::git::Repository;
 use worktrunk::shell_exec::run;
@@ -1031,7 +1033,11 @@ pub struct PrStatus {
     pub url: Option<String>,
 }
 
-/// Cached CI status stored in git config
+/// Cached CI status stored in `.git/wt-cache/ci-status/<branch>.json`
+///
+/// Uses file-based caching instead of git config to avoid file locking issues.
+/// On Windows, concurrent `git config` writes can temporarily lock `.git/config`,
+/// causing other git operations to fail with "Permission denied".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedCiStatus {
     /// The cached CI status (None means no CI found for this branch)
@@ -1076,13 +1082,10 @@ impl CachedCiStatus {
         self.head == current_head && now_secs.saturating_sub(self.checked_at) < ttl
     }
 
-    /// Read cached CI status from git config.
-    ///
-    /// Key format: `worktrunk.state.<branch>.ci-status`
-    fn read(branch: &str, repo_root: &str) -> Option<Self> {
-        let config_key = format!("worktrunk.state.{branch}.ci-status");
+    /// Get the cache directory path: `.git/wt-cache/ci-status/`
+    fn cache_dir(repo_root: &str) -> Option<PathBuf> {
         let mut cmd = Command::new("git");
-        cmd.args(["config", "--get", &config_key])
+        cmd.args(["rev-parse", "--git-common-dir"])
             .current_dir(repo_root);
         let output = run(&mut cmd, None).ok()?;
 
@@ -1090,69 +1093,161 @@ impl CachedCiStatus {
             return None;
         }
 
-        let json = String::from_utf8(output.stdout).ok()?;
-        serde_json::from_str(json.trim()).ok()
+        let git_dir = String::from_utf8(output.stdout).ok()?;
+        let git_dir = git_dir.trim();
+
+        // Handle relative paths from git rev-parse
+        let git_path = if Path::new(git_dir).is_absolute() {
+            PathBuf::from(git_dir)
+        } else {
+            PathBuf::from(repo_root).join(git_dir)
+        };
+
+        Some(git_path.join("wt-cache").join("ci-status"))
     }
 
-    /// Write CI status to git config cache.
+    /// Sanitize branch name for use as a filename.
+    /// Handles Windows reserved names, control characters, and invalid filename characters.
+    fn sanitize_branch_for_filename(branch: &str) -> String {
+        let mut result: String = branch
+            .chars()
+            .map(|c| match c {
+                // Windows/Unix invalid filename characters
+                '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
+                // Control characters (0x00-0x1F)
+                c if c.is_control() => '-',
+                _ => c,
+            })
+            .collect();
+
+        // Trim trailing dots and spaces (Windows silently strips these)
+        while result.ends_with('.') || result.ends_with(' ') {
+            result.pop();
+        }
+
+        // Handle Windows reserved names (case-insensitive)
+        // CON, PRN, AUX, NUL, COM1-9, LPT1-9
+        let upper = result.to_uppercase();
+        let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (upper.len() == 4
+                && (upper.starts_with("COM") || upper.starts_with("LPT"))
+                && upper.chars().last().is_some_and(|c| c.is_ascii_digit()));
+
+        if is_reserved {
+            format!("_{result}")
+        } else if result.is_empty() {
+            "_empty".to_string()
+        } else {
+            result
+        }
+    }
+
+    /// Get the cache file path for a branch.
+    fn cache_file(branch: &str, repo_root: &str) -> Option<PathBuf> {
+        let dir = Self::cache_dir(repo_root)?;
+        let safe_branch = Self::sanitize_branch_for_filename(branch);
+        Some(dir.join(format!("{safe_branch}.json")))
+    }
+
+    /// Read cached CI status from file.
+    fn read(branch: &str, repo_root: &str) -> Option<Self> {
+        let path = Self::cache_file(branch, repo_root)?;
+        let json = fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// Write CI status to cache file.
     ///
-    /// Key format: `worktrunk.state.<branch>.ci-status`
+    /// Uses atomic write (write to temp file, then rename) to avoid corruption
+    /// and minimize lock contention on Windows.
     fn write(&self, branch: &str, repo_root: &str) {
-        let config_key = format!("worktrunk.state.{branch}.ci-status");
+        let Some(path) = Self::cache_file(branch, repo_root) else {
+            log::debug!("Failed to get cache path for {}", branch);
+            return;
+        };
+
+        // Create cache directory if needed
+        if let Some(parent) = path.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            log::debug!("Failed to create cache dir for {}: {}", branch, e);
+            return;
+        }
+
         let Ok(json) = serde_json::to_string(self) else {
             log::debug!("Failed to serialize CI cache for {}", branch);
             return;
         };
-        let mut cmd = Command::new("git");
-        cmd.args(["config", &config_key, &json])
-            .current_dir(repo_root);
-        if let Err(e) = run(&mut cmd, None) {
-            log::debug!("Failed to write CI cache for {}: {}", branch, e);
+
+        // Write to temp file first, then rename for atomic update
+        let temp_path = path.with_extension("json.tmp");
+        if let Err(e) = fs::write(&temp_path, &json) {
+            log::debug!("Failed to write CI cache temp file for {}: {}", branch, e);
+            return;
+        }
+
+        if let Err(e) = fs::rename(&temp_path, &path) {
+            log::debug!("Failed to rename CI cache file for {}: {}", branch, e);
+            // Clean up temp file on failure
+            let _ = fs::remove_file(&temp_path);
         }
     }
 
     /// List all cached CI statuses as (branch_name, cached_status) pairs.
-    ///
-    /// Key format: `worktrunk.state.<branch>.ci-status`
     pub(crate) fn list_all(repo: &Repository) -> Vec<(String, Self)> {
-        let output = repo
-            .run_command(&[
-                "config",
-                "--get-regexp",
-                r"^worktrunk\.state\..+\.ci-status$",
-            ])
-            .unwrap_or_default();
+        let repo_root = match repo.worktree_root() {
+            Ok(path) => path,
+            Err(_) => return Vec::new(),
+        };
 
-        output
-            .lines()
-            .filter_map(|line| {
-                let (key, json) = line.split_once(' ')?;
-                let branch = key
-                    .strip_prefix("worktrunk.state.")?
-                    .strip_suffix(".ci-status")?;
-                let cached: Self = serde_json::from_str(json).ok()?;
-                Some((branch.to_string(), cached))
+        let Some(cache_dir) = Self::cache_dir(repo_root.to_str().unwrap_or_default()) else {
+            return Vec::new();
+        };
+
+        let entries = match fs::read_dir(&cache_dir) {
+            Ok(entries) => entries,
+            Err(_) => return Vec::new(),
+        };
+
+        entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+
+                // Only process .json files (skip .json.tmp)
+                if path.extension()?.to_str()? != "json" {
+                    return None;
+                }
+
+                let branch = path.file_stem()?.to_str()?.to_string();
+                let json = fs::read_to_string(&path).ok()?;
+                let cached: Self = serde_json::from_str(&json).ok()?;
+                Some((branch, cached))
             })
             .collect()
     }
 
     /// Clear all cached CI statuses, returns count cleared.
-    ///
-    /// Key format: `worktrunk.state.<branch>.ci-status`
     pub(crate) fn clear_all(repo: &Repository) -> usize {
-        let output = repo
-            .run_command(&[
-                "config",
-                "--get-regexp",
-                r"^worktrunk\.state\..+\.ci-status$",
-            ])
-            .unwrap_or_default();
+        let repo_root = match repo.worktree_root() {
+            Ok(path) => path,
+            Err(_) => return 0,
+        };
+
+        let Some(cache_dir) = Self::cache_dir(repo_root.to_str().unwrap_or_default()) else {
+            return 0;
+        };
+
+        let entries = match fs::read_dir(&cache_dir) {
+            Ok(entries) => entries,
+            Err(_) => return 0,
+        };
 
         let mut cleared = 0;
-        for line in output.lines() {
-            if let Some(key) = line.split_whitespace().next()
-                && repo.run_command(&["config", "--unset", key]).is_ok()
-            {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Only remove .json files
+            if path.extension().is_some_and(|ext| ext == "json") && fs::remove_file(&path).is_ok() {
                 cleared += 1;
             }
         }

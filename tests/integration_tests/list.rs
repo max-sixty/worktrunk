@@ -1653,7 +1653,7 @@ fn run_git(repo: &TestRepo, args: &[&str], cwd: &std::path::Path) {
     cmd.args(args).current_dir(cwd).output().unwrap();
 }
 
-/// Mock CI status by writing to git config cache
+/// Mock CI status by writing to file-based cache
 fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
     // Get HEAD commit for the branch
     let mut cmd = Command::new("git");
@@ -1678,14 +1678,34 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
         head
     );
 
-    // Write to git config using subsection format (branch name is subsection, no escaping needed)
-    let config_key = format!("worktrunk.state.{branch}.ci-status");
+    // Get git common dir for cache location
     let mut cmd = Command::new("git");
     repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", &config_key, &cache_json])
+    let output = cmd
+        .args(["rev-parse", "--git-common-dir"])
         .current_dir(repo.root_path())
         .output()
         .unwrap();
+    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Resolve relative path if needed
+    let git_path = if std::path::Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        repo.root_path().join(&git_dir)
+    };
+
+    // Create cache directory and write file
+    let cache_dir = git_path.join("wt-cache").join("ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    // Sanitize branch name for filename (replace / and \ with -)
+    let safe_branch: String = branch
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+        .collect();
+    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    std::fs::write(&cache_file, &cache_json).unwrap();
 }
 
 /// Generate README example: Basic `wt list` output

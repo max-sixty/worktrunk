@@ -3,6 +3,21 @@ use insta::assert_snapshot;
 use rstest::rstest;
 use std::process::Command;
 
+/// Write CI status to the file-based cache at .git/wt-cache/ci-status/<branch>.json
+fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
+    let git_dir = repo.root_path().join(".git");
+    let cache_dir = git_dir.join("wt-cache").join("ci-status");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    // Sanitize branch name for filename
+    let safe_branch: String = branch
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+        .collect();
+    let cache_file = cache_dir.join(format!("{safe_branch}.json"));
+    std::fs::write(&cache_file, json).unwrap();
+}
+
 /// Create a command for `wt config state <key> <action> [args...]`
 fn wt_state_cmd(repo: &TestRepo, key: &str, action: &str, args: &[&str]) -> Command {
     let mut cmd = wt_command();
@@ -491,14 +506,12 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // Marker (using JSON format)
     repo.set_marker("main", "🚧");
 
-    // CI cache
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.feature.ci-status",
+    // CI cache (file-based)
+    write_ci_cache(
+        &repo,
+        "feature",
         r#"{"checked_at":1704067200,"head":"abc123"}"#,
-    ])
-    .status()
-    .unwrap();
+    );
 
     // Logs
     let git_dir = repo.root_path().join(".git");
@@ -527,13 +540,11 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
             .code()
             == Some(1)
     );
+    // CI cache is now file-based, verify the cache file is cleared
+    let ci_cache_dir = git_dir.join("wt-cache").join("ci-status");
     assert!(
-        repo.git_command(&["config", "--get", "worktrunk.state.feature.ci-status"])
-            .output()
-            .unwrap()
-            .status
-            .code()
-            == Some(1)
+        !ci_cache_dir.join("feature.json").exists(),
+        "CI cache file should be cleared"
     );
     assert!(!log_dir.exists());
 }
@@ -578,29 +589,27 @@ fn test_state_get_empty(repo: TestRepo) {
 #[rstest]
 fn test_state_get_with_ci_entries(repo: TestRepo) {
     // Add CI cache entries - use TEST_EPOCH for deterministic age=0s in snapshots
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.feature.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
-    ])
-    .status()
-    .unwrap();
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+        ),
+    );
 
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.bugfix.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555"}}"#),
-    ])
-    .status()
-    .unwrap();
+    write_ci_cache(
+        &repo,
+        "bugfix",
+        &format!(
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":true}},"checked_at":{TEST_EPOCH},"head":"111222333444555"}}"#
+        ),
+    );
 
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.main.ci-status",
+    write_ci_cache(
+        &repo,
+        "main",
         &format!(r#"{{"status":null,"checked_at":{TEST_EPOCH},"head":"deadbeef12345678"}}"#),
-    ])
-    .status()
-    .unwrap();
+    );
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
@@ -630,14 +639,14 @@ fn test_state_get_comprehensive(repo: TestRepo) {
     .status()
     .unwrap();
 
-    // Set up CI cache
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.feature.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
-    ])
-    .status()
-    .unwrap();
+    // Set up CI cache (file-based)
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+        ),
+    );
 
     // Create log files
     let git_dir = repo.root_path().join(".git");
@@ -682,14 +691,14 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
     .status()
     .unwrap();
 
-    // Set up CI cache
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.feature.ci-status",
-        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#),
-    ])
-    .status()
-    .unwrap();
+    // Set up CI cache (file-based)
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345def67890"}}"#
+        ),
+    );
 
     let output = wt_state_get_json_cmd(&repo).output().unwrap();
     assert!(output.status.success());

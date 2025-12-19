@@ -51,8 +51,8 @@ Special setup tricks:
 
 ## CI Cache Trick
 
-CI status is cached in git config. To show CI without GitHub access:
-1. Write fake cache entries directly to git config
+CI status is cached in `.git/wt-cache/ci-status/<branch>.json` files. To show CI without GitHub access:
+1. Write fake cache entries directly to the cache files
 2. Use **future timestamp** (1 hour ahead) so cache never expires
 3. VHS recording reads cached status
 

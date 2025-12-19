@@ -39,9 +39,9 @@ The setup process:
 
 CI CACHE TRICK
 ==============
-The CI status is cached in git config (`worktrunk.state.{branch}.ci-status`). To show CI
+The CI status is cached in `.git/wt-cache/ci-status/<branch>.json` files. To show CI
 status without actual GitHub/GitLab access, we:
-1. Write fake CI cache entries directly to git config
+1. Write fake CI cache entries directly to the cache files
 2. Use a future timestamp (1 hour ahead) so the cache never expires during recording
 3. VHS recording runs `wt select` which reads the cached CI status
 
@@ -345,9 +345,9 @@ fn validate_template(template: &str) -> Result<(), String> {
 
 
 def add_ci_status(env: DemoEnv):
-    """Add fake CI status to git config for demo.
+    """Add fake CI status to file-based cache for demo.
 
-    CI status is cached in git config as worktrunk.state.{branch}.ci-status with JSON value.
+    CI status is cached in .git/wt-cache/ci-status/<branch>.json files.
     The cache uses a future timestamp to prevent expiration during VHS recording.
     """
     import json
@@ -403,10 +403,12 @@ def add_ci_status(env: DemoEnv):
     }
 
     print("Adding CI status cache...")
+    # Write to file-based cache at .git/wt-cache/ci-status/<branch>.json
+    cache_dir = env.repo / ".git" / "wt-cache" / "ci-status"
+    cache_dir.mkdir(parents=True, exist_ok=True)
     for branch, config in ci_configs.items():
-        config_key = f"worktrunk.state.{branch}.ci-status"
-        config_json = json.dumps(config)
-        git(["-C", str(env.repo), "config", config_key, config_json])
+        cache_file = cache_dir / f"{branch}.json"
+        cache_file.write_text(json.dumps(config))
 
 
 def main():
