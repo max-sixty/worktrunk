@@ -2,14 +2,14 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mRunning project post-create [1minstall[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
+[36m◎[39m [36mRunning project post-create [1minstall[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
 Installing dependencies...
-🔄 [36mRunning project post-create [1mbuild[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
+[36m◎[39m [36mRunning project post-create [1mbuild[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
 Building project...
-✅ [32mCreated new worktree for [1mfeature-hooks[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-hooks[22m[39m
-🔄 [36mRunning project post-start [1mserver[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Starting dev server on port 3000'[0m[2m[0m
-🔄 [36mRunning project post-start [1mwatch[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Watching for file changes'[0m[2m[0m
+[32m✓[39m [32mCreated new worktree for [1mfeature-hooks[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-hooks[22m[39m
+[36m◎[39m [36mRunning project post-start [1mserver[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Starting dev server on port 3000'[0m[2m[0m
+[36m◎[39m [36mRunning project post-start [1mwatch[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Watching for file changes'[0m[2m[0m

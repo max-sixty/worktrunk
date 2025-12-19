@@ -2,11 +2,11 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mRunning project post-create [1minstall[22m:[39m
-[107m [0m  [2m[0m[2m[34muv[0m[2m sync[0m
+[36m◎[39m [36mRunning project post-create [1minstall[22m:[39m
+[107m [0m [2m[0m[2m[34muv[0m[2m sync[0m
 
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
-✅ [32mCreated new worktree for [1mfeature-x[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-x[22m[39m
-🔄 [36mRunning project post-start [1mdev[22m:[39m
-[107m [0m  [2m[0m[2m[34muv[0m[2m run dev[0m
+[32m✓[39m [32mCreated new worktree for [1mfeature-x[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-x[22m[39m
+[36m◎[39m [36mRunning project post-start [1mdev[22m:[39m
+[107m [0m [2m[0m[2m[34muv[0m[2m run dev[0m
