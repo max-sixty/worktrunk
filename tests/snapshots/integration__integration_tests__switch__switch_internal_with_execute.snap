@@ -32,7 +32,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].exec-internal'
+cd [REPO].exec-internal
 echo 'line1'
 echo 'line2'
 

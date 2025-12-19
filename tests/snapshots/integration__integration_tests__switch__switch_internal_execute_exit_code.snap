@@ -32,7 +32,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].exit-code-test'
+cd [REPO].exit-code-test
 exit 42
 
 ----- stderr -----

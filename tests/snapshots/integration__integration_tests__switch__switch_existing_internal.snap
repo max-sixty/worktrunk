@@ -29,7 +29,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].existing-wt'
+cd [REPO].existing-wt
 
 ----- stderr -----
 [2m○[22m Switched to worktree for [1mexisting-wt[22m @ [1m[REPO].existing-wt[22m

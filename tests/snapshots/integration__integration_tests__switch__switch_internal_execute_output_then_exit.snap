@@ -32,7 +32,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].output-exit-test'
+cd [REPO].output-exit-test
 echo 'doing work'
 exit 7
 

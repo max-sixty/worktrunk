@@ -1820,6 +1820,11 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         }
     }
 
+    // Handle shell-escaped paths: when shell_escape quotes a path like '/path/to/repo',
+    // the filter replaces the path portion leaving '[REPO]' with quotes. Remove them.
+    settings.add_filter(r"'\[REPO\]'", "[REPO]");
+    settings.add_filter(r"'\[REPO\](\.[a-zA-Z0-9_-]+)'", "[REPO]$1");
+
     // Normalize backslashes for Windows compatibility
     settings.add_filter(r"\\", "/");
 

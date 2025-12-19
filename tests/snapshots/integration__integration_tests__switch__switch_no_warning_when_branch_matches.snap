@@ -29,7 +29,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].feature'
+cd [REPO].feature
 
 ----- stderr -----
 [2m○[22m Switched to worktree for [1mfeature[22m @ [1m[REPO].feature[22m
