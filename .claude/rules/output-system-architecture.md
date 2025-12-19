@@ -13,6 +13,20 @@ Both modes write all messages to stderr. stdout is reserved for structured data
 The mode is determined at initialization in `main()` and never changes during
 execution.
 
+## Piped Output Bypasses Shell Wrapper
+
+When stdout is not a terminal (piped or redirected), the shell wrapper runs the
+binary directly without `--internal`. This ensures piping works:
+
+```bash
+wt list --format=json | jq .           # Works - stdout piped, runs directly
+wt step commit --show-prompt | llm     # Works - stdout piped, runs directly
+```
+
+The check happens in the shell wrapper (`[[ ! -t 1 ]]` / `isatty stdout` /
+`[Console]::IsOutputRedirected`). When stdout is piped, the wrapper bypasses
+`--internal` and eval, so data flows through the pipe.
+
 ## The Cardinal Rule: Never Check Mode in Command Code
 
 Command code must never check which output mode is active. The output system
@@ -52,7 +66,7 @@ The output module (`src/output/global.rs`) provides:
   directive)
 - `gutter(content)` — Gutter-formatted content (use with `format_with_gutter()`)
 - `blank()` — Blank line for visual separation
-- `data(content)` — Structured data output without emoji (JSON, for piping)
+- `data(content)` — Structured data (JSON, prompts, statuslines) to stdout/stderr
 - `table(content)` — Table/UI output to stderr
 - `change_directory(path)` — Request directory change
 - `execute(command)` — Execute command or buffer for shell script
@@ -74,12 +88,12 @@ For the complete API, see `src/output/global.rs` and `src/styling/constants.rs`.
 
 ## Adding New Output Functions
 
-Add the function to both handlers, add dispatch in `global.rs`, never add mode
-parameters. This maintains one canonical path: commands have ONE code path that
-works for both modes.
+Add the function to `global.rs` with a match on `get_mode()`. Never add mode
+parameters to function signatures — commands have ONE code path that works for
+both modes.
 
 ## Architectural Constraint: --internal Commands Must Use Output System
 
 Commands supporting `--internal` must never use direct print macros — use output
 system functions to prevent directive leaks. Enforced by
-`tests/output_system_guard.rs`.
+`tests/integration_tests/output_system_guard.rs`.

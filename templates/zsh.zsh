@@ -39,6 +39,14 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             return "$exit_code"
         fi
 
+        # If stdout is not a terminal (piped/redirected), run directly.
+        # This allows `wt list --format=json | jq` to work - the output flows
+        # through instead of being captured and eval'd as shell script.
+        if [[ ! -t 1 ]]; then
+            command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}"
+            return
+        fi
+
         wt_exec --internal "${args[@]}"
     }
 

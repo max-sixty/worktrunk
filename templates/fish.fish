@@ -49,6 +49,15 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
             return $exit_code
         end
 
+        # If stdout is not a terminal (piped/redirected), run directly.
+        # This allows `wt list --format=json | jq` to work - the output flows
+        # through instead of being captured and eval'd as shell script.
+        if not isatty stdout
+            test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd }})
+            command $WORKTRUNK_BIN $args
+            return $status
+        end
+
         wt_exec --internal $args
     end
 

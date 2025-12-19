@@ -141,6 +141,25 @@ $ cargo install worktrunk --no-default-features
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
+## Why does JSON output go to stderr?
+
+When run interactively (not piped), JSON appears on stderr rather than stdout. The shell wrapper captures stdout to enable directory changing (`wt switch` runs `cd` in the caller's shell). With stdout captured for eval, data output goes to stderr.
+
+When piping or redirecting, the wrapper detects this and runs the binary directly:
+
+```bash
+wt list --format=json | jq .           # Works - JSON flows to jq
+wt list --format=json > worktrees.json # Works - JSON goes to file
+```
+
+To force stdout interactively, bypass the wrapper with `command`:
+
+```bash
+command wt list --format=json          # Outputs to stdout
+```
+
+This applies to all data-producing flags (`--format=json`, `--show-prompt`, etc.). We're open to better ideas — [let us know](https://github.com/max-sixty/worktrunk/issues) if you have one.
+
 ## Running tests (for contributors)
 
 ### Quick tests

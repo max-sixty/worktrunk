@@ -239,15 +239,18 @@ messages. Currently being trialed — expand to other commands if it works well.
 **Both modes write all messages to stderr.** stdout is reserved for structured
 data:
 
-- **stdout**: JSON output (`--format=json`), shell scripts (directive mode)
+- **stdout**: Data output (`--format=json`, `--show-prompt`, `--claude-code`),
+  shell scripts (directive mode)
 - **stderr**: All user-facing messages (progress, success, errors, hints,
   gutter, etc.)
 
 **Directive mode** additionally emits a shell script to stdout at the end.
 
-Use the output system (`output::print()` with message formatting functions) to
-handle both modes automatically. Never write directly to stdout/stderr in
-command code.
+Use the output system (`output::print()`, `output::data()`) to handle both modes
+automatically. Never write directly to stdout/stderr in command code.
+
+For the full architecture (piped output bypass, mode selection), see
+`output-system-architecture.md`.
 
 ```rust
 // GOOD - use output system (handles both modes)
