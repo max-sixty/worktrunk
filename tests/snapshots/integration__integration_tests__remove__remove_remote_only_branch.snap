@@ -30,6 +30,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-✗ [31mBranch [1mremote-feature[22m exists only on remote (origin/remote-feature)[39m
+[31m✗[39m [31mBranch [1mremote-feature[22m exists only on remote (origin/remote-feature)[39m
 
-↳ [2mTo create a local worktree, run [90mwt switch remote-feature[39m[22m
+[2m↳[22m [2mTo create a local worktree, run [90mwt switch remote-feature[39m[22m

@@ -32,4 +32,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-◎ [36mRemoving [1mfeature[22m worktree & branch in background[39m (--force-delete)
+[36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background[39m (--force-delete)

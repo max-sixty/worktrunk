@@ -1,4 +1,4 @@
-//! Style constants and emojis for terminal output
+//! Style constants and symbols for terminal output
 //!
 //! # Styling with color-print
 //!
@@ -29,6 +29,7 @@
 //! table rendering where computed styles are needed at runtime.
 
 use anstyle::{AnsiColor, Color, Style};
+use color_print::cstr;
 
 // ============================================================================
 // Programmatic Style Constants (for StyledLine, tables, computed styles)
@@ -59,33 +60,29 @@ pub const DEFAULT_HELP_WIDTH: usize = 98;
 // Message Symbols
 // ============================================================================
 //
-// Single-width Unicode symbols for message prefixes. These replace the previous
-// emoji-based indicators for better terminal compatibility and a more serious
-// aesthetic.
+// Single-width Unicode symbols for message prefixes with embedded colors.
+// Using `cstr!` to create colored `&'static str` constants that work everywhere.
 
-/// Progress symbol: `cformat!("{PROGRESS_SYMBOL} <cyan>message</>")`
-pub const PROGRESS_SYMBOL: &str = "◎";
+/// Progress symbol (cyan ◎)
+pub const PROGRESS_SYMBOL: &str = cstr!("<cyan>◎</>");
 
-/// Success symbol: `cformat!("{SUCCESS_SYMBOL} <green>message</>")`
-pub const SUCCESS_SYMBOL: &str = "✓";
+/// Success symbol (green ✓)
+pub const SUCCESS_SYMBOL: &str = cstr!("<green>✓</>");
 
-/// Error symbol: `cformat!("{ERROR_SYMBOL} <red>message</>")`
-pub const ERROR_SYMBOL: &str = "✗";
+/// Error symbol (red ✗)
+pub const ERROR_SYMBOL: &str = cstr!("<red>✗</>");
 
-/// Warning symbol: `cformat!("{WARNING_SYMBOL} <yellow>message</>")`
-pub const WARNING_SYMBOL: &str = "▲";
+/// Warning symbol (yellow ▲)
+pub const WARNING_SYMBOL: &str = cstr!("<yellow>▲</>");
 
-/// Hint symbol: `cformat!("{HINT_SYMBOL} <dim>message</>")`
-pub const HINT_SYMBOL: &str = "↳";
+/// Hint symbol (dim ↳)
+pub const HINT_SYMBOL: &str = cstr!("<dim>↳</>");
 
-/// Info symbol - use for neutral status (primary status NOT dimmed, metadata may be dimmed)
-/// Primary status: `output::info("All commands already approved")?;`
-/// Metadata: `cformat!("{INFO_SYMBOL} <dim>Showing 5 worktrees...</>")`
-pub const INFO_SYMBOL: &str = "○";
+/// Info symbol (dim ○) - for neutral status
+pub const INFO_SYMBOL: &str = cstr!("<dim>○</>");
 
-/// Prompt symbol - use for questions requiring user input
-/// `eprint!("{PROMPT_SYMBOL} Proceed? [y/N] ")`
-pub const PROMPT_SYMBOL: &str = "❯";
+/// Prompt symbol (cyan ❯) - for questions requiring user input
+pub const PROMPT_SYMBOL: &str = cstr!("<cyan>❯</>");
 
 // Legacy aliases for compatibility during migration
 #[doc(hidden)]
@@ -196,47 +193,32 @@ use color_print::cformat;
 /// println!("{}", error_message(cformat!("Branch <bold>{name}</> not found")));
 /// ```
 pub fn error_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!(
-        "<red>{ERROR_SYMBOL}</> <red>{}</>",
-        content.as_ref()
-    ))
+    FormattedMessage(cformat!("{ERROR_SYMBOL} <red>{}</>", content.as_ref()))
 }
 
 /// Format a hint message with symbol and dim styling
 pub fn hint_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!(
-        "<dim>{HINT_SYMBOL}</> <dim>{}</>",
-        content.as_ref()
-    ))
+    FormattedMessage(cformat!("{HINT_SYMBOL} <dim>{}</>", content.as_ref()))
 }
 
 /// Format a warning message with symbol and yellow styling
 pub fn warning_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!(
-        "<yellow>{WARNING_SYMBOL}</> <yellow>{}</>",
-        content.as_ref()
-    ))
+    FormattedMessage(cformat!("{WARNING_SYMBOL} <yellow>{}</>", content.as_ref()))
 }
 
 /// Format a success message with symbol and green styling
 pub fn success_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!(
-        "<green>{SUCCESS_SYMBOL}</> <green>{}</>",
-        content.as_ref()
-    ))
+    FormattedMessage(cformat!("{SUCCESS_SYMBOL} <green>{}</>", content.as_ref()))
 }
 
 /// Format a progress message with symbol and cyan styling
 pub fn progress_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!(
-        "<cyan>{PROGRESS_SYMBOL}</> <cyan>{}</>",
-        content.as_ref()
-    ))
+    FormattedMessage(cformat!("{PROGRESS_SYMBOL} <cyan>{}</>", content.as_ref()))
 }
 
-/// Format an info message with symbol (dim symbol, no color on text - neutral status)
+/// Format an info message with symbol (no color on text - neutral status)
 pub fn info_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("<dim>{INFO_SYMBOL}</> {}", content.as_ref()))
+    FormattedMessage(format!("{INFO_SYMBOL} {}", content.as_ref()))
 }
 
 /// Format a section heading (cyan uppercase text, no emoji)
@@ -300,13 +282,14 @@ mod tests {
 
     #[test]
     fn test_symbol_constants() {
-        assert_eq!(PROGRESS_SYMBOL, "◎");
-        assert_eq!(SUCCESS_SYMBOL, "✓");
-        assert_eq!(ERROR_SYMBOL, "✗");
-        assert_eq!(WARNING_SYMBOL, "▲");
-        assert_eq!(HINT_SYMBOL, "↳");
-        assert_eq!(INFO_SYMBOL, "○");
-        assert_eq!(PROMPT_SYMBOL, "❯");
+        // Symbols are pre-colored with ANSI codes, but contain the Unicode character
+        assert!(PROGRESS_SYMBOL.contains("◎"));
+        assert!(SUCCESS_SYMBOL.contains("✓"));
+        assert!(ERROR_SYMBOL.contains("✗"));
+        assert!(WARNING_SYMBOL.contains("▲"));
+        assert!(HINT_SYMBOL.contains("↳"));
+        assert!(INFO_SYMBOL.contains("○"));
+        assert!(PROMPT_SYMBOL.contains("❯"));
     }
 
     // ============================================================================

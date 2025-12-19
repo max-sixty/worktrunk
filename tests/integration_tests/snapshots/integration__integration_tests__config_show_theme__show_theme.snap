@@ -34,4 +34,4 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mwt[0m[2m config shell init bash)"[0m[2m[0m
 
 [2m○[22m Prompt formatting:
-❯ Proceed? [y/N]
+[36m❯[39m Proceed? [y/N]
