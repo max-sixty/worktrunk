@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -102,7 +103,7 @@ in the foreground.
 
 [32mShortcuts
 
-[2m@[0m (current), [2m-[0m (previous), [2m^[0m (main worktree). See wt switch for argument resolution.
+[2m@[0m (current), [2m-[0m (previous), [2m^[0m (main worktree). See wt switch.
 
 [32mSee also
 
