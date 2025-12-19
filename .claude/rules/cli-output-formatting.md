@@ -195,12 +195,12 @@ Use `suggest_command()` from `worktrunk::styling` to build commands with proper
 shell escaping. Include the branch name or other specific arguments so users can
 copy-paste.
 
-**Message formatting functions** add emoji AND semantic color. Callers provide
+**Message formatting functions** add symbol AND semantic color. Callers provide
 content with optional inner styling (like `<bold>`), then pass to
 `output::print()`:
 
 ```rust
-// Simple message - formatting function adds emoji + color
+// Simple message - formatting function adds symbol + color
 output::print(success_message("Created worktree"))?;
 output::print(hint_message("Run 'wt config' to configure"))?;
 
@@ -218,11 +218,11 @@ output::print(warning_message(cformat!("Branch <bold>{name}</> not found")))?;
 - `info_message()` → no color (neutral status)
 - `error_message()` → red
 
-**Every user-facing message requires either an emoji or a gutter** for
+**Every user-facing message requires either a symbol or a gutter** for
 consistent visual separation.
 
 **Section titles** (experimental): For output with distinct sections (like
-`wt hook show`, `wt config show`), use cyan uppercase text without emoji:
+`wt hook show`, `wt config show`), use cyan uppercase text without symbol:
 `<cyan>SECTION TITLE</>`. This distinguishes organizational headers from status
 messages. Currently being trialed — expand to other commands if it works well.
 
@@ -260,7 +260,7 @@ println!("Branch created");
 Interactive prompts must flush stderr before blocking on stdin:
 
 ```rust
-eprint!("❓ Allow and remember? [y/N] ");
+eprint!("❯ Allow and remember? [y/N] ");
 stderr().flush()?;
 io::stdin().read_line(&mut response)?;
 ```
@@ -284,8 +284,8 @@ for item in items {
 Bad example (output decoupled from operations):
 
 ```
-🔄 Removing worktree for feature...
-🔄 Removing worktree for bugfix...
+◎ Removing worktree for feature...
+◎ Removing worktree for bugfix...
                                     ← Long delay, no feedback
 Removed worktree for feature        ← All output at the end
 Removed worktree for bugfix
@@ -316,8 +316,8 @@ styling):
 - `DELETION`: Red (diffs, deletions) — used in table rendering
 - `GUTTER`: BrightWhite background (quoted content)
 
-Emoji constants: `PROGRESS_EMOJI` (🔄), `SUCCESS_EMOJI` (✅), `ERROR_EMOJI` (❌),
-`WARNING_EMOJI` (🟡), `HINT_EMOJI` (💡), `INFO_EMOJI` (⚪), `PROMPT_EMOJI` (❓)
+Symbol constants: `PROGRESS_SYMBOL` (◎), `SUCCESS_SYMBOL` (✓), `ERROR_SYMBOL` (✗),
+`WARNING_SYMBOL` (▲), `HINT_SYMBOL` (↳), `INFO_SYMBOL` (○), `PROMPT_SYMBOL` (❯)
 
 For all other styling, use color-print tags in `cformat!`: `<red>`, `<green>`,
 `<yellow>`, `<cyan>`, `<dim>`, `<bold>`, `<bright-black>`
@@ -325,10 +325,10 @@ For all other styling, use color-print tags in `cformat!`: `<red>`, `<green>`,
 ## Styling in Command Code
 
 Use `output::print()` with message formatting functions. The formatting function
-adds the emoji + semantic color, and `cformat!` handles inner styling:
+adds the symbol + semantic color, and `cformat!` handles inner styling:
 
 ```rust
-// GOOD - formatting function handles emoji + outer color, cformat! handles inner styling
+// GOOD - formatting function handles symbol + outer color, cformat! handles inner styling
 output::print(success_message(cformat!("Created <bold>{branch}</> from <bold>{base}</>")))?;
 output::print(warning_message(cformat!("Branch <bold>{name}</> has <dim>uncommitted changes</>")))?;
 output::print(hint_message(cformat!("Run <bright-black>wt merge</> to continue")))?;
@@ -341,11 +341,11 @@ output::print(hint_message("No changes to commit"))?;
 **Available color-print tags:** `<bold>`, `<dim>`, `<bright-black>`, `<red>`,
 `<green>`, `<yellow>`, `<cyan>`, `<magenta>`
 
-**Emoji constants in cformat!:** Use `{ERROR_EMOJI}`, `{HINT_EMOJI}`, etc. for
+**Symbol constants in cformat!:** Use `{ERROR_SYMBOL}`, `{HINT_SYMBOL}`, etc. for
 messages that bypass output:: functions (e.g., GitError Display impl):
 
 ```rust
-cformat!("{ERROR_EMOJI} <red>Branch <bold>{branch}</> not found</>")
+cformat!("{ERROR_SYMBOL} <red>Branch <bold>{branch}</> not found</>")
 ```
 
 Branch names in messages should be bolded. Tables (`wt list`) use `StyledLine`
@@ -391,12 +391,12 @@ use worktrunk::styling::eprintln;  // Auto-detects color support
   (`<green>`, `<bold>`, etc.). Only use anstyle for `StyledLine` table
   rendering.
 - **output:: functions over direct printing** — Use output:: for user messages,
-  which auto-adds emoji + semantic color
+  which auto-adds symbol + semantic color
 - **cformat! for inner styling** — Use `<bold>`, `<dim>` tags within output::
   calls
 - **Never manual escape codes** — No `\x1b[...` in code
 - **YAGNI for presentation** — Most output needs no styling
-- **Unicode-aware** — Width calculations respect emoji and CJK characters (via
+- **Unicode-aware** — Width calculations respect symbols and CJK characters (via
   `StyledLine`)
 - **Graceful degradation** — Must work without color support
 
@@ -498,11 +498,11 @@ Use the `format_error_block` helper in `src/git/error.rs` or follow its pattern:
 
 ```rust
 // GOOD - command shown in header, multi-line error in gutter
-❌ Commit generation command 'llm --model claude' failed
+✗ Commit generation command 'llm --model claude' failed
    ┃ Error: [Errno 8] nodename nor servname provided, or not known
 
 // BAD - multi-line error embedded inline
-❌ Commit generation command 'llm' failed: LLM command failed: Error: [Errno 8]...
+✗ Commit generation command 'llm' failed: LLM command failed: Error: [Errno 8]...
 ```
 
 **Implementation:** See `format_error_block()` in `src/git/error.rs` for the

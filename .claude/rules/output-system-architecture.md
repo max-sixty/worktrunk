@@ -4,7 +4,7 @@
 
 Worktrunk supports two output modes, selected once at program startup:
 
-1. **Interactive Mode** — Human-friendly output with colors, emojis, and hints
+1. **Interactive Mode** — Human-friendly output with colors, symbols, and hints
 2. **Directive Mode** — Shell script on stdout (at end), user messages on stderr
 
 Both modes write all messages to stderr. stdout is reserved for structured data
@@ -52,7 +52,7 @@ The output module (`src/output/global.rs`) provides:
   directive)
 - `gutter(content)` — Gutter-formatted content (use with `format_with_gutter()`)
 - `blank()` — Blank line for visual separation
-- `data(content)` — Structured data output without emoji (JSON, for piping)
+- `data(content)` — Structured data output without symbol (JSON, for piping)
 - `table(content)` — Table/UI output to stderr
 - `change_directory(path)` — Request directory change
 - `execute(command)` — Execute command or buffer for shell script
