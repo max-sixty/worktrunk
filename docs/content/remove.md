@@ -61,7 +61,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Shortcuts
 
-`@` (current), `-` (previous), `^` (main worktree). See [wt switch](@/switch.md#argument-resolution) for argument resolution.
+`@` (current), `-` (previous), `^` (main worktree). See [wt switch](@/switch.md#shortcuts).
 
 ## See also
 
