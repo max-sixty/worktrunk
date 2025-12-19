@@ -8,10 +8,3 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 [[profile.default.overrides]]
 filter = 'test(/integration_tests::ci_status::test_list_full/)'
 threads-required = 4
-
-# Windows has stricter file locking than macOS/Linux. The list tests run many parallel
-# git operations that can race for .git/config access, causing transient "Permission
-# denied" errors. Retry flaky list tests.
-[[profile.default.overrides]]
-filter = 'test(/integration_tests::list::/)'
-retries = { backoff = "exponential", count = 2, delay = "100ms" }

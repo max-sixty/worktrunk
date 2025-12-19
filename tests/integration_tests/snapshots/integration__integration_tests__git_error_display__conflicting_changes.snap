@@ -1,9 +1,8 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
 ❌ [31mCannot push: conflicting uncommitted changes in:[39m
-
 [107m [0m  src/main.rs
 [107m [0m  src/lib.rs
 

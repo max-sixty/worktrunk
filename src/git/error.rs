@@ -305,9 +305,9 @@ impl std::fmt::Display for GitError {
                 files,
                 worktree_path,
             } => {
-                write!(
+                writeln!(
                     f,
-                    "{}\n\n",
+                    "{}",
                     error_message("Cannot push: conflicting uncommitted changes in:")
                 )?;
                 if !files.is_empty() {

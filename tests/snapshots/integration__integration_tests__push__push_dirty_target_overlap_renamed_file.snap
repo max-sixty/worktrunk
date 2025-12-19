@@ -15,10 +15,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -30,7 +32,6 @@ exit_code: 1
 
 ----- stderr -----
 ❌ [31mCannot push: conflicting uncommitted changes in:[39m
-
 [107m [0m  file.txt
 
 💡 [2mCommit or stash these changes in [REPO] first[22m

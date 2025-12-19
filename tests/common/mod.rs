@@ -600,6 +600,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
     cmd.env("COLUMNS", "150");
+    // Enable warn-level logging so diagnostics show up in test failures
+    cmd.env("RUST_LOG", "warn");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
