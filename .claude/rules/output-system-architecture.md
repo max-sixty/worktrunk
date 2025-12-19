@@ -21,7 +21,7 @@ uses enum dispatch — commands call output functions without knowing the mode.
 ```rust
 // NEVER DO THIS
 if mode == OutputMode::Interactive {
-    println!("✅ Success!");
+    println!("✓ Success!");
 }
 
 // ALWAYS DO THIS
@@ -48,7 +48,7 @@ output::change_directory(&path)?;
 The output module (`src/output/global.rs`) provides:
 
 - `print(message)` — Write message as-is (use with message formatting functions)
-- `shell_integration_hint(message)` — Shell integration hints (💡, suppressed in
+- `shell_integration_hint(message)` — Shell integration hints (↳, suppressed in
   directive)
 - `gutter(content)` — Gutter-formatted content (use with `format_with_gutter()`)
 - `blank()` — Blank line for visual separation
@@ -63,12 +63,12 @@ The output module (`src/output/global.rs`) provides:
 
 **Message formatting functions** (from `worktrunk::styling`):
 
-- `success_message(content)` — ✅ green
-- `progress_message(content)` — 🔄 cyan
-- `info_message(content)` — ⚪ no color
-- `warning_message(content)` — 🟡 yellow
-- `hint_message(content)` — 💡 dimmed
-- `error_message(content)` — ❌ red
+- `success_message(content)` — ✓ green
+- `progress_message(content)` — ◎ cyan
+- `info_message(content)` — ○ no color
+- `warning_message(content)` — ▲ yellow
+- `hint_message(content)` — ↳ dimmed
+- `error_message(content)` — ✗ red
 
 For the complete API, see `src/output/global.rs` and `src/styling/constants.rs`.
 

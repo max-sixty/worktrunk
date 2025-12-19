@@ -143,20 +143,20 @@ spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 
 ## Message Types
 
-Seven canonical message patterns with their emojis:
+Seven canonical message patterns with their symbols:
 
-1. **Progress**: 🔄 (operations in progress)
-2. **Success**: ✅ (something was created or changed)
-3. **Errors**: ❌ (failures, invalid states)
-4. **Warnings**: 🟡 (non-blocking issues)
-5. **Hints**: 💡 (actionable — user could/should do something)
-6. **Info**: ⚪ (status — acknowledging state or user choices, no action needed)
-7. **Prompts**: ❓ (questions requiring user input)
+1. **Progress**: ◎ (operations in progress)
+2. **Success**: ✓ (something was created or changed)
+3. **Errors**: ✗ (failures, invalid states)
+4. **Warnings**: ▲ (non-blocking issues)
+5. **Hints**: ↳ (actionable — user could/should do something)
+6. **Info**: ○ (status — acknowledging state or user choices, no action needed)
+7. **Prompts**: ❯ (questions requiring user input)
 
-**Success vs Info decision:** Success (✅) means something was created or
-changed. Info (⚪) means acknowledging state without creating/changing anything.
+**Success vs Info decision:** Success (✓) means something was created or
+changed. Info (○) means acknowledging state without creating/changing anything.
 
-| Success ✅                              | Info ⚪                               |
+| Success ✓                               | Info ○                                |
 | --------------------------------------- | ------------------------------------- |
 | "Created worktree for feature"          | "Switched to worktree for feature"    |
 | "Created new worktree for feature"      | "Already on worktree for feature"     |
@@ -165,7 +165,7 @@ changed. Info (⚪) means acknowledging state without creating/changing anything
 **Hint vs Info decision:** If the message suggests the user take an action, it's
 a hint. If it's acknowledging what happened (including flag effects), it's info.
 
-| Hint 💡                       | Info ⚪                               |
+| Hint ↳                        | Info ○                                |
 | ----------------------------- | ------------------------------------- |
 | "Run `wt merge` to continue"  | "Already up to date with main"        |
 | "Use `--force` to override"   | "Skipping hooks (--no-verify)"        |

@@ -117,7 +117,7 @@ fn prompt_for_batch_approval(commands: &[&Command], project_id: &str) -> anyhow:
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
         // Phase comes from the command itself (e.g., "pre-commit", "pre-merge")
-        // Uses INFO_EMOJI (⚪) since this is a preview, not active execution
+        // Uses INFO_SYMBOL (○) since this is a preview, not active execution
         let phase = cmd.phase.to_string();
         let label = match &cmd.name {
             Some(name) => cformat!("{INFO_EMOJI} {phase} <bold>{name}</>:"),

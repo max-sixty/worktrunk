@@ -164,12 +164,12 @@ The JSON includes all template variables plus `hook_type` and `hook_name`.
 Project commands require approval on first run:
 
 ```
-🟡 repo needs approval to execute 3 commands:
+▲ repo needs approval to execute 3 commands:
 
-⚪ post-create install:
+○ post-create install:
    echo 'Installing dependencies...'
 
-❓ Allow and remember? [y/N]
+❯ Allow and remember? [y/N]
 ```
 
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)

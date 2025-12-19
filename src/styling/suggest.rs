@@ -9,7 +9,7 @@
 //! let branch = "feature";
 //! let cmd = suggest_command("remove", &[branch], &["--force"]);
 //! println!("{}", hint_message(cformat!("To force delete, run <bright-black>{cmd}</>")));
-//! // → 💡 To force delete, run wt remove feature --force
+//! // → ↳ To force delete, run wt remove feature --force
 //! ```
 //!
 //! Handles shell escaping and `--` separator for args starting with `-`:
