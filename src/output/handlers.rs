@@ -429,6 +429,7 @@ pub fn handle_remove_output(
             branch_name,
             deletion_mode,
             target_branch,
+            integration_reason,
         } => handle_removed_worktree_output(
             main_path,
             worktree_path,
@@ -436,6 +437,7 @@ pub fn handle_remove_output(
             branch_name.as_deref(),
             *deletion_mode,
             target_branch.as_deref(),
+            *integration_reason,
             branch,
             background,
             verify,
@@ -498,6 +500,7 @@ fn handle_removed_worktree_output(
     branch_name: Option<&str>,
     deletion_mode: BranchDeletionMode,
     target_branch: Option<&str>,
+    pre_computed_integration: Option<IntegrationReason>,
     branch: Option<&str>,
     background: bool,
     verify: bool,
@@ -564,8 +567,8 @@ fn handle_removed_worktree_output(
     if background {
         // Background mode: spawn detached process
 
-        // Determine outcome upfront (check once, not in background script)
-        // Only show effective_target in message if we had a meaningful target (not tautological "HEAD" fallback)
+        // Use pre-computed integration reason to avoid race conditions when removing
+        // multiple worktrees (background processes can hold git locks)
         let (outcome, effective_target) = if deletion_mode.should_keep() {
             (
                 BranchDeletionOutcome::NotDeleted,
@@ -577,20 +580,12 @@ fn handle_removed_worktree_output(
                 target_branch.map(String::from),
             )
         } else {
-            // Check if branch is integrated
-            let check_target = target_branch.unwrap_or("HEAD");
-            let deletion_repo = worktrunk::git::Repository::at(main_path);
-            let IntegrationResult {
-                reason,
-                effective_target,
-            } = get_integration_reason(&deletion_repo, branch_name, check_target);
-            // Only use effective_target for display if we had a real target (not "HEAD" fallback)
-            let display_target = target_branch.map(|_| effective_target);
-            let outcome = match reason {
+            // Use pre-computed integration reason
+            let outcome = match pre_computed_integration {
                 Some(r) => BranchDeletionOutcome::Integrated(r),
                 None => BranchDeletionOutcome::NotDeleted,
             };
-            (outcome, display_target)
+            (outcome, target_branch.map(String::from))
         };
 
         let should_delete_branch = matches!(

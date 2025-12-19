@@ -142,6 +142,23 @@ impl RepositoryCliExt for Repository {
             _ => default_branch,
         };
 
+        // Pre-compute integration reason to avoid race conditions when removing
+        // multiple worktrees in background mode. Background git processes can hold
+        // locks that cause subsequent integration checks to fail.
+        let integration_reason = if deletion_mode.should_keep() || deletion_mode.is_force() {
+            // Skip integration check if user explicitly controls branch deletion
+            None
+        } else if let Some(ref target) = target_branch {
+            // Use main_path repo for integration check (may be different from current repo)
+            let main_repo = Repository::at(&main_path);
+            let effective_target = main_repo.effective_integration_target(target);
+            let mut provider =
+                worktrunk::git::LazyGitIntegration::new(&main_repo, branch_name, &effective_target);
+            worktrunk::git::check_integration(&mut provider)
+        } else {
+            None
+        };
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,
@@ -149,6 +166,7 @@ impl RepositoryCliExt for Repository {
             branch_name: Some(branch_name.to_string()),
             deletion_mode,
             target_branch,
+            integration_reason,
         })
     }
 
@@ -188,6 +206,20 @@ impl RepositoryCliExt for Repository {
             _ => default_branch,
         };
 
+        // Pre-compute integration reason (same logic as remove_worktree_by_name)
+        let integration_reason =
+            if deletion_mode.should_keep() || deletion_mode.is_force() || branch_name.is_none() {
+                None
+            } else if let (Some(target), Some(bn)) = (&target_branch, &branch_name) {
+                let main_repo = Repository::at(&main_path);
+                let effective_target = main_repo.effective_integration_target(target);
+                let mut provider =
+                    worktrunk::git::LazyGitIntegration::new(&main_repo, bn, &effective_target);
+                worktrunk::git::check_integration(&mut provider)
+            } else {
+                None
+            };
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path: current_path,
@@ -195,6 +227,7 @@ impl RepositoryCliExt for Repository {
             branch_name,
             deletion_mode,
             target_branch,
+            integration_reason,
         })
     }
 

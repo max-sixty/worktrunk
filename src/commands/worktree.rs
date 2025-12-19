@@ -423,6 +423,11 @@ pub enum RemoveResult {
         branch_name: Option<String>,
         deletion_mode: BranchDeletionMode,
         target_branch: Option<String>,
+        /// Pre-computed integration reason (if branch is integrated with target).
+        /// Computed upfront to avoid race conditions when removing multiple worktrees
+        /// in background mode (background git operations can hold locks that cause
+        /// subsequent integration checks to fail).
+        integration_reason: Option<worktrunk::git::IntegrationReason>,
     },
     /// Branch exists but has no worktree - attempt branch deletion only
     BranchOnly {
@@ -786,6 +791,7 @@ pub fn handle_remove_by_path(
         branch_name: branch,
         deletion_mode: BranchDeletionMode::Keep, // Can't delete branch for detached worktree
         target_branch: None,
+        integration_reason: None, // Not applicable for detached worktrees
     })
 }
 
@@ -1179,6 +1185,7 @@ mod tests {
             branch_name: Some("feature".to_string()),
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
+            integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -1188,6 +1195,7 @@ mod tests {
                 branch_name,
                 deletion_mode,
                 target_branch,
+                integration_reason,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -1196,6 +1204,7 @@ mod tests {
                 assert!(!deletion_mode.should_keep());
                 assert!(!deletion_mode.is_force());
                 assert_eq!(target_branch.as_deref(), Some("main"));
+                assert!(integration_reason.is_some());
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
@@ -1229,6 +1238,7 @@ mod tests {
             branch_name: None, // Detached HEAD
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
+            integration_reason: None, // Force delete skips integration check
         };
         match result {
             RemoveResult::RemovedWorktree {
