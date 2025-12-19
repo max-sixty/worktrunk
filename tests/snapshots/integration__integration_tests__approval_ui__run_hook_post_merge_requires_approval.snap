@@ -12,4 +12,4 @@ exit_code: 1
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Post-merge cleanup for {{ branch }}'[0m[2m
 [31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 
-[2m↳[22m [2mIn CI/CD, use [90m--force[39m to skip prompts. To pre-approve commands, use [90mwt hook approvals add[39m[22m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m

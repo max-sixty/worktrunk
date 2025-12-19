@@ -595,6 +595,7 @@ pub fn handle_switch(
                 .with_context(|| format!("Failed to move {path_display} to {backup_display}"))?;
         } else {
             return Err(GitError::WorktreePathExists {
+                branch: resolved_branch.clone(),
                 path: worktree_path,
             }
             .into());
@@ -642,6 +643,7 @@ pub fn handle_switch(
                 })
             {
                 return Err(GitError::WorktreePathExists {
+                    branch: resolved_branch.clone(),
                     path: std::path::PathBuf::from(path_str),
                 }
                 .into());

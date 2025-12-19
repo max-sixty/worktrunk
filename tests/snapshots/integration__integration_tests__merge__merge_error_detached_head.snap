@@ -32,4 +32,4 @@ exit_code: 1
 ----- stderr -----
 [31m✗[39m [31mCannot merge: not on a branch (detached HEAD)[39m
 
-[2m↳[22m [2mSwitch to a branch first with [90mgit switch <branch>[39m[22m
+[2m↳[22m [2mTo switch to a branch, run [90mgit switch <branch>[39m[22m

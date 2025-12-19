@@ -36,4 +36,4 @@ exit_code: 1
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
 [0m[31m✗[39m [31mpre-remove command failed: exit status: 1[39m
 
-[2m↳[22m [2mTo skip pre-remove commands, add [90m--no-verify[39m[22m
+[2m↳[22m [2mTo skip pre-remove hooks, re-run with [90m--no-verify[39m[22m

@@ -4,4 +4,4 @@ expression: err_with_hint.to_string()
 ---
 [31m✗[39m [31mpre-merge command failed: [1mtest[22m: exit code 1[39m
 
-[2m↳[22m [2mTo skip pre-merge commands, add [90m--no-verify[39m[22m
+[2m↳[22m [2mTo skip pre-merge hooks, re-run with [90m--no-verify[39m[22m

@@ -34,4 +34,4 @@ exit_code: 1
 ----- stderr -----
 [0m[31m✗[39m [31mBranch [1m__WORKTRUNK_CD__/tmp[22m already exists[39m
 
-[2m↳[22m [2mRemove [90m--create[39m flag to switch to the existing branch[22m
+[2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m; run [90mwt switch __WORKTRUNK_CD__/tmp[39m[22m

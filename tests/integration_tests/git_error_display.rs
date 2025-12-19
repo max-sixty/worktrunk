@@ -60,6 +60,7 @@ fn display_worktree_path_occupied() {
 #[test]
 fn display_worktree_path_exists() {
     let err = GitError::WorktreePathExists {
+        branch: "feature".to_string(),
         path: PathBuf::from("/tmp/repo.feature"),
     };
 
