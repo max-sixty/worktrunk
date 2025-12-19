@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -30,7 +31,7 @@ exit_code: 0
 
 ----- stderr -----
   [1mBranch[0m           [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m                     [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ [1mfeature-current[0m      [2m↑[22m                 [32m↑1[0m      [1m../repo.feature-current[0m           [2m431987e2[0m  [2m23h[0m   [2mCommit at 01:00
+@ feature-current      [2m↑[22m                 [32m↑1[0m      ../repo.feature-current           [2m431987e2[0m  [2m23h[0m   [2mCommit at 01:00
 ^ main                 [2m^[22m                         .                                 [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
 + feature-newest       [2m↑[22m                 [32m↑1[0m      ../repo.feature-newest            [2m721211d9[0m  [2m21h[0m   [2mCommit at 03:00
 + feature-middle       [2m↑[22m                 [32m↑1[0m      ../repo.feature-middle            [2ma84219ce[0m  [2m22h[0m   [2mCommit at 02:00
