@@ -17,10 +17,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -31,9 +33,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2md233817[22m (no commit/squash/rebase needed)[39m
-[107m [0m  * [33md233817[m Add feature
-[107m [0m   feature.txt | 1 [32m+[m
-[107m [0m   1 file changed, 1 insertion(+)
-✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-⚪ Worktree preserved (--no-remove)
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2md233817[22m (no commit/squash/rebase needed)[39m
+[107m [0m * [33md233817[m Add feature
+[107m [0m  feature.txt | 1 [32m+[m
+[107m [0m  1 file changed, 1 insertion(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+[2m○[22m Worktree preserved (--no-remove)

@@ -2,4 +2,4 @@
 source: src/styling/mod.rs
 expression: result
 ---
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'hello'[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mgrep[0m[2m hello [0m[2m[36m>[0m[2m output.txt [0m[2m[36m&&[0m[2m [0m[2m[34mcat[0m[2m output.txt[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'hello'[0m[2m [0m[2m[36m|[0m[2m [0m[2m[34mgrep[0m[2m hello [0m[2m[36m>[0m[2m output.txt [0m[2m[36m&&[0m[2m [0m[2m[34mcat[0m[2m output.txt[0m

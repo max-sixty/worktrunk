@@ -21,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -31,8 +32,8 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRunning user pre-merge [1mcheck[22m:[39m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1
-[0m❌ [31mpre-merge command failed: [1mcheck[22m: exit status: 1[39m
+[36m◎[39m [36mRunning user pre-merge [1mcheck[22m:[39m
+[107m [0m [2m[0m[2m[34mexit[0m[2m 1
+[0m[31m✗[39m [31mpre-merge command failed: [1mcheck[22m: exit status: 1[39m
 
-💡 [2mTo skip pre-merge commands, add [90m--no-verify[39m[22m
+[2m↳[22m [2mTo skip pre-merge commands, add [90m--no-verify[39m[22m

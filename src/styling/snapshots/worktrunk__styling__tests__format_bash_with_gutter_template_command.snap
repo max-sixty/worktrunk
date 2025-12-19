@@ -2,5 +2,5 @@
 source: src/styling/mod.rs
 expression: result
 ---
-[107m [0m  [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-cR[0m[2m {{ repo_root }}/target/debug/.fingerprint {{ repo_root [0m
-[107m [0m  [2m}}/target/debug/build {{ worktree }}/target/debug/[0m
+[107m [0m [2m[0m[2m[34mcp[0m[2m [0m[2m[36m-cR[0m[2m {{ repo_root }}/target/debug/.fingerprint {{ repo_root [0m
+[107m [0m [2m}}/target/debug/build {{ worktree }}/target/debug/[0m

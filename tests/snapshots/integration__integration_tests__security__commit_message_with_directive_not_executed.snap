@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -32,4 +33,4 @@ exit_code: 0
 @ [1mmain[0m         [2m^[22m                         [1m.[0m                         [2m85d55864[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
 + [2mfeature[0m      [2m_[22m                         [2m../repo.feature[0m           [2m85d55864[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
 
-⚪ [2mShowing 2 worktrees
+○ [2mShowing 2 worktrees

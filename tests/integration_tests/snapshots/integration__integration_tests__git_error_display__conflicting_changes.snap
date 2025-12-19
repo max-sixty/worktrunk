@@ -2,8 +2,8 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mCannot push: conflicting uncommitted changes in:[39m
-[107m [0m  src/main.rs
-[107m [0m  src/lib.rs
+[31m✗[39m [31mCannot push: conflicting uncommitted changes in:[39m
+[107m [0m src/main.rs
+[107m [0m src/lib.rs
 
-💡 [2mCommit or stash these changes in /tmp/repo.main first[22m
+[2m↳[22m [2mCommit or stash these changes in /tmp/repo.main first[22m

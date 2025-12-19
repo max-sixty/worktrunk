@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -32,4 +33,4 @@ exit_code: 0
 @ [1mmain[0m           [2m^[22m                         [1m.[0m                           [2mc80da958[0m  [2m1d[0m    [2mShort message
 + [2mfeature-a[0m      [2m⊂[22m                     [2m[31m↓1[0m  [2m../repo.feature-a[0m           [2m0fcd1a46[0m  [2m1d[0m    [2mThis is a very long commit message that should test how the me…
 
-⚪ [2mShowing 2 worktrees
+○ [2mShowing 2 worktrees

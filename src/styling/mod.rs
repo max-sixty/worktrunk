@@ -330,11 +330,11 @@ command = "npm install"
         let result = format_with_gutter(commit_msg, "", Some(80));
 
         insta::assert_snapshot!(result, @r"
-        [107m [0m  This commit refactors the authentication system to use a more secure
-        [107m [0m  token-based approach instead of the previous session-based system which had
-        [107m [0m  several security vulnerabilities that were identified during the security
-        [107m [0m  audit last month. The new implementation follows industry best practices and
-        [107m [0m  includes proper token rotation and expiration handling.
+        [107m [0m This commit refactors the authentication system to use a more secure
+        [107m [0m token-based approach instead of the previous session-based system which had
+        [107m [0m several security vulnerabilities that were identified during the security
+        [107m [0m audit last month. The new implementation follows industry best practices and
+        [107m [0m includes proper token rotation and expiration handling.
         ");
     }
 

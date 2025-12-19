@@ -18,6 +18,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -33,4 +34,4 @@ exit_code: 0
 + complex  [36m+[39m [36m?[39m [2m↑[22m       [32m+1[0m   [31m-1[0m   [32m↑1[0m      ../repo.complex           [2m42162296[0m  [2m1d[0m    [2mComplex
 + simple     [36m?[39m [2m↑[22m                 [32m↑1[0m      ../repo.simple            [2m63ee5cb5[0m  [2m1d[0m    [2mSimple
 
-⚪ [2mShowing 3 worktrees, 2 with changes, 2 ahead
+○ [2mShowing 3 worktrees, 2 with changes, 2 ahead

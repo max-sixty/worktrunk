@@ -106,9 +106,9 @@ fn test_switch_internal_directive(repo: TestRepo) {
         ----- stdout -----
 
         ----- stderr -----
-        [0m❌ [31mBranch [1mmy-feature[22m not found[39m
+        [0m[31m✗[39m [31mBranch [1mmy-feature[22m not found[39m
 
-        💡 [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
+        [2m↳[22m [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
         ");
     });
 }
@@ -132,9 +132,9 @@ fn test_switch_without_internal(repo: TestRepo) {
         ----- stdout -----
 
         ----- stderr -----
-        ❌ [31mBranch [1mmy-feature[22m not found[39m
+        [31m✗[39m [31mBranch [1mmy-feature[22m not found[39m
 
-        💡 [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
+        [2m↳[22m [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
         ");
     });
 }
@@ -161,7 +161,7 @@ fn test_remove_internal_directive(repo: TestRepo) {
         ----- stdout -----
 
         ----- stderr -----
-        [0m❌ [31mThe main worktree cannot be removed[39m
+        [0m[31m✗[39m [31mThe main worktree cannot be removed[39m
         ");
     });
 }
@@ -183,7 +183,7 @@ fn test_remove_without_internal(repo: TestRepo) {
         ----- stdout -----
 
         ----- stderr -----
-        ❌ [31mThe main worktree cannot be removed[39m
+        [31m✗[39m [31mThe main worktree cannot be removed[39m
         ");
     });
 }

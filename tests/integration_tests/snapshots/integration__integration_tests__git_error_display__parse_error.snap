@@ -1,5 +1,5 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mInvalid branch name format[39m
+[31m✗[39m [31mInvalid branch name format[39m

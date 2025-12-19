@@ -2,4 +2,4 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mpre-merge command failed: [1mtest[22m: exit code 1[39m
+[31m✗[39m [31mpre-merge command failed: [1mtest[22m: exit code 1[39m

@@ -3,13 +3,13 @@ source: tests/integration_tests/config_state.rs
 expression: "String::from_utf8_lossy(&output.stderr)"
 ---
 [36mDEFAULT BRANCH[39m
-[107m [0m  main
+[107m [0m main
 
 [36mPREVIOUS BRANCH[39m
-[107m [0m  (none)
+[107m [0m (none)
 
 [36mBRANCH MARKERS[39m
-[107m [0m  (none)
+[107m [0m (none)
 
 [36mCI STATUS CACHE[39m
  Branch  Status Age   Head   
@@ -19,4 +19,4 @@ expression: "String::from_utf8_lossy(&output.stderr)"
  main    none   now deadbeef
 
 [36mLOG FILES[39m  @ .git/wt-logs
-[107m [0m  (none)
+[107m [0m (none)

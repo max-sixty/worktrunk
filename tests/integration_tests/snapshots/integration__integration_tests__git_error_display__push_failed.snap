@@ -1,8 +1,8 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mPush failed[39m
-[107m [0m  To /Users/user/workspace/repo/.git
-[107m [0m   ! [remote rejected] HEAD -> main (Up-to-date check failed)
-[107m [0m  error: failed to push some refs to '/Users/user/workspace/repo/.git'
+[31m✗[39m [31mPush failed[39m
+[107m [0m To /Users/user/workspace/repo/.git
+[107m [0m  ! [remote rejected] HEAD -> main (Up-to-date check failed)
+[107m [0m error: failed to push some refs to '/Users/user/workspace/repo/.git'

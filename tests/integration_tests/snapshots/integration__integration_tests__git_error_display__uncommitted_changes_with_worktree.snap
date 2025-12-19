@@ -1,7 +1,7 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mCannot remove worktree: [1mfeature-branch[22m has uncommitted changes[39m
+[31m✗[39m [31mCannot remove worktree: [1mfeature-branch[22m has uncommitted changes[39m
 
-💡 [2mCommit or stash changes first[22m
+[2m↳[22m [2mCommit or stash changes first[22m

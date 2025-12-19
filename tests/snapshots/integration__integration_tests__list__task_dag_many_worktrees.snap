@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -42,4 +43,4 @@ exit_code: 0
 + [2mfeature-8[0m       [2m_[22m                         [2m../repo.feature-8[0m            [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
 + [2mfeature-9[0m       [2m_[22m                         [2m../repo.feature-9[0m            [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
 
-⚪ [2mShowing 11 worktrees
+○ [2mShowing 11 worktrees

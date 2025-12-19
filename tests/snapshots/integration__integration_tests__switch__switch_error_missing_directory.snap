@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,6 +30,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mWorktree directory missing for [1mmissing-wt[22m[39m
+[31m✗[39m [31mWorktree directory missing for [1mmissing-wt[22m[39m
 
-💡 [2mTo clean up, run [90mgit worktree prune[39m[22m
+[2m↳[22m [2mTo clean up, run [90mgit worktree prune[39m[22m

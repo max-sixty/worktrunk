@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -38,4 +39,4 @@ exit_code: 0
 + [2min-sync[0m          [2m_[22m[2m|[22m                                   [2m../repo.in-sync[0m         [2m|[0m         [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
 + [2mno-upstream[0m      [2m_[22m                                    [2m../repo.no-upstream[0m               [2mb8b9f445[0m  [2m1d[0m    [2mInitial commit on main
 
-⚪ [2mShowing 6 worktrees, 2 ahead
+○ [2mShowing 6 worktrees, 2 ahead

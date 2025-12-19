@@ -14,13 +14,16 @@ use super::{get_terminal_width, visual_width};
 ///
 /// The gutter formatting adds:
 /// - 1 column: colored space (gutter)
-/// - 2 columns: regular spaces for padding
+/// - 1 column: regular space for padding
 ///
-/// Total: 3 columns
+/// Total: 2 columns
+///
+/// This aligns with message symbols (1 char) + space (1 char) = 2 columns,
+/// so gutter content starts at the same column as message text.
 ///
 /// When passing widths to tools like git --stat-width, subtract this overhead
 /// so the final output (content + gutter) fits within the terminal width.
-pub const GUTTER_OVERHEAD: usize = 3;
+pub const GUTTER_OVERHEAD: usize = 2;
 
 /// Wraps text at word boundaries to fit within the specified width
 ///
@@ -99,8 +102,8 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
 /// * `left_margin` - Should always be "" (gutter provides all visual separation)
 /// * `max_width` - Optional maximum width (for testing). If None, auto-detects terminal width.
 ///
-/// The gutter appears at column 0, followed by 2 spaces, then the content starts at column 3.
-/// This aligns with emoji messages where the emoji (2 columns) + space (1 column) also starts content at column 3.
+/// The gutter appears at column 0, followed by 1 space, then the content starts at column 2.
+/// This aligns with message symbols (1 column) + space (1 column) = content at column 2.
 ///
 /// # Example
 /// ```
@@ -115,9 +118,9 @@ pub fn format_with_gutter(content: &str, left_margin: &str, max_width: Option<us
     // Use provided width or detect terminal width (respects COLUMNS env var)
     let term_width = max_width.unwrap_or_else(get_terminal_width);
 
-    // Account for gutter (1) + spaces (2) + left_margin
+    // Account for gutter (1) + space (1) + left_margin
     let left_margin_width = left_margin.width();
-    let available_width = term_width.saturating_sub(3 + left_margin_width);
+    let available_width = term_width.saturating_sub(2 + left_margin_width);
 
     for line in content.lines() {
         // Wrap the line at word boundaries
@@ -125,7 +128,7 @@ pub fn format_with_gutter(content: &str, left_margin: &str, max_width: Option<us
 
         for wrapped_line in wrapped_lines {
             output.push_str(&format!(
-                "{left_margin}{gutter} {gutter:#}  {wrapped_line}\n"
+                "{left_margin}{gutter} {gutter:#} {wrapped_line}\n"
             ));
         }
     }
@@ -196,7 +199,7 @@ fn format_bash_with_gutter_impl(
     // Calculate available width for content
     let term_width = width_override.unwrap_or_else(get_terminal_width);
     let left_margin_width = left_margin.width();
-    let available_width = term_width.saturating_sub(3 + left_margin_width);
+    let available_width = term_width.saturating_sub(2 + left_margin_width);
 
     // Set up tree-sitter bash highlighting
     let highlight_names = vec![
@@ -249,7 +252,7 @@ fn format_bash_with_gutter_impl(
             styled_line.push_str(line);
             for wrapped in wrap_styled_text(&styled_line, available_width) {
                 output.push_str(&format!(
-                    "{left_margin}{gutter} {gutter:#}  {wrapped}{reset}\n"
+                    "{left_margin}{gutter} {gutter:#} {wrapped}{reset}\n"
                 ));
             }
             continue;
@@ -304,7 +307,7 @@ fn format_bash_with_gutter_impl(
         // Wrap and output with gutter
         for wrapped in wrap_styled_text(&styled_line, available_width) {
             output.push_str(&format!(
-                "{left_margin}{gutter} {gutter:#}  {wrapped}{reset}\n"
+                "{left_margin}{gutter} {gutter:#} {wrapped}{reset}\n"
             ));
         }
     }
@@ -437,7 +440,7 @@ mod tests {
     #[test]
     fn test_gutter_overhead_constant() {
         // Verify the overhead matches documented value
-        assert_eq!(GUTTER_OVERHEAD, 3);
+        assert_eq!(GUTTER_OVERHEAD, 2);
     }
 
     #[test]

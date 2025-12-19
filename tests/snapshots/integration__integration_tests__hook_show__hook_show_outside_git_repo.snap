@@ -11,6 +11,7 @@ info:
     COLUMNS: "150"
     GIT_EDITOR: ""
     HOME: "[TEST_HOME]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -21,4 +22,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mfatal: not a git repository (or any of the parent directories): .git[39m
+[31m✗[39m [31mfatal: not a git repository (or any of the parent directories): .git[39m

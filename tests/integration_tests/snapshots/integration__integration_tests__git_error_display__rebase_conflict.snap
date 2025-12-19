@@ -1,6 +1,6 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mRebase onto [1mmain[22m incomplete[39m
-[107m [0m  CONFLICT (content): Merge conflict in src/main.rs
+[31m✗[39m [31mRebase onto [1mmain[22m incomplete[39m
+[107m [0m CONFLICT (content): Merge conflict in src/main.rs

@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -30,7 +31,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[0m❌ [31mCannot create worktree for [1mfeature[22m: existing worktree at [1m[REPO].feature[22m, detached[39m
+[0m[31m✗[39m [31mCannot create worktree for [1mfeature[22m: existing worktree at [1m[REPO].feature[22m, detached[39m
 
-💡 [2mSwitch the worktree at [90m[REPO].feature[39m to [90mfeature[39m[22m
-[107m [0m  [2m[0m[2m[34mcd[0m[2m [REPO].feature [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch feature
+[2m↳[22m [2mSwitch the worktree at [90m[REPO].feature[39m to [90mfeature[39m[22m
+[107m [0m [2m[0m[2m[34mcd[0m[2m [REPO].feature [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch feature

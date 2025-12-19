@@ -1,7 +1,7 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mBranch [1mfeature[22m already exists[39m
+[31m✗[39m [31mBranch [1mfeature[22m already exists[39m
 
-💡 [2mRemove [90m--create[39m flag to switch to the existing branch[22m
+[2m↳[22m [2mRemove [90m--create[39m flag to switch to the existing branch[22m
