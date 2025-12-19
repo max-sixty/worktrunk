@@ -14,18 +14,6 @@ use super::model::{
 };
 use worktrunk::git::LineDiff;
 
-/// Compute style for branch/path based on worktree state.
-///
-/// Uses bold only for current worktree - no colors. Gutter symbols (^@-+)
-/// already communicate position, so color adds no information.
-fn position_style(is_current: bool, default: Style) -> Style {
-    if is_current {
-        Style::new().bold()
-    } else {
-        default
-    }
-}
-
 impl DiffDisplayConfig {
     /// Format diff values with fixed-width alignment for tabular display.
     ///
@@ -444,15 +432,12 @@ impl LayoutConfig {
                 }
                 ColumnKind::Branch => {
                     // Show actual branch name (no dim - start normal, gray out later if removable)
-                    cell.push_styled(branch, position_style(is_current, Style::default()));
+                    cell.push_raw(branch.to_string());
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Path => {
                     // Show actual path (no dim - start normal, gray out later if removable)
-                    cell.push_styled(
-                        &shortened_path,
-                        position_style(is_current, Style::default()),
-                    );
+                    cell.push_raw(&shortened_path);
                     cell.pad_to(col.width);
                 }
                 ColumnKind::Commit => {
@@ -526,17 +511,12 @@ impl<'a> ListRowContext<'a> {
     }
 
     fn compute_text_style(&self) -> Option<Style> {
-        // Bold for current worktree, no color - gutter symbols already differentiate positions
-        let base_style = if self.is_current {
-            Some(Style::new().bold())
+        // No special styling for current worktree - gutter symbol (@) and top position
+        // already communicate it. Only dim removable worktrees.
+        if self.item.should_dim() {
+            Some(Style::new().dimmed())
         } else {
             None
-        };
-
-        if self.item.should_dim() {
-            Some(base_style.unwrap_or_default().dimmed())
-        } else {
-            base_style
         }
     }
 }
