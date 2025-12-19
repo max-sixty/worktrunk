@@ -1824,6 +1824,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // the filter replaces the path portion leaving '[REPO]' with quotes. Remove them.
     settings.add_filter(r"'\[REPO\]'", "[REPO]");
     settings.add_filter(r"'\[REPO\](\.[a-zA-Z0-9_-]+)'", "[REPO]$1");
+    // Also handle syntax-highlighted quoted strings (green color for single-quoted strings)
+    settings.add_filter(r"\x1b\[32m\[REPO\]\x1b\[0m", "[REPO]");
+    settings.add_filter(r"\x1b\[32m\[REPO\](\.[a-zA-Z0-9_-]+)\x1b\[0m", "[REPO]$1");
 
     // Normalize backslashes for Windows compatibility
     settings.add_filter(r"\\", "/");
