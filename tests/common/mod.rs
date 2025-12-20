@@ -1779,18 +1779,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "_REPO_");
     // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
     settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
-    // Match single-quoted versions for shell_escape output (Windows paths need quoting)
-    // Strip quotes in replacement to normalize across platforms
-    settings.add_filter(&format!("'{}'", regex::escape(root_str)), "_REPO_");
-    settings.add_filter(
-        &format!("'{}'", regex::escape(&root_str.replace('\\', "/"))),
-        "_REPO_",
-    );
-    // Also add POSIX-style quoted path for Git Bash
-    settings.add_filter(
-        &format!("'{}'", regex::escape(&to_posix_path(root_str))),
-        "_REPO_",
-    );
 
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
@@ -1799,10 +1787,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Filters are applied in order, so ~/repo.feature is replaced before ~/repo would match it.
     settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)", "_REPO_$1");
     settings.add_filter(r"~/repo", "_REPO_");
-    // Match single-quoted versions for shell_escape output (paths with ~ need quoting)
-    // Strip quotes in replacement to normalize across platforms
-    settings.add_filter(r"'~/repo(\.[a-zA-Z0-9_-]+)'", "_REPO_$1");
-    settings.add_filter(r"'~/repo'", "_REPO_");
 
     // Also handle the case where the real home contains the temp directory (Windows/macOS)
     // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
@@ -1811,17 +1795,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         && let Ok(relative) = root_canonical.strip_prefix(&home)
     {
         let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
-        // Match exact repo path
         settings.add_filter(&regex::escape(&tilde_path), "_REPO_");
-        // Match single-quoted versions (strip quotes to normalize across platforms)
-        settings.add_filter(&format!("'{}'", regex::escape(&tilde_path)), "_REPO_");
         // Match worktree paths
         let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
         settings.add_filter(&tilde_worktree_pattern, "_REPO_$1");
-        // Match single-quoted worktree paths (strip quotes to normalize across platforms)
-        let quoted_tilde_worktree_pattern =
-            format!(r"'{}(\.[a-zA-Z0-9_-]+)'", regex::escape(&tilde_path));
-        settings.add_filter(&quoted_tilde_worktree_pattern, "_REPO_$1");
     }
 
     for (name, path) in &repo.worktrees {
@@ -1832,17 +1809,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
         // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
         settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
-        // Match single-quoted versions for shell_escape output
-        // Strip quotes in replacement to normalize across platforms
-        settings.add_filter(&format!("'{}'", regex::escape(path_str)), &replacement);
-        settings.add_filter(
-            &format!("'{}'", regex::escape(&path_str.replace('\\', "/"))),
-            &replacement,
-        );
-        settings.add_filter(
-            &format!("'{}'", regex::escape(&to_posix_path(path_str))),
-            &replacement,
-        );
 
         // Also add tilde-prefixed worktree path filter for Windows
         if let Some(home) = home::home_dir().and_then(|h| canonicalize(&h).ok())
@@ -1850,8 +1816,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         {
             let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
             settings.add_filter(&regex::escape(&tilde_path), &replacement);
-            // Match single-quoted versions (strip quotes to normalize across platforms)
-            settings.add_filter(&format!("'{}'", regex::escape(&tilde_path)), &replacement);
         }
     }
 
@@ -1863,18 +1827,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
     // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
     settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "_REPO_");
-    // Match single-quoted versions (shell_escape quotes paths with ~)
-    // Strip quotes in replacement to normalize across platforms
-    settings.add_filter(r"'~/AppData/Local/Temp/\.tmp[^/]+/repo'", "_REPO_");
     // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
     // Pattern: /c/Users/.../Temp/.tmpXXXXXX/repo and worktrees like /c/.../repo.feature-test
     settings.add_filter(
         r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?",
-        "_REPO_$1",
-    );
-    // Match single-quoted versions (strip quotes to normalize across platforms)
-    settings.add_filter(
-        r"'/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?'",
         "_REPO_$1",
     );
 

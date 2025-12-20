@@ -15,8 +15,9 @@ use worktrunk::git::path_dir_name;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
-    FormattedMessage, PROGRESS_EMOJI, error_message, format_with_gutter, hint_message,
-    info_message, progress_message, success_message, suggest_command, warning_message,
+    FormattedMessage, PROGRESS_EMOJI, SUCCESS_EMOJI, error_message, format_with_gutter,
+    hint_message, info_message, progress_message, success_message, suggest_command,
+    warning_message,
 };
 
 /// Format a switch message with a consistent location phrase
@@ -192,6 +193,69 @@ fn handle_branch_deletion_result(
     }
 }
 
+// ============================================================================
+// FlagNote: Workaround for cformat! being compile-time only
+// ============================================================================
+//
+// We want to parameterize the color (cyan/green) but can't because cformat!
+// parses color tags at compile time before generic substitution. So we have
+// duplicate methods (after_cyan, after_green) instead of after(color).
+//
+// This is ugly but unavoidable. Keep it encapsulated here.
+// ============================================================================
+
+struct FlagNote {
+    text: String,
+    symbol: Option<String>,
+    suffix: String,
+}
+
+impl FlagNote {
+    fn empty() -> Self {
+        Self {
+            text: String::new(),
+            symbol: None,
+            suffix: String::new(),
+        }
+    }
+
+    fn text_only(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            symbol: None,
+            suffix: String::new(),
+        }
+    }
+
+    fn with_symbol(
+        text: impl Into<String>,
+        symbol: impl Into<String>,
+        suffix: impl Into<String>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            symbol: Some(symbol.into()),
+            suffix: suffix.into(),
+        }
+    }
+
+    fn after_cyan(&self) -> String {
+        match &self.symbol {
+            Some(s) => cformat!("{}<cyan>{}</>", s, self.suffix),
+            None => String::new(),
+        }
+    }
+
+    fn after_green(&self) -> String {
+        match &self.symbol {
+            Some(s) => cformat!("{}<green>{}</>", s, self.suffix),
+            None => String::new(),
+        }
+    }
+}
+
+// ============================================================================
+
 /// Get flag acknowledgment note for remove messages
 ///
 /// `target_branch`: The branch we checked integration against (shown in reason)
@@ -199,26 +263,33 @@ fn get_flag_note(
     deletion_mode: BranchDeletionMode,
     outcome: &BranchDeletionOutcome,
     target_branch: Option<&str>,
-) -> String {
+) -> FlagNote {
     if deletion_mode.should_keep() {
-        return " (--no-delete-branch)".to_string();
+        return FlagNote::text_only(" (--no-delete-branch)");
     }
 
     match outcome {
-        BranchDeletionOutcome::NotDeleted => String::new(),
-        BranchDeletionOutcome::ForceDeleted => " (--force-delete)".to_string(),
+        BranchDeletionOutcome::NotDeleted => FlagNote::empty(),
+        BranchDeletionOutcome::ForceDeleted => FlagNote::text_only(" (--force-delete)"),
         BranchDeletionOutcome::Integrated(reason) => {
             let Some(target) = target_branch else {
-                return String::new();
+                return FlagNote::empty();
             };
             let symbol = reason.symbol();
             let desc = reason.description();
-            cformat!(" ({desc} <bold>{target}</>, <dim>{symbol}</>)")
+            FlagNote::with_symbol(
+                cformat!(" ({desc} <bold>{target}</>,"),
+                cformat!(" <dim>{symbol}</>"),
+                ")",
+            )
         }
     }
 }
 
 /// Format message for remove worktree operation (includes emoji and color for consistency)
+///
+/// Returns a FormattedMessage with green styling for success messages.
+/// The symbol (if present) is placed outside the green so it renders in its canonical dim styling.
 ///
 /// `target_branch`: The branch we checked integration against (Some = merge context, None = explicit remove)
 fn format_remove_worktree_message(
@@ -229,7 +300,7 @@ fn format_remove_worktree_message(
     deletion_mode: BranchDeletionMode,
     outcome: &BranchDeletionOutcome,
     target_branch: Option<&str>,
-) -> String {
+) -> FormattedMessage {
     let flag_note = get_flag_note(deletion_mode, outcome, target_branch);
 
     let branch_display = branch.or(Some(branch_name));
@@ -254,21 +325,27 @@ fn format_remove_worktree_message(
         "worktree"
     };
 
-    if changed_directory {
+    // Symbol is placed AFTER closing green so it renders in its canonical dim styling.
+    let flag_text = &flag_note.text;
+    let flag_after = flag_note.after_green();
+    let msg = if changed_directory {
         if let Some(b) = branch_display {
             cformat!(
-                "Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}"
+                "{SUCCESS_EMOJI} <green>Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
             )
         } else {
             cformat!(
-                "Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_note}"
+                "{SUCCESS_EMOJI} <green>Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
             )
         }
     } else if let Some(b) = branch_display {
-        cformat!("Removed <bold>{b}</> {action_suffix}{flag_note}")
+        cformat!(
+            "{SUCCESS_EMOJI} <green>Removed <bold>{b}</> {action_suffix}{flag_text}</>{flag_after}"
+        )
     } else {
-        format!("Removed {action_suffix}{flag_note}")
-    }
+        cformat!("{SUCCESS_EMOJI} <green>Removed {action_suffix}{flag_text}</>{flag_after}")
+    };
+    FormattedMessage::new(msg)
 }
 
 /// Shell integration hint message
@@ -482,8 +559,10 @@ fn handle_branch_only_output(
             &deletion.outcome,
             Some(&deletion.effective_target),
         );
-        super::print(success_message(cformat!(
-            "Removed branch <bold>{branch_name}</>{flag_note}"
+        let flag_text = &flag_note.text;
+        let flag_after = flag_note.after_green();
+        super::print(FormattedMessage::new(cformat!(
+            "{SUCCESS_EMOJI} <green>Removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
         )))?;
     }
 
@@ -594,18 +673,20 @@ fn handle_removed_worktree_output(
         );
 
         let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
+        let flag_text = &flag_note.text;
+        let flag_after = flag_note.after_cyan();
 
         // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
         // Note: We use FormattedMessage directly instead of progress_message() to control
-        // where cyan styling ends. The flag_note (integration reason) should use standard
-        // colors so the symbol appears in its canonical dim styling, not cyan.
+        // where cyan styling ends. The symbol appears after closing cyan so it renders
+        // in its canonical dim styling, not tinted by cyan.
         let action = if deletion_mode.should_keep() {
             cformat!(
-                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree in background; retaining branch</>{flag_note}"
+                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}"
             )
         } else if should_delete_branch {
             cformat!(
-                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree & branch in background</>{flag_note}"
+                "{PROGRESS_EMOJI} <cyan>Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
             )
         } else {
             cformat!(
@@ -680,7 +761,7 @@ fn handle_removed_worktree_output(
         };
 
         // Show success message (includes emoji and color)
-        super::print(success_message(format_remove_worktree_message(
+        super::print(format_remove_worktree_message(
             main_path,
             changed_directory,
             branch_name,
@@ -688,7 +769,7 @@ fn handle_removed_worktree_output(
             deletion_mode,
             &outcome,
             effective_target.as_deref(),
-        )))?;
+        ))?;
 
         // Show hint for unmerged branches (after success message)
         if show_hint {
@@ -907,37 +988,37 @@ mod tests {
 
     #[test]
     fn test_get_flag_note() {
-        // --no-delete-branch flag
-        assert_eq!(
-            get_flag_note(
-                BranchDeletionMode::Keep,
-                &BranchDeletionOutcome::NotDeleted,
-                None
-            ),
-            " (--no-delete-branch)"
+        // --no-delete-branch flag (text only, no symbol, no suffix)
+        let note = get_flag_note(
+            BranchDeletionMode::Keep,
+            &BranchDeletionOutcome::NotDeleted,
+            None,
         );
+        assert_eq!(note.text, " (--no-delete-branch)");
+        assert!(note.symbol.is_none());
+        assert!(note.suffix.is_empty());
 
-        // NotDeleted without flag
-        assert_eq!(
-            get_flag_note(
-                BranchDeletionMode::SafeDelete,
-                &BranchDeletionOutcome::NotDeleted,
-                None
-            ),
-            ""
+        // NotDeleted without flag (empty)
+        let note = get_flag_note(
+            BranchDeletionMode::SafeDelete,
+            &BranchDeletionOutcome::NotDeleted,
+            None,
         );
+        assert!(note.text.is_empty());
+        assert!(note.symbol.is_none());
+        assert!(note.suffix.is_empty());
 
-        // Force deleted
-        assert_eq!(
-            get_flag_note(
-                BranchDeletionMode::ForceDelete,
-                &BranchDeletionOutcome::ForceDeleted,
-                None
-            ),
-            " (--force-delete)"
+        // Force deleted (text only, no symbol, no suffix)
+        let note = get_flag_note(
+            BranchDeletionMode::ForceDelete,
+            &BranchDeletionOutcome::ForceDeleted,
+            None,
         );
+        assert_eq!(note.text, " (--force-delete)");
+        assert!(note.symbol.is_none());
+        assert!(note.suffix.is_empty());
 
-        // Integration reasons - check description and target separately since target is styled
+        // Integration reasons - text includes description and target, symbol is separate, suffix is closing paren
         let cases = [
             (IntegrationReason::SameCommit, "same commit as"),
             (IntegrationReason::Ancestor, "ancestor of"),
@@ -952,14 +1033,30 @@ mod tests {
                 Some("main"),
             );
             assert!(
-                note.contains(expected_desc),
-                "reason {:?} should contain '{}'",
+                note.text.contains(expected_desc),
+                "reason {:?} text should contain '{}'",
                 reason,
                 expected_desc
             );
             assert!(
-                note.contains("main"),
-                "reason {:?} should contain target 'main'",
+                note.text.contains("main"),
+                "reason {:?} text should contain target 'main'",
+                reason
+            );
+            assert!(
+                note.symbol.is_some(),
+                "reason {:?} should have a symbol",
+                reason
+            );
+            let symbol = note.symbol.as_ref().unwrap();
+            assert!(
+                symbol.contains(reason.symbol()),
+                "reason {:?} symbol part should contain the symbol",
+                reason
+            );
+            assert_eq!(
+                note.suffix, ")",
+                "reason {:?} suffix should be closing paren",
                 reason
             );
         }
@@ -979,10 +1076,10 @@ mod tests {
             &BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit),
             Some("main"),
         );
-        assert!(msg.contains("feature"));
-        assert!(msg.contains("worktree & branch"));
-        assert!(msg.contains("same commit as"));
-        assert!(msg.contains("main"));
+        assert!(msg.as_str().contains("feature"));
+        assert!(msg.as_str().contains("worktree & branch"));
+        assert!(msg.as_str().contains("same commit as"));
+        assert!(msg.as_str().contains("main"));
 
         // Removed worktree only (--no-delete-branch)
         let msg = format_remove_worktree_message(
@@ -994,9 +1091,9 @@ mod tests {
             &BranchDeletionOutcome::NotDeleted,
             None,
         );
-        assert!(msg.contains("worktree"));
-        assert!(!msg.contains("& branch"));
-        assert!(msg.contains("--no-delete-branch"));
+        assert!(msg.as_str().contains("worktree"));
+        assert!(!msg.as_str().contains("& branch"));
+        assert!(msg.as_str().contains("--no-delete-branch"));
 
         // Removed with directory change
         let msg = format_remove_worktree_message(
@@ -1008,8 +1105,8 @@ mod tests {
             &BranchDeletionOutcome::ForceDeleted,
             None,
         );
-        assert!(msg.contains("changed directory"));
-        assert!(msg.contains("--force-delete"));
+        assert!(msg.as_str().contains("changed directory"));
+        assert!(msg.as_str().contains("--force-delete"));
 
         // Unmerged branch retained
         let msg = format_remove_worktree_message(
@@ -1021,7 +1118,7 @@ mod tests {
             &BranchDeletionOutcome::NotDeleted,
             None,
         );
-        assert!(msg.contains("retaining unmerged branch"));
+        assert!(msg.as_str().contains("retaining unmerged branch"));
     }
 
     #[test]
