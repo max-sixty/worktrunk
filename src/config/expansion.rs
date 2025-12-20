@@ -5,9 +5,30 @@
 //! - `shell_escape: false` — Literal values for filesystem paths
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
+//!
+//! # Custom Filters
+//!
+//! - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe names
+//!   ```text
+//!   {{ branch | sanitize }} → feature-foo
+//!   ```
+//!
+//! - `hash_port` — Hash a string to a deterministic port number (10000-19999)
+//!   ```text
+//!   {{ branch | hash_port }}              → 12472
+//!   {{ repo ~ "-" ~ branch | hash_port }} → 15839
+//!   ```
 
 use minijinja::{Environment, Value};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
+/// Hash a string to a port in range 10000-19999.
+fn string_to_port(s: &str) -> u16 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    10000 + (h.finish() % 10000) as u16
+}
 
 /// Sanitize a branch name for use in filesystem paths.
 ///
@@ -84,10 +105,11 @@ pub fn expand_template(
         env.set_keep_trailing_newline(true);
     }
 
-    // Register the `sanitize` filter for branch names (replaces / and \ with -)
+    // Register custom filters
     env.add_filter("sanitize", |value: Value| -> String {
         sanitize_branch_name(value.as_str().unwrap_or_default())
     });
+    env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     let tmpl = env
         .template_from_str(template)
@@ -248,5 +270,32 @@ mod tests {
                 .unwrap()
                 .ends_with('\n')
         );
+    }
+
+    #[test]
+    fn test_string_to_port_deterministic_and_in_range() {
+        for input in ["main", "feature-foo", "", "a", "long-branch-name-123"] {
+            let p1 = string_to_port(input);
+            let p2 = string_to_port(input);
+            assert_eq!(p1, p2, "same input should produce same port");
+            assert!((10000..20000).contains(&p1), "port {} out of range", p1);
+        }
+    }
+
+    #[test]
+    fn test_hash_port_filter() {
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature-foo");
+        vars.insert("repo", "myrepo");
+
+        // Filter produces a number in range
+        let result = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+        let port: u16 = result.parse().expect("should be a number");
+        assert!((10000..20000).contains(&port));
+
+        // Concatenation produces different (but deterministic) result
+        let r1 = expand_template("{{ repo ~ '-' ~ branch | hash_port }}", &vars, false).unwrap();
+        let r2 = expand_template("{{ repo ~ '-' ~ branch | hash_port }}", &vars, false).unwrap();
+        assert_eq!(r1, r2);
     }
 }
