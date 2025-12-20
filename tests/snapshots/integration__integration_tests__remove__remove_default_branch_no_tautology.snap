@@ -26,4 +26,4 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mmain[22m worktree...[39m
-[32m✓[39m [32mRemoved [1mmain[22m worktree & branch[39m
+[32m✓ Removed [1mmain[22m worktree & branch[39m

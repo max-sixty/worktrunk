@@ -15,9 +15,8 @@ use worktrunk::git::path_dir_name;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::Shell;
 use worktrunk::styling::{
-    FormattedMessage, PROGRESS_SYMBOL, SUCCESS_SYMBOL, error_message, format_with_gutter,
-    hint_message, info_message, progress_message, success_message, suggest_command,
-    warning_message,
+    FormattedMessage, error_message, format_with_gutter, hint_message, info_message,
+    progress_message, success_message, suggest_command, warning_message,
 };
 
 /// Format a switch message with a consistent location phrase
@@ -325,25 +324,24 @@ fn format_remove_worktree_message(
         "worktree"
     };
 
-    // Symbol is placed AFTER closing green so it renders in its canonical dim styling.
+    // Symbol must be inside the <green> block to get proper coloring.
+    // flag_after contains integration symbols (like _) that render outside green in dim.
     let flag_text = &flag_note.text;
     let flag_after = flag_note.after_green();
     let msg = if changed_directory {
         if let Some(b) = branch_display {
             cformat!(
-                "{SUCCESS_SYMBOL} <green>Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
+                "<green>✓ Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
             )
         } else {
             cformat!(
-                "{SUCCESS_SYMBOL} <green>Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
+                "<green>✓ Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
             )
         }
     } else if let Some(b) = branch_display {
-        cformat!(
-            "{SUCCESS_SYMBOL} <green>Removed <bold>{b}</> {action_suffix}{flag_text}</>{flag_after}"
-        )
+        cformat!("<green>✓ Removed <bold>{b}</> {action_suffix}{flag_text}</>{flag_after}")
     } else {
-        cformat!("{SUCCESS_SYMBOL} <green>Removed {action_suffix}{flag_text}</>{flag_after}")
+        cformat!("<green>✓ Removed {action_suffix}{flag_text}</>{flag_after}")
     };
     FormattedMessage::new(msg)
 }
@@ -562,7 +560,7 @@ fn handle_branch_only_output(
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after_green();
         super::print(FormattedMessage::new(cformat!(
-            "{SUCCESS_SYMBOL} <green>Removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
+            "<green>✓ Removed branch <bold>{branch_name}</>{flag_text}</>{flag_after}"
         )))?;
     }
 
@@ -678,19 +676,18 @@ fn handle_removed_worktree_output(
 
         // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
         // Note: We use FormattedMessage directly instead of progress_message() to control
-        // where cyan styling ends. The symbol appears after closing cyan so it renders
-        // in its canonical dim styling, not tinted by cyan.
+        // where cyan styling ends. Symbol must be inside the <cyan> block to get proper coloring.
         let action = if deletion_mode.should_keep() {
             cformat!(
-                "{PROGRESS_SYMBOL} <cyan>Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}"
             )
         } else if should_delete_branch {
             cformat!(
-                "{PROGRESS_SYMBOL} <cyan>Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
             )
         } else {
             cformat!(
-                "{PROGRESS_SYMBOL} <cyan>Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
             )
         };
         super::print(FormattedMessage::new(action))?;
