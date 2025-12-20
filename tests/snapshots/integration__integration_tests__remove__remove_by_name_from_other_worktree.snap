@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,4 +30,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRemoving [1mfeature-b[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)
+🔄 [36mRemoving [1mfeature-b[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m

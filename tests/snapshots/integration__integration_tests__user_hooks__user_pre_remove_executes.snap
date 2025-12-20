@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -32,4 +33,4 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRunning user pre-remove [1mcleanup[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_PRE_REMOVE_RAN'[0m[2m [0m[2m[36m>[0m[2m ../user_preremove_marker.txt
-[0m🔄 [36mRemoving [1mfeature[22m worktree & branch in background[39m (--force-delete)
+[0m🔄 [36mRemoving [1mfeature[22m worktree & branch in background (--force-delete)[39m
