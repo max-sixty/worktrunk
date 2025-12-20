@@ -1896,15 +1896,16 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 
     // Normalize syntax highlighting around _REPO_ placeholders.
     // Bash syntax highlighters may split tokens differently on different platforms.
-    // Linux CI produces: [2m [0m[2m_REPO_[2m [0m (space, path, space as separate spans)
+    // Linux CI produces: [2m [0m[2m[32m_REPO_[0m[2m [0m (space, green path, space as separate spans)
     // macOS local produces: [2m _REPO_ [0m (all in one span)
+    // The [32m is green color applied to _REPO_ which the local highlighter doesn't add.
     // Normalize CI format to local format by matching the split pattern and merging.
     settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m(_REPO_(?:\.[a-zA-Z0-9_-]+)?)\x1b\[2m \x1b\[0m",
+        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_REPO_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
         "\x1b[2m $1 \x1b[0m",
     );
     settings.add_filter(
-        r"\x1b\[2m \x1b\[0m\x1b\[2m(_WORKTREE_[A-Z0-9_]+_)\x1b\[2m \x1b\[0m",
+        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_WORKTREE_[A-Z0-9_]+_)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
         "\x1b[2m $1 \x1b[0m",
     );
 
