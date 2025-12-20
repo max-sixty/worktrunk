@@ -53,22 +53,23 @@ Controls where new worktrees are created. The template is relative to the reposi
 
 **Available variables:**
 - `{{ main_worktree }}` — main worktree directory name
-- `{{ branch }}` — branch name (slashes replaced with dashes)
+- `{{ branch }}` — raw branch name (e.g., `feature/foo`)
+- `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
 **Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
 
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
+worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
-worktree-path = ".worktrees/{{ branch }}"
+worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
+worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
 ```
 
 ### Command settings
@@ -297,18 +298,19 @@ args = ["-m", "claude-haiku-4.5"]
 
 # Worktree Path Template
 # Variables:
-#   {{ main_worktree }} - Main worktree directory name (e.g., "myproject")
-#   {{ branch }}        - Branch name with slashes replaced by dashes (feature/auth → feature-auth)
+#   {{ main_worktree }}     - Main worktree directory name (e.g., "myproject")
+#   {{ branch }}            - Raw branch name (e.g., "feature/auth")
+#   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
 # Example paths created (main worktree at /Users/dev/myproject, branch feature/auth):
-#   "../{{ main_worktree }}.{{ branch }}" → /Users/dev/myproject.feature-auth
-#   ".worktrees/{{ branch }}"             → /Users/dev/myproject/.worktrees/feature-auth
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
+#   "../{{ main_worktree }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
+#   ".worktrees/{{ branch | sanitize }}"             → /Users/dev/myproject/.worktrees/feature-auth
+worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
 # Alternative: Inside repo (useful for bare repos)
-# worktree-path = ".worktrees/{{ branch }}"
+# worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # List Command Defaults
 # Configure default behavior for `wt list`
@@ -467,10 +469,11 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}      - Repository name (e.g., "my-project")
-#   {{ branch }}    - Branch name (slashes replaced with dashes)
-#   {{ worktree }}  - Absolute path to the worktree
-#   {{ repo_root }} - Absolute path to the repository root
+#   {{ repo }}              - Repository name (e.g., "my-project")
+#   {{ branch }}            - Raw branch name (e.g., "feature/foo")
+#   {{ branch | sanitize }} - Branch name with / and \ replaced by -
+#   {{ worktree }}          - Absolute path to the worktree
+#   {{ repo_root }}         - Absolute path to the repository root
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main")

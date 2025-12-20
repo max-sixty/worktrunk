@@ -186,7 +186,8 @@ All hooks support template variables for dynamic behavior.
 
 Available in all hook types:
 - `{{ repo }}` - Repository name (e.g., "my-project")
-- `{{ branch }}` - Branch name (e.g., "feature-auth")
+- `{{ branch }}` - Raw branch name (e.g., "feature/auth")
+- `{{ branch | sanitize }}` - Branch name with `/` and `\` replaced by `-`
 - `{{ worktree }}` - Absolute path to worktree
 - `{{ repo_root }}` - Absolute path to repository root
 

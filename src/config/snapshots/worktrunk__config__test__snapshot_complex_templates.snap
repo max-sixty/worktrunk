@@ -7,7 +7,7 @@ expression: results
   - feature branch
   - "cd '/path with spaces/wt' && git merge 'main; rm -rf /'"
 - - npm_install
-  - "cd {{ main_worktree }}/{{ branch }} && npm install"
+  - "cd {{ main_worktree }}/{{ branch | sanitize }} && npm install"
   - feature/new-ui
   - cd /repo/path/feature-new-ui && npm install
 - - echo_vars

@@ -10,6 +10,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -75,18 +76,19 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m
   [2m# Worktree Path Template
   [2m# Variables:
-  [2m#   {{ main_worktree }} - Main worktree directory name (e.g., "myproject")
-  [2m#   {{ branch }}        - Branch name with slashes replaced by dashes (feature/auth → feature-auth)
+  [2m#   {{ main_worktree }}     - Main worktree directory name (e.g., "myproject")
+  [2m#   {{ branch }}            - Raw branch name (e.g., "feature/auth")
+  [2m#   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
   [2m#
   [2m# Paths are relative to the main worktree root (original repository directory).
   [2m#
   [2m# Example paths created (main worktree at /Users/dev/myproject, branch feature/auth):
-  [2m#   "../{{ main_worktree }}.{{ branch }}" → /Users/dev/myproject.feature-auth
-  [2m#   ".worktrees/{{ branch }}"             → /Users/dev/myproject/.worktrees/feature-auth
-  [2mworktree-path = "../{{ main_worktree }}.{{ branch }}"
+  [2m#   "../{{ main_worktree }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
+  [2m#   ".worktrees/{{ branch | sanitize }}"             → /Users/dev/myproject/.worktrees/feature-auth
+  [2mworktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
   [2m
   [2m# Alternative: Inside repo (useful for bare repos)
-  [2m# worktree-path = ".worktrees/{{ branch }}"
+  [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
   [2m
   [2m# List Command Defaults
   [2m# Configure default behavior for `wt list`
@@ -243,10 +245,11 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# developers working on the project.
   [2m
   [2m# Available template variables (all hooks):
-  [2m#   {{ repo }}      - Repository name (e.g., "my-project")
-  [2m#   {{ branch }}    - Branch name (slashes replaced with dashes)
-  [2m#   {{ worktree }}  - Absolute path to the worktree
-  [2m#   {{ repo_root }} - Absolute path to the repository root
+  [2m#   {{ repo }}              - Repository name (e.g., "my-project")
+  [2m#   {{ branch }}            - Raw branch name (e.g., "feature/foo")
+  [2m#   {{ branch | sanitize }} - Branch name with / and \ replaced by -
+  [2m#   {{ worktree }}          - Absolute path to the worktree
+  [2m#   {{ repo_root }}         - Absolute path to the repository root
   [2m#
   [2m# Merge-related hooks also support:
   [2m#   {{ target }}    - Target branch for the merge (e.g., "main")

@@ -3,7 +3,7 @@
 //! These tests target potential shell injection vulnerabilities and
 //! edge cases in template variable substitution.
 
-use super::{expand_template, sanitize_branch_name};
+use super::expand_template;
 use std::collections::HashMap;
 
 /// Helper to build vars with common fields
@@ -17,29 +17,33 @@ fn vars_with_branch(branch: &str) -> HashMap<&str, &str> {
 
 #[test]
 fn test_expand_template_normal() {
-    let branch = sanitize_branch_name("feature");
-    let vars = vars_with_branch(&branch);
+    let vars = vars_with_branch("feature");
     let result = expand_template("echo {{ branch }} {{ main_worktree }}", &vars, true).unwrap();
     assert_eq!(result, "echo feature myrepo");
 }
 
 #[test]
 fn test_expand_template_branch_with_slashes() {
-    // Caller is responsible for sanitizing branch names
-    let branch = sanitize_branch_name("feature/nested/branch");
-    let vars = vars_with_branch(&branch);
-    let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
+    // Use {{ branch | sanitize }} to replace slashes with dashes
+    let vars = vars_with_branch("feature/nested/branch");
+    let result = expand_template("echo {{ branch | sanitize }}", &vars, true).unwrap();
     assert_eq!(result, "echo feature-nested-branch");
+}
+
+#[test]
+fn test_expand_template_branch_raw_with_slashes() {
+    // Raw branch preserves slashes
+    let vars = vars_with_branch("feature/nested/branch");
+    let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
+    assert_eq!(result, "echo feature/nested/branch");
 }
 
 // Tests with platform-specific shell escaping (Unix uses single quotes, Windows uses double quotes)
 #[test]
 #[cfg(unix)]
 fn test_expand_template_branch_escaping() {
-    let expand = |input| {
-        let branch = sanitize_branch_name(input);
-        expand_template("echo {{ branch }}", &vars_with_branch(&branch), true).unwrap()
-    };
+    let expand =
+        |input| expand_template("echo {{ branch }}", &vars_with_branch(input), true).unwrap();
 
     assert_eq!(expand("feature name"), "echo 'feature name'"); // spaces
     assert_eq!(expand("feature$(whoami)"), "echo 'feature$(whoami)'"); // command sub
@@ -49,8 +53,7 @@ fn test_expand_template_branch_escaping() {
 #[test]
 #[cfg(unix)]
 fn snapshot_expand_template_branch_with_quotes() {
-    let branch = sanitize_branch_name("feature'test");
-    let vars = vars_with_branch(&branch);
+    let vars = vars_with_branch("feature'test");
     let result = expand_template("echo '{{ branch }}'", &vars, true).unwrap();
     insta::assert_snapshot!(result, @"echo ''feature'\\''test''");
 }
@@ -119,8 +122,7 @@ fn test_expand_template_empty_branch() {
 #[cfg(unix)]
 fn test_expand_template_unicode_in_branch() {
     // Unicode characters in branch name are shell-escaped
-    let branch = sanitize_branch_name("feature-\u{1F680}");
-    let vars = vars_with_branch(&branch);
+    let vars = vars_with_branch("feature-\u{1F680}");
     let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
 
     // Unicode is preserved but quoted for shell safety
@@ -129,19 +131,18 @@ fn test_expand_template_unicode_in_branch() {
 
 #[test]
 fn test_expand_template_backslash_in_branch() {
-    // Windows-style path separators - caller sanitizes
-    let branch = sanitize_branch_name("feature\\branch");
-    let vars = vars_with_branch(&branch);
-    let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
+    // Use {{ branch | sanitize }} to replace backslashes with dashes
+    // Note: shell_escape=false to test sanitize filter in isolation
+    let vars = vars_with_branch("feature\\branch");
+    let result = expand_template("path/{{ branch | sanitize }}", &vars, false).unwrap();
 
-    // Backslashes are replaced with dashes by sanitize_branch_name
-    assert_eq!(result, "echo feature-branch");
+    // Backslashes are replaced with dashes by sanitize filter
+    assert_eq!(result, "path/feature-branch");
 }
 
 #[test]
 fn test_expand_template_multiple_replacements() {
-    let branch = sanitize_branch_name("feature");
-    let mut vars = vars_with_branch(&branch);
+    let mut vars = vars_with_branch("feature");
     vars.insert("worktree", "/path/to/wt");
     vars.insert("target", "develop");
 
@@ -167,8 +168,7 @@ fn test_expand_template_curly_braces_without_variables() {
 #[test]
 fn test_expand_template_nested_curly_braces() {
     // Nested braces - minijinja doesn't support {{{ syntax, use literal curly braces instead
-    let branch = sanitize_branch_name("main");
-    let vars = vars_with_branch(&branch);
+    let vars = vars_with_branch("main");
     let result = expand_template("echo {{ '{' ~ branch ~ '}' }}", &vars, true).unwrap();
 
     // Renders as {main}
@@ -200,11 +200,10 @@ fn snapshot_shell_escaping_special_chars() {
     ];
 
     let mut results = Vec::new();
-    for (name, branch_raw) in test_cases {
-        let branch = sanitize_branch_name(branch_raw);
-        let vars = vars_with_branch(&branch);
+    for (name, branch) in test_cases {
+        let vars = vars_with_branch(branch);
         let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
-        results.push((name, branch_raw, result));
+        results.push((name, branch, result));
     }
 
     insta::assert_yaml_snapshot!(results);
@@ -222,11 +221,10 @@ fn snapshot_shell_escaping_quotes() {
     ];
 
     let mut results = Vec::new();
-    for (name, branch_raw) in test_cases {
-        let branch = sanitize_branch_name(branch_raw);
-        let vars = vars_with_branch(&branch);
+    for (name, branch) in test_cases {
+        let vars = vars_with_branch(branch);
         let result = expand_template("echo {{ branch }}", &vars, true).unwrap();
-        results.push((name, branch_raw, result));
+        results.push((name, branch, result));
     }
 
     insta::assert_yaml_snapshot!(results);
@@ -246,8 +244,7 @@ fn snapshot_shell_escaping_paths() {
 
     let mut results = Vec::new();
     for (name, path) in test_cases {
-        let branch = sanitize_branch_name("main");
-        let mut vars = vars_with_branch(&branch);
+        let mut vars = vars_with_branch("main");
         vars.insert("worktree", path);
         let result =
             expand_template("cd {{ worktree }} && echo {{ branch }}", &vars, true).unwrap();
@@ -261,6 +258,7 @@ fn snapshot_shell_escaping_paths() {
 #[cfg(unix)]
 fn snapshot_complex_templates() {
     // Test realistic complex template commands
+    // Note: {{ branch | sanitize }} is used when branch sanitization is needed
     let test_cases = vec![
         (
             "cd_and_merge",
@@ -269,7 +267,7 @@ fn snapshot_complex_templates() {
         ),
         (
             "npm_install",
-            "cd {{ main_worktree }}/{{ branch }} && npm install",
+            "cd {{ main_worktree }}/{{ branch | sanitize }} && npm install",
             "feature/new-ui",
         ),
         (
@@ -280,15 +278,14 @@ fn snapshot_complex_templates() {
     ];
 
     let mut results = Vec::new();
-    for (name, template, branch_raw) in test_cases {
-        let branch = sanitize_branch_name(branch_raw);
+    for (name, template, branch) in test_cases {
         let mut vars = HashMap::new();
-        vars.insert("branch", branch.as_str());
+        vars.insert("branch", branch);
         vars.insert("main_worktree", "/repo/path");
         vars.insert("worktree", "/path with spaces/wt");
         vars.insert("target", "main; rm -rf /");
         let result = expand_template(template, &vars, true).unwrap();
-        results.push((name, template, branch_raw, result));
+        results.push((name, template, branch, result));
     }
 
     insta::assert_yaml_snapshot!(results);
@@ -298,10 +295,9 @@ fn snapshot_complex_templates() {
 
 #[test]
 fn test_expand_template_literal_normal() {
-    let branch = sanitize_branch_name("feature");
     let mut vars = HashMap::new();
     vars.insert("main_worktree", "myrepo");
-    vars.insert("branch", branch.as_str());
+    vars.insert("branch", "feature");
     let result = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false).unwrap();
     assert_eq!(result, "myrepo.feature");
 }
@@ -309,10 +305,9 @@ fn test_expand_template_literal_normal() {
 #[test]
 fn test_expand_template_literal_unicode_no_escaping() {
     // Unicode should NOT be shell-escaped in filesystem paths
-    let branch = sanitize_branch_name("test-\u{2282}");
     let mut vars = HashMap::new();
     vars.insert("main_worktree", "myrepo");
-    vars.insert("branch", branch.as_str());
+    vars.insert("branch", "test-\u{2282}");
     let result = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false).unwrap();
     // Path should contain literal unicode, NO quotes
     assert_eq!(result, "myrepo.test-\u{2282}");
@@ -325,10 +320,9 @@ fn test_expand_template_literal_unicode_no_escaping() {
 #[test]
 fn test_expand_template_literal_spaces_no_escaping() {
     // Spaces should NOT be shell-escaped (filesystem paths can have spaces)
-    let branch = sanitize_branch_name("feature name");
     let mut vars = HashMap::new();
     vars.insert("main_worktree", "my repo");
-    vars.insert("branch", branch.as_str());
+    vars.insert("branch", "feature name");
     let result = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false).unwrap();
     // No shell quotes around spaces
     assert_eq!(result, "my repo.feature name");
@@ -340,12 +334,12 @@ fn test_expand_template_literal_spaces_no_escaping() {
 
 #[test]
 fn test_expand_template_literal_sanitizes_slashes() {
-    // Branch name sanitization is caller's responsibility
-    let branch = sanitize_branch_name("feature/nested/branch");
+    // Use {{ branch | sanitize }} to replace slashes with dashes
     let mut vars = HashMap::new();
     vars.insert("main_worktree", "myrepo");
-    vars.insert("branch", branch.as_str());
-    let result = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false).unwrap();
+    vars.insert("branch", "feature/nested/branch");
+    let result =
+        expand_template("{{ main_worktree }}.{{ branch | sanitize }}", &vars, false).unwrap();
     assert_eq!(result, "myrepo.feature-nested-branch");
 }
 
@@ -353,10 +347,9 @@ fn test_expand_template_literal_sanitizes_slashes() {
 #[cfg(unix)]
 fn test_expand_template_literal_vs_escaped_unicode() {
     // Demonstrate the difference between literal and escaped expansion
-    let branch = sanitize_branch_name("test-\u{2282}");
     let mut vars = HashMap::new();
     vars.insert("main_worktree", "myrepo");
-    vars.insert("branch", branch.as_str());
+    vars.insert("branch", "test-\u{2282}");
     let template = "{{ main_worktree }}.{{ branch }}";
 
     let literal_result = expand_template(template, &vars, false).unwrap();

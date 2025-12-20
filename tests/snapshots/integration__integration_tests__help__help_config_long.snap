@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -78,21 +79,22 @@ Controls where new worktrees are created. The template is relative to the reposi
 
 [1mAvailable variables:
 - [2m{{ main_worktree }}[0m — main worktree directory name
-- [2m{{ branch }}[0m — branch name (slashes replaced with dashes)
+- [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/foo[0m)
+- [2m{{ branch | sanitize }}[0m — branch name with [2m/[0m and [2m\[0m replaced by [2m-
 
 [1mExamples[0m for a repo at [2m~/code/myproject[0m creating branch [2mfeature/login[0m:
 
   [2m# Default — siblings in parent directory
   [2m# Creates: ~/code/myproject.feature-login
-  [2mworktree-path = "../{{ main_worktree }}.{{ branch }}"
+  [2mworktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
   [2m
   [2m# Inside the repository
   [2m# Creates: ~/code/myproject/.worktrees/feature-login
-  [2mworktree-path = ".worktrees/{{ branch }}"
+  [2mworktree-path = ".worktrees/{{ branch | sanitize }}"
   [2m
   [2m# Namespaced (useful when multiple repos share a parent directory)
   [2m# Creates: ~/code/worktrees/myproject/feature-login
-  [2mworktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
+  [2mworktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
 
 [1mCommand settings
 

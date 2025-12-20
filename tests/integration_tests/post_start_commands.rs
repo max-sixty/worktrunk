@@ -141,7 +141,7 @@ root = "echo 'Root: {{ repo_root }}' >> info.txt"
     // Pre-approve all commands in isolated test config
     let repo_name = "repo";
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
 [projects."repo"]
 approved-commands = [
@@ -182,8 +182,8 @@ approved-commands = [
         contents
     );
     assert!(
-        contents.contains("Branch: feature-test"),
-        "Should contain expanded branch name (sanitized), got: {}",
+        contents.contains("Branch: feature/test"),
+        "Should contain raw branch name, got: {}",
         contents
     );
 }

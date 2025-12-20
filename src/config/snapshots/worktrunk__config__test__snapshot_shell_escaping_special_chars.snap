@@ -16,7 +16,7 @@ expression: results
   - "echo 'feature`id`'"
 - - semicolon
   - feature;rm -rf /
-  - "echo 'feature;rm -rf -'"
+  - "echo 'feature;rm -rf /'"
 - - pipe
   - feature|grep foo
   - "echo 'feature|grep foo'"

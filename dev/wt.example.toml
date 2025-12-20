@@ -6,10 +6,11 @@
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}      - Repository name (e.g., "my-project")
-#   {{ branch }}    - Branch name (slashes replaced with dashes)
-#   {{ worktree }}  - Absolute path to the worktree
-#   {{ repo_root }} - Absolute path to the repository root
+#   {{ repo }}              - Repository name (e.g., "my-project")
+#   {{ branch }}            - Raw branch name (e.g., "feature/foo")
+#   {{ branch | sanitize }} - Branch name with / and \ replaced by -
+#   {{ worktree }}          - Absolute path to the worktree
+#   {{ repo_root }}         - Absolute path to the repository root
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main")

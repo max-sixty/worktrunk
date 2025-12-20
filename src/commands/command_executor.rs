@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use worktrunk::HookType;
-use worktrunk::config::{
-    Command, CommandConfig, WorktrunkConfig, expand_template, sanitize_branch_name,
-};
+use worktrunk::config::{Command, CommandConfig, WorktrunkConfig, expand_template};
 use worktrunk::git::Repository;
 use worktrunk::path::to_posix_path;
 
@@ -76,7 +74,7 @@ pub fn build_hook_context(
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
     map.insert("main_worktree".into(), repo_name.into()); // Alias for repo
-    map.insert("branch".into(), sanitize_branch_name(ctx.branch_or_head()));
+    map.insert("branch".into(), ctx.branch_or_head().into());
     map.insert("worktree".into(), worktree);
     map.insert("worktree_name".into(), worktree_name.into());
     map.insert(
