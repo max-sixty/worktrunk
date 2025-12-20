@@ -138,6 +138,25 @@ $ cargo install worktrunk --no-default-features
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
+## Why does JSON output go to stderr?
+
+The `wt` shell function captures stdout so it can eval the output as shell script — this is how `wt switch` runs `cd` in the caller's shell. With stdout reserved for shell directives, data output (JSON, tables) goes to stderr during interactive use.
+
+When stdout isn't a terminal (piped or redirected), the wrapper runs the binary directly instead:
+
+```bash
+wt list --format=json | jq .           # Binary runs directly, JSON flows to jq
+wt list --format=json > worktrees.json # Binary runs directly, JSON goes to file
+```
+
+This direct-binary mode applies to all commands, not just data-producing flags. Shell-side effects like directory changing require the wrapper, so `wt switch branch | cat` won't change directories. In practice this is fine — piped output is typically for data processing, not interactive use.
+
+To force direct-binary mode interactively, bypass the wrapper:
+
+```bash
+command wt list --format=json          # Outputs to stdout
+```
+
 ## Running tests (for contributors)
 
 ### Quick tests

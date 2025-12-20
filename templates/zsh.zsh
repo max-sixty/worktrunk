@@ -28,6 +28,10 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
+            if [[ ! -t 1 ]]; then
+                cargo run --bin {{ cmd }} --quiet -- "${args[@]}"
+                return
+            fi
             local script exit_code=0
             script="$(cargo run --bin {{ cmd }} --quiet -- --internal "${args[@]}")" || exit_code=$?
             if [[ -n "$script" ]]; then
@@ -37,6 +41,13 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
                 fi
             fi
             return "$exit_code"
+        fi
+
+        # If stdout is not a terminal (piped/redirected), run directly.
+        # This allows `wt list --format=json | jq` to work.
+        if [[ ! -t 1 ]]; then
+            command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}"
+            return
         fi
 
         wt_exec --internal "${args[@]}"

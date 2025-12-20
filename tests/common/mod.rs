@@ -1933,6 +1933,17 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(r"\x1b\[0m$", "");
     settings.add_filter(r"\x1b\[0m\n", "\n");
 
+    // Normalize tree-sitter bash syntax highlighting differences between platforms.
+    // On Linux, tree-sitter-bash may parse paths as "string" tokens (green: [32m),
+    // while on macOS the same paths are just dimmed (no color). This causes snapshot
+    // mismatches when the same code produces different ANSI sequences.
+    // Strip green color from _REPO_ placeholders and normalize the surrounding sequences.
+    // Pattern: [2m [0m[2m[32m_REPO_...[0m[2m [0m[2m  ->  [2m _REPO_... [0m[2m
+    settings.add_filter(
+        r"\x1b\[2m \x1b\[0m\x1b\[2m\x1b\[32m(_REPO_[^\x1b]*)\x1b\[0m\x1b\[2m \x1b\[0m\x1b\[2m",
+        "\x1b[2m $1 \x1b[0m\x1b[2m",
+    );
+
     settings
 }
 

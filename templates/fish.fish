@@ -38,6 +38,10 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
 
         # --source: use cargo run (builds from source)
         if test $use_source = true
+            if not isatty stdout
+                cargo run --bin {{ cmd }} --quiet -- $args
+                return $status
+            end
             cargo run --bin {{ cmd }} --quiet -- --internal $args | string collect --allow-empty | read --local -z script
             set -l exit_code $pipestatus[1]
             if test -n "$script"
@@ -47,6 +51,14 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
                 end
             end
             return $exit_code
+        end
+
+        # If stdout is not a terminal (piped/redirected), run directly.
+        # This allows `wt list --format=json | jq` to work.
+        if not isatty stdout
+            test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd }})
+            command $WORKTRUNK_BIN $args
+            return $status
         end
 
         wt_exec --internal $args

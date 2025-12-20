@@ -33,7 +33,7 @@ use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
-use worktrunk::styling::{eprintln, hint_message, println, stderr};
+use worktrunk::styling::{eprintln, hint_message, stderr};
 
 /// Output mode selection
 #[derive(Debug, Clone, Copy)]
@@ -127,8 +127,10 @@ pub fn blank() -> io::Result<()> {
 
 /// Emit structured data output without emoji decoration
 ///
-/// Used for JSON and other pipeable data.
-/// - **Interactive**: writes to stdout (for piping to `jq`, etc.)
+/// Used for JSON, prompts, statuslines, and other pipeable data. Writes directly
+/// to stdout/stderr without anstream processing, preserving any ANSI codes.
+///
+/// - **Interactive**: writes to stdout (for piping to `jq`, `llm`, etc.)
 /// - **Directive**: writes to stderr (stdout reserved for shell script)
 ///
 /// Example:
@@ -136,30 +138,6 @@ pub fn blank() -> io::Result<()> {
 /// output::data(json_string)?;
 /// ```
 pub fn data(content: impl Into<String>) -> io::Result<()> {
-    let content = content.into();
-    match get_mode() {
-        OutputMode::Interactive => {
-            // Structured data goes to stdout for piping
-            println!("{content}");
-            io::stdout().flush()
-        }
-        OutputMode::Directive(_) => {
-            // stdout reserved for shell script, data goes to stderr
-            eprintln!("{content}");
-            stderr().flush()
-        }
-    }
-}
-
-/// Emit raw data output, bypassing anstream color detection
-///
-/// Like `data()` but writes directly to stdout/stderr without anstream processing.
-/// Use when ANSI codes must be preserved regardless of TTY detection (e.g., statusline
-/// output for Claude Code which always expects ANSI).
-///
-/// - **Interactive**: writes to stdout
-/// - **Directive**: writes to stderr (stdout reserved for shell script)
-pub fn data_raw(content: impl Into<String>) -> io::Result<()> {
     let content = content.into();
     match get_mode() {
         OutputMode::Interactive => {

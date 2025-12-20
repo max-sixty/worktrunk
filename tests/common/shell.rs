@@ -2,8 +2,6 @@ use super::{TestRepo, wt_command};
 use insta_cmd::get_cargo_bin;
 use std::{
     collections::HashSet,
-    env,
-    path::PathBuf,
     process::{Command, Stdio},
     sync::LazyLock,
 };
@@ -49,80 +47,6 @@ pub fn shell_available(shell: &str) -> bool {
     AVAILABLE_SHELLS.contains(shell)
 }
 
-/// Path to dev-detach binary (workspace member built automatically by `cargo test`).
-///
-/// Uses custom binary detection (matching insta_cmd's logic) to provide a clearer
-/// error message when the binary is missing. The standard `get_cargo_bin()` panics
-/// with "Cannot determine path to executable 'dev-detach'" which doesn't explain
-/// how to fix the issue.
-///
-/// Note: The binary is only built when running `cargo test` without package filters.
-/// Commands like `cargo test -p worktrunk` or `cargo test --test integration` do NOT
-/// build the dev-detach binary. Use `cargo test` or `cargo test --workspace` instead.
-static DEV_DETACH_BIN: LazyLock<PathBuf> = LazyLock::new(|| {
-    // Check for CARGO_BIN_EXE_dev-detach first (set when dev-detach is a build dependency)
-    if let Some(path) = env::var_os("CARGO_BIN_EXE_dev-detach") {
-        return PathBuf::from(path);
-    }
-
-    // Fall back to target directory detection
-    let target_dir = env::current_exe()
-        .ok()
-        .map(|mut path| {
-            path.pop();
-            if path.ends_with("deps") || path.ends_with("examples") {
-                path.pop();
-            }
-            path
-        })
-        .expect("Could not determine target directory from current exe");
-
-    let binary_name = format!("dev-detach{}", env::consts::EXE_SUFFIX);
-    let path = target_dir.join(&binary_name);
-
-    if !path.is_file() {
-        panic!(
-            "\n\
-            ══════════════════════════════════════════════════════════════════════════════\n\
-            dev-detach binary not found at: {}\n\
-            \n\
-            The dev-detach binary is only built when running `cargo test` without\n\
-            package filters. Commands like these do NOT build it:\n\
-            \n\
-              cargo test -p worktrunk\n\
-              cargo test --test integration\n\
-              cargo test --lib --bins\n\
-            \n\
-            To fix, run one of these first:\n\
-            \n\
-              cargo build -p dev-detach     # just build the binary\n\
-              cargo test                    # or run full workspace tests\n\
-            \n\
-            Then re-run your specific test command.\n\
-            ══════════════════════════════════════════════════════════════════════════════\n",
-            path.display()
-        );
-    }
-
-    path
-});
-
-/// Convert signal number to human-readable name
-#[cfg(unix)]
-fn signal_name(sig: i32) -> &'static str {
-    match sig {
-        1 => "SIGHUP",
-        2 => "SIGINT",
-        3 => "SIGQUIT",
-        6 => "SIGABRT",
-        9 => "SIGKILL",
-        11 => "SIGSEGV",
-        13 => "SIGPIPE",
-        15 => "SIGTERM",
-        _ => "UNKNOWN",
-    }
-}
-
 /// Map shell display names to actual binaries.
 pub fn get_shell_binary(shell: &str) -> &str {
     match shell {
@@ -133,97 +57,102 @@ pub fn get_shell_binary(shell: &str) -> &str {
     }
 }
 
-/// Build a command to execute a shell script via dev-detach.
-fn build_shell_command(repo: &TestRepo, shell: &str, script: &str) -> Command {
-    let mut cmd = Command::new(&*DEV_DETACH_BIN);
-    repo.clean_cli_env(&mut cmd);
+/// Execute a script in the given shell with the repo's isolated environment.
+///
+/// Uses a PTY so that stdout appears as a terminal to the shell. This is required
+/// for shell wrapper tests since the wrapper uses `[[ ! -t 1 ]]` to detect piping.
+#[cfg(unix)]
+pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
+    use portable_pty::CommandBuilder;
+    use std::io::Read;
 
-    // Prevent user shell config from leaking into tests
-    cmd.env_remove("BASH_ENV");
-    cmd.env_remove("ENV");
-    cmd.env_remove("ZDOTDIR");
-    cmd.env_remove("XONSHRC");
-    cmd.env_remove("XDG_CONFIG_HOME");
+    let pair = super::open_pty();
 
-    // Build argument list: <dev-detach-binary> <shell> [shell-flags...] -c <script>
-    cmd.arg(get_shell_binary(shell));
+    let mut cmd = CommandBuilder::new(get_shell_binary(shell));
+
+    // Clear inherited environment for test isolation
+    cmd.env_clear();
+
+    // Set minimal required environment for shells to function
+    cmd.env("HOME", repo.home_path().to_string_lossy().to_string());
+    cmd.env(
+        "PATH",
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string()),
+    );
+    cmd.env("USER", "testuser");
+    cmd.env("SHELL", get_shell_binary(shell));
+
+    // Add repo's test environment (git config, worktrunk config, etc.)
+    for (key, value) in repo.test_env_vars() {
+        cmd.env(key, value);
+    }
 
     // Add shell-specific no-config flags
     match shell {
-        "bash" => cmd.arg("--noprofile").arg("--norc"),
-        "zsh" => cmd.arg("--no-globalrcs").arg("-f"),
-        "fish" => cmd.arg("--no-config"),
-        "powershell" | "pwsh" => cmd.arg("-NoProfile"),
-        "xonsh" => cmd.arg("--no-rc"),
-        "nushell" | "nu" => cmd.arg("--no-config-file"),
-        _ => &mut cmd,
+        "bash" => {
+            cmd.arg("--noprofile");
+            cmd.arg("--norc");
+        }
+        "zsh" => {
+            cmd.arg("--no-globalrcs");
+            cmd.arg("-f");
+        }
+        "fish" => {
+            cmd.arg("--no-config");
+        }
+        "powershell" | "pwsh" => {
+            cmd.arg("-NoProfile");
+        }
+        "xonsh" => {
+            cmd.arg("--no-rc");
+        }
+        "nushell" | "nu" => {
+            cmd.arg("--no-config-file");
+        }
+        _ => {}
     };
 
-    cmd.arg("-c").arg(script);
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    cmd
-}
+    // PTY combines stdout/stderr at the terminal device level, so we don't need
+    // explicit redirection. Redirecting would break the shell wrapper protocol:
+    // wt_exec() captures stdout for directives, and stderr must stay separate.
+    cmd.arg("-c");
+    cmd.arg(script);
+    cmd.cwd(repo.root_path());
 
-/// Execute a script in the given shell with the repo's isolated environment.
-pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
-    let mut cmd = build_shell_command(repo, shell, script);
+    // Pass through LLVM coverage env vars for subprocess coverage collection
+    super::pass_coverage_env_to_pty_cmd(&mut cmd);
 
-    let output = cmd
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap_or_else(|e| panic!("Failed to execute {} script: {}", shell, e));
+    let mut child = pair.slave.spawn_command(cmd).unwrap();
+    drop(pair.slave); // Close slave in parent
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Read everything the "terminal" would display
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let mut buf = String::new();
+    reader.read_to_string(&mut buf).unwrap(); // Blocks until child exits & PTY closes
 
-    // Check for dev-detach-specific errors (setsid failures, execvp failures, etc.)
-    if stderr.contains("dev-detach:") {
-        panic!(
-            "dev-detach binary error:\nstderr: {}\nstdout: {}",
-            stderr,
-            String::from_utf8_lossy(&output.stdout)
-        );
-    }
+    let status = child.wait().unwrap();
 
-    if !output.status.success() {
-        let exit_info = match output.status.code() {
-            Some(code) => format!("exit code {}", code),
-            None => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::ExitStatusExt;
-                    match output.status.signal() {
-                        Some(sig) => format!("killed by signal {} ({})", sig, signal_name(sig)),
-                        None => "killed by signal (unknown)".to_string(),
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    "killed by signal".to_string()
-                }
-            }
+    if !status.success() {
+        let exit_info = match status.exit_code() {
+            0 => "unknown error".to_string(),
+            code => format!("exit code {}", code),
         };
         panic!(
-            "Shell script failed ({}):\nCommand: dev-detach {} [shell-flags...] -c <script>\nstdout: {}\nstderr: {}",
-            exit_info,
-            shell,
-            String::from_utf8_lossy(&output.stdout),
-            stderr
+            "Shell script failed ({}):\nshell: {}\noutput: {}",
+            exit_info, shell, buf
         );
     }
 
-    // Check for shell errors in stderr (command not found, syntax errors, etc.)
+    // Check for shell errors in output (command not found, syntax errors, etc.)
     // These indicate problems with our shell integration code
-    if stderr.contains("command not found") || stderr.contains("not defined") {
+    if buf.contains("command not found") || buf.contains("not defined") {
         panic!(
-            "Shell integration error detected:\nstderr: {}\nstdout: {}",
-            stderr,
-            String::from_utf8_lossy(&output.stdout)
+            "Shell integration error detected:\nshell: {}\noutput: {}",
+            shell, buf
         );
     }
 
-    String::from_utf8(output.stdout).unwrap()
+    buf
 }
 
 /// Generate `wt config shell init <shell>` output for the repo.

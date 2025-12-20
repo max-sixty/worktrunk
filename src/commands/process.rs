@@ -48,7 +48,7 @@ fn posix_command_separator(command: &str) -> &'static str {
 /// Spawn a detached background process with output redirected to a log file
 ///
 /// The process will be fully detached from the parent:
-/// - On Unix: uses double-fork with setsid to create a daemon
+/// - On Unix: uses process_group(0) to create a new process group (survives PTY closure)
 /// - On Windows: uses CREATE_NEW_PROCESS_GROUP to detach from console
 ///
 /// Logs are centralized in the main worktree's `.git/wt-logs/` directory.
@@ -99,12 +99,12 @@ pub fn spawn_detached(
 
     #[cfg(unix)]
     {
-        spawn_detached_unix(worktree_path, command, log_file, context_json)?;
+        spawn_detached_unix(worktree_path, command, log_file, context_json, name)?;
     }
 
     #[cfg(windows)]
     {
-        spawn_detached_windows(worktree_path, command, log_file, context_json)?;
+        spawn_detached_windows(worktree_path, command, log_file, context_json, name)?;
     }
 
     Ok(log_path)
@@ -116,14 +116,9 @@ fn spawn_detached_unix(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
+    name: &str,
 ) -> anyhow::Result<()> {
-    // Detachment using nohup and background execution (&):
-    // - nohup makes the process immune to SIGHUP (continues after parent exits)
-    // - sh -c allows complex shell commands with pipes, redirects, etc.
-    // - & backgrounds the process immediately
-    // - We wait for the outer shell to exit (happens immediately after backgrounding)
-    // - This prevents zombie process accumulation under high concurrency
-    // - Output redirected to log file for debugging
+    use std::os::unix::process::CommandExt;
 
     // Build the command, optionally piping JSON context to stdin
     let full_command = match context_json {
@@ -141,12 +136,18 @@ fn spawn_detached_unix(
         None => command.to_string(),
     };
 
+    let shell_cmd = format!("sh -c {} &", shell_escape::escape(full_command.into()));
+
+    // Log only the operation identifier, not the full command (which may contain context_json
+    // with user data that shouldn't appear in debug logs)
+    log::debug!("spawn_detached: {} in {}", name, worktree_path.display());
+
+    // Detachment via process_group(0): puts the spawned shell in its own process group.
+    // When the controlling PTY closes, SIGHUP is sent to the foreground process group.
+    // Since our process is in a different group, it doesn't receive the signal.
     let mut child = Command::new("sh")
         .arg("-c")
-        .arg(format!(
-            "nohup sh -c {} &",
-            shell_escape::escape(full_command.into())
-        ))
+        .arg(&shell_cmd)
         .current_dir(worktree_path)
         .stdin(Stdio::null())
         .stdout(Stdio::from(
@@ -155,10 +156,11 @@ fn spawn_detached_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
+        .process_group(0) // New process group, not in PTY's foreground group
         .spawn()
         .context("Failed to spawn detached process")?;
 
-    // Wait for the outer shell to exit (immediate, doesn't block on background command)
+    // Wait for sh to exit (immediate, doesn't block on background command)
     child
         .wait()
         .context("Failed to wait for detachment shell")?;
@@ -172,9 +174,14 @@ fn spawn_detached_windows(
     command: &str,
     log_file: fs::File,
     context_json: Option<&str>,
+    name: &str,
 ) -> anyhow::Result<()> {
     use std::os::windows::process::CommandExt;
     use worktrunk::shell_exec::ShellConfig;
+
+    // Log only the operation identifier, not the full command (which may contain context_json
+    // with user data that shouldn't appear in debug logs)
+    log::debug!("spawn_detached: {} in {}", name, worktree_path.display());
 
     // CREATE_NEW_PROCESS_GROUP: Creates new process group (0x00000200)
     // DETACHED_PROCESS: Creates process without console (0x00000008)
