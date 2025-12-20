@@ -28,7 +28,13 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+<<<<<<< HEAD
 Set-Location [REPO]
+||||||| 930c5842
+Set-Location '[PATH]'
+=======
+Set-Location _REPO_
+>>>>>>> origin/main
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background[39m (same commit as [1mmain[22m, [2m_[22m)

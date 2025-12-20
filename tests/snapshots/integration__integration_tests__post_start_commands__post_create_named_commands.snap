@@ -37,5 +37,13 @@ exit_code: 0
 [36m◎[39m [36mRunning project post-create [1msetup[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running setup'[0m[2m
 [0mRunning setup
+<<<<<<< HEAD
 [32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [REPO].feature
 [2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+||||||| 930c5842
+✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m[REPO].feature[22m[39m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+=======
+✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+>>>>>>> origin/main

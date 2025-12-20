@@ -30,5 +30,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
+<<<<<<< HEAD
 [32m✓[39m [32mSwitched to worktree for [1mbranch-a[22m @ [REPO].branch-a
 [2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+||||||| 930c5842
+✅ [32mSwitched to worktree for [1mbranch-a[22m @ [1m[REPO].branch-a[22m[39m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+=======
+✅ [32mSwitched to worktree for [1mbranch-a[22m @ [1m_REPO_.branch-a[22m[39m
+💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+>>>>>>> origin/main

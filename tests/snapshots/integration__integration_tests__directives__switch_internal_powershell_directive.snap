@@ -29,7 +29,19 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+<<<<<<< HEAD
 Set-Location [REPO].feature
+||||||| 930c5842
+Set-Location '[PATH]'
+=======
+Set-Location _REPO_.feature
+>>>>>>> origin/main
 
 ----- stderr -----
+<<<<<<< HEAD
 [2m○[22m Switched to worktree for [1mfeature[22m @ [REPO].feature
+||||||| 930c5842
+⚪ Switched to worktree for [1mfeature[22m @ [1m[REPO].feature[22m
+=======
+⚪ Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m
+>>>>>>> origin/main

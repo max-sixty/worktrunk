@@ -30,7 +30,7 @@ exit_code: 0
 [
   {
     "branch": "main",
-    "path": "[REPO]",
+    "path": "_REPO_",
     "kind": "worktree",
     "commit": {
       "sha": "4803e9416c19681b83017135ac3a8c1b04898868",
@@ -65,7 +65,7 @@ exit_code: 0
   },
   {
     "branch": "feature-ahead",
-    "path": "[REPO].feature-ahead",
+    "path": "_REPO_.feature-ahead",
     "kind": "worktree",
     "commit": {
       "sha": "1080181c245695ed0d64aba6b0b0b7c0bfff9530",
@@ -100,7 +100,7 @@ exit_code: 0
   },
   {
     "branch": "feature-behind",
-    "path": "[REPO].feature-behind",
+    "path": "_REPO_.feature-behind",
     "kind": "worktree",
     "commit": {
       "sha": "b8b9f4453f95a585105de3ae3439d8017dee67f3",
