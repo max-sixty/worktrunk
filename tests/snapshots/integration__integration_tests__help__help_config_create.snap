@@ -245,14 +245,17 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# developers working on the project.
   [2m
   [2m# Available template variables (all hooks):
-  [2m#   {{ repo }}              - Repository name (e.g., "my-project")
-  [2m#   {{ branch }}            - Raw branch name (e.g., "feature/foo")
-  [2m#   {{ branch | sanitize }} - Branch name with / and \ replaced by -
-  [2m#   {{ worktree }}          - Absolute path to the worktree
-  [2m#   {{ repo_root }}         - Absolute path to the repository root
+  [2m#   {{ repo }}      - Repository name (e.g., "my-project")
+  [2m#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
+  [2m#   {{ worktree }}  - Absolute path to the worktree
+  [2m#   {{ repo_root }} - Absolute path to the repository root
   [2m#
   [2m# Merge-related hooks also support:
   [2m#   {{ target }}    - Target branch for the merge (e.g., "main")
+  [2m#
+  [2m# Filters:
+  [2m#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
+  [2m#   {{ branch | hash_port }} - Hash string to deterministic port (10000-19999)
   [2m
   [2m# Post-Create Hook
   [2m# Runs SEQUENTIALLY and BLOCKS until complete

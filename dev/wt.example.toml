@@ -6,14 +6,17 @@
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}              - Repository name (e.g., "my-project")
-#   {{ branch }}            - Raw branch name (e.g., "feature/foo")
-#   {{ branch | sanitize }} - Branch name with / and \ replaced by -
-#   {{ worktree }}          - Absolute path to the worktree
-#   {{ repo_root }}         - Absolute path to the repository root
+#   {{ repo }}      - Repository name (e.g., "my-project")
+#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
+#   {{ worktree }}  - Absolute path to the worktree
+#   {{ repo_root }} - Absolute path to the repository root
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main")
+#
+# Filters:
+#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
+#   {{ branch | hash_port }} - Hash string to deterministic port (10000-19999)
 
 # Post-Create Hook
 # Runs SEQUENTIALLY and BLOCKS until complete

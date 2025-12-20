@@ -131,7 +131,11 @@ Result: `~/code/myproject/.worktrees/feature-auth`
 
 - `{{ main_worktree }}` - Main worktree directory name
 - `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
-- `{{ branch | sanitize }}` - Branch name with `/` and `\` replaced by `-`
+
+### Filters
+
+- `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., `feature-foo`)
+- `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
 
 ### Validation Rules
 

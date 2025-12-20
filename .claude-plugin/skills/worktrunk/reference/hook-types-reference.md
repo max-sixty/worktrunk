@@ -14,7 +14,7 @@ Detailed behavior and use cases for all five Worktrunk hook types.
 
 **Basic variables**: `{{ repo }}`, `{{ branch }}` (raw), `{{ worktree }}`, `{{ repo_root }}`
 **Merge variables**: Basic + `{{ target }}`
-**Filter**: `{{ branch | sanitize }}` replaces `/` and `\` with `-`
+**Filters**: `{{ branch | sanitize }}` (replace `/` `\` with `-`), `{{ branch | hash_port }}` (port 10000-19999)
 
 ## Detailed Behavior
 

@@ -35,6 +35,8 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Repo: repo'[0m[2m [0m[2m[36m>[0m[2m info.txt
 [0m[36m◎[39m [36mRunning project post-create [1mbranch[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature/test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
+[0m[36m◎[39m [36mRunning project post-create [1mhash_port[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Port: 18064'[0m[2m [0m[2m[36m>>[0m[2m info.txt
 [0m[36m◎[39m [36mRunning project post-create [1mworktree[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: _REPO_.feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
 [0m[36m◎[39m [36mRunning project post-create [1mroot[22m:[39m
