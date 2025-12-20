@@ -4,23 +4,23 @@ expression: normalized
 ---
 y
 
-🟡 [33m[1mrepo[22m needs approval to execute [1m3[22m commands:[39m
+[33m▲[39m [33m[1mrepo[22m needs approval to execute [1m3[22m commands:[39m
 
-⚪ post-create [1minstall[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
-⚪ post-create [1mbuild[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
-⚪ post-create [1mtest[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
-❓ Allow and remember? [1m[y/N][22m 
-🔄 [36mRunning project post-create [1minstall[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
+[2m○[22m post-create [1minstall[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
+[2m○[22m post-create [1mbuild[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
+[2m○[22m post-create [1mtest[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
+[36m❯[39m Allow and remember? [1m[y/N][22m 
+[36m◎[39m [36mRunning project post-create [1minstall[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Installing dependencies...'[0m[2m[0m
 [0mInstalling dependencies...
-🔄 [36mRunning project post-create [1mbuild[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
+[36m◎[39m [36mRunning project post-create [1mbuild[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m[0m
 [0mBuilding project...
-🔄 [36mRunning project post-create [1mtest[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
+[36m◎[39m [36mRunning project post-create [1mtest[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
 [0mRunning tests...
-✅ [32mCreated new worktree for [1mtest-named[22m from [1mmain[22m @ [1m_REPO_/repo.test-named[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[32m✓[39m [32mCreated new worktree for [1mtest-named[22m from [1mmain[22m @ [1m_REPO_/repo.test-named[22m[39m
+[2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
