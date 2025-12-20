@@ -29,19 +29,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-<<<<<<< HEAD
-cd [REPO].existing-wt
-||||||| 930c5842
-cd '[REPO].existing-wt'
-=======
 cd _REPO_.existing-wt
->>>>>>> origin/main
 
 ----- stderr -----
-<<<<<<< HEAD
-[2m○[22m Switched to worktree for [1mexisting-wt[22m @ [REPO].existing-wt
-||||||| 930c5842
-⚪ Switched to worktree for [1mexisting-wt[22m @ [1m[REPO].existing-wt[22m
-=======
-⚪ Switched to worktree for [1mexisting-wt[22m @ [1m_REPO_.existing-wt[22m
->>>>>>> origin/main
+[2m○[22m Switched to worktree for [1mexisting-wt[22m @ [1m_REPO_.existing-wt[22m

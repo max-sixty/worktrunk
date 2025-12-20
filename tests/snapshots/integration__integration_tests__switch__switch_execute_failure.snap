@@ -33,16 +33,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-<<<<<<< HEAD
-[32m✓[39m [32mCreated new worktree for [1mfail-test[22m from [1mmain[22m @ [REPO].fail-test
+[32m✓[39m [32mCreated new worktree for [1mfail-test[22m from [1mmain[22m @ [1m_REPO_.fail-test[22m[39m
 [36m◎[39m [36mExecuting (--execute):[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
-||||||| 930c5842
-✅ [32mCreated new worktree for [1mfail-test[22m from [1mmain[22m @ [1m[REPO].fail-test[22m[39m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1
-=======
-✅ [32mCreated new worktree for [1mfail-test[22m from [1mmain[22m @ [1m_REPO_.fail-test[22m[39m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1
->>>>>>> origin/main

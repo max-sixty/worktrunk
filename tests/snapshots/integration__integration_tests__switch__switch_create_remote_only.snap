@@ -31,19 +31,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-<<<<<<< HEAD
 [33m▲[39m [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
 [2m↳[22m [2mTo switch to the remote branch, remove [90m--create[39m; run [90mwt switch remote-feature[39m[22m
-[32m✓[39m [32mCreated new worktree for [1mremote-feature[22m from [1mmain[22m @ [REPO].remote-feature
+[32m✓[39m [32mCreated new worktree for [1mremote-feature[22m from [1mmain[22m @ [1m_REPO_.remote-feature[22m[39m
 [2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
-||||||| 930c5842
-🟡 [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
-💡 [2mTo switch to the remote branch, remove [90m--create[39m; run [90mwt switch remote-feature[39m[22m
-✅ [32mCreated new worktree for [1mremote-feature[22m from [1mmain[22m @ [1m[REPO].remote-feature[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
-=======
-🟡 [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
-💡 [2mTo switch to the remote branch, remove [90m--create[39m; run [90mwt switch remote-feature[39m[22m
-✅ [32mCreated new worktree for [1mremote-feature[22m from [1mmain[22m @ [1m_REPO_.remote-feature[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
->>>>>>> origin/main

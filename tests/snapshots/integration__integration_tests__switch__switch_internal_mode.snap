@@ -30,19 +30,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-<<<<<<< HEAD
-cd [REPO].internal-test
-||||||| 930c5842
-cd '[REPO].internal-test'
-=======
 cd _REPO_.internal-test
->>>>>>> origin/main
 
 ----- stderr -----
-<<<<<<< HEAD
-[32m✓[39m [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [REPO].internal-test
-||||||| 930c5842
-✅ [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m[REPO].internal-test[22m[39m
-=======
-✅ [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m
->>>>>>> origin/main
+[32m✓[39m [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m

@@ -34,16 +34,6 @@ exit_code: 0
 execute still runs
 
 ----- stderr -----
-<<<<<<< HEAD
-[2m○[22m Switched to worktree for [1mexisting-no-hooks[22m @ [REPO].existing-no-hooks
+[2m○[22m Switched to worktree for [1mexisting-no-hooks[22m @ [1m_REPO_.existing-no-hooks[22m
 [36m◎[39m [36mExecuting (--execute):[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m
-||||||| 930c5842
-⚪ Switched to worktree for [1mexisting-no-hooks[22m @ [1m[REPO].existing-no-hooks[22m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m
-=======
-⚪ Switched to worktree for [1mexisting-no-hooks[22m @ [1m_REPO_.existing-no-hooks[22m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m
->>>>>>> origin/main

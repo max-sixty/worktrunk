@@ -33,13 +33,5 @@ exit_code: 0
 [TEST_CONFIG]
 [2m↳[22m [2m(none configured)[22m
 
-<<<<<<< HEAD
-[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
-[2m↳[22m [2m(not found)[22m
-||||||| 930c5842
-[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
-💡 [2m(not found)[22m
-=======
 [36mPROJECT HOOKS[39m  _REPO_/.config/wt.toml
-💡 [2m(not found)[22m
->>>>>>> origin/main
+[2m↳[22m [2m(not found)[22m

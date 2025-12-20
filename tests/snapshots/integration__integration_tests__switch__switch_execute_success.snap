@@ -34,16 +34,6 @@ exit_code: 0
 test output
 
 ----- stderr -----
-<<<<<<< HEAD
-[32m✓[39m [32mCreated new worktree for [1mexec-test[22m from [1mmain[22m @ [REPO].exec-test
+[32m✓[39m [32mCreated new worktree for [1mexec-test[22m from [1mmain[22m @ [1m_REPO_.exec-test[22m[39m
 [36m◎[39m [36mExecuting (--execute):[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test output'[0m[2m
-||||||| 930c5842
-✅ [32mCreated new worktree for [1mexec-test[22m from [1mmain[22m @ [1m[REPO].exec-test[22m[39m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test output'[0m[2m
-=======
-✅ [32mCreated new worktree for [1mexec-test[22m from [1mmain[22m @ [1m_REPO_.exec-test[22m[39m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test output'[0m[2m
->>>>>>> origin/main

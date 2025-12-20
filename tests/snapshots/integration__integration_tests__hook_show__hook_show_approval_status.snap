@@ -33,22 +33,8 @@ exit_code: 0
 [36mUSER HOOKS[39m  ~/.config/worktrunk/config.toml
 [2m↳[22m [2m(none configured)[22m
 
-<<<<<<< HEAD
-[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
+[36mPROJECT HOOKS[39m  _REPO_/.config/wt.toml
 [2m○[22m pre-merge [1mbuild[22m:
 [107m [0m [2m[0m[2m[34mcargo[0m[2m build
 [36m❯[39m pre-merge [1mtest[22m: [2m(requires approval)[22m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test
-||||||| 930c5842
-[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
-⚪ pre-merge [1mbuild[22m:
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m build
-❓ pre-merge [1mtest[22m: [2m(requires approval)[22m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m test
-=======
-[36mPROJECT HOOKS[39m  _REPO_/.config/wt.toml
-⚪ pre-merge [1mbuild[22m:
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m build
-❓ pre-merge [1mtest[22m: [2m(requires approval)[22m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m test
->>>>>>> origin/main
