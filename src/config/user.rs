@@ -59,7 +59,7 @@ pub fn set_config_path(path: PathBuf) {
     CONFIG_PATH.set(path).ok();
 }
 
-use super::expansion::{expand_template, sanitize_branch_name};
+use super::expansion::expand_template;
 
 /// What to stage before committing
 #[derive(
@@ -92,19 +92,20 @@ pub enum StageMode {
 /// The `worktree-path` template is relative to the repository root.
 /// Supported variables:
 /// - `{{ main_worktree }}` - Main worktree directory name
-/// - `{{ branch }}` - Branch name (slashes replaced with dashes)
+/// - `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
+/// - `{{ branch | sanitize }}` - Branch name with `/` and `\` replaced by `-`
 ///
 /// # Examples
 ///
 /// ```toml
 /// # Default - parent directory siblings
-/// worktree-path = "../{{ main_worktree }}.{{ branch }}"
+/// worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 ///
 /// # Inside repo (clean, no redundant directory)
-/// worktree-path = ".worktrees/{{ branch }}"
+/// worktree-path = ".worktrees/{{ branch | sanitize }}"
 ///
 /// # Repository-namespaced (useful for shared directories with multiple repos)
-/// worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
+/// worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
 ///
 /// # Commit generation configuration
 /// [commit-generation]
@@ -327,7 +328,7 @@ pub struct MergeConfig {
 
 /// Default worktree path template (used by serde)
 fn default_worktree_path() -> String {
-    "../{{ main_worktree }}.{{ branch }}".to_string()
+    "../{{ main_worktree }}.{{ branch | sanitize }}".to_string()
 }
 
 impl Default for WorktrunkConfig {
@@ -423,23 +424,23 @@ impl WorktrunkConfig {
     ///
     /// # Arguments
     /// * `main_worktree` - Main worktree directory name (replaces {{ main_worktree }} in template)
-    /// * `branch` - Branch name (replaces {{ branch }} in template, slashes sanitized to dashes)
+    /// * `branch` - Branch name (replaces {{ branch }} in template; use `{{ branch | sanitize }}` for paths)
     ///
     /// # Examples
     /// ```
     /// use worktrunk::config::WorktrunkConfig;
     ///
+    /// // Default template uses {{ branch | sanitize }} for filesystem-safe paths
     /// let config = WorktrunkConfig::default();
     /// let path = config.format_path("myproject", "feature/foo").unwrap();
     /// assert_eq!(path, "../myproject.feature-foo");
     /// ```
     pub fn format_path(&self, main_worktree: &str, branch: &str) -> Result<String, String> {
         use std::collections::HashMap;
-        let safe_branch = sanitize_branch_name(branch);
         let mut vars = HashMap::new();
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
-        vars.insert("branch", safe_branch.as_str());
+        vars.insert("branch", branch);
         expand_template(&self.worktree_path, &vars, false)
     }
 
@@ -899,7 +900,10 @@ run = "npm run build"
     #[test]
     fn test_worktrunk_config_default() {
         let config = WorktrunkConfig::default();
-        assert_eq!(config.worktree_path, "../{{ main_worktree }}.{{ branch }}");
+        assert_eq!(
+            config.worktree_path,
+            "../{{ main_worktree }}.{{ branch | sanitize }}"
+        );
         assert!(config.projects.is_empty());
         assert!(config.list.is_none());
         assert!(config.commit.is_none());

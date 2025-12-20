@@ -33,7 +33,7 @@ fn test_approval_saves_to_disk() {
     // Verify TOML structure
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
     [commit-generation]
     args = []
@@ -89,7 +89,7 @@ fn test_duplicate_approvals_not_saved_twice() {
     // Verify file contains only one entry
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
     [commit-generation]
     args = []
@@ -141,7 +141,7 @@ fn test_multiple_project_approvals() {
     // Verify file structure
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
     [commit-generation]
     args = []
@@ -230,7 +230,7 @@ fn test_force_flag_does_not_save_approval() {
     // Load the config and verify it's still empty (no approvals added)
     let saved_config = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(saved_config, @r#"
-    worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
     [commit-generation]
     args = []
@@ -264,7 +264,7 @@ fn test_force_flag_saves_to_new_config_file() {
     // Verify content
     let content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(content, @r#"
-    worktree-path = "../{{ main_worktree }}.{{ branch }}"
+    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
     [commit-generation]
     args = []

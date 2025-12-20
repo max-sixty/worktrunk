@@ -960,7 +960,8 @@ All variables are shell-escaped:
 
 | Variable | Description |
 |----------|-------------|
-| `{{ branch }}` | Branch name (slashes replaced with dashes) |
+| `{{ branch }}` | Branch name (raw, e.g., `feature/foo`) |
+| `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
 | `{{ worktree }}` | Absolute path to the worktree |
 | `{{ worktree_name }}` | Worktree directory name |
 | `{{ repo }}` | Repository name |
@@ -1203,22 +1204,23 @@ Controls where new worktrees are created. The template is relative to the reposi
 
 **Available variables:**
 - `{{ main_worktree }}` — main worktree directory name
-- `{{ branch }}` — branch name (slashes replaced with dashes)
+- `{{ branch }}` — raw branch name (e.g., `feature/foo`)
+- `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
 **Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
 
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ main_worktree }}.{{ branch }}"
+worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
-worktree-path = ".worktrees/{{ branch }}"
+worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ main_worktree }}/{{ branch }}"
+worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
 ```
 
 ### Command settings
