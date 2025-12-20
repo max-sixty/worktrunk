@@ -16,10 +16,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -68,6 +70,10 @@ if type -q wt; or test -n "$WORKTRUNK_BIN"
 
         # --source: use cargo run (builds from source)
         if test $use_source = true
+            if not isatty stdout
+                cargo run --bin wt --quiet -- $args
+                return $status
+            end
             cargo run --bin wt --quiet -- --internal $args | string collect --allow-empty | read --local -z script
             set -l exit_code $pipestatus[1]
             if test -n "$script"
@@ -77,6 +83,14 @@ if type -q wt; or test -n "$WORKTRUNK_BIN"
                 end
             end
             return $exit_code
+        end
+
+        # If stdout is not a terminal (piped/redirected), run directly.
+        # This allows `wt list --format=json | jq` to work.
+        if not isatty stdout
+            test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P wt)
+            command $WORKTRUNK_BIN $args
+            return $status
         end
 
         wt_exec --internal $args

@@ -123,7 +123,7 @@ fn format_directory_fish_style(path: &Path) -> String {
 
 /// Run the statusline command.
 ///
-/// Output uses `output::data_raw()` which routes based on mode:
+/// Output uses `output::data()` which routes based on mode:
 /// - Interactive: stdout (for shell prompts)
 /// - Directive: stderr (stdout reserved for shell script)
 pub fn run(claude_code: bool) -> Result<()> {
@@ -201,7 +201,7 @@ pub fn run(claude_code: bool) -> Result<()> {
         use worktrunk::styling::fix_dim_after_color_reset;
         let reset = anstyle::Reset;
         let output = fix_dim_after_color_reset(&output);
-        output::data_raw(format!("{reset} {output}"))?;
+        output::data(format!("{reset} {output}"))?;
     }
 
     Ok(())
