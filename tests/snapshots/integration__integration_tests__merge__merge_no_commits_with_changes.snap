@@ -30,15 +30,15 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAuto-staging 1 untracked path:[39m
-[107m [0m  newfile.txt
-🔄 [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
-💡 [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
-[107m [0m  [1mChanges to newfile.txt[22m
-✅ [32mCommitted changes @ [2mbbcee27[22m[39m
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2mbbcee27[22m (no rebase needed)[39m
-[107m [0m  * [33mbbcee27[m Changes to newfile.txt
-[107m [0m   newfile.txt | 1 [32m+[m
-[107m [0m   1 file changed, 1 insertion(+)
-✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-🔄 [36mRemoving [1mno-commits-dirty[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[33m▲[39m [33mAuto-staging 1 untracked path:[39m
+[107m [0m newfile.txt
+[36m◎[39m [36mCommitting changes with default message... [90m(1 file, [32m+1[39m, no squashing needed[39m[90m)[39m[39m
+[2m↳[22m [2mUsing fallback commit message. Run [90mwt config --help[39m for LLM setup guide[22m
+[107m [0m [1mChanges to newfile.txt[22m
+[32m✓[39m [32mCommitted changes @ [2mbbcee27[22m[39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mbbcee27[22m (no rebase needed)[39m
+[107m [0m * [33mbbcee27[m Changes to newfile.txt
+[107m [0m  newfile.txt | 1 [32m+[m
+[107m [0m  1 file changed, 1 insertion(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+[36m◎[39m [36mRemoving [1mno-commits-dirty[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m

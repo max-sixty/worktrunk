@@ -2,15 +2,15 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mSquashing 3 commits into a single commit [90m(2 files, [32m+45[39m[39m[90m)[39m...[39m
-🔄 [36mGenerating squash commit message...[39m
-[107m [0m  [1mfeat(api): Add user authentication endpoints[22m
-[107m [0m  
-[107m [0m  Implement login and token refresh endpoints with JWT validation.
-[107m [0m  Includes comprehensive test coverage and input validation.
-✅ [32mSquashed @ [2m[HASH][22m[39m
-🔄 [36mRunning project pre-merge [1mtest[22m:[39m
-[107m [0m  [2m[0m[2m[34muv[0m[2m run pytest[0m
+[36m◎[39m [36mSquashing 3 commits into a single commit [90m(2 files, [32m+45[39m[39m[90m)[39m...[39m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[107m [0m [1mfeat(api): Add user authentication endpoints[22m
+[107m [0m 
+[107m [0m Implement login and token refresh endpoints with JWT validation.
+[107m [0m Includes comprehensive test coverage and input validation.
+[32m✓[39m [32mSquashed @ [2m[HASH][22m[39m
+[36m◎[39m [36mRunning project pre-merge [1mtest[22m:[39m
+[107m [0m [2m[0m[2m[34muv[0m[2m run pytest[0m
 
 ============================= test session starts ==============================
 collected 3 items
@@ -21,15 +21,15 @@ tests/test_auth.py::test_token_validation PASSED                         [100%]
 
 ============================== 3 passed in 0.8s ===============================
 
-🔄 [36mRunning project pre-merge [1mlint[22m:[39m
-[107m [0m  [2m[0m[2m[34muv[0m[2m run ruff check[0m
+[36m◎[39m [36mRunning project pre-merge [1mlint[22m:[39m
+[107m [0m [2m[0m[2m[34muv[0m[2m run ruff check[0m
 
 All checks passed!
 
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
-[107m [0m  * [33m[HASH][m feat(api): Add user authentication endpoints
-[107m [0m   api/auth.py        | 31 [32m+++++++++++++++++++++++++++++++[m
-[107m [0m   tests/test_auth.py | 14 [32m++++++++++++++[m
-[107m [0m   2 files changed, 45 insertions(+)
-✅ [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+45[39m[39m[90m)[39m[39m
-🔄 [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m feat(api): Add user authentication endpoints
+[107m [0m  api/auth.py        | 31 [32m+++++++++++++++++++++++++++++++[m
+[107m [0m  tests/test_auth.py | 14 [32m++++++++++++++[m
+[107m [0m  2 files changed, 45 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+45[39m[39m[90m)[39m[39m
+[36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m

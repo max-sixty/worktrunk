@@ -31,20 +31,20 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mSquashing 3 commits into a single commit [90m(3 files, [32m+33[39m[39m[90m)[39m...[39m
-🔄 [36mGenerating squash commit message...[39m
-[107m [0m  [1mfeat(auth): Implement JWT authentication system[22m
-[107m [0m  
-[107m [0m  Add comprehensive JWT token handling including validation, refresh logic,
-[107m [0m  and authentication tests. This establishes the foundation for secure
-[107m [0m  API authentication.
-[107m [0m  
-[107m [0m  - Implement token refresh mechanism with expiry handling
-[107m [0m  - Add JWT encoding/decoding with signature verification
-[107m [0m  - Create test suite covering all authentication flows
-✅ [32mSquashed @ [2m85d3884[22m[39m
-🔄 [36mRunning project pre-merge [1mtest[22m:[39m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m test
+[36m◎[39m [36mSquashing 3 commits into a single commit [90m(3 files, [32m+33[39m[39m[90m)[39m...[39m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[107m [0m [1mfeat(auth): Implement JWT authentication system[22m
+[107m [0m 
+[107m [0m Add comprehensive JWT token handling including validation, refresh logic,
+[107m [0m and authentication tests. This establishes the foundation for secure
+[107m [0m API authentication.
+[107m [0m 
+[107m [0m - Implement token refresh mechanism with expiry handling
+[107m [0m - Add JWT encoding/decoding with signature verification
+[107m [0m - Create test suite covering all authentication flows
+[32m✓[39m [32mSquashed @ [2m85d3884[22m[39m
+[36m◎[39m [36mRunning project pre-merge [1mtest[22m:[39m
+[107m [0m [2m[0m[2m[34mcargo[0m[2m test
 [0m    Finished test [unoptimized + debuginfo] target(s) in 0.12s
      Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)
 
@@ -55,20 +55,20 @@ test auth::tests::test_token_refresh ... ok
 test auth::tests::test_token_validation ... ok
 
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-🔄 [36mRunning project pre-merge [1mlint[22m:[39m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m clippy
+[36m◎[39m [36mRunning project pre-merge [1mlint[22m:[39m
+[107m [0m [2m[0m[2m[34mcargo[0m[2m clippy
 [0m    Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m85d3884[22m (no rebase needed)[39m
-[107m [0m  * [33m85d3884[m feat(auth): Implement JWT authentication system
-[107m [0m   auth.rs      |  8 [32m++++++++[m
-[107m [0m   auth_test.rs | 17 [32m+++++++++++++++++[m
-[107m [0m   jwt.rs       |  8 [32m++++++++[m
-[107m [0m   3 files changed, 33 insertions(+)
-✅ [32mMerged to [1mmain[22m [90m(1 commit, 3 files, [32m+33[39m[39m[90m)[39m[39m
-🔄 [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-🔄 [36mRunning project post-merge [1minstall[22m:[39m
-[107m [0m  [2m[0m[2m[34mcargo[0m[2m install [0m[2m[36m--path[0m[2m .
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m85d3884[22m (no rebase needed)[39m
+[107m [0m * [33m85d3884[m feat(auth): Implement JWT authentication system
+[107m [0m  auth.rs      |  8 [32m++++++++[m
+[107m [0m  auth_test.rs | 17 [32m+++++++++++++++++[m
+[107m [0m  jwt.rs       |  8 [32m++++++++[m
+[107m [0m  3 files changed, 33 insertions(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 3 files, [32m+33[39m[39m[90m)[39m[39m
+[36m◎[39m [36mRemoving [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mRunning project post-merge [1minstall[22m:[39m
+[107m [0m [2m[0m[2m[34mcargo[0m[2m install [0m[2m[36m--path[0m[2m .
 [0m  Installing worktrunk v0.1.0
    Compiling worktrunk v0.1.0
     Finished release [optimized] target(s) in 2.34s
