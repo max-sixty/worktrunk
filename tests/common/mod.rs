@@ -1786,10 +1786,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
     // see HOME=temp_dir, so format_path_for_display() outputs ~/repo instead of the full path.
     // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
-    // IMPORTANT: Add worktree pattern FIRST so it matches before the plain ~/repo pattern.
-    // Filters are applied in order, so ~/repo.feature is replaced before ~/repo would match it.
-    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)", "_REPO_$1");
-    settings.add_filter(r"~/repo", "_REPO_");
+    // The optional suffix matches worktree paths like ~/repo.feature
+    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)?", "_REPO_$1");
 
     // Also handle the case where the real home contains the temp directory (Windows/macOS)
     // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
