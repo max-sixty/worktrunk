@@ -1882,10 +1882,20 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // This handles cases where ANSI codes are inserted between the quote and path content,
     // causing the quoted path filter to not match. The path filter replaces the path with
     // the placeholder, but the surrounding quotes from shell_escape remain.
-    settings.add_filter(r"'\[REPO\]'", "[REPO]");
-    settings.add_filter(r"'\[REPO\](\.[a-zA-Z0-9_-]+)'", "[REPO]$1");
-    // Match quoted worktree placeholders and strip the quotes using capture group
-    settings.add_filter(r"'(\[WORKTREE_[A-Z0-9_]+\])'", "$1");
+    // The pattern matches quotes with optional ANSI escape sequences inside.
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*\[REPO\](?:\x1b\[[0-9;]*m)*'",
+        "[REPO]",
+    );
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*\[REPO\](\.[a-zA-Z0-9_-]+)(?:\x1b\[[0-9;]*m)*'",
+        "[REPO]$1",
+    );
+    // Match quoted worktree placeholders (with optional ANSI codes) and strip the quotes
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(\[WORKTREE_[A-Z0-9_]+\])(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
     // (metadata is handled via redactions below)
