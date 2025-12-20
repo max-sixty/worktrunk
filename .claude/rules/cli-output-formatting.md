@@ -41,6 +41,25 @@ information, not restate what's already said.
 "Committing with default message... (3 files, +45, -12)"
 ```
 
+**Two types of parenthesized content with different styling:**
+
+1. **Stats parentheses → Gray** (`[90m` bright-black): Supplementary numerical
+   info that could be omitted without losing meaning.
+   ```
+   ✅ Merged to main (1 commit, 1 file, +1)
+   🔄 Squashing 2 commits into a single commit (2 files, +2)...
+   ```
+
+2. **Reason parentheses → Message color**: Explains WHY an action is happening;
+   integral to understanding.
+   ```
+   🔄 Removing feature worktree & branch in background (same commit as main, _)
+   ```
+
+Stats are truly optional context. Reasons answer "why is this safe/happening?"
+and belong with the main message. Symbols within reason parentheses still render
+in their native styling (see "Symbol styling" below).
+
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something
 mentioned in the error message.
@@ -99,17 +118,17 @@ behavior:
 "Removing feature worktree in background; retaining branch (--no-delete-branch)"             // User flag (user keeps)
 ```
 
-**Symbol styling:** Status symbols should use their standard styling consistently
-across all contexts (messages, tables, etc.). Each symbol has a defined
-appearance:
+**Symbol styling:** Symbols are atomic with their color — the styling is part of
+the symbol's identity, not a presentation choice. Each symbol has a defined
+appearance that must be preserved in all contexts:
 
 - `_` and `⊂` — dim (integration/safe-to-delete indicators)
-- Other symbols may have colors (e.g., diff indicators)
+- `+N` and `-N` — green/red (diff indicators)
 
-Symbols should match their `wt list` appearance when referenced in messages.
-When a symbol appears in a progress/success message, ensure the message's color
-(e.g., cyan for progress) is closed BEFORE the symbol so the symbol renders in
-its standard styling, not tinted by the message color.
+When a symbol appears in a colored message (cyan progress, green success), close
+the message color before the symbol so it renders in its native styling. This
+requires breaking out of the message color and reopening it after the symbol.
+See `FlagNote` in `src/output/handlers.rs` for the implementation pattern.
 
 **Comma + "but" + em-dash for limitations:** When stating an outcome with a
 limitation and its reason:

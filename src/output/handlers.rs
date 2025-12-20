@@ -193,22 +193,20 @@ fn handle_branch_deletion_result(
     }
 }
 
-/// Flag note split into message-colored text, independently-styled symbol, and suffix.
-///
-/// The text part goes inside the message color (cyan for progress, green for success).
-/// The symbol (if present) goes AFTER closing the message color so it renders in its
-/// canonical dim styling, not tinted by the message color.
-/// The suffix goes after the symbol, back inside the message color.
-///
-/// This is verbose because `cformat!` is compile-time only — we can't parameterize the color.
-/// Encapsulating it here keeps the duplication in one place.
+// ============================================================================
+// FlagNote: Workaround for cformat! being compile-time only
+// ============================================================================
+//
+// We want to parameterize the color (cyan/green) but can't because cformat!
+// parses color tags at compile time before generic substitution. So we have
+// duplicate methods (after_cyan, after_green) instead of after(color).
+//
+// This is ugly but unavoidable. Keep it encapsulated here.
+// ============================================================================
+
 struct FlagNote {
-    /// Text to include inside the message color (includes opening paren and comma if symbol follows)
     text: String,
-    /// Symbol to render outside message color in its canonical styling (dim)
-    /// None for flag notes without symbols (e.g., --no-delete-branch, --force-delete)
     symbol: Option<String>,
-    /// Suffix to include inside message color after the symbol (e.g., closing paren)
     suffix: String,
 }
 
@@ -255,6 +253,8 @@ impl FlagNote {
         }
     }
 }
+
+// ============================================================================
 
 /// Get flag acknowledgment note for remove messages
 ///
