@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -28,7 +29,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-Set-Location '[PATH]'
+Set-Location [REPO]
 
 ----- stderr -----
 🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m

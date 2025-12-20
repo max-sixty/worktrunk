@@ -1878,6 +1878,15 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         "[REPO]$1",
     );
 
+    // Final cleanup: strip any remaining quotes around placeholders.
+    // This handles cases where ANSI codes are inserted between the quote and path content,
+    // causing the quoted path filter to not match. The path filter replaces the path with
+    // the placeholder, but the surrounding quotes from shell_escape remain.
+    settings.add_filter(r"'\[REPO\]'", "[REPO]");
+    settings.add_filter(r"'\[REPO\](\.[a-zA-Z0-9_-]+)'", "[REPO]$1");
+    // Match quoted worktree placeholders and strip the quotes using capture group
+    settings.add_filter(r"'(\[WORKTREE_[A-Z0-9_]+\])'", "$1");
+
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
     // (metadata is handled via redactions below)
     // IMPORTANT: These specific filters must come BEFORE the generic [PROJECT_ID] filters
