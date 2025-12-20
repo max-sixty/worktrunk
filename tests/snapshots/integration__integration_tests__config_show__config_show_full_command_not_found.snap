@@ -15,10 +15,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -37,18 +39,18 @@ exit_code: 0
 [107m [0m  args = [[32m"-m"[0m, [32m"test-model"[0m]
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
-💡 [2mNot found[22m
+[2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
-⚪ [2mSkipped bash; ~/.bashrc not found[22m
-⚪ [2mSkipped zsh; ~/.zshrc not found[22m
-⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
+[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
 [36mDIAGNOSTICS[39m
-💡 [2mCI status requires GitHub or GitLab remote[22m
-❌ [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
-[107m [0m  ❌ [31mCommit generation command failed[39m
-[107m [0m  [107m [0m  Failed to spawn LLM command
-[107m [0m  
-[107m [0m  ⚪ Ran command:
-[107m [0m  [107m [0m  nonexistent-llm-command-12345 -m test-model
+[2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
+[31m✗[39m [31mCommit generation failed ([1mnonexistent-llm-command-12345 -m test-model[22m)[39m
+[107m [0m [31m✗[39m [31mCommit generation command failed[39m
+[107m [0m [107m [0m Failed to spawn LLM command
+[107m [0m 
+[107m [0m [2m○[22m Ran command:
+[107m [0m [107m [0m nonexistent-llm-command-12345 -m test-model

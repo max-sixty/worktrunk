@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -31,5 +32,5 @@ exit_code: 0
 cd '[PROJECT_ID]'
 
 ----- stderr -----
-⚪ Switched to worktree for [1mfeature[22m @ [1m[PROJECT_ID][22m
-🟡 [33mWorktree path doesn't match branch name; expected [1m_REPO_.feature[22m [31m⚑[39m[39m
+[2m○[22m Switched to worktree for [1mfeature[22m @ [1m[PROJECT_ID][22m
+[33m▲[39m [33mWorktree path doesn't match branch name; expected [1m_REPO_.feature[22m [31m⚑[39m[39m

@@ -6,10 +6,10 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33m[1mrepo[22m needs approval to execute [1m1[22m command:[39m
+[33m▲[39m [33m[1mrepo[22m needs approval to execute [1m1[22m command:[39m
 
-⚪ pre-merge:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running pre-merge checks on {{ branch }}'[0m[2m
-❌ [31mCannot prompt for approval in non-interactive environment[39m
+[2m○[22m pre-merge:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running pre-merge checks on {{ branch }}'[0m[2m
+[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 
-💡 [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m

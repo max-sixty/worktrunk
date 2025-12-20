@@ -31,4 +31,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRemoving [1mfeature-keep[22m worktree in background; retaining branch (--no-delete-branch)[39m
+[36m◎[39m [36mRemoving [1mfeature-keep[22m worktree in background; retaining branch (--no-delete-branch)[39m

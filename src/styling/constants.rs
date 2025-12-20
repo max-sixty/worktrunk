@@ -1,4 +1,4 @@
-//! Style constants and emojis for terminal output
+//! Style constants and symbols for terminal output
 //!
 //! # Styling with color-print
 //!
@@ -29,6 +29,7 @@
 //! table rendering where computed styles are needed at runtime.
 
 use anstyle::{AnsiColor, Color, Style};
+use color_print::cstr;
 
 // ============================================================================
 // Programmatic Style Constants (for StyledLine, tables, computed styles)
@@ -56,32 +57,48 @@ pub const GUTTER: Style = Style::new().bg_color(Some(Color::Ansi(AnsiColor::Brig
 pub const DEFAULT_HELP_WIDTH: usize = 98;
 
 // ============================================================================
-// Message Emojis
+// Message Symbols
 // ============================================================================
+//
+// Single-width Unicode symbols for message prefixes with embedded colors.
+// Using `cstr!` to create colored `&'static str` constants that work everywhere.
 
-/// Progress emoji: `cformat!("{PROGRESS_EMOJI} <cyan>message</>")`
-pub const PROGRESS_EMOJI: &str = "🔄";
+/// Progress symbol (cyan ◎)
+pub const PROGRESS_SYMBOL: &str = cstr!("<cyan>◎</>");
 
-/// Success emoji: `cformat!("{SUCCESS_EMOJI} <green>message</>")`
-pub const SUCCESS_EMOJI: &str = "✅";
+/// Success symbol (green ✓)
+pub const SUCCESS_SYMBOL: &str = cstr!("<green>✓</>");
 
-/// Error emoji: `cformat!("{ERROR_EMOJI} <red>message</>")`
-pub const ERROR_EMOJI: &str = "❌";
+/// Error symbol (red ✗)
+pub const ERROR_SYMBOL: &str = cstr!("<red>✗</>");
 
-/// Warning emoji: `cformat!("{WARNING_EMOJI} <yellow>message</>")`
-pub const WARNING_EMOJI: &str = "🟡";
+/// Warning symbol (yellow ▲)
+pub const WARNING_SYMBOL: &str = cstr!("<yellow>▲</>");
 
-/// Hint emoji: `cformat!("{HINT_EMOJI} <dim>message</>")`
-pub const HINT_EMOJI: &str = "💡";
+/// Hint symbol (dim ↳)
+pub const HINT_SYMBOL: &str = cstr!("<dim>↳</>");
 
-/// Info emoji - use for neutral status (primary status NOT dimmed, metadata may be dimmed)
-/// Primary status: `output::info("All commands already approved")?;`
-/// Metadata: `cformat!("{INFO_EMOJI} <dim>Showing 5 worktrees...</>")`
-pub const INFO_EMOJI: &str = "⚪";
+/// Info symbol (dim ○) - for neutral status
+pub const INFO_SYMBOL: &str = cstr!("<dim>○</>");
 
-/// Prompt emoji - use for questions requiring user input
-/// `eprint!("{PROMPT_EMOJI} Proceed? [y/N] ")`
-pub const PROMPT_EMOJI: &str = "❓";
+/// Prompt symbol (cyan ❯) - for questions requiring user input
+pub const PROMPT_SYMBOL: &str = cstr!("<cyan>❯</>");
+
+// Legacy aliases for compatibility during migration
+#[doc(hidden)]
+pub use ERROR_SYMBOL as ERROR_EMOJI;
+#[doc(hidden)]
+pub use HINT_SYMBOL as HINT_EMOJI;
+#[doc(hidden)]
+pub use INFO_SYMBOL as INFO_EMOJI;
+#[doc(hidden)]
+pub use PROGRESS_SYMBOL as PROGRESS_EMOJI;
+#[doc(hidden)]
+pub use PROMPT_SYMBOL as PROMPT_EMOJI;
+#[doc(hidden)]
+pub use SUCCESS_SYMBOL as SUCCESS_EMOJI;
+#[doc(hidden)]
+pub use WARNING_SYMBOL as WARNING_EMOJI;
 
 // ============================================================================
 // Formatted Message Type
@@ -165,7 +182,7 @@ impl From<FormattedMessage> for String {
 
 use color_print::cformat;
 
-/// Format an error message with emoji and red styling
+/// Format an error message with symbol and red styling
 ///
 /// Content can include inner styling like `<bold>`:
 /// ```
@@ -176,32 +193,32 @@ use color_print::cformat;
 /// println!("{}", error_message(cformat!("Branch <bold>{name}</> not found")));
 /// ```
 pub fn error_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("{ERROR_EMOJI} <red>{}</>", content.as_ref()))
+    FormattedMessage(cformat!("{ERROR_SYMBOL} <red>{}</>", content.as_ref()))
 }
 
-/// Format a hint message with emoji and dim styling
+/// Format a hint message with symbol and dim styling
 pub fn hint_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("{HINT_EMOJI} <dim>{}</>", content.as_ref()))
+    FormattedMessage(cformat!("{HINT_SYMBOL} <dim>{}</>", content.as_ref()))
 }
 
-/// Format a warning message with emoji and yellow styling
+/// Format a warning message with symbol and yellow styling
 pub fn warning_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("{WARNING_EMOJI} <yellow>{}</>", content.as_ref()))
+    FormattedMessage(cformat!("{WARNING_SYMBOL} <yellow>{}</>", content.as_ref()))
 }
 
-/// Format a success message with emoji and green styling
+/// Format a success message with symbol and green styling
 pub fn success_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("{SUCCESS_EMOJI} <green>{}</>", content.as_ref()))
+    FormattedMessage(cformat!("{SUCCESS_SYMBOL} <green>{}</>", content.as_ref()))
 }
 
-/// Format a progress message with emoji and cyan styling
+/// Format a progress message with symbol and cyan styling
 pub fn progress_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("{PROGRESS_EMOJI} <cyan>{}</>", content.as_ref()))
+    FormattedMessage(cformat!("{PROGRESS_SYMBOL} <cyan>{}</>", content.as_ref()))
 }
 
-/// Format an info message with emoji (no color - neutral status)
+/// Format an info message with symbol (no color on text - neutral status)
 pub fn info_message(content: impl AsRef<str>) -> FormattedMessage {
-    FormattedMessage(cformat!("{INFO_EMOJI} {}", content.as_ref()))
+    FormattedMessage(format!("{INFO_SYMBOL} {}", content.as_ref()))
 }
 
 /// Format a section heading (cyan uppercase text, no emoji)
@@ -260,18 +277,19 @@ mod tests {
     }
 
     // ============================================================================
-    // Emoji Constants Tests
+    // Symbol Constants Tests
     // ============================================================================
 
     #[test]
-    fn test_emoji_constants() {
-        assert_eq!(PROGRESS_EMOJI, "🔄");
-        assert_eq!(SUCCESS_EMOJI, "✅");
-        assert_eq!(ERROR_EMOJI, "❌");
-        assert_eq!(WARNING_EMOJI, "🟡");
-        assert_eq!(HINT_EMOJI, "💡");
-        assert_eq!(INFO_EMOJI, "⚪");
-        assert_eq!(PROMPT_EMOJI, "❓");
+    fn test_symbol_constants() {
+        // Symbols are pre-colored with ANSI codes, but contain the Unicode character
+        assert!(PROGRESS_SYMBOL.contains("◎"));
+        assert!(SUCCESS_SYMBOL.contains("✓"));
+        assert!(ERROR_SYMBOL.contains("✗"));
+        assert!(WARNING_SYMBOL.contains("▲"));
+        assert!(HINT_SYMBOL.contains("↳"));
+        assert!(INFO_SYMBOL.contains("○"));
+        assert!(PROMPT_SYMBOL.contains("❯"));
     }
 
     // ============================================================================
@@ -281,7 +299,7 @@ mod tests {
     #[test]
     fn test_error_message() {
         let msg = error_message("Something went wrong");
-        assert!(msg.as_str().contains("❌"));
+        assert!(msg.as_str().contains(ERROR_SYMBOL));
         assert!(msg.as_str().contains("Something went wrong"));
     }
 
@@ -289,7 +307,7 @@ mod tests {
     fn test_error_message_with_inner_styling() {
         let name = "feature";
         let msg = error_message(cformat!("Branch <bold>{name}</> not found"));
-        assert!(msg.as_str().contains("❌"));
+        assert!(msg.as_str().contains(ERROR_SYMBOL));
         assert!(msg.as_str().contains("Branch"));
         assert!(msg.as_str().contains("feature"));
     }
@@ -297,35 +315,35 @@ mod tests {
     #[test]
     fn test_hint_message() {
         let msg = hint_message("Try running --help");
-        assert!(msg.as_str().contains("💡"));
+        assert!(msg.as_str().contains(HINT_SYMBOL));
         assert!(msg.as_str().contains("Try running --help"));
     }
 
     #[test]
     fn test_warning_message() {
         let msg = warning_message("Deprecated option");
-        assert!(msg.as_str().contains("🟡"));
+        assert!(msg.as_str().contains(WARNING_SYMBOL));
         assert!(msg.as_str().contains("Deprecated option"));
     }
 
     #[test]
     fn test_success_message() {
         let msg = success_message("Operation completed");
-        assert!(msg.as_str().contains("✅"));
+        assert!(msg.as_str().contains(SUCCESS_SYMBOL));
         assert!(msg.as_str().contains("Operation completed"));
     }
 
     #[test]
     fn test_progress_message() {
         let msg = progress_message("Loading data...");
-        assert!(msg.as_str().contains("🔄"));
+        assert!(msg.as_str().contains(PROGRESS_SYMBOL));
         assert!(msg.as_str().contains("Loading data..."));
     }
 
     #[test]
     fn test_info_message() {
         let msg = info_message("5 items found");
-        assert!(msg.as_str().contains("⚪"));
+        assert!(msg.as_str().contains(INFO_SYMBOL));
         assert!(msg.as_str().contains("5 items found"));
     }
 

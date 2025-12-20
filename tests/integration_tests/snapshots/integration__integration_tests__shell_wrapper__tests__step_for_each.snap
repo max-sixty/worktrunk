@@ -2,11 +2,11 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mRunning in [1mmain[22m...[39m
+[36m◎[39m [36mRunning in [1mmain[22m...[39m
 Branch: main
-🔄 [36mRunning in [1mfeature-a[22m...[39m
+[36m◎[39m [36mRunning in [1mfeature-a[22m...[39m
 Branch: feature-a
-🔄 [36mRunning in [1mfeature-b[22m...[39m
+[36m◎[39m [36mRunning in [1mfeature-b[22m...[39m
 Branch: feature-b
 
-✅ [32mCompleted in 3 worktrees[39m
+[32m✓[39m [32mCompleted in 3 worktrees[39m

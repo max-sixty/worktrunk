@@ -34,4 +34,4 @@ exit_code: 0
 @ main         [2m^[22m                                    .                             [2m1c3b3fec[0m  [2m1d[0m    [2mMain conflicting changes
 + feature  [36m+[39m[36m![39m[36m?[39m[31m✘[39m[2m–[22m 🤖    [32m+7[0m                           ../repo.feature               [2m1c3b3fec[0m  [2m1d[0m    [2mMain conflicting changes
 
-⚪ [2mShowing 2 worktrees, 1 with changes
+[2m○[22m [2mShowing 2 worktrees, 1 with changes

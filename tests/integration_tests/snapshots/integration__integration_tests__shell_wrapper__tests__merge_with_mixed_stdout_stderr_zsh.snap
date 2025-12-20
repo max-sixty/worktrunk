@@ -2,8 +2,8 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mRunning project pre-merge [1mcheck1[22m:[39m
-[107m [0m  [2m[0m[2m[34m[TMPDIR]/repo/mixed-output.sh[0m[2m check1 3[0m
+[36m◎[39m [36mRunning project pre-merge [1mcheck1[22m:[39m
+[107m [0m [2m[0m[2m[34m[TMPDIR]/repo/mixed-output.sh[0m[2m check1 3[0m
 [check1] stdout line 1
 [check1] stderr line 1
 [check1] stdout line 2
@@ -12,8 +12,8 @@ expression: output.normalized()
 [check1] stderr line 3
 [check1] stdout complete
 [check1] stderr complete
-🔄 [36mRunning project pre-merge [1mcheck2[22m:[39m
-[107m [0m  [2m[0m[2m[34m[TMPDIR]/repo/mixed-output.sh[0m[2m check2 3[0m
+[36m◎[39m [36mRunning project pre-merge [1mcheck2[22m:[39m
+[107m [0m [2m[0m[2m[34m[TMPDIR]/repo/mixed-output.sh[0m[2m check2 3[0m
 [check2] stdout line 1
 [check2] stderr line 1
 [check2] stdout line 2
@@ -22,9 +22,9 @@ expression: output.normalized()
 [check2] stderr line 3
 [check2] stdout complete
 [check2] stderr complete
-🔄 [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
-[107m [0m  * [33m[HASH][m Add feature file
-[107m [0m   feature.txt | 1 [32m+[m
-[107m [0m   1 file changed, 1 insertion(+)
-✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-🔄 [36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no commit/squash/rebase needed)[39m
+[107m [0m * [33m[HASH][m Add feature file
+[107m [0m  feature.txt | 1 [32m+[m
+[107m [0m  1 file changed, 1 insertion(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+[36m◎[39m [36mRemoving [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m

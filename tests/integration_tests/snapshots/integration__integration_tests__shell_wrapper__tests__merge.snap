@@ -2,5 +2,5 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-⚪ Already up to date with [1mmain[22m (no new commits, no rebase needed)
-⚪ Worktree preserved (main worktree)
+[2m○[22m Already up to date with [1mmain[22m (no new commits, no rebase needed)
+[2m○[22m Worktree preserved (main worktree)

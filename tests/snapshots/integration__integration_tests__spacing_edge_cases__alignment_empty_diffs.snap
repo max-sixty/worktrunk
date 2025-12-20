@@ -35,4 +35,4 @@ exit_code: 0
 + [2mno-changes[0m           [2m_[22m                         [2m../repo.no-changes[0m                [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
 + with-changes      [36m![39m  [2m–[22m       [32m+1[0m   [31m-1[0m           ../repo.with-changes              [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
 
-⚪ [2mShowing 4 worktrees, 1 with changes
+[2m○[22m [2mShowing 4 worktrees, 1 with changes

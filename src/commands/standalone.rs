@@ -844,7 +844,7 @@ fn render_hook_commands(
             false
         };
 
-        // Use ❓ for needs approval, ⚪ for approved/user hooks
+        // Use ❯ for needs approval, ○ for approved/user hooks
         let (emoji, suffix) = if needs_approval {
             (PROMPT_EMOJI, cformat!(" <dim>(requires approval)</>"))
         } else {

@@ -16,10 +16,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -30,13 +32,13 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mPushing 3 commits to [1mmain[22m @ [2m2489484[22m (merge commits allowed)[39m
-[107m [0m  *   [33m2489484[m Merge temp
-[107m [0m  [31m|[m[32m/[m  
-[107m [0m  [31m|[m * [33me03c938[m Commit 2
-[107m [0m  [31m|[m[31m/[m  
-[107m [0m  * [33m9ca7ddd[m Commit 1
-[107m [0m   file1.txt | 1 [32m+[m
-[107m [0m   file2.txt | 1 [32m+[m
-[107m [0m   2 files changed, 2 insertions(+)
-✅ [32mPushed to [1mmain[22m [90m(3 commits, 2 files, [32m+2[39m[39m[90m)[39m[39m
+[36m◎[39m [36mPushing 3 commits to [1mmain[22m @ [2m2489484[22m (merge commits allowed)[39m
+[107m [0m *   [33m2489484[m Merge temp
+[107m [0m [31m|[m[32m/[m  
+[107m [0m [31m|[m * [33me03c938[m Commit 2
+[107m [0m [31m|[m[31m/[m  
+[107m [0m * [33m9ca7ddd[m Commit 1
+[107m [0m  file1.txt | 1 [32m+[m
+[107m [0m  file2.txt | 1 [32m+[m
+[107m [0m  2 files changed, 2 insertions(+)
+[32m✓[39m [32mPushed to [1mmain[22m [90m(3 commits, 2 files, [32m+2[39m[39m[90m)[39m[39m

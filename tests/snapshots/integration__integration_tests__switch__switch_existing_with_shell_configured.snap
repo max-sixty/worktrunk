@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,4 +30,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — shell integration not active[39m
+[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — shell integration not active[39m

@@ -2,7 +2,7 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
-[107m [0m  abc1234 New commit on main
+[31m✗[39m [31mCan't push to local [1mmain[22m branch: it has newer commits[39m
+[107m [0m abc1234 New commit on main
 
-💡 [2mTo incorporate these changes, run [90mwt merge main[39m again[22m
+[2m↳[22m [2mTo incorporate these changes, run [90mwt merge main[39m again[22m

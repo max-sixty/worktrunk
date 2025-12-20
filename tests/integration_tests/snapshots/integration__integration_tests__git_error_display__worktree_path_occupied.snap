@@ -2,7 +2,7 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mCannot create worktree for [1mfeature-z[22m: existing worktree at [1m/tmp/repo.feature-z[22m on [1mother-branch[22m[39m
+[31m✗[39m [31mCannot create worktree for [1mfeature-z[22m: existing worktree at [1m/tmp/repo.feature-z[22m on [1mother-branch[22m[39m
 
-💡 [2mTo switch the worktree to this branch:[22m
-[107m [0m  [2m[0m[2m[34mcd[0m[2m /tmp/repo.feature-z [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch feature-z[0m
+[2m↳[22m [2mTo switch the worktree to this branch:[22m
+[107m [0m [2m[0m[2m[34mcd[0m[2m /tmp/repo.feature-z [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch feature-z[0m

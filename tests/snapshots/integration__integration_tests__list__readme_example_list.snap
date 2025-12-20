@@ -34,4 +34,4 @@ exit_code: 0
 ^ main             [2m^[22m[2m⇅[22m                         [32m⇡1[0m  [2m[31m⇣1[0m  [2m6088adb3[0m  [2m4d[0m    [2mMerge fix-auth: hardened to…
 + fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m     [2m|[0m     [2m127407de[0m  [2m5h[0m    [2mAdd secure token storage
 
-⚪ [2mShowing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden
+[2m○[22m [2mShowing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden

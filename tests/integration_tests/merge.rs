@@ -1648,12 +1648,12 @@ fn test_merge_no_commit_with_clean_tree(mut repo_with_feature_worktree: TestRepo
         ----- stdout -----
 
         ----- stderr -----
-        🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
-        [107m [0m  * [33mfc12499[m Add feature file
-        [107m [0m   feature.txt | 1 [32m+[m
-        [107m [0m   1 file changed, 1 insertion(+)
-        ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-        ⚪ Worktree preserved (--no-remove)
+        [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
+        [107m [0m * [33mfc12499[m Add feature file
+        [107m [0m  feature.txt | 1 [32m+[m
+        [107m [0m  1 file changed, 1 insertion(+)
+        [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+        [2m○[22m Worktree preserved (--no-remove)
         ");
     });
 }
@@ -1682,9 +1682,9 @@ fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
         ----- stdout -----
 
         ----- stderr -----
-        ❌ [31mCannot merge with --no-commit: [1mfeature[22m has uncommitted changes[39m
+        [31m✗[39m [31mCannot merge with --no-commit: [1mfeature[22m has uncommitted changes[39m
 
-        💡 [2mCommit or stash changes first[22m
+        [2m↳[22m [2mCommit or stash changes first[22m
         ");
     });
 }
@@ -1709,12 +1709,12 @@ fn test_merge_no_commit_no_squash_no_remove_redundant(mut repo_with_feature_work
         ----- stdout -----
 
         ----- stderr -----
-        🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
-        [107m [0m  * [33mfc12499[m Add feature file
-        [107m [0m   feature.txt | 1 [32m+[m
-        [107m [0m   1 file changed, 1 insertion(+)
-        ✅ [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-        ⚪ Worktree preserved (--no-remove)
+        [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
+        [107m [0m * [33mfc12499[m Add feature file
+        [107m [0m  feature.txt | 1 [32m+[m
+        [107m [0m  1 file changed, 1 insertion(+)
+        [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+        [2m○[22m Worktree preserved (--no-remove)
         ");
     });
 }

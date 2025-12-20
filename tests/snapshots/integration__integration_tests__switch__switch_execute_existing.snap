@@ -21,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -31,6 +32,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ Switched to worktree for [1mexisting-exec[22m @ [1m_REPO_.existing-exec[22m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'existing worktree'[0m[2m [0m[2m[36m>[0m[2m existing.txt
+[2m○[22m Switched to worktree for [1mexisting-exec[22m @ [1m_REPO_.existing-exec[22m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'existing worktree'[0m[2m [0m[2m[36m>[0m[2m existing.txt

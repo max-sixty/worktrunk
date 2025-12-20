@@ -33,4 +33,4 @@ exit_code: 0
 @ main              [2m^[22m                         .                              [2md167d3cc[0m  [2m1d[0m    [2mFix bug with café ☕ handling
 + [2mfeature-test[0m      [2m⊂[22m                     [2m[31m↓1[0m  [2m../repo.feature-test[0m           [2m96b95eab[0m  [2m1d[0m    [2mAdd support for 日本語 and émoji 🎉
 
-⚪ [2mShowing 2 worktrees
+[2m○[22m [2mShowing 2 worktrees

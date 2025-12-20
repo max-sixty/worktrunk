@@ -26,15 +26,15 @@ fn test_config_init_already_exists(temp_home: TempDir) {
         cmd.arg("config").arg("create");
         set_temp_home_env(&mut cmd, temp_home.path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
-        ⚪ User config already exists: [1m~/.config/worktrunk/config.toml[22m
+        [2m○[22m User config already exists: [1m~/.config/worktrunk/config.toml[22m
 
-        💡 [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
+        [2m↳[22m [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
         ");
     });
 }
@@ -52,15 +52,15 @@ fn test_config_init_creates_file(temp_home: TempDir) {
         cmd.arg("config").arg("create");
         set_temp_home_env(&mut cmd, temp_home.path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
-        ✅ [32mCreated user config: [1m~/.config/worktrunk/config.toml[22m[39m
+        [32m✓[39m [32mCreated user config: [1m~/.config/worktrunk/config.toml[22m[39m
 
-        💡 [2mEdit this file to customize worktree paths and LLM settings[22m
+        [2m↳[22m [2mEdit this file to customize worktree paths and LLM settings[22m
         ");
     });
 
@@ -75,16 +75,16 @@ fn test_config_create_project_creates_file(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
-        ✅ [32mCreated project config: [1m_REPO_/.config/wt.toml[22m[39m
+        [32m✓[39m [32mCreated project config: [1m_REPO_/.config/wt.toml[22m[39m
 
-        💡 [2mEdit this file to configure hooks for this repository[22m
-        💡 [2mSee https://worktrunk.dev/hooks/ for hook documentation[22m
+        [2m↳[22m [2mEdit this file to configure hooks for this repository[22m
+        [2m↳[22m [2mSee https://worktrunk.dev/hooks/ for hook documentation[22m
         ");
     });
 
@@ -113,15 +113,15 @@ run = "echo hello"
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(&repo, "config", &["create", "--project"], None);
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
 
         ----- stderr -----
-        ⚪ Project config already exists: [1m_REPO_/.config/wt.toml[22m
+        [2m○[22m Project config already exists: [1m_REPO_/.config/wt.toml[22m
 
-        💡 [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
+        [2m↳[22m [2mFor format reference, run [90mwt config create --help[39m; to view, run [90mwt config show[39m[22m
         ");
     });
 }

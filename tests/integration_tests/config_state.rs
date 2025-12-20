@@ -87,7 +87,7 @@ fn test_state_set_default_branch(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet default branch to [1mdevelop[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet default branch to [1mdevelop[22m[39m");
 
     // Verify it was set by checking origin/HEAD
     let output = repo
@@ -109,7 +109,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared default branch cache[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared default branch cache[39m");
 
     // Verify it was cleared - origin/HEAD should not exist
     let output = repo
@@ -130,7 +130,7 @@ fn test_state_clear_default_branch_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No default branch cache to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No default branch cache to clear");
 }
 
 // ============================================================================
@@ -153,7 +153,7 @@ fn test_state_set_previous_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet previous branch to [1mfeature[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet previous branch to [1mfeature[22m[39m");
 
     // Verify it was set
     let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
@@ -174,7 +174,7 @@ fn test_state_clear_previous_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared previous branch[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared previous branch[39m");
 
     // Verify it was cleared
     let output = wt_state_cmd(&repo, "previous-branch", "get", &[])
@@ -191,7 +191,7 @@ fn test_state_clear_previous_branch_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No previous branch to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No previous branch to clear");
 }
 
 // ============================================================================
@@ -237,7 +237,7 @@ fn test_state_clear_ci_status_all_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No CI cache entries to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache entries to clear");
 }
 
 #[rstest]
@@ -255,7 +255,7 @@ fn test_state_clear_ci_status_branch(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared CI cache for [1mmain[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mmain[22m[39m");
 }
 
 #[rstest]
@@ -264,7 +264,7 @@ fn test_state_clear_ci_status_branch_not_cached(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No CI cache for [1mmain[22m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mmain[22m");
 }
 
 // ============================================================================
@@ -311,7 +311,7 @@ fn test_state_set_marker_branch_default(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet marker for [1mmain[22m to [1m🚧[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet marker for [1mmain[22m to [1m🚧[22m[39m");
 
     // Verify it was set (use wt command to parse JSON storage)
     let output = wt_state_cmd(&repo, "marker", "get", &[]).output().unwrap();
@@ -326,7 +326,7 @@ fn test_state_set_marker_branch_specific(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mSet marker for [1mfeature[22m to [1m🔧[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet marker for [1mfeature[22m to [1m🔧[22m[39m");
 
     // Verify it was set (use wt command to parse JSON storage)
     let output = wt_state_cmd(&repo, "marker", "get", &["--branch", "feature"])
@@ -344,7 +344,7 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared marker for [1mmain[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared marker for [1mmain[22m[39m");
 
     // Verify it was unset
     let output = repo
@@ -363,7 +363,7 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared marker for [1mfeature[22m[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared marker for [1mfeature[22m[39m");
 
     // Verify it was unset
     let output = repo
@@ -384,7 +384,7 @@ fn test_state_clear_marker_all(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared [1m3[22m markers[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m3[22m markers[39m");
 
     // Verify all were unset
     let output = repo
@@ -400,7 +400,7 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No markers to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No markers to clear");
 }
 
 // ============================================================================
@@ -411,7 +411,7 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
 fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No logs");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No logs");
 }
 
 #[rstest]
@@ -442,7 +442,7 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 fn test_state_clear_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No logs to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No logs to clear");
 }
 
 #[rstest]
@@ -456,7 +456,7 @@ fn test_state_clear_logs_with_files(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared [1m2[22m log files[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m log files[39m");
 
     // Verify logs are gone
     assert!(!log_dir.exists());
@@ -472,7 +472,7 @@ fn test_state_clear_logs_single_file(repo: TestRepo) {
 
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared [1m1[22m log file[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m log file[39m");
 }
 
 // ============================================================================
@@ -492,7 +492,7 @@ fn test_state_clear_all_empty(repo: TestRepo) {
     // Clear when no state exists
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No stored state to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No stored state to clear");
 }
 
 #[rstest]
@@ -521,7 +521,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"✅ [32mCleared all stored state[39m");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared all stored state[39m");
 
     // Verify everything was cleared
     assert!(
@@ -557,7 +557,7 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
     // Clear again when nothing exists
     let output = wt_state_clear_all_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"⚪ No stored state to clear");
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No stored state to clear");
 }
 
 // ============================================================================
@@ -570,19 +570,19 @@ fn test_state_get_empty(repo: TestRepo) {
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
     [36mDEFAULT BRANCH[39m
-    [107m [0m  main
+    [107m [0m main
 
     [36mPREVIOUS BRANCH[39m
-    [107m [0m  (none)
+    [107m [0m (none)
 
     [36mBRANCH MARKERS[39m
-    [107m [0m  (none)
+    [107m [0m (none)
 
     [36mCI STATUS CACHE[39m
-    [107m [0m  (none)
+    [107m [0m (none)
 
     [36mLOG FILES[39m  @ .git/wt-logs
-    [107m [0m  (none)
+    [107m [0m (none)
     ");
 }
 

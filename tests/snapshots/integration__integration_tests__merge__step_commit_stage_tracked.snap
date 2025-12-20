@@ -15,10 +15,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_COMMIT_GENERATION__ARGS: "fix: update tracked file"
@@ -31,6 +33,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mGenerating commit message and committing tracked changes... [90m(1 file, [32m+1[39m, [31m-1[39m[39m[90m)[39m[39m
-[107m [0m  [1mfix: update tracked file[22m
-✅ [32mCommitted changes @ [2m0495397[22m[39m
+[36m◎[39m [36mGenerating commit message and committing tracked changes... [90m(1 file, [32m+1[39m, [31m-1[39m[39m[90m)[39m[39m
+[107m [0m [1mfix: update tracked file[22m
+[32m✓[39m [32mCommitted changes @ [2m0495397[22m[39m

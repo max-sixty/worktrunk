@@ -2,5 +2,5 @@
 source: src/styling/mod.rs
 expression: result
 ---
-[107m [0m  [2m[0m[2m[34mecho[0m[2m {{ worktree[0m
-[107m [0m  [2m}}/path[0m[2m[0m
+[107m [0m [2m[0m[2m[34mecho[0m[2m {{ worktree[0m
+[107m [0m [2m}}/path[0m[2m[0m

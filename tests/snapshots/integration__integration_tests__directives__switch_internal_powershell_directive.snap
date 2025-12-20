@@ -32,4 +32,4 @@ exit_code: 0
 Set-Location _REPO_.feature
 
 ----- stderr -----
-⚪ Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m
+[2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m

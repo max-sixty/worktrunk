@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,5 +30,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRemoving [1mfeature-unmerged[22m worktree in background; retaining unmerged branch[39m
-💡 [2mTo delete the unmerged branch, run [90mwt remove feature-unmerged -D[39m[22m
+[36m◎[39m [36mRemoving [1mfeature-unmerged[22m worktree in background; retaining unmerged branch[39m
+[2m↳[22m [2mTo delete the unmerged branch, run [90mwt remove feature-unmerged -D[39m[22m

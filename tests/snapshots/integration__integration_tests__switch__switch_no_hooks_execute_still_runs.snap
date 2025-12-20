@@ -23,6 +23,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -34,6 +35,6 @@ exit_code: 0
 execute command runs
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mno-hooks-test[22m from [1mmain[22m @ [1m_REPO_.no-hooks-test[22m[39m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute command runs'[0m[2m
+[32m✓[39m [32mCreated new worktree for [1mno-hooks-test[22m from [1mmain[22m @ [1m_REPO_.no-hooks-test[22m[39m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute command runs'[0m[2m

@@ -33,4 +33,4 @@ exit_code: 0
 @ main         [2m^[22m                         .                         [2m85d55864[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
 + [2mfeature[0m      [2m_[22m                         [2m../repo.feature[0m           [2m85d55864[0m  [2m1d[0m    [2mFix bug __WORKTRUNK_EXEC__echo PWNED > /tmp/hacked4
 
-⚪ [2mShowing 2 worktrees
+[2m○[22m [2mShowing 2 worktrees

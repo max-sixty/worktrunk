@@ -14,10 +14,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -28,10 +30,10 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mSquashing 2 commits into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
-🔄 [36mGenerating squash commit message...[39m
-❌ [31mCommit generation command failed[39m
-[107m [0m  Error: connection refused
+[36m◎[39m [36mSquashing 2 commits into a single commit [90m(2 files, [32m+2[39m[39m[90m)[39m...[39m
+[36m◎[39m [36mGenerating squash commit message...[39m
+[31m✗[39m [31mCommit generation command failed[39m
+[107m [0m Error: connection refused
 
-⚪ Ran command:
-[107m [0m  wt step squash --show-prompt | sh -c cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1
+[2m○[22m Ran command:
+[107m [0m wt step squash --show-prompt | sh -c cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1

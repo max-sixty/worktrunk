@@ -35,4 +35,4 @@ exit_code: 0
 + feature-changes   [36m![39m[36m?[39m [2m↑[22m 🤖   [32m+50[0m [31m-100[0m   [32m↑1[0m      ../repo.feature-changes           [2m38944dae[0m  [2m1d[0m    [2mAdd 100 lines
 + fix                [36m?[39m [2m–[22m 💬                      ../repo.fix                       [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
 
-⚪ [2mShowing 4 worktrees, 3 with changes, 2 ahead
+[2m○[22m [2mShowing 4 worktrees, 3 with changes, 2 ahead

@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -30,6 +31,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mBranch not rebased onto [1mmain[22m[39m
+[31m✗[39m [31mBranch not rebased onto [1mmain[22m[39m
 
-💡 [2mRemove [90m--no-rebase[39m; or to rebase first, run [90mwt step rebase main[39m[22m
+[2m↳[22m [2mRemove [90m--no-rebase[39m; or to rebase first, run [90mwt step rebase main[39m[22m

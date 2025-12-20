@@ -2,12 +2,12 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-🔄 [36mRunning project pre-merge [1mformat[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'[0m[2m[0m
+[36m◎[39m [36mRunning project pre-merge [1mformat[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✓ Code formatting check passed'[0m[2m[0m
 ✓ Code formatting check passed
-🔄 [36mRunning project pre-merge [1mtest[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✗ Test suite failed: 3 tests failing'[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mexit[0m[2m 1[0m
+[36m◎[39m [36mRunning project pre-merge [1mtest[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'✗ Test suite failed: 3 tests failing'[0m[2m [0m[2m[36m&&[0m[2m [0m[2m[34mexit[0m[2m 1[0m
 ✗ Test suite failed: 3 tests failing
-❌ [31mpre-merge command failed: [1mtest[22m: exit status: 1[39m
+[31m✗[39m [31mpre-merge command failed: [1mtest[22m: exit status: 1[39m
 
-💡 [2mTo skip pre-merge hooks, re-run with [90m--no-verify[39m[22m
+[2m↳[22m [2mTo skip pre-merge hooks, re-run with [90m--no-verify[39m[22m

@@ -2,6 +2,6 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mFound merge commits in push range[39m
+[31m✗[39m [31mFound merge commits in push range[39m
 
-💡 [2mTo push non-linear history, run [90mwt merge --allow-merge-commits[39m[22m
+[2m↳[22m [2mTo push non-linear history, run [90mwt merge --allow-merge-commits[39m[22m

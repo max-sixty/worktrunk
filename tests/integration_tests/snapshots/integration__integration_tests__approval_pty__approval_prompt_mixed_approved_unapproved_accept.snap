@@ -4,21 +4,21 @@ expression: normalized
 ---
 y
 
-🟡 [33m[1mrepo[22m needs approval to execute [1m2[22m commands:[39m
+[33m▲[39m [33m[1mrepo[22m needs approval to execute [1m2[22m commands:[39m
 
-⚪ post-create [1mfirst[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m[0m
-⚪ post-create [1mthird[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
-❓ Allow and remember? [1m[y/N][22m 
-🔄 [36mRunning project post-create [1mfirst[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m[0m
+[2m○[22m post-create [1mfirst[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m[0m
+[2m○[22m post-create [1mthird[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
+[36m❯[39m Allow and remember? [1m[y/N][22m 
+[36m◎[39m [36mRunning project post-create [1mfirst[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m[0m
 [0mFirst command
-🔄 [36mRunning project post-create [1msecond[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Second command'[0m[2m[0m
+[36m◎[39m [36mRunning project post-create [1msecond[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Second command'[0m[2m[0m
 [0mSecond command
-🔄 [36mRunning project post-create [1mthird[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
+[36m◎[39m [36mRunning project post-create [1mthird[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
 [0mThird command
-✅ [32mCreated new worktree for [1mtest-mixed-accept[22m from [1mmain[22m @ [1m_REPO_/repo.test-mixed-accept[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[32m✓[39m [32mCreated new worktree for [1mtest-mixed-accept[22m from [1mmain[22m @ [1m_REPO_/repo.test-mixed-accept[22m[39m
+[2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m

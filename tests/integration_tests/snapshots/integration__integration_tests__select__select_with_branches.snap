@@ -5,7 +5,7 @@ expression: normalized
 > [QUERY]                                                     │[PREVIEW_HEADER]
     Branch           Status        HEAD±    main↕  Remote⇅  │Enter: switch | Esc: cancel | ctrl-u/d: scroll | alt-p: tog
 > @ main                 ^                                  │
-  + active-worktree      _                                  │⚪ main has no uncommitted changes
+  + active-worktree      _                                  │○ main has no uncommitted changes
     orphan-branch       /_                                  │
                                                             │
                                                             │

@@ -20,6 +20,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -30,9 +31,9 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
-🔄 [36mRunning user post-start [1mbg[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_POST_START'[0m[2m [0m[2m[36m>[0m[2m user_bg.txt
-🔄 [36mRunning project post-start:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'PROJECT_POST_START'[0m[2m [0m[2m[36m>[0m[2m project_bg.txt
+[32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
+[2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[36m◎[39m [36mRunning user post-start [1mbg[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_POST_START'[0m[2m [0m[2m[36m>[0m[2m user_bg.txt
+[36m◎[39m [36mRunning project post-start:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'PROJECT_POST_START'[0m[2m [0m[2m[36m>[0m[2m project_bg.txt

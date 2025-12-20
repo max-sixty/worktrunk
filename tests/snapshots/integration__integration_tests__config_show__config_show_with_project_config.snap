@@ -14,10 +14,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -41,6 +43,6 @@ exit_code: 0
 [107m [0m  server = [32m"npm run dev"
 
 [36mSHELL INTEGRATION[39m
-⚪ [2mSkipped bash; ~/.bashrc not found[22m
-⚪ [2mSkipped zsh; ~/.zshrc not found[22m
-⚪ [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
+[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m

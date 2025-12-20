@@ -32,10 +32,10 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mAuto-staging 1 untracked path:[39m
-[107m [0m  uncommitted.txt
-🔄 [36mRunning user pre-commit [1mlint[22m:[39m
-[107m [0m  [2m[0m[2m[34mexit[0m[2m 1
-[0m❌ [31mpre-commit command failed: [1mlint[22m: exit status: 1[39m
+[33m▲[39m [33mAuto-staging 1 untracked path:[39m
+[107m [0m uncommitted.txt
+[36m◎[39m [36mRunning user pre-commit [1mlint[22m:[39m
+[107m [0m [2m[0m[2m[34mexit[0m[2m 1
+[0m[31m✗[39m [31mpre-commit command failed: [1mlint[22m: exit status: 1[39m
 
-💡 [2mTo skip pre-commit hooks, re-run with [90m--no-verify[39m[22m
+[2m↳[22m [2mTo skip pre-commit hooks, re-run with [90m--no-verify[39m[22m

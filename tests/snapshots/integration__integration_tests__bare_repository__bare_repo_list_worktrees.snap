@@ -13,6 +13,7 @@ info:
     LANG: C
     LC_ALL: C
     NO_COLOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
 ---
@@ -25,4 +26,4 @@ exit_code: 0
 @ main         ^                         .                    6c3da842  1d    Initial commit on main
 + feature      ↑                 ↑1      ../feature           72413a3b  1d    Work on feature
 
-⚪ Showing 2 worktrees, 1 ahead
+○ Showing 2 worktrees, 1 ahead

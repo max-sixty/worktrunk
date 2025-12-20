@@ -31,6 +31,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mRemoving [1mfeature-unmerged-fg[22m worktree...[39m
-✅ [32mRemoved [1mfeature-unmerged-fg[22m worktree; retaining unmerged branch[39m
-💡 [2mTo delete the unmerged branch, run [90mwt remove feature-unmerged-fg -D[39m[22m
+[36m◎[39m [36mRemoving [1mfeature-unmerged-fg[22m worktree...[39m
+[32m✓[39m [32mRemoved [1mfeature-unmerged-fg[22m worktree; retaining unmerged branch[39m
+[2m↳[22m [2mTo delete the unmerged branch, run [90mwt remove feature-unmerged-fg -D[39m[22m

@@ -15,10 +15,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,8 +31,8 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🔄 [36mPushing 1 commit to [1mmain[22m @ [2me26c61d[22m[39m
-[107m [0m  * [33me26c61d[m Add test file
-[107m [0m   test.txt | 1 [32m+[m
-[107m [0m   1 file changed, 1 insertion(+)
-✅ [32mPushed to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+[36m◎[39m [36mPushing 1 commit to [1mmain[22m @ [2me26c61d[22m[39m
+[107m [0m * [33me26c61d[m Add test file
+[107m [0m  test.txt | 1 [32m+[m
+[107m [0m  1 file changed, 1 insertion(+)
+[32m✓[39m [32mPushed to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m

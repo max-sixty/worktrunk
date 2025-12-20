@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,5 +30,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mSwitched to worktree for [1mbranch-b[22m @ [1m_REPO_.branch-b[22m[39m
-💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[32m✓[39m [32mSwitched to worktree for [1mbranch-b[22m @ [1m_REPO_.branch-b[22m[39m
+[2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m

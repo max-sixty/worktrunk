@@ -1,6 +1,6 @@
 ---
-source: tests/git_error_display.rs
+source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mFailed to create worktree for [1mfeature-y[22m from base [1mmain[22m[39m
-[107m [0m  fatal: '/tmp/repo.feature-y' already exists
+[31m✗[39m [31mFailed to create worktree for [1mfeature-y[22m from base [1mmain[22m[39m
+[107m [0m fatal: '/tmp/repo.feature-y' already exists

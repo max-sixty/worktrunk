@@ -22,6 +22,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -33,6 +34,6 @@ exit_code: 0
 execute still runs
 
 ----- stderr -----
-⚪ Switched to worktree for [1mexisting-no-hooks[22m @ [1m_REPO_.existing-no-hooks[22m
-🔄 [36mExecuting (--execute):[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m
+[2m○[22m Switched to worktree for [1mexisting-no-hooks[22m @ [1m_REPO_.existing-no-hooks[22m
+[36m◎[39m [36mExecuting (--execute):[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m

@@ -662,9 +662,9 @@ mod tests {
     fn snapshot_detached_head_display() {
         let err = GitError::DetachedHead { action: None };
         assert_snapshot!(err.to_string(), @r"
-        ❌ [31mNot on a branch (detached HEAD)[39m
+        [31m✗[39m [31mNot on a branch (detached HEAD)[39m
 
-        💡 [2mTo switch to a branch, run [90mgit switch <branch>[39m[22m
+        [2m↳[22m [2mTo switch to a branch, run [90mgit switch <branch>[39m[22m
         ");
     }
 
@@ -675,9 +675,9 @@ mod tests {
             worktree: Some("wt".into()),
         };
         assert_snapshot!(err.to_string(), @r"
-        ❌ [31mCannot merge: [1mwt[22m has uncommitted changes[39m
+        [31m✗[39m [31mCannot merge: [1mwt[22m has uncommitted changes[39m
 
-        💡 [2mCommit or stash changes first[22m
+        [2m↳[22m [2mCommit or stash changes first[22m
         ");
     }
 
@@ -691,9 +691,9 @@ mod tests {
 
         let downcast = err.downcast_ref::<GitError>().expect("Should downcast");
         assert_snapshot!(downcast.to_string(), @r"
-        ❌ [31mBranch [1mmain[22m already exists[39m
+        [31m✗[39m [31mBranch [1mmain[22m already exists[39m
 
-        💡 [2mTo switch to the existing branch, remove [90m--create[39m; run [90mwt switch main[39m[22m
+        [2m↳[22m [2mTo switch to the existing branch, remove [90m--create[39m; run [90mwt switch main[39m[22m
         ");
     }
 
@@ -718,9 +718,9 @@ mod tests {
             path: PathBuf::from("/some/path"),
         };
         assert_snapshot!(err.to_string(), @r"
-        ❌ [31mDirectory already exists: [1m/some/path[22m[39m
+        [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
 
-        💡 [2mTo remove manually, run [90mrm -rf /some/path[39m; to retry with backup, run [90mwt switch feature --clobber[39m[22m
+        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to retry with backup, run [90mwt switch feature --clobber[39m[22m
         ");
     }
 

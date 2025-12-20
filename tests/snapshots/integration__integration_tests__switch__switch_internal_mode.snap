@@ -33,4 +33,4 @@ exit_code: 0
 cd _REPO_.internal-test
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m
+[32m✓[39m [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m

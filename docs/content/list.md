@@ -25,7 +25,7 @@ List all worktrees:
 ^ main             <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>6088adb3</span>  <span class=d>4d</span>    <span class=d>Merge fix-auth: hardened to…</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>127407de</span>  <span class=d>5h</span>    <span class=d>Add secure token storage</span>
 
-⚪ <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
+<span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
@@ -41,7 +41,7 @@ Include CI status and line diffs:
 ^ main             <span class=d>^</span><span class=d>⇅</span>                                    <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=g>●</span>   <span class=d>6088adb3</span>  <span class=d>4d</span>    <span class=d>Merge fix-au…</span>
 + fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+25</span>  <span class=r>-11</span>     <span class=d>|</span>     <span class=g>●</span>   <span class=d>127407de</span>  <span class=d>5h</span>    <span class=d>Add secure t…</span>
 
-⚪ <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
+<span class=d>○</span> <span class=d>Showing 3 worktrees, 1 with changes, 2 ahead, 1 column hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
@@ -59,7 +59,7 @@ Include branches that don't have worktrees:
   exp             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>  <span class=g>+137</span>                    <span class=d>99e114de</span>  <span class=d>2d</span>    <span class=d>Add GraphQL…</span>
   wip             <span class=d>/</span><span class=d>↕</span>                 <span class=g>↑1</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>+33</span>                    <span class=d>d62fd0e8</span>  <span class=d>3d</span>    <span class=d>Start API do…</span>
 
-⚪ <span class=d>Showing 3 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden</span>
+<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 branches, 1 with changes, 4 ahead, 1 column hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->

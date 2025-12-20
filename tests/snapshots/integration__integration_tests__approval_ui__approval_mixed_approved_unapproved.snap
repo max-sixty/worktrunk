@@ -6,12 +6,12 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33m[1mrepo[22m needs approval to execute [1m2[22m commands:[39m
+[33m▲[39m [33m[1mrepo[22m needs approval to execute [1m2[22m commands:[39m
 
-⚪ post-create [1mfirst[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m
-⚪ post-create [1mthird[22m:
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m
-❌ [31mCannot prompt for approval in non-interactive environment[39m
+[2m○[22m post-create [1mfirst[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'First command'[0m[2m
+[2m○[22m post-create [1mthird[22m:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m
+[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 
-💡 [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m

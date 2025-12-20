@@ -37,4 +37,4 @@ exit_code: 0
 + feature-middle       [2m↑[22m                 [32m↑1[0m      ../repo.feature-middle            [2ma84219ce[0m  [2m22h[0m   [2mCommit at 02:00
 + feature-oldest       [2m↑[22m                 [32m↑1[0m      ../repo.feature-oldest            [2m9777b5e4[0m  [2m23h[0m   [2mCommit at 00:30
 
-⚪ [2mShowing 5 worktrees, 4 ahead
+[2m○[22m [2mShowing 5 worktrees, 4 ahead

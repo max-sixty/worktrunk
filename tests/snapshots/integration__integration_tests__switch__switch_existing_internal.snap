@@ -32,4 +32,4 @@ exit_code: 0
 cd _REPO_.existing-wt
 
 ----- stderr -----
-⚪ Switched to worktree for [1mexisting-wt[22m @ [1m_REPO_.existing-wt[22m
+[2m○[22m Switched to worktree for [1mexisting-wt[22m @ [1m_REPO_.existing-wt[22m

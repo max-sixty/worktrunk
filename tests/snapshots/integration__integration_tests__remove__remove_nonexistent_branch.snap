@@ -19,6 +19,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,4 +30,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mNo worktree found for branch [1mnonexistent[22m[39m
+[31m✗[39m [31mNo worktree found for branch [1mnonexistent[22m[39m

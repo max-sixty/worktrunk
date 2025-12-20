@@ -2,6 +2,6 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-❌ [31mCannot prompt for approval in non-interactive environment[39m
+[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
 
-💡 [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m
+[2m↳[22m [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m
