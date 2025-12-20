@@ -1769,14 +1769,17 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
     }
 
+    // Normalize backslashes FIRST so all subsequent path filters only need forward-slash versions.
+    // This must come before any path replacement filters.
+    settings.add_filter(r"\\", "/");
+
     // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
     let root_canonical =
         canonicalize(repo.root_path()).unwrap_or_else(|_| repo.root_path().to_path_buf());
     let root_str = root_canonical.to_str().unwrap();
-    // Add both backslash and forward-slash versions for Windows compatibility
-    // (output may have either format depending on when filters are applied)
-    settings.add_filter(&regex::escape(root_str), "_REPO_");
-    settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "_REPO_");
+    // Convert backslashes to forward slashes before escaping (backslash filter already ran)
+    let root_str_normalized = root_str.replace('\\', "/");
+    settings.add_filter(&regex::escape(&root_str_normalized), "_REPO_");
     // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
     settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
 
@@ -1805,8 +1808,9 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
         let path_str = canonical.to_str().unwrap();
         let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));
-        settings.add_filter(&regex::escape(path_str), &replacement);
-        settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
+        // Convert backslashes to forward slashes before escaping (backslash filter already ran)
+        let path_str_normalized = path_str.replace('\\', "/");
+        settings.add_filter(&regex::escape(&path_str_normalized), &replacement);
         // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
         settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
 
@@ -1818,9 +1822,6 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
             settings.add_filter(&regex::escape(&tilde_path), &replacement);
         }
     }
-
-    // Normalize backslashes for Windows compatibility
-    settings.add_filter(r"\\", "/");
 
     // Windows fallback: use a regex pattern to catch tilde-prefixed Windows temp paths.
     // This handles cases where path formats differ between home::home_dir() and the actual
