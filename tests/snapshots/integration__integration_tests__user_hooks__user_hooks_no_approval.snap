@@ -32,5 +32,5 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRunning user post-create [1msetup[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'NO_APPROVAL_NEEDED'[0m[2m [0m[2m[36m>[0m[2m no_approval.txt
-[0m✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m[REPO].feature[22m[39m
+[0m✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

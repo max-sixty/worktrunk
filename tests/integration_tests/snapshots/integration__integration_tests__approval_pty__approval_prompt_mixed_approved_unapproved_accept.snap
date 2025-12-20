@@ -20,5 +20,5 @@ y
 🔄 [36mRunning project post-create [1mthird[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Third command'[0m[2m[0m
 [0mThird command
-✅ [32mCreated new worktree for [1mtest-mixed-accept[22m from [1mmain[22m @ [1m[REPO]/repo.test-mixed-accept[22m[39m
+✅ [32mCreated new worktree for [1mtest-mixed-accept[22m from [1mmain[22m @ [1m_REPO_/repo.test-mixed-accept[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

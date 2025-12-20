@@ -308,9 +308,9 @@ fn normalize_output(output: &str) -> String {
 
     let output = lines.join("\n");
 
-    // Replace temp paths like /var/folders/.../repo.XXX with [REPO]
+    // Replace temp paths like /var/folders/.../repo.XXX with _REPO_
     let re = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]*").unwrap();
-    let output = re.replace_all(&output, "[REPO]");
+    let output = re.replace_all(&output, "_REPO_");
 
     // Replace count indicators like "1/4", "3/4" etc at end of lines
     let count_re = regex::Regex::new(r"\d+/\d+$").unwrap();

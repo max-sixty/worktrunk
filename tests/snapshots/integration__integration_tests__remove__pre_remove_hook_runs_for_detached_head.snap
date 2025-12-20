@@ -25,5 +25,5 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRemoving current worktree...[39m
 🔄 [36mRunning project pre-remove:[39m
-[107m [0m  [2m[0m[2m[34mtouch[0m[2m [REPO]/m.txt
+[107m [0m  [2m[0m[2m[34mtouch[0m[2m _REPO_/m.txt
 [0m✅ [32mRemoved worktree (detached HEAD, no branch to delete)[39m

@@ -30,4 +30,4 @@ exit_code: 0
 
 ----- stderr -----
 🔄 [36mRemoving current worktree...[39m
-✅ [32mRemoved [1mfeature[22m worktree & branch; changed directory to [1m[REPO][22m (same commit as [1mmain[22m, [2m_[22m)[39m
+✅ [32mRemoved [1mfeature[22m worktree & branch; changed directory to [1m_REPO_[22m (same commit as [1mmain[22m, [2m_[22m)[39m

@@ -29,7 +29,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd [REPO]
+cd _REPO_
 
 ----- stderr -----
 🔄 [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m

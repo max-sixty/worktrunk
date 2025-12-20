@@ -33,5 +33,5 @@ exit_code: 0
 🔄 [36mRunning user post-create [1mfailing[22m:[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 1
 [0m🟡 [33mCommand [1mfailing[22m failed: exit status: 1[39m
-✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m[REPO].feature[22m[39m
+✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

@@ -31,5 +31,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mno-post-start[22m from [1mmain[22m @ [1m[REPO].no-post-start[22m[39m
+✅ [32mCreated new worktree for [1mno-post-start[22m from [1mmain[22m @ [1m_REPO_.no-post-start[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

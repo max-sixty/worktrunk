@@ -31,4 +31,4 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mBackup path already exists: [REPO].clobber-backup-exists.bak.20250102-000000[39m
+❌ [31mBackup path already exists: _REPO_.clobber-backup-exists.bak.20250102-000000[39m

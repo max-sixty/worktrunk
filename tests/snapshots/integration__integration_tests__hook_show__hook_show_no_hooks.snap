@@ -28,5 +28,5 @@ exit_code: 0
 [TEST_CONFIG]
 💡 [2m(none configured)[22m
 
-[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
+[36mPROJECT HOOKS[39m  _REPO_/.config/wt.toml
 💡 [2m(not found)[22m

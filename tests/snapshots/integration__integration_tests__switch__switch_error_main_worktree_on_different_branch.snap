@@ -31,7 +31,7 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[0m❌ [31mCannot create worktree for [1mmain[22m: existing worktree at [1m[REPO][22m on [1mfeature[22m[39m
+[0m❌ [31mCannot create worktree for [1mmain[22m: existing worktree at [1m_REPO_[22m on [1mfeature[22m[39m
 
 💡 [2mTo switch the worktree to this branch:[22m
-[107m [0m  [2m[0m[2m[34mcd[0m[2m [REPO] [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch main
+[107m [0m  [2m[0m[2m[34mcd[0m[2m _REPO_ [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch main

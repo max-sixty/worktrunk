@@ -35,8 +35,8 @@ exit_code: 0
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-templates'[0m[2m
 [0mBranch: feature-templates
 🔄 [36mRunning project pre-remove [1mworktree[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-templates'[0m[2m
-[0mWorktree: [REPO].feature-templates
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: _REPO_.feature-templates'[0m[2m
+[0mWorktree: _REPO_.feature-templates
 🔄 [36mRunning project pre-remove [1mworktree_name[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Name: repo.feature-templates'[0m[2m
 [0mName: repo.feature-templates

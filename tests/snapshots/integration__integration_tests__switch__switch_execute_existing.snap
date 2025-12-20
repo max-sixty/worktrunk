@@ -31,6 +31,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-⚪ Switched to worktree for [1mexisting-exec[22m @ [1m[REPO].existing-exec[22m
+⚪ Switched to worktree for [1mexisting-exec[22m @ [1m_REPO_.existing-exec[22m
 🔄 [36mExecuting (--execute):[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'existing worktree'[0m[2m [0m[2m[36m>[0m[2m existing.txt

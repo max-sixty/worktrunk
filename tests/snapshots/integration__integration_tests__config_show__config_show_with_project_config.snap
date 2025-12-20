@@ -34,7 +34,7 @@ exit_code: 0
 [107m [0m  [1m[36m[projects."test-project"]
 [107m [0m  approved-commands = [[32m"npm install"[0m]
 
-[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
+[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [107m [0m  post-create = [32m"npm install"
 [107m [0m  
 [107m [0m  [1m[36m[post-start]

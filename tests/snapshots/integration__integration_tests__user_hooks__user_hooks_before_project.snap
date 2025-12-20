@@ -34,5 +34,5 @@ exit_code: 0
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_HOOK'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
 [0m🔄 [36mRunning project post-create:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'PROJECT_HOOK'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
-[0m✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m[REPO].feature[22m[39m
+[0m✅ [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

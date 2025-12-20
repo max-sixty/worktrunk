@@ -29,7 +29,7 @@ exit_code: 0
 [TEST_CONFIG]
 💡 [2m(none configured)[22m
 
-[36mPROJECT HOOKS[39m  [REPO]/.config/wt.toml
+[36mPROJECT HOOKS[39m  _REPO_/.config/wt.toml
 ❓ post-start [1mdeps[22m: [2m(requires approval)[22m
 [107m [0m  [2m[0m[2m[34mnpm[0m[2m install
 ❓ pre-merge [1mbuild[22m: [2m(requires approval)[22m
