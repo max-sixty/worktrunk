@@ -9,11 +9,9 @@
 //! - **`WorktrunkError`** - A minimal enum for semantic errors that need
 //!   special handling (exit codes, silent errors).
 
-use std::borrow::Cow;
 use std::path::PathBuf;
 
 use color_print::{cformat, cwrite};
-use shell_escape::escape;
 
 use super::HookType;
 use crate::path::format_path_for_display;
@@ -74,7 +72,6 @@ pub enum GitError {
         occupant: Option<String>,
     },
     WorktreePathExists {
-        branch: String,
         path: PathBuf,
     },
     WorktreeCreationFailed {
@@ -149,7 +146,7 @@ impl std::fmt::Display for GitError {
                     "{}\n\n{}",
                     error_message(&message),
                     hint_message(cformat!(
-                        "To switch to a branch, run <bright-black>git switch <<branch>></>"
+                        "Switch to a branch first with <bright-black>git switch <<branch>></>"
                     ))
                 )
             }
@@ -176,13 +173,12 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::BranchAlreadyExists { branch } => {
-                let switch_cmd = suggest_command("switch", &[branch], &[]);
                 write!(
                     f,
                     "{}\n\n{}",
                     error_message(cformat!("Branch <bold>{branch}</> already exists")),
                     hint_message(cformat!(
-                        "To switch to the existing branch, remove <bright-black>--create</>; run <bright-black>{switch_cmd}</>"
+                        "Remove <bright-black>--create</> flag to switch to the existing branch"
                     ))
                 )
             }
@@ -240,10 +236,11 @@ impl std::fmt::Display for GitError {
                 } else {
                     cformat!("existing worktree at <bold>{path_display}</>, detached")
                 };
-                // Hint leads into the command in the gutter block
-                let hint = hint_message("To switch the worktree to this branch:");
-                let path_escaped = escape(Cow::Borrowed(path_display.as_ref()));
-                let command = format!("cd {path_escaped} && git switch {branch}");
+                // Hint is self-contained (includes both path and branch)
+                let hint = hint_message(cformat!(
+                    "Switch the worktree at <bright-black>{path_display}</> to <bright-black>{branch}</>"
+                ));
+                let command = format!("cd {path_display} && git switch {branch}");
                 write!(
                     f,
                     "{}\n\n{}\n{}",
@@ -255,11 +252,8 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::WorktreePathExists { branch, path } => {
+            GitError::WorktreePathExists { path } => {
                 let path_display = format_path_for_display(path);
-                let path_str = path.to_string_lossy();
-                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
-                let switch_cmd = suggest_command("switch", &[branch], &["--clobber"]);
                 write!(
                     f,
                     "{}\n\n{}",
@@ -267,7 +261,7 @@ impl std::fmt::Display for GitError {
                         "Directory already exists: <bold>{path_display}</>"
                     )),
                     hint_message(cformat!(
-                        "To remove manually, run <bright-black>rm -rf {path_escaped}</>; to retry with backup, run <bright-black>{switch_cmd}</>"
+                        "Use <bright-black>--clobber</> to remove, or <bright-black>rm -rf {path_display}</>"
                     ))
                 )
             }
@@ -368,13 +362,12 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::MergeCommitsFound => {
-                let merge_cmd = suggest_command("merge", &[], &["--allow-merge-commits"]);
                 write!(
                     f,
                     "{}\n\n{}",
                     error_message("Found merge commits in push range"),
                     hint_message(cformat!(
-                        "To push non-linear history, run <bright-black>{merge_cmd}</>"
+                        "To push non-linear history, add <bright-black>--allow-merge-commits</>"
                     ))
                 )
             }
@@ -395,10 +388,10 @@ impl std::fmt::Display for GitError {
                         f,
                         "\n\n{}\n{}",
                         hint_message(cformat!(
-                            "To continue after resolving conflicts, run <bright-black>git rebase --continue</>"
+                            "Resolve conflicts and run <bright-black>git rebase --continue</>"
                         )),
                         hint_message(cformat!(
-                            "To abort, run <bright-black>git rebase --abort</>"
+                            "Or abort with <bright-black>git rebase --abort</>"
                         ))
                     )
                 }
@@ -422,13 +415,12 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::NotInteractive => {
-                let approvals_cmd = suggest_command("hook", &["approvals", "add"], &[]);
                 write!(
                     f,
                     "{}\n\n{}",
                     error_message("Cannot prompt for approval in non-interactive environment"),
                     hint_message(cformat!(
-                        "To skip prompts in CI/CD, add <bright-black>--force</>; to pre-approve commands, run <bright-black>{approvals_cmd}</>"
+                        "In CI/CD, use <bright-black>--force</> to skip prompts. To pre-approve commands, use <bright-black>wt hook approvals add</>"
                     ))
                 )
             }
@@ -624,12 +616,12 @@ impl std::fmt::Display for HookErrorWithHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Display the original error (always HookCommandFailed - validated by add_hook_skip_hint)
         write!(f, "{}", self.inner)?;
-        // Can't derive command from hook type (e.g., PreRemove is used by both `wt remove` and `wt merge`)
+        // Add the hint
         write!(
             f,
             "\n\n{}",
             hint_message(cformat!(
-                "To skip {} hooks, re-run with <bright-black>--no-verify</>",
+                "To skip {} commands, add <bright-black>--no-verify</>",
                 self.hook_type
             ))
         )
@@ -664,7 +656,7 @@ mod tests {
         assert_snapshot!(err.to_string(), @r"
         ❌ [31mNot on a branch (detached HEAD)[39m
 
-        💡 [2mTo switch to a branch, run [90mgit switch <branch>[39m[22m
+        💡 [2mSwitch to a branch first with [90mgit switch <branch>[39m[22m
         ");
     }
 
@@ -693,7 +685,7 @@ mod tests {
         assert_snapshot!(downcast.to_string(), @r"
         ❌ [31mBranch [1mmain[22m already exists[39m
 
-        💡 [2mTo switch to the existing branch, remove [90m--create[39m; run [90mwt switch main[39m[22m
+        💡 [2mRemove [90m--create[39m flag to switch to the existing branch[22m
         ");
     }
 
@@ -714,13 +706,12 @@ mod tests {
     #[test]
     fn snapshot_worktree_error_with_path() {
         let err = GitError::WorktreePathExists {
-            branch: "feature".to_string(),
             path: PathBuf::from("/some/path"),
         };
         assert_snapshot!(err.to_string(), @r"
         ❌ [31mDirectory already exists: [1m/some/path[22m[39m
 
-        💡 [2mTo remove manually, run [90mrm -rf /some/path[39m; to retry with backup, run [90mwt switch feature --clobber[39m[22m
+        💡 [2mUse [90m--clobber[39m to remove, or [90mrm -rf /some/path[39m[22m
         ");
     }
 

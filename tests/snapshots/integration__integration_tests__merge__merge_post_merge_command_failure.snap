@@ -20,7 +20,6 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
-    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -42,4 +41,4 @@ exit_code: 1
 [0m🟡 [33mCommand failed: exit status: 1[39m
 ❌ [31mpost-merge command failed: exit status: 1[39m
 
-💡 [2mTo skip post-merge hooks, re-run with [90m--no-verify[39m[22m
+💡 [2mTo skip post-merge commands, add [90m--no-verify[39m[22m

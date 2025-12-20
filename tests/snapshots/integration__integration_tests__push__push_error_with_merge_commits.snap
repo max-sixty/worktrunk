@@ -20,7 +20,6 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
-    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -33,4 +32,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mFound merge commits in push range[39m
 
-💡 [2mTo push non-linear history, run [90mwt merge --allow-merge-commits[39m[22m
+💡 [2mTo push non-linear history, add [90m--allow-merge-commits[39m[22m

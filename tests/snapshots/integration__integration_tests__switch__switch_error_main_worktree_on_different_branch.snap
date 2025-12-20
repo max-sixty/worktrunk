@@ -20,7 +20,6 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
-    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -33,5 +32,5 @@ exit_code: 1
 ----- stderr -----
 [0m❌ [31mCannot create worktree for [1mmain[22m: existing worktree at [1m[REPO][22m on [1mfeature[22m[39m
 
-💡 [2mTo switch the worktree to this branch:[22m
+💡 [2mSwitch the worktree at [90m[REPO][39m to [90mmain[39m[22m
 [107m [0m  [2m[0m[2m[34mcd[0m[2m [REPO] [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch main

@@ -20,7 +20,6 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
-    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -33,4 +32,4 @@ exit_code: 1
 ----- stderr -----
 ❌ [31mDirectory already exists: [1m[REPO].occupied-branch[22m[39m
 
-💡 [2mTo remove manually, run [90mrm -rf [REPO].occupied-branch[39m; to retry with backup, run [90mwt switch occupied-branch --clobber[39m[22m
+💡 [2mUse [90m--clobber[39m to remove, or [90mrm -rf [REPO].occupied-branch[39m[22m
