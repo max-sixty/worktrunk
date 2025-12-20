@@ -34,5 +34,5 @@ exit_code: 0
 🔄 [36mRunning project post-create:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test command'[0m[2m
 [0mtest command
-✅ [32mCreated new worktree for [1mtest-force-tty[22m from [1mmain[22m @ [1m[REPO].test-force-tty[22m[39m
+✅ [32mCreated new worktree for [1mtest-force-tty[22m from [1mmain[22m @ [1m_REPO_.test-force-tty[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

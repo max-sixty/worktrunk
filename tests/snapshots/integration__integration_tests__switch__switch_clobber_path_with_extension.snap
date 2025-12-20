@@ -31,6 +31,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mMoving [1m[REPO].clobber-ext.txt[22m to [1m[REPO].clobber-ext.txt.bak.20250102-000000[22m ([90m--clobber[39m)[39m
-✅ [32mCreated new worktree for [1mclobber-ext.txt[22m from [1mmain[22m @ [1m[REPO].clobber-ext.txt[22m[39m
+🟡 [33mMoving [1m_REPO_.clobber-ext.txt[22m to [1m_REPO_.clobber-ext.txt.bak.20250102-000000[22m ([90m--clobber[39m)[39m
+✅ [32mCreated new worktree for [1mclobber-ext.txt[22m from [1mmain[22m @ [1m_REPO_.clobber-ext.txt[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

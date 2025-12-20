@@ -31,7 +31,7 @@ exit_code: 0
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
 
-[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
+[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 🟡 [33mUnknown key [1mpost-merge-command[22m will be ignored[39m
 [107m [0m  [1m[36m[post-merge-command]
 [107m [0m  deploy = [32m"task deploy"

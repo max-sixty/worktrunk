@@ -82,7 +82,7 @@ fn normalize_output(output: &str) -> String {
     // Remove repository paths
     let output = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]+")
         .unwrap()
-        .replace_all(&output, "[REPO]");
+        .replace_all(&output, "_REPO_");
 
     // Remove config paths
     let output = regex::Regex::new(r"/var/folders/[^\s]+/test-config\.toml")

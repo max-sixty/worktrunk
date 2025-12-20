@@ -32,5 +32,5 @@ exit_code: 0
 ----- stderr -----
 🔄 [36mRunning project post-create:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'approved'[0m[2m [0m[2m[36m>[0m[2m output.txt
-[0m✅ [32mCreated new worktree for [1mtest-approved[22m from [1mmain[22m @ [1m[REPO].test-approved[22m[39m
+[0m✅ [32mCreated new worktree for [1mtest-approved[22m from [1mmain[22m @ [1m_REPO_.test-approved[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

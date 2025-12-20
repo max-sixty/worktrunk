@@ -35,8 +35,8 @@ exit_code: 0
 [0m🔄 [36mRunning project post-create [1mbranch[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Branch: feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
 [0m🔄 [36mRunning project post-create [1mworktree[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: [REPO].feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Worktree: _REPO_.feature-test'[0m[2m [0m[2m[36m>>[0m[2m info.txt
 [0m🔄 [36mRunning project post-create [1mroot[22m:[39m
-[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Root: [REPO]'[0m[2m [0m[2m[36m>>[0m[2m info.txt
-[0m✅ [32mCreated new worktree for [1mfeature/test[22m from [1mmain[22m @ [1m[REPO].feature-test[22m[39m
+[107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Root: _REPO_'[0m[2m [0m[2m[36m>>[0m[2m info.txt
+[0m✅ [32mCreated new worktree for [1mfeature/test[22m from [1mmain[22m @ [1m_REPO_.feature-test[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

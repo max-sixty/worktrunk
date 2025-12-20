@@ -30,7 +30,7 @@ exit_code: 0
 [
   {
     "branch": "main",
-    "path": "[REPO]",
+    "path": "_REPO_",
     "kind": "worktree",
     "commit": {
       "sha": "33244e69fc0c568ce7cffd49b04c9c89ffb22510",
@@ -65,7 +65,7 @@ exit_code: 0
   },
   {
     "branch": "feature",
-    "path": "[REPO].feature",
+    "path": "_REPO_.feature",
     "kind": "worktree",
     "commit": {
       "sha": "33244e69fc0c568ce7cffd49b04c9c89ffb22510",

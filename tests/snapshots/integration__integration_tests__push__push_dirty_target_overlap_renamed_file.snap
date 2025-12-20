@@ -34,4 +34,4 @@ exit_code: 1
 ❌ [31mCannot push: conflicting uncommitted changes in:[39m
 [107m [0m  file.txt
 
-💡 [2mCommit or stash these changes in [REPO] first[22m
+💡 [2mCommit or stash these changes in _REPO_ first[22m

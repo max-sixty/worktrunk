@@ -221,7 +221,7 @@ fn extract_section(content: &str, start_marker: &str, end_marker: &str) -> Strin
 /// - `[HASH]` → `a1b2c3d`
 /// - `[TMPDIR]/repo.branch` → `../repo.branch`
 /// - `[TMPDIR]/repo` → `../repo`
-/// - `[REPO]` → `../repo`
+/// - `_REPO_` → `../repo`
 fn replace_placeholders(content: &str) -> String {
     let content = HASH_REGEX.replace_all(content, "a1b2c3d");
     let content = TMPDIR_BRANCH_REGEX.replace_all(&content, "../repo.$1");

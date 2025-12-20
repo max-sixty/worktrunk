@@ -31,6 +31,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-❌ [31mDirectory already exists: [1m[REPO].occupied-branch[22m[39m
+❌ [31mDirectory already exists: [1m_REPO_.occupied-branch[22m[39m
 
-💡 [2mTo remove manually, run [90mrm -rf [REPO].occupied-branch[39m; to retry with backup, run [90mwt switch occupied-branch --clobber[39m[22m
+💡 [2mTo remove manually, run [90mrm -rf _REPO_.occupied-branch[39m; to retry with backup, run [90mwt switch occupied-branch --clobber[39m[22m

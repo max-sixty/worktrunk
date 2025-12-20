@@ -30,7 +30,7 @@ exit_code: 0
 [
   {
     "branch": "main",
-    "path": "[REPO]",
+    "path": "_REPO_",
     "kind": "worktree",
     "commit": {
       "sha": "33c3e5aa9f928d3eab87da8cbcd187e2ab921064",
@@ -65,7 +65,7 @@ exit_code: 0
   },
   {
     "branch": "feature-merged",
-    "path": "[REPO].feature-merged",
+    "path": "_REPO_.feature-merged",
     "kind": "worktree",
     "commit": {
       "sha": "ee45656141f6f30e6e036767adf380b3ccc639d7",

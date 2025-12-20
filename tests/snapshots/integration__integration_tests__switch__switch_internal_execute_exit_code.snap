@@ -23,6 +23,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -31,10 +32,10 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].exit-code-test'
+cd _REPO_.exit-code-test
 exit 42
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mexit-code-test[22m from [1mmain[22m @ [1m[REPO].exit-code-test[22m[39m
+✅ [32mCreated new worktree for [1mexit-code-test[22m from [1mmain[22m @ [1m_REPO_.exit-code-test[22m[39m
 🔄 [36mExecuting (--execute):[39m
 [107m [0m  [2m[0m[2m[34mexit[0m[2m 42

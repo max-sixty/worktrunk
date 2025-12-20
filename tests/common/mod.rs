@@ -1775,15 +1775,21 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     let root_str = root_canonical.to_str().unwrap();
     // Add both backslash and forward-slash versions for Windows compatibility
     // (output may have either format depending on when filters are applied)
-    settings.add_filter(&regex::escape(root_str), "[REPO]");
-    settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "[REPO]");
+    settings.add_filter(&regex::escape(root_str), "_REPO_");
+    settings.add_filter(&regex::escape(&root_str.replace('\\', "/")), "_REPO_");
     // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
-    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "[REPO]");
+    settings.add_filter(&regex::escape(&to_posix_path(root_str)), "_REPO_");
     // Match single-quoted versions for shell_escape output (Windows paths need quoting)
-    settings.add_filter(&format!("'{}'", regex::escape(root_str)), "'[REPO]'");
+    // Strip quotes in replacement to normalize across platforms
+    settings.add_filter(&format!("'{}'", regex::escape(root_str)), "_REPO_");
     settings.add_filter(
         &format!("'{}'", regex::escape(&root_str.replace('\\', "/"))),
-        "'[REPO]'",
+        "_REPO_",
+    );
+    // Also add POSIX-style quoted path for Git Bash
+    settings.add_filter(
+        &format!("'{}'", regex::escape(&to_posix_path(root_str))),
+        "_REPO_",
     );
 
     // In tests, HOME is set to the temp directory containing the repo. Commands being tested
@@ -1791,11 +1797,12 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // The repo is always at {temp_dir}/repo, so we hardcode ~/repo for the filter.
     // IMPORTANT: Add worktree pattern FIRST so it matches before the plain ~/repo pattern.
     // Filters are applied in order, so ~/repo.feature is replaced before ~/repo would match it.
-    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)", "[REPO]$1");
-    settings.add_filter(r"~/repo", "[REPO]");
+    settings.add_filter(r"~/repo(\.[a-zA-Z0-9_-]+)", "_REPO_$1");
+    settings.add_filter(r"~/repo", "_REPO_");
     // Match single-quoted versions for shell_escape output (paths with ~ need quoting)
-    settings.add_filter(r"'~/repo(\.[a-zA-Z0-9_-]+)'", "'[REPO]$1'");
-    settings.add_filter(r"'~/repo'", "'[REPO]'");
+    // Strip quotes in replacement to normalize across platforms
+    settings.add_filter(r"'~/repo(\.[a-zA-Z0-9_-]+)'", "_REPO_$1");
+    settings.add_filter(r"'~/repo'", "_REPO_");
 
     // Also handle the case where the real home contains the temp directory (Windows/macOS)
     // Note: canonicalize home_dir too, since on Windows home::home_dir() may return a short path
@@ -1805,39 +1812,36 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     {
         let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
         // Match exact repo path
-        settings.add_filter(&regex::escape(&tilde_path), "[REPO]");
-        // Match single-quoted versions
-        settings.add_filter(&format!("'{}'", regex::escape(&tilde_path)), "'[REPO]'");
+        settings.add_filter(&regex::escape(&tilde_path), "_REPO_");
+        // Match single-quoted versions (strip quotes to normalize across platforms)
+        settings.add_filter(&format!("'{}'", regex::escape(&tilde_path)), "_REPO_");
         // Match worktree paths
         let tilde_worktree_pattern = format!(r"{}(\.[a-zA-Z0-9_-]+)", regex::escape(&tilde_path));
-        settings.add_filter(&tilde_worktree_pattern, "[REPO]$1");
-        // Match single-quoted worktree paths
+        settings.add_filter(&tilde_worktree_pattern, "_REPO_$1");
+        // Match single-quoted worktree paths (strip quotes to normalize across platforms)
         let quoted_tilde_worktree_pattern =
             format!(r"'{}(\.[a-zA-Z0-9_-]+)'", regex::escape(&tilde_path));
-        settings.add_filter(&quoted_tilde_worktree_pattern, "'[REPO]$1'");
+        settings.add_filter(&quoted_tilde_worktree_pattern, "_REPO_$1");
     }
 
     for (name, path) in &repo.worktrees {
         let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
         let path_str = canonical.to_str().unwrap();
-        let replacement = format!("[WORKTREE_{}]", name.to_uppercase().replace('-', "_"));
-        let quoted_replacement = format!("'[WORKTREE_{}]'", name.to_uppercase().replace('-', "_"));
+        let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));
         settings.add_filter(&regex::escape(path_str), &replacement);
         settings.add_filter(&regex::escape(&path_str.replace('\\', "/")), &replacement);
         // Also add POSIX-style path for Git Bash (C:\foo\bar -> /c/foo/bar)
         settings.add_filter(&regex::escape(&to_posix_path(path_str)), &replacement);
         // Match single-quoted versions for shell_escape output
-        settings.add_filter(
-            &format!("'{}'", regex::escape(path_str)),
-            &quoted_replacement,
-        );
+        // Strip quotes in replacement to normalize across platforms
+        settings.add_filter(&format!("'{}'", regex::escape(path_str)), &replacement);
         settings.add_filter(
             &format!("'{}'", regex::escape(&path_str.replace('\\', "/"))),
-            &quoted_replacement,
+            &replacement,
         );
         settings.add_filter(
             &format!("'{}'", regex::escape(&to_posix_path(path_str))),
-            &quoted_replacement,
+            &replacement,
         );
 
         // Also add tilde-prefixed worktree path filter for Windows
@@ -1846,11 +1850,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         {
             let tilde_path = format!("~/{}", relative.display()).replace('\\', "/");
             settings.add_filter(&regex::escape(&tilde_path), &replacement);
-            // Match single-quoted versions
-            settings.add_filter(
-                &format!("'{}'", regex::escape(&tilde_path)),
-                &quoted_replacement,
-            );
+            // Match single-quoted versions (strip quotes to normalize across platforms)
+            settings.add_filter(&format!("'{}'", regex::escape(&tilde_path)), &replacement);
         }
     }
 
@@ -1861,19 +1862,51 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // This handles cases where path formats differ between home::home_dir() and the actual
     // paths used in commands. MUST come after backslash normalization so paths have forward slashes.
     // Pattern: ~/AppData/Local/Temp/.tmpXXXXXX/repo (where XXXXXX varies)
-    settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "[REPO]");
+    settings.add_filter(r"~/AppData/Local/Temp/\.tmp[^/]+/repo", "_REPO_");
     // Match single-quoted versions (shell_escape quotes paths with ~)
-    settings.add_filter(r"'~/AppData/Local/Temp/\.tmp[^/]+/repo'", "'[REPO]'");
+    // Strip quotes in replacement to normalize across platforms
+    settings.add_filter(r"'~/AppData/Local/Temp/\.tmp[^/]+/repo'", "_REPO_");
     // Windows fallback for POSIX-style paths from Git Bash (used in hook template expansion).
     // Pattern: /c/Users/.../Temp/.tmpXXXXXX/repo and worktrees like /c/.../repo.feature-test
     settings.add_filter(
         r"/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?",
-        "[REPO]$1",
+        "_REPO_$1",
     );
-    // Match single-quoted versions
+    // Match single-quoted versions (strip quotes to normalize across platforms)
     settings.add_filter(
         r"'/[a-z]/Users/[^/]+/AppData/Local/Temp/\.tmp[^/]+/repo(\.[a-zA-Z0-9_/-]+)?'",
-        "'[REPO]$1'",
+        "_REPO_$1",
+    );
+
+    // Final cleanup: strip any remaining quotes around placeholders.
+    // This handles cases where ANSI codes are inserted between the quote and path content,
+    // causing the quoted path filter to not match. The path filter replaces the path with
+    // the placeholder, but the surrounding quotes from shell_escape remain.
+    // The pattern matches quotes with optional ANSI escape sequences inside.
+    settings.add_filter(r"'(?:\x1b\[[0-9;]*m)*_REPO_(?:\x1b\[[0-9;]*m)*'", "_REPO_");
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*_REPO_(\.[a-zA-Z0-9_-]+)(?:\x1b\[[0-9;]*m)*'",
+        "_REPO_$1",
+    );
+    // Match quoted worktree placeholders (with optional ANSI codes) and strip the quotes
+    settings.add_filter(
+        r"'(?:\x1b\[[0-9;]*m)*(_WORKTREE_[A-Z0-9_]+_)(?:\x1b\[[0-9;]*m)*'",
+        "$1",
+    );
+
+    // Normalize syntax highlighting around _REPO_ placeholders.
+    // Bash syntax highlighters may split tokens differently on different platforms.
+    // Linux CI produces: [2m [0m[2m[32m_REPO_[0m[2m [0m (space, green path, space as separate spans)
+    // macOS local produces: [2m _REPO_ [0m (all in one span)
+    // The [32m is green color applied to _REPO_ which the local highlighter doesn't add.
+    // Normalize CI format to local format by matching the split pattern and merging.
+    settings.add_filter(
+        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_REPO_(?:\.[a-zA-Z0-9_-]+)?)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
+        "\x1b[2m $1 \x1b[0m",
+    );
+    settings.add_filter(
+        r"\x1b\[2m \x1b\[0m\x1b\[2m(?:\x1b\[32m)?(_WORKTREE_[A-Z0-9_]+_)(?:\x1b\[0m)?\x1b\[2m \x1b\[0m",
+        "\x1b[2m $1 \x1b[0m",
     );
 
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output

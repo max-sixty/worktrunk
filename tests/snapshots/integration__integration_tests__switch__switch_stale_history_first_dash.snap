@@ -29,5 +29,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-🟡 [33mWorktree for [1mbranch-a[22m @ [1m[REPO].branch-a[22m, but cannot change directory — shell integration not installed[39m
+🟡 [33mWorktree for [1mbranch-a[22m @ [1m_REPO_.branch-a[22m, but cannot change directory — shell integration not installed[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

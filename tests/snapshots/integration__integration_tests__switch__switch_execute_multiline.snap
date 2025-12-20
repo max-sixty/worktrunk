@@ -35,7 +35,7 @@ line2
 line3
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1mmultiline-test[22m from [1mmain[22m @ [1m[REPO].multiline-test[22m[39m
+✅ [32mCreated new worktree for [1mmultiline-test[22m from [1mmain[22m @ [1m_REPO_.multiline-test[22m[39m
 🔄 [36mExecuting (--execute):[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line1'[0m[2m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'line2'[0m[2m

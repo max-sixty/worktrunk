@@ -22,5 +22,5 @@ y
 🔄 [36mRunning project post-create [1mtest[22m:[39m
 [107m [0m  [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m[0m
 [0mRunning tests...
-✅ [32mCreated new worktree for [1mtest-named[22m from [1mmain[22m @ [1m[REPO]/repo.test-named[22m[39m
+✅ [32mCreated new worktree for [1mtest-named[22m from [1mmain[22m @ [1m_REPO_/repo.test-named[22m[39m
 💡 [2mRun [90mwt config shell install[39m to enable automatic cd[22m

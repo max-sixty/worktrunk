@@ -35,7 +35,7 @@ exit_code: 0
 [107m [0m  [1m[36m[commit-gen]
 [107m [0m  command = [32m"llm"
 
-[36mPROJECT CONFIG[39m  [REPO]/.config/wt.toml
+[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 💡 [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m

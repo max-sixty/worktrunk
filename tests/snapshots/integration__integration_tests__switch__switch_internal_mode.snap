@@ -21,6 +21,7 @@ info:
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -29,7 +30,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-cd '[REPO].internal-test'
+cd _REPO_.internal-test
 
 ----- stderr -----
-✅ [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m[REPO].internal-test[22m[39m
+✅ [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m
