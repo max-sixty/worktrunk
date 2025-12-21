@@ -485,6 +485,47 @@ fn clean_ansi_html(html: &str) -> String {
         .replace("<span style='color:var(--cyan,#0aa)'>", "<span class=c>")
 }
 
+/// Regex to find command reference code blocks with ANSI content
+/// Matches: ## Command reference\n\n```\n<content with ANSI>\n```
+/// or: ### Command reference\n\n```\n<content with ANSI>\n```
+static COMMAND_REF_BLOCK_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)(###? Command reference\n\n)```\n(.*?)\n```").unwrap());
+
+/// Convert command reference code blocks to terminal shortcodes with HTML
+///
+/// Finds code blocks after "## Command reference" or "### Command reference" headers
+/// and converts ANSI escape codes to HTML, wrapping in {% terminal() %} shortcode.
+fn convert_command_reference_to_html(content: &str) -> Result<String, String> {
+    let mut result = content.to_string();
+
+    // Find all command reference blocks and convert them
+    // Process in reverse order to preserve positions
+    let matches: Vec<_> = COMMAND_REF_BLOCK_PATTERN
+        .captures_iter(content)
+        .map(|cap| {
+            let full_match = cap.get(0).unwrap();
+            let header = cap.get(1).unwrap().as_str();
+            let code_content = cap.get(2).unwrap().as_str();
+            (full_match.start(), full_match.end(), header, code_content)
+        })
+        .collect();
+
+    for (start, end, header, code_content) in matches.into_iter().rev() {
+        // Convert ANSI to HTML
+        let with_resets = ensure_line_resets(code_content);
+        let html =
+            ansi_to_html(&with_resets).map_err(|e| format!("ANSI conversion failed: {e}"))?;
+        let clean_html = clean_ansi_html(&html);
+        let trimmed_html = trim_lines(&clean_html);
+
+        // Build terminal shortcode
+        let replacement = format!("{header}{{% terminal() %}}\n{trimmed_html}\n{{% end %}}");
+        result.replace_range(start..end, &replacement);
+    }
+
+    Ok(result)
+}
+
 /// Get help output for a command
 ///
 /// Expected format: `wt <subcommand> --help-md` (ID includes backticks from marker)
@@ -1145,6 +1186,18 @@ fn test_command_pages_are_in_sync() {
             Err(e) => {
                 errors.push(format!(
                     "Failed to expand placeholders for '{}': {}",
+                    cmd, e
+                ));
+                continue;
+            }
+        };
+
+        // Convert command reference code blocks to terminal shortcodes with HTML
+        let generated = match convert_command_reference_to_html(&generated) {
+            Ok(converted) => converted,
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to convert command reference for '{}': {}",
                     cmd, e
                 ));
                 continue;

@@ -64,27 +64,27 @@ wt switch --create fix --base=@  # Branch from current HEAD
 
 ## Command reference
 
-```
+{% terminal() %}
 wt switch - Switch to a worktree
 
-Usage: wt switch [OPTIONS] <BRANCH>
+Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span>
 
-Arguments:
-  <BRANCH>
+<b><span class=g>Arguments:</span></b>
+  <span class=c>&lt;BRANCH&gt;</span>
           Branch or worktree name
 
-          Shortcuts: '^' (main), '-' (previous), '@' (current)
+          Shortcuts: &#39;^&#39; (main), &#39;-&#39; (previous), &#39;@&#39; (current)
 
-Options:
-  -c, --create
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
           Create a new branch
 
-  -b, --base <BASE>
+  <b><span class=c>-b</span></b>, <b><span class=c>--base</span></b><span class=c> &lt;BASE&gt;</span>
           Base branch
 
           Defaults to default branch.
 
-  -x, --execute <EXECUTE>
+  <b><span class=c>-x</span></b>, <b><span class=c>--execute</span></b><span class=c> &lt;EXECUTE&gt;</span>
           Command to run after switch
 
           Replaces the wt process with the command after switching, giving it
@@ -94,31 +94,31 @@ Options:
           Especially useful in shell aliases to create a worktree and start
           working in one command:
 
-            alias wsc='wt switch --create --execute=claude'
+            <b>alias wsc=&#39;wt switch --create --execute=claude&#39;</b>
 
-          Then wsc feature-branch creates the worktree and launches Claude Code.
+          Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code.
 
-  -f, --force
+  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Skip approval prompts
 
-      --clobber
+      <b><span class=c>--clobber</span></b>
           Remove stale paths at target
 
-      --no-verify
+      <b><span class=c>--no-verify</span></b>
           Skip hooks
 
-  -h, --help
-          Print help (see a summary with '-h')
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 <!-- END AUTO-GENERATED from `wt switch --help-page` -->

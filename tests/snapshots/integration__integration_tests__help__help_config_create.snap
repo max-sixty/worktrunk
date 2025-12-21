@@ -117,7 +117,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m
   [2m# NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
   [2m# use a separate PROJECT config file at <repo>/.config/wt.toml
-  [2m# Run `wt config create --project` to create one, or see https://worktrunk.dev/hooks/
+  [2m# Run `wt config create --project` to create one, or see https://worktrunk.dev/hook/
   [2m
   [2m# ============================================================================
   [2m# Custom Prompt Templates (Advanced)

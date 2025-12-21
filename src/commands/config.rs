@@ -61,7 +61,7 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
             "Project config",
             &[
                 "Edit this file to configure hooks for this repository",
-                "See https://worktrunk.dev/hooks/ for hook documentation",
+                "See https://worktrunk.dev/hook/ for hook documentation",
             ],
         )
     } else {

@@ -84,7 +84,7 @@ fn test_config_create_project_creates_file(repo: TestRepo) {
         [32m✓[39m [32mCreated project config: [1m_REPO_/.config/wt.toml[22m[39m
 
         [2m↳[22m [2mEdit this file to configure hooks for this repository[22m
-        [2m↳[22m [2mSee https://worktrunk.dev/hooks/ for hook documentation[22m
+        [2m↳[22m [2mSee https://worktrunk.dev/hook/ for hook documentation[22m
         ");
     });
 
