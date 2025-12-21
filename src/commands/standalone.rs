@@ -458,24 +458,20 @@ pub enum RebaseResult {
 
 /// Handle shared rebase workflow (used by `wt step rebase` and `wt merge`)
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
+    use super::repository_ext::RepositoryCliExt;
+
     let repo = Repository::current();
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
 
-    // Check if already up-to-date
-    let merge_base = repo.merge_base("HEAD", &target_branch)?;
-    let target_sha = repo
-        .run_command(&["rev-parse", &target_branch])?
-        .trim()
-        .to_string();
-
-    if merge_base == target_sha {
-        // Already up-to-date, no rebase needed
+    // Check if already up-to-date (linear extension of target, no merge commits)
+    if repo.is_rebased_onto(&target_branch)? {
         return Ok(RebaseResult::UpToDate(target_branch));
     }
 
     // Check if this is a fast-forward or true rebase
+    let merge_base = repo.merge_base("HEAD", &target_branch)?;
     let head_sha = repo.run_command(&["rev-parse", "HEAD"])?.trim().to_string();
     let is_fast_forward = merge_base == head_sha;
 

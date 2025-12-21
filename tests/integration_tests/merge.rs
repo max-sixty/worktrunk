@@ -2705,3 +2705,72 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
         &[],
     );
 }
+
+// =============================================================================
+// step rebase tests
+// =============================================================================
+
+/// Helper to snapshot step rebase command
+fn snapshot_step_rebase(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
+        cmd.arg("rebase").args(args);
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+/// Test that step rebase correctly handles merge commits.
+///
+/// When a branch has merged main into it, the merge-base equals main's HEAD,
+/// but there are still commits that need rebasing to linearize the history.
+/// This test verifies that we don't incorrectly report "Already up-to-date".
+#[rstest]
+fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
+    // Create a feature worktree with a commit
+    let feature_wt = repo.add_worktree_with_commit(
+        "feature-with-merge",
+        "feature.txt",
+        "feature content",
+        "Add feature",
+    );
+
+    // Advance main with a new commit
+    fs::write(repo.root_path().join("main-update.txt"), "main content").unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "main-update.txt"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Update main"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Merge main INTO the feature branch (creating a merge commit)
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    let output = cmd
+        .args(["merge", "main", "-m", "Merge main into feature"])
+        .current_dir(&feature_wt)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git merge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Now step rebase should linearize the history (not report "Already up-to-date")
+    snapshot_step_rebase(
+        "step_rebase_with_merge_commit",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+    );
+}
