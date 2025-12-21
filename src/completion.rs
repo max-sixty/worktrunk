@@ -372,7 +372,6 @@ thread_local! {
 
 fn completion_command() -> Command {
     let cmd = cli::build_command();
-    let cmd = adjust_completion_command(cmd);
     hide_non_positional_options_for_completion(cmd)
 }
 
@@ -420,39 +419,4 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
     }
 
     process_command(cmd, true)
-}
-
-// Mark positional args as `.last(true)` to allow them after all flags.
-// This enables flexible argument ordering like:
-// - `wt switch --create --execute=cmd --base=main feature` instead of `wt switch feature --create --execute=cmd --base=main`
-// - `wt merge --no-squash main` instead of `wt merge main --no-squash`
-// - `wt remove --no-delete-branch feature` instead of `wt remove feature --no-delete-branch`
-fn adjust_completion_command(cmd: Command) -> Command {
-    cmd.mut_subcommand("switch", |switch| {
-        switch.mut_arg("branch", |arg| arg.last(true))
-    })
-    .mut_subcommand("remove", |remove| {
-        remove.mut_arg("worktrees", |arg| arg.last(true))
-    })
-    .mut_subcommand("merge", |merge| {
-        merge.mut_arg("target", |arg| arg.last(true))
-    })
-    .mut_subcommand("step", |step| {
-        step.mut_subcommand("push", |push| push.mut_arg("target", |arg| arg.last(true)))
-            .mut_subcommand("squash", |squash| {
-                squash.mut_arg("target", |arg| arg.last(true))
-            })
-            .mut_subcommand("rebase", |rebase| {
-                rebase.mut_arg("target", |arg| arg.last(true))
-            })
-    })
-    .mut_subcommand("hook", |hook| {
-        // Hook subcommands - allow name after --force
-        hook.mut_subcommand("post-create", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("post-start", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("pre-commit", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("pre-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("post-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("pre-remove", |c| c.mut_arg("name", |arg| arg.last(true)))
-    })
 }

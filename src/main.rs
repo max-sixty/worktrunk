@@ -1191,6 +1191,7 @@ fn main() {
             create,
             base,
             execute,
+            execute_args,
             force,
             clobber,
             verify,
@@ -1266,8 +1267,19 @@ fn main() {
                 }
 
                 // Execute user command after post-start hooks have been spawned
+                // Note: execute_args requires execute via clap's `requires` attribute
                 if let Some(cmd) = execute {
-                    execute_user_command(&cmd)?;
+                    // Append any trailing args (after --) to the execute command
+                    let full_cmd = if execute_args.is_empty() {
+                        cmd
+                    } else {
+                        let escaped_args: Vec<_> = execute_args
+                            .iter()
+                            .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
+                            .collect();
+                        format!("{} {}", cmd, escaped_args.join(" "))
+                    };
+                    execute_user_command(&full_cmd)?;
                 }
 
                 Ok(())

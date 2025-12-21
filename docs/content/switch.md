@@ -67,13 +67,19 @@ wt switch --create fix --base=@  # Branch from current HEAD
 ```
 wt switch - Switch to a worktree
 
-Usage: wt switch [OPTIONS] <BRANCH>
+Usage: wt switch [OPTIONS] <BRANCH> [-- <EXECUTE_ARGS>...]
 
 Arguments:
   <BRANCH>
           Branch or worktree name
 
           Shortcuts: '^' (main), '-' (previous), '@' (current)
+
+  [EXECUTE_ARGS]...
+          Additional arguments for --execute command (after --)
+
+          Arguments after -- are appended to the execute command. Each argument
+          is POSIX shell-escaped before appending.
 
 Options:
   -c, --create
@@ -91,12 +97,14 @@ Options:
           full terminal control. Useful for launching editors, AI agents, or
           other interactive tools.
 
-          Especially useful in shell aliases to create a worktree and start
-          working in one command:
+          Especially useful with shell aliases:
 
-            alias wsc='wt switch --create --execute=claude'
+            alias wsc='wt switch --create -x claude'
+            wsc feature-branch -- 'implement the login flow'
 
           Then wsc feature-branch creates the worktree and launches Claude Code.
+          Arguments after -- are passed to the command, so wsc feature --
+          'implement login' works.
 
   -f, --force
           Skip approval prompts

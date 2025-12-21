@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -19,10 +20,11 @@ exit_code: 0
 ----- stderr -----
 wt switch - Switch to a worktree
 
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
 
 [1m[32mArguments:
-  [36m<BRANCH>[0m  Branch or worktree name
+  [36m<BRANCH>[0m           Branch or worktree name
+  [36m[EXECUTE_ARGS]...[0m  Additional arguments for --execute command (after --)
 
 [1m[32mOptions:
   [1m[36m-c[0m, [1m[36m--create[0m             Create a new branch

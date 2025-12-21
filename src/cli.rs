@@ -2182,16 +2182,25 @@ wt switch --create fix --base=@  # Branch from current HEAD
         /// it full terminal control. Useful for launching editors, AI agents,
         /// or other interactive tools.
         ///
-        /// Especially useful in shell aliases to create a worktree and start
-        /// working in one command:
+        /// Especially useful with shell aliases:
         ///
         /// ```sh
-        /// alias wsc='wt switch --create --execute=claude'
+        /// alias wsc='wt switch --create -x claude'
+        /// wsc feature-branch -- 'implement the login flow'
         /// ```
         ///
-        /// Then `wsc feature-branch` creates the worktree and launches Claude Code.
+        /// Then `wsc feature-branch` creates the worktree and launches Claude
+        /// Code. Arguments after `--` are passed to the command, so
+        /// `wsc feature -- 'implement login'` works.
         #[arg(short = 'x', long)]
         execute: Option<String>,
+
+        /// Additional arguments for --execute command (after --)
+        ///
+        /// Arguments after `--` are appended to the execute command.
+        /// Each argument is POSIX shell-escaped before appending.
+        #[arg(last = true, requires = "execute")]
+        execute_args: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short = 'f', long)]

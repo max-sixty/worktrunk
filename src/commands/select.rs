@@ -110,7 +110,10 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
 
     // Build shell pipeline: git <args> | pager
     // Shell-escape args to handle paths with spaces
-    let escaped_args: Vec<String> = git_args.iter().map(|arg| shell_escape(arg)).collect();
+    let escaped_args: Vec<String> = git_args
+        .iter()
+        .map(|arg| shlex::try_quote(arg).unwrap_or((*arg).into()).into_owned())
+        .collect();
     let pipeline = format!("git {} | {}", escaped_args.join(" "), pager_with_args);
 
     log::debug!("Running pager pipeline: {}", pipeline);
@@ -167,18 +170,6 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
                 return None;
             }
         }
-    }
-}
-
-/// Shell-escape a string for use in sh -c commands.
-fn shell_escape(s: &str) -> String {
-    // If it contains special chars, wrap in single quotes and escape existing single quotes
-    if s.chars()
-        .any(|c| c.is_whitespace() || "\"'\\$`!*?[]{}|&;<>()".contains(c))
-    {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s.to_string()
     }
 }
 
@@ -1096,42 +1087,6 @@ mod tests {
         assert!(!pager_needs_paging_disabled("delta-preview"));
         assert!(!pager_needs_paging_disabled("/path/to/delta-preview"));
         assert!(pager_needs_paging_disabled("batcat")); // Debian's bat package name
-    }
-
-    #[test]
-    fn test_shell_escape_simple() {
-        // Simple strings pass through unchanged
-        assert_eq!(shell_escape("hello"), "hello");
-        assert_eq!(shell_escape("foo-bar"), "foo-bar");
-        assert_eq!(shell_escape("path/to/file"), "path/to/file");
-    }
-
-    #[test]
-    fn test_shell_escape_with_spaces() {
-        // Strings with spaces get quoted
-        assert_eq!(shell_escape("hello world"), "'hello world'");
-        assert_eq!(shell_escape("path/to/my file"), "'path/to/my file'");
-    }
-
-    #[test]
-    fn test_shell_escape_with_special_chars() {
-        // Special shell characters get quoted
-        assert_eq!(shell_escape("foo$bar"), "'foo$bar'");
-        assert_eq!(shell_escape("foo`bar"), "'foo`bar'");
-        assert_eq!(shell_escape("foo;bar"), "'foo;bar'");
-        assert_eq!(shell_escape("foo|bar"), "'foo|bar'");
-        assert_eq!(shell_escape("foo&bar"), "'foo&bar'");
-        assert_eq!(shell_escape("foo*bar"), "'foo*bar'");
-        assert_eq!(shell_escape("foo?bar"), "'foo?bar'");
-    }
-
-    #[test]
-    fn test_shell_escape_with_quotes() {
-        // Single quotes get escaped specially
-        assert_eq!(shell_escape("it's"), "'it'\\''s'");
-        assert_eq!(shell_escape("don't"), "'don'\\''t'");
-        // Double quotes trigger quoting but don't need internal escaping
-        assert_eq!(shell_escape("say \"hi\""), "'say \"hi\"'");
     }
 
     #[test]
