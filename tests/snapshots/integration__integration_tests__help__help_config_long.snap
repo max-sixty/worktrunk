@@ -233,6 +233,7 @@ Override the LLM command in CI to use a mock:
    ───────────────────────────────── ────────────────────────────────────────────────────────────────────────── 
    WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)    
    WORKTRUNK_CONFIG_PATH             Override user config file location                                         
+   WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                
    WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting resource limits. 
    NO_COLOR                          Disable colored output (standard)                                          
    CLICOLOR_FORCE                    Force colored output even when not a TTY

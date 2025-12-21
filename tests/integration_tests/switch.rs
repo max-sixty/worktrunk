@@ -585,9 +585,9 @@ fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
     );
 }
 
-// Internal mode with execute tests
-/// Test that --execute with exit code is emitted in directive mode shell script.
-/// The shell wrapper will eval this script and propagate the exit code.
+// Execute tests with directive file
+/// Test that --execute with exit code is written to directive file.
+/// The shell wrapper sources this file and propagates the exit code.
 #[rstest]
 fn test_switch_internal_execute_exit_code(repo: TestRepo) {
     // wt succeeds (exit 0), but shell script contains "exit 42"
@@ -599,7 +599,7 @@ fn test_switch_internal_execute_exit_code(repo: TestRepo) {
     );
 }
 
-/// Test execute command failure propagation in directive mode.
+/// Test execute command failure propagation with shell integration.
 /// When wt succeeds but the execute script would fail, wt still exits 0.
 /// The shell wrapper handles the execute command's exit code.
 #[rstest]

@@ -48,7 +48,7 @@ fn run_statusline_from_dir(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Return whichever has content (stdout for interactive, stderr for directive mode)
+    // Return whichever has content (stdout for interactive)
     if !stdout.is_empty() {
         stdout.to_string()
     } else {

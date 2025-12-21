@@ -1259,7 +1259,7 @@ approved-commands = ["echo 'test command executed'"]
         // should NOT appear because the user already has shell integration
         let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "bash-test"]);
 
-        // Critical: shell integration hint must be suppressed in directive mode
+        // Critical: shell integration hint must be suppressed when shell integration is active
         assert!(
             !output.combined.contains("To enable automatic cd"),
             "Shell integration hint should not appear when running through wrapper. Output:\n{}",
@@ -1358,7 +1358,7 @@ approved-commands = ["echo 'background task'"]
         assert_eq!(output.exit_code, 0, "Command should succeed");
 
         // Critical assertion: progress messages should appear to users
-        // This is the test that catches the bug where progress() is suppressed in directive mode
+        // This is the test that catches the bug where progress() was incorrectly suppressed
         assert!(
             output.combined.contains("Running project post-start"),
             "Progress message 'Running project post-start' missing from output. \
