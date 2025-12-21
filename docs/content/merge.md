@@ -15,9 +15,11 @@ group = "Commands"
 </picture>
 </figure>
 
+Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
+
 ## Examples
 
-Basic merge to the default branch:
+Merge to the default branch:
 
 ```bash
 wt merge

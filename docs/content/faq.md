@@ -62,8 +62,10 @@ Worktrunk automates the full lifecycle:
 ```bash
 wt switch --create feature-branch  # Creates worktree, runs setup hooks
 # ...work...
-wt merge                            # Squashes, merges, removes worktree
+wt merge                            # Merges into default branch, cleans up
 ```
+
+No cd back to main — `wt merge` runs from the feature worktree and merges into the target, like GitHub's merge button.
 
 What `git worktree` doesn't provide:
 

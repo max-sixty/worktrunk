@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.0
+
+### Improved
+
+- **Single-width Unicode symbols**: Replaced emojis (🔄, ✅, ❌) with single-width Unicode symbols (◎, ✓, ✗, ▲, ↳, ○, ❯) for better terminal compatibility and consistent alignment.
+- **Output system overhaul**: Clean separation of output channels (data→stdout, status→stderr, directives→file) means piping works with shell integration active. `wt list --format=json | jq` and `wt switch feature | tee log.txt` both work correctly. Background processes use `process_group(0)` instead of `nohup` for more reliable detachment.
+- **Trailing arguments for `--execute`**: `wt switch --execute` now accepts arguments after `--`, enabling shell aliases like `alias wsc='wt switch --create -x claude'` then `wsc feature -- 'implement login'`.
+- **`hash_port` template filter**: `{{ branch | hash_port }}` hashes the branch name to a deterministic port number (10000-19999), useful for running dev servers without port conflicts.
+- **`sanitize` template filter**: `{{ branch | sanitize }}` explicitly replaces `/` and `\` with `-` for filesystem-safe paths. (Breaking: `{{ branch }}` now provides raw branch names. Update templates that use `{{ branch }}` in filesystem paths to use `{{ branch | sanitize }}` instead)
+- **Log directory in state output**: `wt config state logs` and `wt config state get` now show the log directory path under a LOG FILES heading.
+- **Actionable error hints**: Error messages now include hints about what command to run next.
+- **Unified directory change output**: `wt remove` now shows "Switched to worktree for {branch} @ {path}" matching `wt switch` format.
+- **Consistent "already up to date" formatting**: Standardized message wording and styling across commands.
+
+### Fixed
+
+- **`wt step rebase` with merge commits**: Fixed incorrect "Already up-to-date" when a branch has merge commits from merging target into itself.
+
+### Documentation
+
+- **Local CI workflow**: Added "Local CI" section to `wt merge --help` explaining how pre-merge hooks enable faster iteration.
+- **Colored command reference**: Web docs now preserve ANSI colors in command reference output.
+- **Clarified terminology**: Help text uses "default branch" instead of hardcoded "main".
+
 ## 0.5.2
 
 ### Improved

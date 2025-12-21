@@ -2302,9 +2302,11 @@ Removal runs in the background by default (returns immediately). Logs are writte
     /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
     #[command(after_long_help = r#"<!-- demo: wt-merge.gif 1600x900 -->
 
+Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
+
 ## Examples
 
-Basic merge to the default branch:
+Merge to the default branch:
 
 ```console
 wt merge

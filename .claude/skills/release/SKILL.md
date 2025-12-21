@@ -47,7 +47,7 @@ Notable changes to document:
 - User-visible behavior changes
 - Bug fixes users might encounter
 
-**Section order:** Improved, Fixed, Internal. Within each section, list most interesting/impactful changes first. Internal is for selected notable internal changes (not everything).
+**Section order:** Improved, Fixed, Documentation, Internal. Within each section, list most interesting/impactful changes first. Documentation is for help text, web docs, and terminology improvements. Internal is for selected notable internal changes (not everything).
 
 **Breaking changes:** Note inline with the entry, not as a separate section:
 
@@ -55,7 +55,7 @@ Notable changes to document:
 - **Feature name**: Description. (Breaking: old behavior no longer supported)
 ```
 
-Skip: internal refactors, doc-only changes, test additions (unless user-facing like shell completion tests).
+Skip: internal refactors, test additions (unless user-facing like shell completion tests).
 
 ### Credit External Contributors
 
