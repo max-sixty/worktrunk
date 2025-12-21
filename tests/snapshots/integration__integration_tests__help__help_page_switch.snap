@@ -77,65 +77,65 @@ wt switch --create fix --base=@  # Branch from current HEAD
 ```
 wt switch - Switch to a worktree
 
-Usage: wt switch [OPTIONS] <BRANCH> [-- <EXECUTE_ARGS>...]
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
 
-Arguments:
-  <BRANCH>
-          Branch or worktree name
-          
-          Shortcuts: '^' (main), '-' (previous), '@' (current)
+[1m[32mArguments:[0m
+  [36m<BRANCH>[0m
+          Branch or worktree name[0m
+          [0m
+          Shortcuts: '^' (main), '-' (previous), '@' (current)[0m
 
-  [EXECUTE_ARGS]...
-          Additional arguments for --execute command (after --)
-          
-          Arguments after -- are appended to the execute command. Each argument
-          is POSIX shell-escaped before appending.
+  [36m[EXECUTE_ARGS]...[0m
+          Additional arguments for --execute command (after --)[0m
+          [0m
+          Arguments after [1m--[0m are appended to the execute command. Each argument
+          is POSIX shell-escaped before appending.[0m
 
-Options:
-  -c, --create
+[1m[32mOptions:[0m
+  [1m[36m-c[0m, [1m[36m--create[0m
           Create a new branch
 
-  -b, --base <BASE>
-          Base branch
-          
-          Defaults to default branch.
+  [1m[36m-b[0m, [1m[36m--base[0m[36m [0m[36m<BASE>[0m
+          Base branch[0m
+          [0m
+          Defaults to default branch.[0m
 
-  -x, --execute <EXECUTE>
-          Command to run after switch
-          
+  [1m[36m-x[0m, [1m[36m--execute[0m[36m [0m[36m<EXECUTE>[0m
+          Command to run after switch[0m
+          [0m
           Replaces the wt process with the command after switching, giving it
           full terminal control. Useful for launching editors, AI agents, or
-          other interactive tools.
-          
-          Especially useful with shell aliases:
-          
-            alias wsc='wt switch --create -x claude'
-            wsc feature-branch -- 'implement the login flow'
-          
-          Then wsc feature-branch creates the worktree and launches Claude Code.
-          Arguments after -- are passed to the command, so wsc feature --
-          'implement login' works.
+          other interactive tools.[0m
+          [0m
+          Especially useful with shell aliases:[0m
+          [0m
+            [1m[1malias wsc='wt switch --create -x claude'[0m
+            [1mwsc feature-branch -- 'implement the login flow'[0m
+          [0m[0m
+          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.
+          Arguments after [1m--[0m are passed to the command, so [1mwsc feature --
+          'implement login'[0m works.[0m
 
-  -f, --force
+  [1m[36m-f[0m, [1m[36m--force[0m
           Skip approval prompts
 
-      --clobber
+      [1m[36m--clobber[0m
           Remove stale paths at target
 
-      --no-verify
+      [1m[36m--no-verify[0m
           Skip hooks
 
-  -h, --help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-Global Options:
-  -C <path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      --config <path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  -v, --verbose
+  [1m[36m-v[0m, [1m[36m--verbose[0m
           Show commands and debug info
 ```
 

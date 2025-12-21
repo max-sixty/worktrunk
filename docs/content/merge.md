@@ -83,60 +83,60 @@ lint = "cargo clippy"
 
 ## Command reference
 
-```
+{% terminal() %}
 wt merge - Merge worktree into target branch
 
 Squashes commits, rebases, runs hooks, merges to target, and removes the
 worktree.
 
-Usage: wt merge [OPTIONS] [TARGET]
+Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
 
-Arguments:
-  [TARGET]
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[TARGET]</span>
           Target branch
 
           Defaults to default branch.
 
-Options:
-      --no-squash
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--no-squash</span></b>
           Skip commit squashing
 
-      --no-commit
+      <b><span class=c>--no-commit</span></b>
           Skip commit and squash
 
-      --no-rebase
+      <b><span class=c>--no-rebase</span></b>
           Skip rebase (fail if not already rebased)
 
-      --no-remove
+      <b><span class=c>--no-remove</span></b>
           Keep worktree after merge
 
-      --no-verify
+      <b><span class=c>--no-verify</span></b>
           Skip hooks
 
-  -f, --force
+  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Skip approval prompts
 
-      --stage <STAGE>
+      <b><span class=c>--stage</span></b><span class=c> &lt;STAGE&gt;</span>
           What to stage before committing [default: all]
 
           Possible values:
-          - all:     Stage everything: untracked files + unstaged tracked
+          - <b><span class=c>all</span></b>:     Stage everything: untracked files + unstaged tracked
             changes
-          - tracked: Stage tracked changes only (like git add -u)
-          - none:    Stage nothing, commit only what's already in the index
+          - <b><span class=c>tracked</span></b>: Stage tracked changes only (like <b>git add -u</b>)
+          - <b><span class=c>none</span></b>:    Stage nothing, commit only what&#39;s already in the index
 
-  -h, --help
-          Print help (see a summary with '-h')
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 <!-- END AUTO-GENERATED from `wt merge --help-page` -->

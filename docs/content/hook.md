@@ -368,35 +368,35 @@ env = "cp {{ repo_root }}/.env.local .env"
 
 ## Command reference
 
-```
+{% terminal() %}
 wt hook - Run hooks independently
 
-Usage: wt hook [OPTIONS] <COMMAND>
+Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
-Commands:
-  show         Show configured hooks
-  post-create  Run post-create hooks
-  post-start   Run post-start hooks
-  pre-commit   Run pre-commit hooks
-  pre-merge    Run pre-merge hooks
-  post-merge   Run post-merge hooks
-  pre-remove   Run pre-remove hooks
-  approvals    Manage command approvals
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>show</span></b>         Show configured hooks
+  <b><span class=c>post-create</span></b>  Run post-create hooks
+  <b><span class=c>post-start</span></b>   Run post-start hooks
+  <b><span class=c>pre-commit</span></b>   Run pre-commit hooks
+  <b><span class=c>pre-merge</span></b>    Run pre-merge hooks
+  <b><span class=c>post-merge</span></b>   Run post-merge hooks
+  <b><span class=c>pre-remove</span></b>   Run pre-remove hooks
+  <b><span class=c>approvals</span></b>    Manage command approvals
 
-Options:
-  -h, --help
-          Print help (see a summary with '-h')
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 ## wt hook approvals
 
@@ -438,28 +438,28 @@ wt hook approvals clear --global
 
 ### Command reference
 
-```
+{% terminal() %}
 wt hook approvals - Manage command approvals
 
-Usage: wt hook approvals [OPTIONS] <COMMAND>
+Usage: <b><span class=c>wt hook approvals</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
-Commands:
-  add    Store approvals in config
-  clear  Clear approved commands from config
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>add</span></b>    Store approvals in config
+  <b><span class=c>clear</span></b>  Clear approved commands from config
 
-Options:
-  -h, --help
-          Print help (see a summary with '-h')
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 <!-- END AUTO-GENERATED from `wt hook --help-page` -->

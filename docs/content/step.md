@@ -43,32 +43,32 @@ wt step push
 
 ## Command reference
 
-```
+{% terminal() %}
 wt step - Run individual workflow operations
 
-Usage: wt step [OPTIONS] <COMMAND>
+Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
-Commands:
-  commit    Commit changes with LLM commit message
-  squash    Squash commits down to target
-  push      Push changes to local target branch
-  rebase    Rebase onto target
-  for-each  [experimental] Run command in each worktree
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>commit</span></b>    Commit changes with LLM commit message
+  <b><span class=c>squash</span></b>    Squash commits down to target
+  <b><span class=c>push</span></b>      Push changes to local target branch
+  <b><span class=c>rebase</span></b>    Rebase onto target
+  <b><span class=c>for-each</span></b>  [experimental] Run command in each worktree
 
-Options:
-  -h, --help
-          Print help (see a summary with '-h')
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 ## wt step for-each
 
@@ -125,28 +125,28 @@ Note: This command is experimental and may change in future versions.
 
 ### Command reference
 
-```
+{% terminal() %}
 wt step for-each - [experimental] Run command in each worktree
 
-Usage: wt step for-each [OPTIONS] -- <ARGS>...
+Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</span> <b><span class=c>--</span></b> <span class=c>&lt;ARGS&gt;...</span>
 
-Arguments:
-  <ARGS>...
+<b><span class=g>Arguments:</span></b>
+  <span class=c>&lt;ARGS&gt;...</span>
           Command template (see --help for all variables)
 
-Options:
-  -h, --help
-          Print help (see a summary with '-h')
+<b><span class=g>Options:</span></b>
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 <!-- END AUTO-GENERATED from `wt step --help-page` -->

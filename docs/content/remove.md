@@ -70,43 +70,43 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Command reference
 
-```
+{% terminal() %}
 wt remove - Remove worktree and branch
 
-Usage: wt remove [OPTIONS] [WORKTREES]...
+Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[WORKTREES]...</span>
 
-Arguments:
-  [WORKTREES]...
+<b><span class=g>Arguments:</span></b>
+  <span class=c>[WORKTREES]...</span>
           Worktree or branch (@ for current)
 
-Options:
-      --no-delete-branch
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--no-delete-branch</span></b>
           Keep branch after removal
 
-  -D, --force-delete
+  <b><span class=c>-D</span></b>, <b><span class=c>--force-delete</span></b>
           Delete unmerged branches
 
-      --no-background
+      <b><span class=c>--no-background</span></b>
           Run removal in foreground
 
-      --no-verify
+      <b><span class=c>--no-verify</span></b>
           Skip hooks
 
-      --force
+      <b><span class=c>--force</span></b>
           Skip approval prompts
 
-  -h, --help
-          Print help (see a summary with '-h')
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 <!-- END AUTO-GENERATED from `wt remove --help-page` -->

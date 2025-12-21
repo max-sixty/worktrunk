@@ -161,7 +161,8 @@ fn maybe_handle_help_with_pager() -> bool {
 ///
 /// Returns the usage/options/subcommands section without the after_long_help content.
 /// If `width` is provided, wraps text at that width (for web docs); otherwise uses default.
-fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
+/// If `with_colors` is true, preserves ANSI color codes for HTML conversion.
+fn get_help_reference(command_path: &[&str], width: Option<usize>, with_colors: bool) -> String {
     use clap::ColorChoice;
     use clap::error::ErrorKind;
 
@@ -171,7 +172,11 @@ fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
     args.push("--help".to_string());
 
     let mut cmd = cli::build_command();
-    cmd = cmd.color(ColorChoice::Never);
+    cmd = cmd.color(if with_colors {
+        ColorChoice::Always
+    } else {
+        ColorChoice::Never
+    });
     if let Some(w) = width {
         cmd = cmd.term_width(w);
     }
@@ -181,9 +186,14 @@ fn get_help_reference(command_path: &[&str], width: Option<usize>) -> String {
             err.kind(),
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         ) {
-        err.render()
-            .to_string()
-            .replace("```text\n", "```\n")
+        let rendered = err.render();
+        // .ansi() returns ANSI-styled output, .to_string() strips colors
+        let text = if with_colors {
+            rendered.ansi().to_string()
+        } else {
+            rendered.to_string()
+        };
+        text.replace("```text\n", "```\n")
             .replace("```console\n", "```bash\n")
     } else {
         return String::new();
@@ -210,20 +220,23 @@ fn find_after_help_start(help: &str) -> Option<usize> {
     let mut offset = 0;
 
     for line in help.lines() {
-        if line.starts_with("Global Options:") {
+        // Strip ANSI codes for pattern matching
+        let plain_line = strip_ansi_codes(line);
+
+        if plain_line.starts_with("Global Options:") {
             past_global_options = true;
             offset += line.len() + 1;
             continue;
         }
 
         if past_global_options {
-            if line.is_empty() {
+            if plain_line.is_empty() {
                 saw_blank_after_options = true;
                 blank_offset = Some(offset);
-            } else if saw_blank_after_options && !line.starts_with(' ') {
+            } else if saw_blank_after_options && !plain_line.starts_with(' ') {
                 // Non-indented line after blank = start of after_long_help
                 return blank_offset;
-            } else if line.starts_with(' ') {
+            } else if plain_line.starts_with(' ') {
                 // Still in indented options, reset blank tracking
                 saw_blank_after_options = false;
             }
@@ -231,6 +244,31 @@ fn find_after_help_start(help: &str) -> Option<usize> {
         offset += line.len() + 1;
     }
     None
+}
+
+/// Strip ANSI escape codes from a string for pattern matching.
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip escape sequence: ESC [ ... m (SGR) or ESC [ ... other
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Consume until we hit a letter (the command character)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Generate a full documentation page for a command.
@@ -307,37 +345,38 @@ fn handle_help_page(args: &[String]) {
         colorize_ci_status_for_html(&text)
     };
 
-    // Get the help reference block (wrap at 80 chars for web docs)
-    let reference_block = get_help_reference(&[subcommand], Some(80));
+    // Get the help reference block (wrap at 80 chars for web docs, with colors for HTML)
+    let reference_block = get_help_reference(&[subcommand], Some(80), true);
 
     // Output the generated content (frontmatter is in skeleton files)
     // Uses region markers so sync can replace just this content
     // END tag mirrors the ID for unambiguous matching with nested markers
-    println!(
+    // Use std::println! to preserve ANSI codes in output (the styling::println strips them)
+    std::println!(
         "<!-- ⚠️ AUTO-GENERATED from `wt {subcommand} --help-page` — edit cli.rs to update -->"
     );
-    println!();
-    println!("{}", main_help.trim());
-    println!();
+    std::println!();
+    std::println!("{}", main_help.trim());
+    std::println!();
 
     // Main command reference immediately after its content
-    println!("## Command reference");
-    println!();
-    println!("```");
-    print!("{}", reference_block.trim());
-    println!();
-    println!("```");
+    std::println!("## Command reference");
+    std::println!();
+    std::println!("```");
+    std::print!("{}", reference_block.trim());
+    std::println!();
+    std::println!("```");
 
     // Subdocs follow, each with their own command reference at the end
     if let Some(subdocs) = subdoc_content {
         let subdocs_expanded = expand_subdoc_placeholders(subdocs, sub, &parent_name);
         let subdocs_processed = colorize_ci_status_for_html(&subdocs_expanded);
-        println!();
-        println!("{}", subdocs_processed.trim());
+        std::println!();
+        std::println!("{}", subdocs_processed.trim());
     }
 
-    println!();
-    println!("<!-- END AUTO-GENERATED from `wt {subcommand} --help-page` -->");
+    std::println!();
+    std::println!("<!-- END AUTO-GENERATED from `wt {subcommand} --help-page` -->");
 }
 
 /// Add HTML color spans for CI status dots in help page output.
@@ -475,8 +514,8 @@ fn format_subcommand_section(
         .chain(std::iter::once(subcommand_name))
         .collect();
 
-    // Get help reference (wrap at 80 chars for web docs)
-    let reference_block = get_help_reference(&command_path, Some(80));
+    // Get help reference (wrap at 80 chars for web docs, with colors for HTML)
+    let reference_block = get_help_reference(&command_path, Some(80), true);
 
     // Format the section: heading, main content, command reference, then nested subdocs
     let mut section = format!("## {}\n\n", full_command);

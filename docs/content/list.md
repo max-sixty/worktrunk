@@ -249,48 +249,48 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
 
 ## Command reference
 
-```
+{% terminal() %}
 wt list - List worktrees and optionally branches
 
-Usage: wt list [OPTIONS]
-       wt list <COMMAND>
+Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
+       <b><span class=c>wt list</span></b> <span class=c>&lt;COMMAND&gt;</span>
 
-Commands:
-  statusline  Single-line status for shell prompts
+<b><span class=g>Commands:</span></b>
+  <b><span class=c>statusline</span></b>  Single-line status for shell prompts
 
-Options:
-      --format <FORMAT>
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--format</span></b><span class=c> &lt;FORMAT&gt;</span>
           Output format (table, json)
 
           [default: table]
 
-      --branches
+      <b><span class=c>--branches</span></b>
           Include branches without worktrees
 
-      --remotes
+      <b><span class=c>--remotes</span></b>
           Include remote branches
 
-      --full
-          Show CI and main diffstat
+      <b><span class=c>--full</span></b>
+          Show CI and <b>main</b> diffstat
 
-      --progressive
+      <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info
 
           Displays local data (branches, paths, status) first, then updates with
           remote data (CI, upstream) as it arrives. Auto-enabled for TTY.
 
-  -h, --help
-          Print help (see a summary with '-h')
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
 
-Global Options:
-  -C <path>
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
           Working directory for this command
 
-      --config <path>
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  -v, --verbose
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
           Show commands and debug info
-```
+{% end %}
 
 <!-- END AUTO-GENERATED from `wt list --help-page` -->

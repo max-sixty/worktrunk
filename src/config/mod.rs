@@ -1,32 +1,9 @@
 //! Configuration system for worktrunk
 //!
-//! Worktrunk has two independent configuration files:
+//! Worktrunk uses two independent configuration files:
 //!
-//! # User Config (~/.config/worktrunk/config.toml)
-//!
-//! **Purpose**: Personal preferences, not checked into git
-//!
-//! **Settings**:
-//! - `worktree-path` - Template for worktree paths (relative to repo root)
-//! - `commit-generation` - LLM command and templates for commit messages
-//! - `approved-commands` - Commands approved for automatic execution
-//!
-//! **Managed by**: Each developer maintains their own user config
-//!
-//! # Project Config (`<repo>`/.config/wt.toml)
-//!
-//! **Purpose**: Project-specific hooks and commands, checked into git
-//!
-//! **Settings**:
-//! - `post-create` - Sequential blocking commands when creating worktree
-//! - `post-start` - Parallel background commands after worktree created
-//! - `pre-commit` - Validation before committing changes during merge
-//! - `pre-merge` - Validation before merging to target branch
-//! - `post-merge` - Cleanup after successful merge
-//!
-//! **Managed by**: Checked into the repository, shared across all developers
-//!
-//! # Configuration Model
+//! - **User config** (`~/.config/worktrunk/config.toml`) - Personal preferences
+//! - **Project config** (`.config/wt.toml`) - Lifecycle hooks, checked into git
 //!
 //! The two configs are **completely independent**:
 //! - No overlap in settings (they configure different things)
@@ -35,6 +12,8 @@
 //!
 //! User config controls "how worktrunk behaves for me", project config controls
 //! "what commands run for this project".
+//!
+//! See `wt config --help` for complete documentation.
 
 mod commands;
 mod expansion;

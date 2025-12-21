@@ -94,58 +94,58 @@ lint = "cargo clippy"
 ## Command reference
 
 ```
-wt merge - Merge worktree into target branch
-
+wt merge - Merge worktree into target branch[0m
+[0m
 Squashes commits, rebases, runs hooks, merges to target, and removes the
-worktree.
+worktree.[0m
 
-Usage: wt merge [OPTIONS] [TARGET]
+Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 
-Arguments:
-  [TARGET]
-          Target branch
-          
-          Defaults to default branch.
+[1m[32mArguments:[0m
+  [36m[TARGET][0m
+          Target branch[0m
+          [0m
+          Defaults to default branch.[0m
 
-Options:
-      --no-squash
+[1m[32mOptions:[0m
+      [1m[36m--no-squash[0m
           Skip commit squashing
 
-      --no-commit
+      [1m[36m--no-commit[0m
           Skip commit and squash
 
-      --no-rebase
+      [1m[36m--no-rebase[0m
           Skip rebase (fail if not already rebased)
 
-      --no-remove
+      [1m[36m--no-remove[0m
           Keep worktree after merge
 
-      --no-verify
+      [1m[36m--no-verify[0m
           Skip hooks
 
-  -f, --force
+  [1m[36m-f[0m, [1m[36m--force[0m
           Skip approval prompts
 
-      --stage <STAGE>
+      [1m[36m--stage[0m[36m [0m[36m<STAGE>[0m
           What to stage before committing [default: all]
 
           Possible values:
-          - all:     Stage everything: untracked files + unstaged tracked
+          - [1m[36mall[0m:     Stage everything: untracked files + unstaged tracked
             changes
-          - tracked: Stage tracked changes only (like git add -u)
-          - none:    Stage nothing, commit only what's already in the index
+          - [1m[36mtracked[0m: Stage tracked changes only (like [1mgit add -u[0m)
+          - [1m[36mnone[0m:    Stage nothing, commit only what's already in the index
 
-  -h, --help
+  [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
 
-Global Options:
-  -C <path>
+[1m[32mGlobal Options:[0m
+  [1m[36m-C[0m[36m [0m[36m<path>[0m
           Working directory for this command
 
-      --config <path>
+      [1m[36m--config[0m[36m [0m[36m<path>[0m
           User config file path
 
-  -v, --verbose
+  [1m[36m-v[0m, [1m[36m--verbose[0m
           Show commands and debug info
 ```
 
