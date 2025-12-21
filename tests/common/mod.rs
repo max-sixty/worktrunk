@@ -1772,6 +1772,7 @@ exit 1
 pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
     settings.add_redaction(".env.GIT_CONFIG_GLOBAL", "[TEST_GIT_CONFIG]");
     settings.add_redaction(".env.WORKTRUNK_CONFIG_PATH", "[TEST_CONFIG]");
+    settings.add_redaction(".env.WORKTRUNK_DIRECTIVE_FILE", "[DIRECTIVE_FILE]");
     settings.add_redaction(".env.HOME", "[TEST_HOME]");
     // Windows: the `home` crate uses USERPROFILE for home_dir()
     settings.add_redaction(".env.USERPROFILE", "[TEST_HOME]");

@@ -47,6 +47,10 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
                 $script = Get-Content -Path $directiveFile -Raw
                 if ($script.Trim()) {
                     Invoke-Expression $script
+                    # If wt succeeded, use the directive script's exit code
+                    if ($exitCode -eq 0) {
+                        $exitCode = $LASTEXITCODE
+                    }
                 }
             }
         }
