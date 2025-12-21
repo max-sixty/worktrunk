@@ -880,10 +880,6 @@ pub(crate) fn execute_streaming(
         signal_hook::consts::{SIGINT, SIGTERM},
         signal_hook::iterator::Signals,
         std::os::unix::process::CommandExt,
-        std::sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicI32, Ordering},
-        },
     };
 
     let shell = ShellConfig::get();
@@ -910,29 +906,8 @@ pub(crate) fn execute_streaming(
     };
 
     #[cfg(unix)]
-    let signal_state = if forward_signals {
-        let received_signal = Arc::new(AtomicI32::new(0));
-        let child_pgid = Arc::new(AtomicI32::new(0));
-        let forwarded = Arc::new(AtomicBool::new(false));
-        let mut signals = Signals::new([SIGINT, SIGTERM])?;
-        let handle = signals.handle();
-        let received_signal_clone = received_signal.clone();
-        let child_pgid_clone = child_pgid.clone();
-        let forwarded_clone = forwarded.clone();
-        let thread = std::thread::spawn(move || {
-            for sig in signals.forever() {
-                if received_signal_clone
-                    .compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-                {
-                    let pgid = child_pgid_clone.load(Ordering::SeqCst);
-                    if pgid != 0 && !forwarded_clone.swap(true, Ordering::SeqCst) {
-                        forward_signal_with_escalation(pgid, sig);
-                    }
-                }
-            }
-        });
-        Some((received_signal, child_pgid, forwarded, handle, thread))
+    let mut signals = if forward_signals {
+        Some(Signals::new([SIGINT, SIGTERM])?)
     } else {
         None
     };
@@ -960,17 +935,6 @@ pub(crate) fn execute_streaming(
             })
         })?;
 
-    #[cfg(unix)]
-    if let Some((received_signal, child_pgid, forwarded, _handle, _thread)) = signal_state.as_ref()
-    {
-        let pgid = child.id() as i32;
-        child_pgid.store(pgid, Ordering::SeqCst);
-        let sig = received_signal.load(Ordering::SeqCst);
-        if sig != 0 && !forwarded.swap(true, Ordering::SeqCst) {
-            forward_signal_with_escalation(pgid, sig);
-        }
-    }
-
     // Write stdin content if provided (used for hook context JSON)
     // We ignore write errors here because:
     // 1. The child may have already exited (broken pipe)
@@ -984,7 +948,38 @@ pub(crate) fn execute_streaming(
         // stdin is dropped here, closing the pipe
     }
 
-    // Wait for command to complete
+    #[cfg(unix)]
+    let (status, seen_signal) = if forward_signals {
+        let child_pgid = child.id() as i32;
+        let mut seen_signal: Option<i32> = None;
+        loop {
+            if let Some(status) = child.try_wait().map_err(|e| {
+                anyhow::Error::from(worktrunk::git::GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                })
+            })? {
+                break (status, seen_signal);
+            }
+            if let Some(signals) = signals.as_mut() {
+                for sig in signals.pending() {
+                    if seen_signal.is_none() {
+                        seen_signal = Some(sig);
+                        forward_signal_with_escalation(child_pgid, sig);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    } else {
+        let status = child.wait().map_err(|e| {
+            anyhow::Error::from(worktrunk::git::GitError::Other {
+                message: format!("Failed to wait for command: {}", e),
+            })
+        })?;
+        (status, None)
+    };
+
+    #[cfg(not(unix))]
     let status = child.wait().map_err(|e| {
         anyhow::Error::from(worktrunk::git::GitError::Other {
             message: format!("Failed to wait for command: {}", e),
@@ -992,17 +987,12 @@ pub(crate) fn execute_streaming(
     })?;
 
     #[cfg(unix)]
-    if let Some((received_signal, _child_pgid, _forwarded, handle, thread)) = signal_state {
-        handle.close();
-        let _ = thread.join();
-        let sig = received_signal.load(Ordering::SeqCst);
-        if sig != 0 {
-            return Err(WorktrunkError::ChildProcessExited {
-                code: 128 + sig,
-                message: format!("terminated by signal {}", sig),
-            }
-            .into());
+    if let Some(sig) = seen_signal {
+        return Err(WorktrunkError::ChildProcessExited {
+            code: 128 + sig,
+            message: format!("terminated by signal {}", sig),
         }
+        .into());
     }
 
     // Check if child was killed by a signal (Unix only)
