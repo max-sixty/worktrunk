@@ -1,6 +1,4 @@
-//! Worktree operations with dual-mode output for shell integration.
-//!
-//! Note: This module uses message functions from worktrunk::styling.
+//! Worktree operations with file-based shell integration.
 //!
 //! # The Directory Change Problem
 //!
@@ -12,11 +10,16 @@
 //! The binary can change *its own* working directory, but when it exits, the parent shell remains
 //! in the original directory.
 //!
-//! # Solution: Dual-Mode Output
+//! # Solution: File-Based Directive Passing
 //!
-//! We solve this with two output modes:
+//! Shell wrappers create a temp file and set `WORKTRUNK_DIRECTIVE_FILE` to its path:
 //!
-//! ## Without `--internal` (Direct Binary Call)
+//! 1. Shell wrapper creates temp file via `mktemp`
+//! 2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE=/path/to/temp`
+//! 3. wt binary writes commands like `cd '/path'` to that file
+//! 4. Shell wrapper sources the file after wt exits
+//!
+//! ## Without Shell Integration (Direct Binary Call)
 //!
 //! ```bash
 //! $ wt switch my-feature
@@ -31,7 +34,7 @@
 //! The binary performs git operations and prints user-friendly messages, but **cannot** change
 //! the parent shell's directory. User must manually `cd` to the worktree.
 //!
-//! ## With `--internal` (Via Shell Wrapper)
+//! ## With Shell Integration
 //!
 //! ```bash
 //! $ wt switch my-feature
@@ -41,16 +44,11 @@
 //! /path/to/worktree  # ← Automatically changed!
 //! ```
 //!
-//! When shell integration is enabled (`eval "$(wt config shell init bash)"`), the shell function
-//! intercepts commands and adds `--internal`:
+//! When shell integration is enabled (`eval "$(wt config shell init bash)"`), the shell wrapper:
 //!
-//! 1. Shell wrapper calls: `wt switch --internal my-feature`
-//! 2. Binary streams user-facing messages to **stderr** (real-time feedback)
-//! 3. At exit, binary outputs a shell script to **stdout** (e.g., `cd '/path/to/worktree'`)
-//! 4. Shell wrapper captures stdout via `$()` and evals it in the parent shell
-//!
-//! The binary **never changes directories itself** - it just outputs a shell script that the
-//! wrapper evals to perform the cd.
+//! 1. Creates a temp file and sets `WORKTRUNK_DIRECTIVE_FILE` to its path
+//! 2. Runs the wt binary (which writes `cd '/path'` to the temp file)
+//! 3. Sources the temp file after wt exits
 //!
 //! # Implementation Details
 //!
@@ -60,38 +58,8 @@
 //! - `output::handle_switch_output()`: Formats and outputs switch operation results
 //! - `output::handle_remove_output()`: Formats and outputs remove operation results
 //!
-//! These handlers automatically select the appropriate mode (user-friendly or directive protocol)
-//! based on the `internal` flag.
-//!
-//! ## Shell Script Protocol
-//!
-//! In directive mode (`--internal`), the binary:
-//! - Streams all user messages to **stderr** (real-time, with colors)
-//! - Buffers cd/exec directives internally
-//! - At exit, emits a shell script to **stdout**:
-//!
-//! ```bash
-//! cd '/path/to/worktree'
-//! echo 'optional follow-up command'
-//! ```
-//!
-//! The shell wrapper captures this via command substitution and evals it:
-//!
-//! ```bash
-//! wt() {
-//!     local script exit_code=0
-//!     script="$(command "$WORKTRUNK_BIN" --internal "$@" 2>&2)" || exit_code=$?
-//!     if [[ -n "$script" ]]; then
-//!         eval "$script"
-//!     fi
-//!     return "$exit_code"
-//! }
-//! ```
-//!
-//! This pattern (stderr for logs, stdout for script) is proven by direnv. Benefits:
-//! - No FIFOs, no background processes, no job control suppression
-//! - Full streaming: stderr goes directly to terminal while wt runs
-//! - Simple shell wrapper: just command substitution + eval
+//! The output handlers check `is_shell_integration_active()` to determine if hints should
+//! be suppressed (when shell integration is already configured).
 //!
 //! ## Exit Code Semantics
 //!

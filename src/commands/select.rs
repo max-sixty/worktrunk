@@ -110,7 +110,10 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
 
     // Build shell pipeline: git <args> | pager
     // Shell-escape args to handle paths with spaces
-    let escaped_args: Vec<String> = git_args.iter().map(|arg| shell_escape(arg)).collect();
+    let escaped_args: Vec<String> = git_args
+        .iter()
+        .map(|arg| shlex::try_quote(arg).unwrap_or((*arg).into()).into_owned())
+        .collect();
     let pipeline = format!("git {} | {}", escaped_args.join(" "), pager_with_args);
 
     log::debug!("Running pager pipeline: {}", pipeline);
@@ -121,6 +124,8 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
         .arg(&pipeline)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // Prevent subprocesses from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
     {
         Ok(child) => child,
@@ -167,18 +172,6 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
                 return None;
             }
         }
-    }
-}
-
-/// Shell-escape a string for use in sh -c commands.
-fn shell_escape(s: &str) -> String {
-    // If it contains special chars, wrap in single quotes and escape existing single quotes
-    if s.chars()
-        .any(|c| c.is_whitespace() || "\"'\\$`!*?[]{}|&;<>()".contains(c))
-    {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s.to_string()
     }
 }
 
@@ -806,7 +799,7 @@ where
     }
 }
 
-pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
+pub fn handle_select() -> anyhow::Result<()> {
     let repo = Repository::current();
 
     // Initialize preview mode state file (auto-cleanup on drop)
@@ -985,15 +978,14 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
             handle_switch(&identifier, false, None, false, false, false, &config)?;
 
         // Clear the terminal screen after skim exits to prevent artifacts
-        // Use stderr for terminal control sequences - in directive mode, stdout goes to a FIFO
-        // for directive parsing, so terminal control must go through stderr to reach the TTY
+        // Use stderr for terminal control - stdout is reserved for data output
         use crossterm::{execute, terminal};
         use std::io::stderr;
         execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
-        // Show success message; emit cd directive if in directive mode
-        handle_switch_output(&result, &branch_info, false, is_directive_mode)?;
+        // Show success message; emit cd directive if shell integration is active
+        handle_switch_output(&result, &branch_info, false)?;
     }
 
     Ok(())
@@ -1096,42 +1088,6 @@ mod tests {
         assert!(!pager_needs_paging_disabled("delta-preview"));
         assert!(!pager_needs_paging_disabled("/path/to/delta-preview"));
         assert!(pager_needs_paging_disabled("batcat")); // Debian's bat package name
-    }
-
-    #[test]
-    fn test_shell_escape_simple() {
-        // Simple strings pass through unchanged
-        assert_eq!(shell_escape("hello"), "hello");
-        assert_eq!(shell_escape("foo-bar"), "foo-bar");
-        assert_eq!(shell_escape("path/to/file"), "path/to/file");
-    }
-
-    #[test]
-    fn test_shell_escape_with_spaces() {
-        // Strings with spaces get quoted
-        assert_eq!(shell_escape("hello world"), "'hello world'");
-        assert_eq!(shell_escape("path/to/my file"), "'path/to/my file'");
-    }
-
-    #[test]
-    fn test_shell_escape_with_special_chars() {
-        // Special shell characters get quoted
-        assert_eq!(shell_escape("foo$bar"), "'foo$bar'");
-        assert_eq!(shell_escape("foo`bar"), "'foo`bar'");
-        assert_eq!(shell_escape("foo;bar"), "'foo;bar'");
-        assert_eq!(shell_escape("foo|bar"), "'foo|bar'");
-        assert_eq!(shell_escape("foo&bar"), "'foo&bar'");
-        assert_eq!(shell_escape("foo*bar"), "'foo*bar'");
-        assert_eq!(shell_escape("foo?bar"), "'foo?bar'");
-    }
-
-    #[test]
-    fn test_shell_escape_with_quotes() {
-        // Single quotes get escaped specially
-        assert_eq!(shell_escape("it's"), "'it'\\''s'");
-        assert_eq!(shell_escape("don't"), "'don'\\''t'");
-        // Double quotes trigger quoting but don't need internal escaping
-        assert_eq!(shell_escape("say \"hi\""), "'say \"hi\"'");
     }
 
     #[test]

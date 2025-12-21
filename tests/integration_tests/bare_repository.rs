@@ -1,5 +1,6 @@
 use crate::common::{
-    TestRepo, canonicalize, repo, setup_temp_snapshot_settings, wait_for_file, wt_command,
+    TestRepo, canonicalize, configure_directive_file, directive_file, repo,
+    setup_temp_snapshot_settings, wait_for_file, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -201,12 +202,12 @@ fn test_bare_repo_list_shows_no_bare_entry() {
     cmd.arg("list").current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should only show the main worktree, not the bare repo (table output is on stderr)
-    assert!(stderr.contains("main"));
-    assert!(!stderr.contains(".git"));
-    assert!(!stderr.contains("bare"));
+    // Should only show the main worktree, not the bare repo (table output is on stdout)
+    assert!(stdout.contains("main"));
+    assert!(!stdout.contains(".git"));
+    assert!(!stdout.contains("bare"));
 }
 
 #[test]
@@ -219,9 +220,11 @@ fn test_bare_repo_switch_creates_worktree() {
 
     // Run wt switch --create to create a new worktree
     // Config uses {{ branch }} template, so worktrees are created inside bare repo
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    cmd.args(["switch", "--create", "feature", "--internal"])
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
@@ -270,9 +273,11 @@ fn test_bare_repo_switch_with_configured_naming() {
     test.commit_in_worktree(&main_worktree, "Initial commit");
 
     // Config uses "{{ branch }}" template, so worktrees are created inside bare repo
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    cmd.args(["switch", "--create", "feature", "--internal"])
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
@@ -306,9 +311,11 @@ fn test_bare_repo_remove_worktree() {
     test.commit_in_worktree(&feature_worktree, "Feature work");
 
     // Remove feature worktree from main worktree
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    cmd.args(["remove", "feature", "--no-background", "--internal"])
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["remove", "feature", "--no-background"])
         .current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
@@ -348,11 +355,11 @@ fn test_bare_repo_identifies_primary_correctly() {
     cmd.arg("list").current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // First non-bare worktree (main) should be primary (table output is on stderr)
+    // First non-bare worktree (main) should be primary (table output is on stdout)
     // The exact formatting may vary, but main should be listed
-    assert!(stderr.contains("main"));
+    assert!(stdout.contains("main"));
 }
 
 #[test]
@@ -365,9 +372,11 @@ fn test_bare_repo_worktree_base_used_for_paths() {
 
     // Create new worktree - config uses {{ branch }} template
     // Worktrees are created inside the bare repo directory
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    cmd.args(["switch", "--create", "dev", "--internal"])
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "dev"])
         .current_dir(&main_worktree);
 
     cmd.output().unwrap();
@@ -421,13 +430,13 @@ worktree-path = "{{ branch }}"
     let bare_output = bare_list.output().unwrap();
     let normal_output = normal_list.output().unwrap();
 
-    // Both should show 1 worktree (main/main) - table output is on stderr
-    let bare_stderr = String::from_utf8_lossy(&bare_output.stderr);
-    let normal_stderr = String::from_utf8_lossy(&normal_output.stderr);
+    // Both should show 1 worktree (main/main) - table output is on stdout
+    let bare_stdout = String::from_utf8_lossy(&bare_output.stdout);
+    let normal_stdout = String::from_utf8_lossy(&normal_output.stdout);
 
-    assert!(bare_stderr.contains("main"));
-    assert!(normal_stderr.contains("main"));
-    assert_eq!(bare_stderr.lines().count(), normal_stderr.lines().count());
+    assert!(bare_stdout.contains("main"));
+    assert!(normal_stdout.contains("main"));
+    assert_eq!(bare_stdout.lines().count(), normal_stdout.lines().count());
 }
 
 #[test]
@@ -453,11 +462,11 @@ fn test_bare_repo_commands_from_bare_directory() {
         );
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should list the worktree even when run from bare repo (table output is on stderr)
-    assert!(stderr.contains("main"), "Should show main worktree");
-    assert!(!stderr.contains("bare"), "Should not show bare repo itself");
+    // Should list the worktree even when run from bare repo (table output is on stdout)
+    assert!(stdout.contains("main"), "Should show main worktree");
+    assert!(!stdout.contains("bare"), "Should not show bare repo itself");
 }
 
 /// Test that merge workflow works correctly with bare repositories.
@@ -475,9 +484,11 @@ fn test_bare_repo_merge_workflow() {
 
     // Create feature branch worktree using wt switch
     // Config uses {{ branch }} template, so worktrees are inside bare repo
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    cmd.args(["switch", "--create", "feature", "--internal"])
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature"])
         .current_dir(&main_worktree);
     cmd.output().unwrap();
 
@@ -489,14 +500,15 @@ fn test_bare_repo_merge_workflow() {
     test.commit_in_worktree(&feature_worktree, "Feature work");
 
     // Merge feature into main (explicitly specify target)
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
     cmd.args([
         "merge",
         "main",        // Explicitly specify target branch
         "--no-squash", // Skip squash to avoid LLM dependency
         "--no-verify", // Skip pre-merge hooks
-        "--internal",
     ])
     .current_dir(&feature_worktree);
 
@@ -554,10 +566,11 @@ fn test_bare_repo_background_logs_location() {
     test.commit_in_worktree(&feature_worktree, "Feature work");
 
     // Run remove in background to test log file location
+    let (directive_path, _guard) = directive_file();
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
-    cmd.args(["remove", "feature", "--internal"])
-        .current_dir(&main_worktree);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["remove", "feature"]).current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
 

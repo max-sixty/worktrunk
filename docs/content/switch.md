@@ -67,13 +67,19 @@ wt switch --create fix --base=@  # Branch from current HEAD
 {% terminal() %}
 wt switch - Switch to a worktree
 
-Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span>
+Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;BRANCH&gt;</span> <b><span class=c>[--</span></b> <span class=c>&lt;EXECUTE_ARGS&gt;...</span><b><span class=c>]</span></b>
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>&lt;BRANCH&gt;</span>
           Branch or worktree name
 
           Shortcuts: &#39;^&#39; (main), &#39;-&#39; (previous), &#39;@&#39; (current)
+
+  <span class=c>[EXECUTE_ARGS]...</span>
+          Additional arguments for --execute command (after --)
+
+          Arguments after <b>--</b> are appended to the execute command. Each argument
+          is POSIX shell-escaped before appending.
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-c</span></b>, <b><span class=c>--create</span></b>
@@ -91,12 +97,14 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           full terminal control. Useful for launching editors, AI agents, or
           other interactive tools.
 
-          Especially useful in shell aliases to create a worktree and start
-          working in one command:
+          Especially useful with shell aliases:
 
-            <b>alias wsc=&#39;wt switch --create --execute=claude&#39;</b>
+            <b>alias wsc=&#39;wt switch --create -x claude&#39;</b>
+            <b>wsc feature-branch -- &#39;implement the login flow&#39;</b>
 
           Then <b>wsc feature-branch</b> creates the worktree and launches Claude Code.
+          Arguments after <b>--</b> are passed to the command, so <b>wsc feature --</b>
+          &#39;implement login&#39; works.
 
   <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
           Skip approval prompts

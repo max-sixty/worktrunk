@@ -29,7 +29,6 @@ pub mod git_error_display;
 pub mod help;
 pub mod hook_show;
 pub mod init;
-pub mod internal_flag;
 pub mod list;
 pub mod list_column_alignment;
 pub mod list_config;

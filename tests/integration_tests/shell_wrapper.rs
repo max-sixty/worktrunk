@@ -539,9 +539,9 @@ fn exec_bash_truly_interactive(
 ///
 /// This simulates what actually happens when users run `wt switch`, etc. in their shell:
 /// 1. The `wt` function is defined (from shell integration)
-/// 2. It calls `wt_exec --internal switch ...`
-/// 3. The wrapper captures stdout (shell script) via command substitution and evals it
-/// 4. Users see stderr output (progress, success, hints) in real-time
+/// 2. It calls `wt_exec` which sets WORKTRUNK_DIRECTIVE_FILE and runs the binary
+/// 3. The wrapper sources the directive file after wt exits (for cd, exec commands)
+/// 4. Users see stdout/stderr output in real-time
 ///
 /// Now uses PTY interactive mode for consistent behavior and potential input echoing.
 ///
@@ -1259,7 +1259,7 @@ approved-commands = ["echo 'test command executed'"]
         // should NOT appear because the user already has shell integration
         let output = exec_through_wrapper("bash", &repo, "switch", &["--create", "bash-test"]);
 
-        // Critical: shell integration hint must be suppressed in directive mode
+        // Critical: shell integration hint must be suppressed when shell integration is active
         assert!(
             !output.combined.contains("To enable automatic cd"),
             "Shell integration hint should not appear when running through wrapper. Output:\n{}",
@@ -1358,7 +1358,7 @@ approved-commands = ["echo 'background task'"]
         assert_eq!(output.exit_code, 0, "Command should succeed");
 
         // Critical assertion: progress messages should appear to users
-        // This is the test that catches the bug where progress() is suppressed in directive mode
+        // This is the test that catches the bug where progress() was incorrectly suppressed
         assert!(
             output.combined.contains("Running project post-start"),
             "Progress message 'Running project post-start' missing from output. \

@@ -77,13 +77,19 @@ wt switch --create fix --base=@  # Branch from current HEAD
 ```
 wt switch - Switch to a worktree
 
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m][0m
 
 [1m[32mArguments:[0m
   [36m<BRANCH>[0m
           Branch or worktree name[0m
           [0m
           Shortcuts: '^' (main), '-' (previous), '@' (current)[0m
+
+  [36m[EXECUTE_ARGS]...[0m
+          Additional arguments for --execute command (after --)[0m
+          [0m
+          Arguments after [1m--[0m are appended to the execute command. Each argument
+          is POSIX shell-escaped before appending.[0m
 
 [1m[32mOptions:[0m
   [1m[36m-c[0m, [1m[36m--create[0m
@@ -101,12 +107,14 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m
           full terminal control. Useful for launching editors, AI agents, or
           other interactive tools.[0m
           [0m
-          Especially useful in shell aliases to create a worktree and start
-          working in one command:[0m
+          Especially useful with shell aliases:[0m
           [0m
-            [1m[1malias wsc='wt switch --create --execute=claude'[0m
+            [1m[1malias wsc='wt switch --create -x claude'[0m
+            [1mwsc feature-branch -- 'implement the login flow'[0m
           [0m[0m
-          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.[0m
+          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.
+          Arguments after [1m--[0m are passed to the command, so [1mwsc feature --
+          'implement login'[0m works.[0m
 
   [1m[36m-f[0m, [1m[36m--force[0m
           Skip approval prompts

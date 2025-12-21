@@ -10,10 +10,6 @@ This demo shows the core workflow with hooks:
 6. wt remove - remove worktree with pre-remove hook
 """
 
-import os
-import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -23,17 +19,14 @@ DEMOS_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(DEMOS_DIR))
 
 from shared import (
-    DemoEnv, run, git, render_tape, record_vhs, REAL_HOME, FIXTURES_DIR,
-    prepare_demo_repo, commit_dated, THEMES, format_theme_for_vhs,
+    DemoEnv, git, prepare_demo_repo,
+    check_dependencies, setup_demo_output, build_shell_env, run_fish_script, record_all_themes,
 )
 
 REPO_ROOT = DEMOS_DIR.parent.parent
 OUT_DIR = SCRIPT_DIR / "out"
 TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
-TAPE_RENDERED = OUT_DIR / ".rendered.tape"
-STARSHIP_CONFIG = OUT_DIR / "starship.toml"
 
-# Output GIF paths for light and dark variants
 OUTPUT_GIFS = {
     "light": OUT_DIR / "wt-core.gif",
     "dark": OUT_DIR / "wt-core-dark.gif",
@@ -42,7 +35,6 @@ OUTPUT_GIFS = {
 
 def prepare_repo(env: DemoEnv):
     """Set up the demo repository with branches and worktrees."""
-    # Use shared rich repo setup with custom hooks config
     hooks_config = '''[post-start]
 dev = "npm run dev"
 
@@ -75,7 +67,6 @@ fi
     flyctl_mock.chmod(0o755)
 
     # Demo-specific: user config with approved commands
-    # Project ID for local path is the path without .git suffix
     config_dir = env.home / ".config" / "worktrunk"
     project_id = str(env.bare_remote).removesuffix(".git")
     (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
@@ -90,15 +81,12 @@ def create_branch_billing(env: DemoEnv):
     """Create billing branch that's already merged (at same commit as main)."""
     branch = "billing"
     path = env.work_base / f"acme.{branch}"
-
-    # Create worktree at main's commit (so it shows as merged/safe to delete)
     git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
     git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
 
 
 def record_text(demo_env: DemoEnv):
     """Record text output by running demo commands."""
-    # Commands to run (matching demo.tape)
     commands = [
         "wt list",
         "wt switch alpha",
@@ -109,56 +97,17 @@ def record_text(demo_env: DemoEnv):
         "wt remove",
     ]
 
-    # Set up environment
-    env = os.environ.copy()
-    env.update({
-        "LANG": "en_US.UTF-8",
-        "LC_ALL": "en_US.UTF-8",
-        "COLUMNS": "140",
-        "RUSTUP_HOME": str(REAL_HOME / ".rustup"),
-        "CARGO_HOME": str(REAL_HOME / ".cargo"),
-        "HOME": str(demo_env.home),
-        "PATH": f"{REPO_ROOT}/target/debug:{demo_env.home}/bin:{os.environ['PATH']}",
-        "STARSHIP_CONFIG": str(STARSHIP_CONFIG),
-        "STARSHIP_CACHE": str(demo_env.root / "starship-cache"),
-        "NO_COLOR": "1",
-        "CLICOLOR": "0",
-    })
-
-    (demo_env.root / "starship-cache").mkdir(exist_ok=True)
-
-    # Run commands and capture output using fish with shell init
-    script = "wt config shell init fish | source\n"
-    for cmd in commands:
-        script += f"echo '$ {cmd}'\n{cmd}\necho ''\n"
-
-    result = subprocess.run(
-        ["fish", "-c", script],
-        cwd=demo_env.repo, env=env,
-        capture_output=True, text=True
-    )
-    output = result.stdout + result.stderr
-
-    # Clean output
-    clean = re.sub(r"\x1B\[[0-9;?]*[A-Za-z]", "", output)  # Strip ANSI
-    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", clean)  # Strip control chars
-
-    (OUT_DIR / "run.txt").write_text(clean)
+    env = build_shell_env(demo_env, REPO_ROOT)
+    script = "\n".join(f"echo '$ {cmd}'\n{cmd}\necho ''" for cmd in commands)
+    output = run_fish_script(demo_env, script, env)
+    (OUT_DIR / "run.txt").write_text(output)
 
 
 def main():
-    # Check dependencies
-    for cmd in ["wt", "vhs", "starship", "bat"]:
-        if not shutil.which(cmd):
-            raise SystemExit(f"Missing dependency: {cmd}")
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Copy starship config from fixtures
-    shutil.copy(FIXTURES_DIR / "starship.toml", STARSHIP_CONFIG)
+    check_dependencies(["wt", "vhs", "starship", "bat"])
+    setup_demo_output(OUT_DIR)
 
     # Create separate environments for text and VHS recording
-    # so they don't interfere with each other
     text_env = DemoEnv(name="text", out_dir=OUT_DIR, repo_name="acme")
     vhs_env = DemoEnv(name="vhs", out_dir=OUT_DIR, repo_name="acme")
 
@@ -166,32 +115,7 @@ def main():
     record_text(text_env)
 
     prepare_repo(vhs_env)
-
-    # Record both light and dark variants
-    docs_assets = REPO_ROOT / "docs" / "static" / "assets"
-    docs_assets.mkdir(parents=True, exist_ok=True)
-
-    for theme_name, output_gif in OUTPUT_GIFS.items():
-        theme = THEMES[theme_name]
-        replacements = {
-            "DEMO_REPO": vhs_env.repo,
-            "DEMO_HOME": vhs_env.home,
-            "REAL_HOME": REAL_HOME,
-            "STARSHIP_CONFIG": STARSHIP_CONFIG,
-            "OUTPUT_GIF": output_gif,
-            "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
-            "THEME": format_theme_for_vhs(theme),
-        }
-        render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements)
-        print(f"\nRecording {theme_name} GIF...")
-        record_vhs(TAPE_RENDERED)
-        TAPE_RENDERED.unlink(missing_ok=True)
-        print(f"GIF saved to {output_gif}")
-
-        # Copy to docs for local preview
-        asset_name = output_gif.name
-        shutil.copy(output_gif, docs_assets / asset_name)
-        print(f"Copied to {docs_assets / asset_name}")
+    record_all_themes(vhs_env, TAPE_TEMPLATE, OUTPUT_GIFS, REPO_ROOT)
 
     print(f"\nText log saved to {OUT_DIR / 'run.txt'}")
 

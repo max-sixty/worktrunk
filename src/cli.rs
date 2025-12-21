@@ -4,16 +4,6 @@ use std::sync::OnceLock;
 
 use crate::commands::Shell;
 
-/// Shell type for directive output in --internal mode
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-pub enum DirectiveShell {
-    /// POSIX shells (bash, zsh, fish) - outputs `cd '/path'`
-    #[default]
-    Posix,
-    /// PowerShell - outputs `Set-Location '/path'`
-    Powershell,
-}
-
 /// Custom styles for help output - matches worktrunk's color scheme
 fn help_styles() -> Styles {
     Styles::styled()
@@ -181,11 +171,6 @@ pub struct Cli {
         help_heading = "Global Options"
     )]
     pub verbose: bool,
-
-    /// Shell wrapper mode (optionally specify shell type for directive output)
-    /// Usage: --internal (defaults to posix) or --internal=powershell
-    #[arg(long, global = true, hide = true, default_missing_value = "posix", num_args = 0..=1, require_equals = true)]
-    pub internal: Option<DirectiveShell>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -1377,7 +1362,10 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 
 | Variable | Purpose |
 |----------|---------|
+| `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
+| `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
+| `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
 | `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting resource limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
@@ -2182,16 +2170,25 @@ wt switch --create fix --base=@  # Branch from current HEAD
         /// it full terminal control. Useful for launching editors, AI agents,
         /// or other interactive tools.
         ///
-        /// Especially useful in shell aliases to create a worktree and start
-        /// working in one command:
+        /// Especially useful with shell aliases:
         ///
         /// ```sh
-        /// alias wsc='wt switch --create --execute=claude'
+        /// alias wsc='wt switch --create -x claude'
+        /// wsc feature-branch -- 'implement the login flow'
         /// ```
         ///
-        /// Then `wsc feature-branch` creates the worktree and launches Claude Code.
+        /// Then `wsc feature-branch` creates the worktree and launches Claude
+        /// Code. Arguments after `--` are passed to the command, so
+        /// `wsc feature -- 'implement login'` works.
         #[arg(short = 'x', long)]
         execute: Option<String>,
+
+        /// Additional arguments for --execute command (after --)
+        ///
+        /// Arguments after `--` are appended to the execute command.
+        /// Each argument is POSIX shell-escaped before appending.
+        #[arg(last = true, requires = "execute")]
+        execute_args: Vec<String>,
 
         /// Skip approval prompts
         #[arg(short = 'f', long)]
@@ -2345,6 +2342,20 @@ wt merge --no-commit
 7. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
 
 Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+
+## Local CI
+
+For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
+
+Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
+
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to main and the worktree cleans up.
+
+```toml
+[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+```
 
 ## See also
 

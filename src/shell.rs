@@ -348,6 +348,15 @@ impl ShellInit {
     }
 }
 
+/// Custom Askama filters for shell templates
+mod filters {
+    /// Convert command name to a safe shell function identifier (hyphens → underscores)
+    /// Used in templates as: {{ cmd|safe_fn }}
+    pub fn safe_fn(cmd: &str, _: &dyn askama::Values) -> askama::Result<String> {
+        Ok(cmd.replace('-', "_"))
+    }
+}
+
 /// POSIX directive shim template (shared by bash, zsh, oil)
 #[derive(Template)]
 #[template(path = "posix_directives.sh", escape = "none")]
@@ -425,6 +434,8 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         .arg(probe_cmd)
         .stdout(Stdio::piped())
         .stderr(Stdio::null()) // Suppress user's zsh startup messages
+        // Prevent subprocesses from writing to the directive file
+        .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
         .ok()?;
 
@@ -694,6 +705,24 @@ mod tests {
         assert!(
             output.contains("custom"),
             "Output should contain custom prefix"
+        );
+    }
+
+    #[test]
+    fn test_shell_init_unique_function_names() {
+        // Verify that commands with hyphens get safe function names
+        // This prevents conflicts when multiple commands are loaded (e.g., wt and git-wt)
+        let init = ShellInit::with_prefix(Shell::Bash, "git-wt".to_string());
+        let output = init.generate().unwrap();
+
+        // Should use _git_wt_exec (underscores), not _git-wt_exec (hyphens)
+        assert!(
+            output.contains("_git_wt_exec"),
+            "Function name should use underscores: {output}"
+        );
+        assert!(
+            !output.contains("git-wt_exec"),
+            "Function name should not contain hyphens"
         );
     }
 

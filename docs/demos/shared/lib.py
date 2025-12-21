@@ -1,11 +1,14 @@
 """Shared infrastructure for demo recording scripts."""
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from .themes import THEMES, format_theme_for_vhs
 
 REAL_HOME = Path.home()
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -344,3 +347,130 @@ def _create_branch_hooks(env: DemoEnv):
     lib_rs.write_text(lib_rs.read_text() + "// Division coming soon\n")
     git(["-C", str(path), "add", "src/lib.rs"])
     lib_rs.write_text(lib_rs.read_text() + "// TODO: add division\n")
+
+
+# =============================================================================
+# Demo recording infrastructure
+# =============================================================================
+
+
+def check_dependencies(commands: list[str]):
+    """Check that required commands are available, exit if not."""
+    for cmd in commands:
+        if not shutil.which(cmd):
+            raise SystemExit(f"Missing dependency: {cmd}")
+
+
+def setup_demo_output(out_dir: Path) -> Path:
+    """Set up demo output directory and copy starship config.
+
+    Returns the path to the starship config file.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    starship_config = out_dir / "starship.toml"
+    shutil.copy(FIXTURES_DIR / "starship.toml", starship_config)
+    return starship_config
+
+
+def build_shell_env(demo_env: "DemoEnv", repo_root: Path, extra: dict = None) -> dict:
+    """Build environment dict for running shell commands in demo context.
+
+    Includes wt, fish, starship setup with isolated HOME.
+    """
+    starship_config = demo_env.out_dir / "starship.toml"
+    starship_cache = demo_env.root / "starship-cache"
+    starship_cache.mkdir(exist_ok=True)
+
+    env = os.environ.copy()
+    env.update({
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8",
+        "COLUMNS": "140",
+        "RUSTUP_HOME": str(REAL_HOME / ".rustup"),
+        "CARGO_HOME": str(REAL_HOME / ".cargo"),
+        "HOME": str(demo_env.home),
+        "PATH": f"{repo_root}/target/debug:{demo_env.home}/bin:{os.environ['PATH']}",
+        "STARSHIP_CONFIG": str(starship_config),
+        "STARSHIP_CACHE": str(starship_cache),
+        "NO_COLOR": "1",
+        "CLICOLOR": "0",
+    })
+    if extra:
+        env.update(extra)
+    return env
+
+
+def clean_ansi_output(text: str) -> str:
+    """Strip ANSI escape codes and control characters from text."""
+    # Strip ANSI escape sequences
+    clean = re.sub(r"\x1B\[[0-9;?]*[A-Za-z]", "", text)
+    # Strip control characters (except newline, tab, carriage return)
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", clean)
+    return clean
+
+
+def run_fish_script(
+    demo_env: "DemoEnv",
+    script: str,
+    env: dict,
+    cwd: Path = None,
+) -> str:
+    """Run a fish script and return cleaned output.
+
+    Automatically prepends shell init and cleans ANSI from output.
+    """
+    full_script = "wt config shell init fish | source\n" + script
+    result = subprocess.run(
+        ["fish", "-c", full_script],
+        cwd=cwd or demo_env.repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return clean_ansi_output(result.stdout + result.stderr)
+
+
+def record_all_themes(
+    demo_env: "DemoEnv",
+    tape_template: Path,
+    output_gifs: dict[str, Path],
+    repo_root: Path,
+    vhs_binary: str = "vhs",
+):
+    """Record demo GIFs for all themes.
+
+    Args:
+        demo_env: Demo environment with repo and home paths
+        tape_template: Path to the .tape template file
+        output_gifs: Dict of theme_name -> output GIF path (e.g., {"light": path, "dark": path})
+        repo_root: Path to worktrunk repo root (for target/debug)
+        vhs_binary: VHS binary to use (default "vhs", can be path to custom build)
+    """
+    tape_rendered = demo_env.out_dir / ".rendered.tape"
+    starship_config = demo_env.out_dir / "starship.toml"
+    docs_assets = repo_root / "docs" / "static" / "assets"
+    docs_assets.mkdir(parents=True, exist_ok=True)
+
+    for theme_name, output_gif in output_gifs.items():
+        theme = THEMES[theme_name]
+        replacements = {
+            "DEMO_REPO": demo_env.repo,
+            "DEMO_HOME": demo_env.home,
+            "REAL_HOME": REAL_HOME,
+            "STARSHIP_CONFIG": starship_config,
+            "OUTPUT_GIF": output_gif,
+            "TARGET_DEBUG": repo_root / "target" / "debug",
+            "THEME": format_theme_for_vhs(theme),
+        }
+
+        if not render_tape(tape_template, tape_rendered, replacements):
+            continue
+
+        print(f"\nRecording {theme_name} GIF...")
+        record_vhs(tape_rendered, vhs_binary)
+        tape_rendered.unlink(missing_ok=True)
+        print(f"GIF saved to {output_gif}")
+
+        # Copy to docs for local preview
+        shutil.copy(output_gif, docs_assets / output_gif.name)
+        print(f"Copied to {docs_assets / output_gif.name}")

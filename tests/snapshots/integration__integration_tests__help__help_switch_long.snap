@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -19,13 +20,18 @@ exit_code: 0
 ----- stderr -----
 wt switch - Switch to a worktree
 
-Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
+Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
 
 [1m[32mArguments:
   [36m<BRANCH>
           Branch or worktree name
           
           Shortcuts: '^' (main), '-' (previous), '@' (current)
+
+  [36m[EXECUTE_ARGS]...
+          Additional arguments for --execute command (after --)
+          
+          Arguments after [1m--[0m are appended to the execute command. Each argument is POSIX shell-escaped before appending.
 
 [1m[32mOptions:
   [1m[36m-c[0m, [1m[36m--create
@@ -42,11 +48,13 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>
           Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other
           interactive tools.
           
-          Especially useful in shell aliases to create a worktree and start working in one command:
+          Especially useful with shell aliases:
           
-            [1m[1malias wsc='wt switch --create --execute=claude'
+            [1m[1malias wsc='wt switch --create -x claude'
+            [1mwsc feature-branch -- 'implement the login flow'
           [0m
-          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.
+          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature --
+          'implement login'[0m works.
 
   [1m[36m-f[0m, [1m[36m--force
           Skip approval prompts

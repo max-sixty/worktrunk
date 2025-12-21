@@ -3,7 +3,6 @@ source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - "--internal"
     - switch
     - "--create"
     - internal-test
@@ -25,12 +24,12 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpmD2P3K
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-cd _REPO_.internal-test
 
 ----- stderr -----
 [32m✓[39m [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m

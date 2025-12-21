@@ -255,21 +255,21 @@ messages. Currently being trialed — expand to other commands if it works well.
 
 ## stdout vs stderr
 
-**Both modes write all messages to stderr.** stdout is reserved for structured
-data:
+stdout is for the primary output of commands — the data you asked for. stderr
+is for status messages about the operation. This separation allows piping
+(`wt list | grep foo`) without progress or warnings interfering.
 
-- **stdout**: JSON output (`--format=json`), shell scripts (directive mode)
-- **stderr**: All user-facing messages (progress, success, errors, hints,
-  gutter, etc.)
+- **stdout**: Primary output (table data, JSON, statusline)
+- **stderr**: Status messages (progress, success, errors, hints, warnings)
 
-**Directive mode** additionally emits a shell script to stdout at the end.
+Shell integration writes directives (cd, exec) to `WORKTRUNK_DIRECTIVE_FILE`, keeping
+stdout completely free for data.
 
-Use the output system (`output::print()` with message formatting functions) to
-handle both modes automatically. Never write directly to stdout/stderr in
-command code.
+Use the output system (`output::print()` with message formatting functions).
+Never write directly to stdout/stderr in command code.
 
 ```rust
-// GOOD - use output system (handles both modes)
+// GOOD - use output system
 output::print(success_message("Branch created"))?;
 
 // BAD - direct writes bypass output system

@@ -3093,6 +3093,7 @@ dependencies = [
  "serde_json",
  "shell-escape",
  "shellexpand",
+ "shlex",
  "skim",
  "strum",
  "synoptic",

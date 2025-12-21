@@ -21,7 +21,7 @@ use worktrunk::styling::{
 
 /// Format a switch message with a consistent location phrase
 ///
-/// Both interactive and directive modes now use the human-friendly
+/// Both modes (with and without shell integration) use the human-friendly
 /// `"Created new worktree for {branch} from {base} @ {path}"` wording so
 /// users see the same message regardless of how worktrunk is invoked.
 ///
@@ -353,13 +353,12 @@ fn shell_integration_hint() -> String {
 
 /// Handle output for a switch operation
 ///
-/// `is_directive_mode` indicates whether shell integration is active (via --internal flag).
-/// When false, we show warnings for operations that can't complete without shell integration.
+/// When shell integration is not active and no execute command is provided,
+/// we show warnings for operations that can't complete without shell integration.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     has_execute_command: bool,
-    is_directive_mode: bool,
 ) -> anyhow::Result<()> {
     // Set target directory for command execution
     super::change_directory(result.path())?;
@@ -367,6 +366,9 @@ pub fn handle_switch_output(
     let path = result.path();
     let path_display = format_path_for_display(path);
     let branch = branch_info.branch();
+
+    // Check if shell integration is active (directive file set)
+    let is_shell_integration_active = super::is_shell_integration_active();
 
     // Show path mismatch warning after the main message
     let path_mismatch_warning = branch_info.expected_path.as_ref().map(|expected| {
@@ -386,7 +388,7 @@ pub fn handle_switch_output(
             }
         }
         SwitchResult::Existing(_) => {
-            if is_directive_mode || has_execute_command {
+            if is_shell_integration_active || has_execute_command {
                 super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
@@ -428,7 +430,7 @@ pub fn handle_switch_output(
                 base_branch.as_deref(),
                 from_remote.as_deref(),
             )))?;
-            // Show setup hint if no execute command (hint suppressed in directive mode)
+            // Show setup hint if no execute command (hint suppressed when shell integration is active)
             if !has_execute_command {
                 super::shell_integration_hint(shell_integration_hint())?;
             }
@@ -674,20 +676,28 @@ fn handle_removed_worktree_output(
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after_cyan();
 
+        // Directory change suffix: ". Changing directory to path" when we're moving the user
+        let dir_change = if changed_directory {
+            let path_display = format_path_for_display(main_path);
+            cformat!("<cyan>. Changing directory to <bold>{path_display}</></>")
+        } else {
+            String::new()
+        };
+
         // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
         // Note: We use FormattedMessage directly instead of progress_message() to control
         // where cyan styling ends. Symbol must be inside the <cyan> block to get proper coloring.
         let action = if deletion_mode.should_keep() {
             cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}{dir_change}"
             )
         } else if should_delete_branch {
             cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}{dir_change}"
             )
         } else {
             cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>{dir_change}"
             )
         };
         super::print(FormattedMessage::new(action))?;
@@ -827,7 +837,7 @@ pub(crate) fn execute_streaming(
 
     // Determine stdout handling based on redirect flag
     // When redirecting, use Stdio::from(stderr) to redirect child stdout to our stderr at OS level.
-    // This keeps stdout clean for directive scripts while hook output goes to stderr.
+    // This keeps stdout reserved for data output while hook output goes to stderr.
     // Previously used shell-level `{ cmd } 1>&2` wrapping, but OS-level redirect is simpler
     // and may improve signal handling by removing an extra shell process layer.
     let stdout_mode = if redirect_stdout_to_stderr {
@@ -853,6 +863,8 @@ pub(crate) fn execute_streaming(
         // Prevent vergen "overridden" warning in nested cargo builds when run via `cargo run`.
         // Add more VERGEN_* variables here if we expand build.rs and hit similar issues.
         .env_remove("VERGEN_GIT_DESCRIBE")
+        // Prevent hooks from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
         .map_err(|e| {
             anyhow::Error::from(worktrunk::git::GitError::Other {

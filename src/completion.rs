@@ -11,9 +11,6 @@ use crate::display::format_relative_time_short;
 use worktrunk::config::{ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{BranchCategory, Repository};
 
-/// Args that should never appear in completions, even when all options are shown.
-const COMPLETION_DENYLIST: &[&str] = &["--internal"];
-
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
 pub fn maybe_handle_env_completion() -> bool {
     let Some(shell_name) = std::env::var_os("COMPLETE") else {
@@ -107,15 +104,6 @@ pub fn maybe_handle_env_completion() -> bool {
         completions
     };
 
-    // Filter out denylisted completions
-    let filtered: Vec<_> = completions
-        .into_iter()
-        .filter(|c| {
-            let value = c.get_value().to_string_lossy();
-            !COMPLETION_DENYLIST.contains(&value.as_ref())
-        })
-        .collect();
-
     // Write completions in the appropriate format for the shell
     let shell_name = shell_name.to_string_lossy();
     let ifs = std::env::var("_CLAP_IFS").ok();
@@ -130,7 +118,7 @@ pub fn maybe_handle_env_completion() -> bool {
     };
 
     let mut stdout = std::io::stdout();
-    for (i, candidate) in filtered.iter().enumerate() {
+    for (i, candidate) in completions.iter().enumerate() {
         if i != 0 {
             let _ = write!(stdout, "{}", separator);
         }
@@ -372,7 +360,6 @@ thread_local! {
 
 fn completion_command() -> Command {
     let cmd = cli::build_command();
-    let cmd = adjust_completion_command(cmd);
     hide_non_positional_options_for_completion(cmd)
 }
 
@@ -406,7 +393,7 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
         };
 
         // Hide non-positional args that aren't already hidden.
-        // Args originally marked hide=true (like --internal) stay hidden always.
+        // Args originally marked hide=true stay hidden always.
         // Args we hide here will appear when completing `--` (all-hidden = all shown).
         let cmd = cmd.mut_args(|arg| {
             if arg.is_positional() || arg.is_hide_set() {
@@ -420,39 +407,4 @@ fn hide_non_positional_options_for_completion(cmd: Command) -> Command {
     }
 
     process_command(cmd, true)
-}
-
-// Mark positional args as `.last(true)` to allow them after all flags.
-// This enables flexible argument ordering like:
-// - `wt switch --create --execute=cmd --base=main feature` instead of `wt switch feature --create --execute=cmd --base=main`
-// - `wt merge --no-squash main` instead of `wt merge main --no-squash`
-// - `wt remove --no-delete-branch feature` instead of `wt remove feature --no-delete-branch`
-fn adjust_completion_command(cmd: Command) -> Command {
-    cmd.mut_subcommand("switch", |switch| {
-        switch.mut_arg("branch", |arg| arg.last(true))
-    })
-    .mut_subcommand("remove", |remove| {
-        remove.mut_arg("worktrees", |arg| arg.last(true))
-    })
-    .mut_subcommand("merge", |merge| {
-        merge.mut_arg("target", |arg| arg.last(true))
-    })
-    .mut_subcommand("step", |step| {
-        step.mut_subcommand("push", |push| push.mut_arg("target", |arg| arg.last(true)))
-            .mut_subcommand("squash", |squash| {
-                squash.mut_arg("target", |arg| arg.last(true))
-            })
-            .mut_subcommand("rebase", |rebase| {
-                rebase.mut_arg("target", |arg| arg.last(true))
-            })
-    })
-    .mut_subcommand("hook", |hook| {
-        // Hook subcommands - allow name after --force
-        hook.mut_subcommand("post-create", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("post-start", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("pre-commit", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("pre-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("post-merge", |c| c.mut_arg("name", |arg| arg.last(true)))
-            .mut_subcommand("pre-remove", |c| c.mut_arg("name", |arg| arg.last(true)))
-    })
 }
