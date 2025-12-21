@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -26,7 +26,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [36m<BRANCH>
           Branch or worktree name
           
-          Shortcuts: '^' (main), '-' (previous), '@' (current)
+          Shortcuts: '^' (default branch), '-' (previous), '@' (current)
 
   [36m[EXECUTE_ARGS]...
           Additional arguments for --execute command (after --)
@@ -116,7 +116,7 @@ When creating a worktree, worktrunk:
    -        Previous worktree (like cd -) 
 
   [2mwt switch -                      # Back to previous
-  [2mwt switch ^                      # Main worktree
+  [2mwt switch ^                      # Default branch worktree
   [2mwt switch --create fix --base=@  # Branch from current HEAD
 
 [32mSee also
@@ -124,4 +124,4 @@ When creating a worktree, worktrunk:
 - wt select — Interactive worktree selection
 - wt list — View all worktrees
 - wt remove — Delete worktrees when done
-- wt merge — Integrate changes back to main
+- wt merge — Integrate changes back to the default branch

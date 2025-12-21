@@ -180,7 +180,7 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
 /// Each mode shows a different aspect of the worktree:
 /// 1. WorkingTree: Uncommitted changes (git diff HEAD --stat)
 /// 2. Log: Commit history since diverging from the default branch (git log with merge-base)
-/// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat <default>…)
+/// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat DEFAULT…)
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column

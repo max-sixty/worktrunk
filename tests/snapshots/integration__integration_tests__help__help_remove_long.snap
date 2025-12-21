@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -83,14 +83,14 @@ file changes match.
 
 Worktrunk checks five conditions (in order of cost):
 
-1. [1mSame commit[0m — Branch HEAD equals main. Shows [2m_[0m in [2mwt list[0m.
+1. [1mSame commit[0m — Branch HEAD equals the default branch. Shows [2m_[0m in [2mwt list[0m.
 2. [1mAncestor[0m — Branch is in target's history (fast-forward or rebase case). Shows [2m⊂[0m.
 3. [1mNo added changes[0m — Three-dot diff ([2mtarget...branch[0m) is empty. Shows [2m⊂[0m.
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
 
-Check 1 compares against main. Checks 2-5 compare against [1mtarget[0m — main, or origin/main when it's strictly ahead (catching branches merged
-remotely before pulling).
+Check 1 compares against the default branch. Checks 2-5 compare against [1mtarget[0m — the default branch, or its upstream (for example, [2morigin/main[0m)
+when it's strictly ahead (catching branches merged remotely before pulling).
 
 Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
 
@@ -103,7 +103,7 @@ in the foreground.
 
 [32mShortcuts
 
-[2m@[0m (current), [2m-[0m (previous), [2m^[0m (main worktree). See wt switch.
+[2m@[0m (current), [2m-[0m (previous), [2m^[0m (default branch). See wt switch.
 
 [32mSee also
 

@@ -9,7 +9,8 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -52,7 +53,7 @@ Use [2mwt config show[0m to view file-based configuration.
 
 - [1mdefault-branch[0m: The repository's default branch (main, master, etc.)
 - [1mprevious-branch[0m: Previous branch for [2mwt switch -
-- [1mci-status[0m: CI/PR status for a branch (passed, running, failed, conflicts, noci)
+- [1mci-status[0m: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - [1mmarker[0m: Custom status marker for a branch (shown in [2mwt list[0m)
 - [1mlogs[0m: Background operation logs
 

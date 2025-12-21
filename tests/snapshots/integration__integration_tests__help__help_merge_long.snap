@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -73,7 +73,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
 
 [32mExamples
 
-Basic merge to main:
+Basic merge to the default branch:
 
   [2mwt merge
 
@@ -89,7 +89,7 @@ Preserve commit history (no squash):
 
   [2mwt merge --no-squash
 
-Skip git operations, only run hooks and push:
+Skip committing/squashing (rebase still runs unless --no-rebase):
 
   [2mwt merge --no-commit
 
@@ -108,8 +108,8 @@ changes become a separate commit and individual commits are preserved.
 the worktree is preserved.
 7. [1mPost-merge hooks[0m — Project commands run after cleanup. Failures are logged but don't abort.
 
-Use [2m--no-commit[0m to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with [2mwt step[0m.
-Requires a clean working tree.
+Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless you pass
+[2m--no-rebase[0m. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 
 [32mLocal CI
 
@@ -120,7 +120,7 @@ Historically, ensuring tests ran before merging was difficult to enforce locally
 guaranteed validation happened. [2mwt merge[0m brings that guarantee local.
 
 The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge
-hooks validate before merging — if they pass, the branch goes to main and the worktree cleans up.
+hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
   [2m[pre-merge]
   [2mtest = "cargo test"

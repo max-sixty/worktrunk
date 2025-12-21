@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -27,7 +27,7 @@ exit_code: 0
 
 ## Examples
 
-Basic merge to main:
+Basic merge to the default branch:
 
 ```bash
 wt merge
@@ -51,7 +51,7 @@ Preserve commit history (no squash):
 wt merge --no-squash
 ```
 
-Skip git operations, only run hooks and push:
+Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```bash
 wt merge --no-commit
@@ -69,7 +69,7 @@ wt merge --no-commit
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
 
-Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless you pass `--no-rebase`. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 
 ## Local CI
 
@@ -77,7 +77,7 @@ For personal projects, pre-merge hooks open up the possibility of a workflow wit
 
 Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
 
-The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to main and the worktree cleans up.
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
 [pre-merge]

@@ -10,7 +10,8 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -52,13 +53,14 @@ Caches GitHub/GitLab CI status for display in wt list.
 
 [32mStatus values
 
-    Status          Meaning         
-   ───────── ────────────────────── 
-   passed    All checks passed      
-   running   Checks in progress     
-   failed    Checks failed          
-   conflicts PR has merge conflicts 
-   noci      No checks configured   
+    Status                   Meaning                 
+   ───────── ─────────────────────────────────────── 
+   passed    All checks passed                       
+   running   Checks in progress                      
+   failed    Checks failed                           
+   conflicts PR has merge conflicts                  
+   no-ci     No checks configured                    
+   error     Fetch error (rate limit, network, auth) 
 
 See wt list CI status for display symbols and colors.
 

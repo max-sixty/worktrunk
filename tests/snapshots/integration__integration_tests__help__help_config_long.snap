@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_EDITOR: ""
+    GIT_CONFIG_GLOBAL: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -118,7 +118,8 @@ Set persistent flag values for commands. These apply unless explicitly overridde
   [2m[merge]
   [2m# These flags are on by default; set to false to disable
   [2msquash = false  # Preserve individual commits (--no-squash)
-  [2mcommit = false  # Skip committing uncommitted changes (--no-commit)
+  [2mcommit = false  # Skip committing uncommitted changes (also disables squash)
+  [2mrebase = false  # Skip rebase (fails if not already rebased)
   [2mremove = false  # Keep worktree after merge (--no-remove)
   [2mverify = false  # Skip hooks (--no-verify)
 
