@@ -79,6 +79,14 @@ wt list --format=json
 
 Structured output for dashboards, statuslines, and scripts. See [wt list](@/list.md) for query examples.
 
+## Side-effects of using Worktrunk
+
+Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-config-state-default-branch), for instance, means scripts work on any repo — no need to hardcode `main` or `master`:
+
+```bash
+git rebase $(wt config state default-branch)
+```
+
 ## Task runners in hooks
 
 Reference Taskfile/Justfile/Makefile in hooks:
