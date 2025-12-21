@@ -186,9 +186,21 @@ All hooks support template variables for dynamic behavior.
 
 Available in all hook types:
 - `{{ repo }}` - Repository name (e.g., "my-project")
-- `{{ branch }}` - Branch name (e.g., "feature-auth")
+- `{{ branch }}` - Raw branch name (e.g., "feature/auth")
 - `{{ worktree }}` - Absolute path to worktree
 - `{{ repo_root }}` - Absolute path to repository root
+
+### Filters
+
+- `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-auth")
+- `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
+
+Example:
+```toml
+[post-start]
+dev = "npm run dev --port {{ branch | hash_port }}"
+cache = "ln -sf {{ repo_root }}/node_modules.{{ branch | sanitize }} node_modules"
+```
 
 <example type="basic-variables">
 

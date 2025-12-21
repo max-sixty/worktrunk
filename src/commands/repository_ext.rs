@@ -47,9 +47,14 @@ pub trait RepositoryCliExt {
         target_branch: &str,
     ) -> anyhow::Result<Option<TargetWorktreeStash>>;
 
-    /// Check if HEAD is rebased onto the target branch.
+    /// Check if HEAD is a linear extension of the target branch.
     ///
-    /// Returns true if the merge-base equals the target's SHA (HEAD is based on target).
+    /// Returns true when:
+    /// 1. The merge-base equals target's SHA (target hasn't advanced), AND
+    /// 2. There are no merge commits between target and HEAD (history is linear)
+    ///
+    /// This detects branches that have merged the target into themselves — such
+    /// branches need rebasing to linearize history even though merge-base equals target.
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool>;
 }
 
@@ -317,7 +322,18 @@ impl RepositoryCliExt for Repository {
     fn is_rebased_onto(&self, target: &str) -> anyhow::Result<bool> {
         let merge_base = self.merge_base("HEAD", target)?;
         let target_sha = self.run_command(&["rev-parse", target])?.trim().to_string();
-        Ok(merge_base == target_sha)
+
+        if merge_base != target_sha {
+            return Ok(false); // Target has advanced past merge-base
+        }
+
+        // Check for merge commits — if present, history is not linear
+        let merge_commits = self
+            .run_command(&["rev-list", "--merges", &format!("{}..HEAD", target)])?
+            .trim()
+            .to_string();
+
+        Ok(merge_commits.is_empty())
     }
 }
 

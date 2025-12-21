@@ -147,6 +147,29 @@ Hooks can use template variables that expand at runtime:
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
 
+### Filters
+
+Templates support Jinja2 filters for transforming values:
+
+| Filter | Example | Description |
+|--------|---------|-------------|
+| `sanitize` | `{{ branch \| sanitize }}` → feature-foo | Replace `/` and `\` with `-` |
+| `hash_port` | `{{ branch \| hash_port }}` → 12472 | Hash string to port (10000-19999) |
+
+The `sanitize` filter makes branch names safe for filesystem paths. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
+
+```toml
+[post-start]
+dev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
+```
+
+You can hash any string, including concatenations:
+
+```toml
+# Unique port per repo+branch combination
+dev = "npm run dev --port {{ repo ~ '-' ~ branch | hash_port }}"
+```
+
 ### JSON context
 
 Hooks also receive context as JSON on stdin, enabling hooks in any language:

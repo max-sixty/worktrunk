@@ -61,14 +61,17 @@ mod tests {
         let config = WorktrunkConfig::default();
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("worktree-path"));
-        assert!(toml.contains("../{{ main_worktree }}.{{ branch }}"));
+        assert!(toml.contains("../{{ main_worktree }}.{{ branch | sanitize }}"));
         assert!(toml.contains("commit-generation"));
     }
 
     #[test]
     fn test_default_config() {
         let config = WorktrunkConfig::default();
-        assert_eq!(config.worktree_path, "../{{ main_worktree }}.{{ branch }}");
+        assert_eq!(
+            config.worktree_path,
+            "../{{ main_worktree }}.{{ branch | sanitize }}"
+        );
         assert_eq!(config.commit_generation.command, None);
         assert!(config.projects.is_empty());
     }
@@ -111,9 +114,9 @@ mod tests {
 
     #[test]
     fn test_format_worktree_path_with_slashes() {
-        // Slashes should be replaced with dashes to prevent directory traversal
+        // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = WorktrunkConfig {
-            worktree_path: "{{ main_worktree }}.{{ branch }}".to_string(),
+            worktree_path: "{{ main_worktree }}.{{ branch | sanitize }}".to_string(),
             ..Default::default()
         };
         assert_eq!(
@@ -125,7 +128,7 @@ mod tests {
     #[test]
     fn test_format_worktree_path_with_multiple_slashes() {
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch }}".to_string(),
+            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
             ..Default::default()
         };
         assert_eq!(
@@ -138,12 +141,25 @@ mod tests {
     fn test_format_worktree_path_with_backslashes() {
         // Windows-style path separators should also be sanitized
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch }}".to_string(),
+            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
             ..Default::default()
         };
         assert_eq!(
             config.format_path("myproject", "feature\\foo").unwrap(),
             ".worktrees/myproject/feature-foo"
+        );
+    }
+
+    #[test]
+    fn test_format_worktree_path_raw_branch() {
+        // {{ branch }} without filter gives raw branch name
+        let config = WorktrunkConfig {
+            worktree_path: "{{ main_worktree }}.{{ branch }}".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.format_path("myproject", "feature/foo").unwrap(),
+            "myproject.feature/foo"
         );
     }
 
@@ -565,20 +581,24 @@ task2 = "echo 'Task 2 running' > task2.txt"
     fn test_expand_template_sanitizes_branch() {
         use std::collections::HashMap;
 
-        // Caller is responsible for sanitizing branch names
-        let branch = sanitize_branch_name("feature/foo");
+        // Use {{ branch | sanitize }} filter for filesystem-safe paths
+        // shell_escape=false to test filter in isolation (shell escaping tested separately)
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
-        vars.insert("branch", branch.as_str());
-        let result = expand_template("{{ main_worktree }}/{{ branch }}", &vars, true).unwrap();
+        vars.insert("branch", "feature/foo");
+        let result =
+            expand_template("{{ main_worktree }}/{{ branch | sanitize }}", &vars, false).unwrap();
         assert_eq!(result, "myrepo/feature-foo");
 
-        let branch = sanitize_branch_name("feat\\bar");
         let mut vars = HashMap::new();
         vars.insert("main_worktree", "myrepo");
-        vars.insert("branch", branch.as_str());
-        let result =
-            expand_template(".worktrees/{{ main_worktree }}/{{ branch }}", &vars, true).unwrap();
+        vars.insert("branch", "feat\\bar");
+        let result = expand_template(
+            ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}",
+            &vars,
+            false,
+        )
+        .unwrap();
         assert_eq!(result, ".worktrees/myrepo/feat-bar");
     }
 

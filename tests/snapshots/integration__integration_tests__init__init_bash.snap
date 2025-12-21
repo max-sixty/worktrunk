@@ -16,10 +16,12 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
     LC_ALL: C
     PATH: "[PATH]"
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -69,6 +71,10 @@ wt_exec() {
 
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
+            if [[ ! -t 1 ]]; then
+                cargo run --bin wt --quiet -- "${args[@]}"
+                return
+            fi
             local script exit_code=0
             script="$(cargo run --bin wt --quiet -- --internal "${args[@]}")" || exit_code=$?
             if [[ -n "$script" ]]; then
@@ -78,6 +84,13 @@ wt_exec() {
                 fi
             fi
             return "$exit_code"
+        fi
+
+        # If stdout is not a terminal (piped/redirected), run directly.
+        # This allows `wt list --format=json | jq` to work.
+        if [[ ! -t 1 ]]; then
+            command "${WORKTRUNK_BIN:-wt}" "${args[@]}"
+            return
         fi
 
         wt_exec --internal "${args[@]}"

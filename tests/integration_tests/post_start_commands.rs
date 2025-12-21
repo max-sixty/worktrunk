@@ -131,6 +131,7 @@ fn test_post_create_template_expansion(repo: TestRepo) {
         r#"[post-create]
 repo = "echo 'Repo: {{ main_worktree }}' > info.txt"
 branch = "echo 'Branch: {{ branch }}' >> info.txt"
+hash_port = "echo 'Port: {{ branch | hash_port }}' >> info.txt"
 worktree = "echo 'Worktree: {{ worktree }}' >> info.txt"
 root = "echo 'Root: {{ repo_root }}' >> info.txt"
 "#,
@@ -141,12 +142,13 @@ root = "echo 'Root: {{ repo_root }}' >> info.txt"
     // Pre-approve all commands in isolated test config
     let repo_name = "repo";
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
 [projects."repo"]
 approved-commands = [
     "echo 'Repo: {{ main_worktree }}' > info.txt",
     "echo 'Branch: {{ branch }}' >> info.txt",
+    "echo 'Port: {{ branch | hash_port }}' >> info.txt",
     "echo 'Worktree: {{ worktree }}' >> info.txt",
     "echo 'Root: {{ repo_root }}' >> info.txt",
 ]
@@ -182,9 +184,25 @@ approved-commands = [
         contents
     );
     assert!(
-        contents.contains("Branch: feature-test"),
-        "Should contain expanded branch name (sanitized), got: {}",
+        contents.contains("Branch: feature/test"),
+        "Should contain raw branch name, got: {}",
         contents
+    );
+
+    // Verify port is a valid number in the expected range (10000-19999)
+    let port_line = contents
+        .lines()
+        .find(|l| l.starts_with("Port: "))
+        .expect("Should contain port line");
+    let port: u16 = port_line
+        .strip_prefix("Port: ")
+        .unwrap()
+        .parse()
+        .expect("Port should be a valid number");
+    assert!(
+        (10000..20000).contains(&port),
+        "Port should be in range 10000-19999, got: {}",
+        port
     );
 }
 

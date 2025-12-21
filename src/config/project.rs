@@ -29,6 +29,11 @@ use super::commands::CommandConfig;
 ///
 /// Merge-related hooks (`pre-commit`, `pre-merge`, `post-merge`) also support:
 /// - `{{ target }}` - Target branch for the merge (e.g., "main")
+///
+/// # Filters
+///
+/// - `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-foo")
+/// - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ProjectConfig {
     /// Commands to execute sequentially before worktree is ready (blocking)

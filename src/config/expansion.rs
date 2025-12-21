@@ -5,9 +5,30 @@
 //! - `shell_escape: false` — Literal values for filesystem paths
 //!
 //! All templates support Jinja2 syntax including filters, conditionals, and loops.
+//!
+//! # Custom Filters
+//!
+//! - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe names
+//!   ```text
+//!   {{ branch | sanitize }} → feature-foo
+//!   ```
+//!
+//! - `hash_port` — Hash a string to a deterministic port number (10000-19999)
+//!   ```text
+//!   {{ branch | hash_port }}              → 12472
+//!   {{ repo ~ "-" ~ branch | hash_port }} → 15839
+//!   ```
 
-use minijinja::Environment;
+use minijinja::{Environment, Value};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
+/// Hash a string to a port in range 10000-19999.
+fn string_to_port(s: &str) -> u16 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    10000 + (h.finish() % 10000) as u16
+}
 
 /// Sanitize a branch name for use in filesystem paths.
 ///
@@ -30,30 +51,32 @@ pub fn sanitize_branch_name(branch: &str) -> String {
 ///
 /// # Arguments
 /// * `template` - Template string using Jinja2 syntax (e.g., `{{ branch }}`)
-/// * `vars` - Variables to substitute. Callers should sanitize branch names with
-///   [`sanitize_branch_name`] before inserting.
+/// * `vars` - Variables to substitute
 /// * `shell_escape` - If true, shell-escape all values for safe command execution.
 ///   If false, substitute values literally (for filesystem paths).
 ///
+/// # Filters
+/// The `sanitize` filter is available for branch names, replacing `/` and `\` with `-`:
+/// - `{{ branch }}` — raw branch name (e.g., `feature/foo`)
+/// - `{{ branch | sanitize }}` — sanitized for paths (e.g., `feature-foo`)
+///
 /// # Examples
 /// ```
-/// use worktrunk::config::{expand_template, sanitize_branch_name};
+/// use worktrunk::config::expand_template;
 /// use std::collections::HashMap;
 ///
-/// // For shell commands (escaped)
-/// let branch = sanitize_branch_name("feature/foo");
+/// // Raw branch name
 /// let mut vars = HashMap::new();
-/// vars.insert("branch", branch.as_str());
+/// vars.insert("branch", "feature/foo");
 /// vars.insert("repo", "myrepo");
 /// let cmd = expand_template("echo {{ branch }} in {{ repo }}", &vars, true).unwrap();
-/// assert_eq!(cmd, "echo feature-foo in myrepo");
+/// assert_eq!(cmd, "echo feature/foo in myrepo");
 ///
-/// // For filesystem paths (literal)
-/// let branch = sanitize_branch_name("feature/foo");
+/// // Sanitized branch name for filesystem paths
 /// let mut vars = HashMap::new();
-/// vars.insert("branch", branch.as_str());
+/// vars.insert("branch", "feature/foo");
 /// vars.insert("main_worktree", "myrepo");
-/// let path = expand_template("{{ main_worktree }}.{{ branch }}", &vars, false).unwrap();
+/// let path = expand_template("{{ main_worktree }}.{{ branch | sanitize }}", &vars, false).unwrap();
 /// assert_eq!(path, "myrepo.feature-foo");
 /// ```
 pub fn expand_template(
@@ -81,6 +104,13 @@ pub fn expand_template(
         // Preserve trailing newlines in templates (important for multiline shell commands)
         env.set_keep_trailing_newline(true);
     }
+
+    // Register custom filters
+    env.add_filter("sanitize", |value: Value| -> String {
+        sanitize_branch_name(value.as_str().unwrap_or_default())
+    });
+    env.add_filter("hash_port", |value: String| string_to_port(&value));
+
     let tmpl = env
         .template_from_str(template)
         .map_err(|e| format!("Template syntax error: {}", e))?;
@@ -201,6 +231,37 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_template_sanitize_filter() {
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature/foo");
+        assert_eq!(
+            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            "feature-foo"
+        );
+
+        // Backslashes are also sanitized
+        vars.insert("branch", "feature\\bar");
+        assert_eq!(
+            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            "feature-bar"
+        );
+
+        // Multiple slashes
+        vars.insert("branch", "user/feature/task");
+        assert_eq!(
+            expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
+            "user-feature-task"
+        );
+
+        // Raw branch is unchanged
+        vars.insert("branch", "feature/foo");
+        assert_eq!(
+            expand_template("{{ branch }}", &vars, false).unwrap(),
+            "feature/foo"
+        );
+    }
+
+    #[test]
     fn test_expand_template_trailing_newline() {
         let mut vars = HashMap::new();
         vars.insert("cmd", "echo hello");
@@ -209,5 +270,32 @@ mod tests {
                 .unwrap()
                 .ends_with('\n')
         );
+    }
+
+    #[test]
+    fn test_string_to_port_deterministic_and_in_range() {
+        for input in ["main", "feature-foo", "", "a", "long-branch-name-123"] {
+            let p1 = string_to_port(input);
+            let p2 = string_to_port(input);
+            assert_eq!(p1, p2, "same input should produce same port");
+            assert!((10000..20000).contains(&p1), "port {} out of range", p1);
+        }
+    }
+
+    #[test]
+    fn test_hash_port_filter() {
+        let mut vars = HashMap::new();
+        vars.insert("branch", "feature-foo");
+        vars.insert("repo", "myrepo");
+
+        // Filter produces a number in range
+        let result = expand_template("{{ branch | hash_port }}", &vars, false).unwrap();
+        let port: u16 = result.parse().expect("should be a number");
+        assert!((10000..20000).contains(&port));
+
+        // Concatenation produces different (but deterministic) result
+        let r1 = expand_template("{{ repo ~ '-' ~ branch | hash_port }}", &vars, false).unwrap();
+        let r2 = expand_template("{{ repo ~ '-' ~ branch | hash_port }}", &vars, false).unwrap();
+        assert_eq!(r1, r2);
     }
 }

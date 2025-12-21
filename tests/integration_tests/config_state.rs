@@ -1,7 +1,16 @@
 use crate::common::{TEST_EPOCH, TestRepo, repo, wt_command};
 use insta::assert_snapshot;
+use regex::Regex;
 use rstest::rstest;
 use std::process::Command;
+
+/// Normalize LOG FILES path in output for stable snapshots (temp dir varies per test)
+fn normalize_log_path(output: &str) -> String {
+    // Match "LOG FILES" followed by ANSI codes, spaces, and "@ " then the path
+    // Pattern: LOG FILES + optional ANSI reset + spaces + @ + path until newline
+    let re = Regex::new(r"(LOG FILES\x1b\[39m\s+@ )[^\n]+").unwrap();
+    re.replace_all(output, "${1}<PATH>").to_string()
+}
 
 /// Write CI status to the file-based cache at .git/wt-cache/ci-status/<branch>.json
 fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
@@ -411,7 +420,17 @@ fn test_state_clear_marker_all_empty(repo: TestRepo) {
 fn test_state_get_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No logs");
+    // Path is dynamic (temp dir), so check pattern instead of exact snapshot
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("LOG FILES"),
+        "Expected LOG FILES heading: {stderr}"
+    );
+    // Path separator varies by platform, so check for either / or \
+    assert!(
+        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
+        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
+    );
 }
 
 #[rstest]
@@ -431,6 +450,15 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
     assert!(output.status.success());
     // Verify we get a table with file info
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("LOG FILES"),
+        "Expected LOG FILES heading: {stderr}"
+    );
+    // Path separator varies by platform, so check for either / or \
+    assert!(
+        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
+        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
+    );
     assert!(stderr.contains("File"));
     assert!(stderr.contains("Size"));
     assert!(stderr.contains("Age"));
@@ -568,7 +596,7 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
 fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @r"
+    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)), @r"
     [36mDEFAULT BRANCH[39m
     [107m [0m main
 
@@ -581,7 +609,7 @@ fn test_state_get_empty(repo: TestRepo) {
     [36mCI STATUS CACHE[39m
     [107m [0m (none)
 
-    [36mLOG FILES[39m  @ .git/wt-logs
+    [36mLOG FILES[39m  @ <PATH>
     [107m [0m (none)
     ");
 }
@@ -613,7 +641,7 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)));
 }
 
 #[rstest]
@@ -657,7 +685,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
 
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(String::from_utf8_lossy(&output.stderr));
+    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)));
 }
 
 #[rstest]
