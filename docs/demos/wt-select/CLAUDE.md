@@ -11,52 +11,18 @@ Creates:
 - `docs/demos/wt-select/out/wt-select-dark.gif` - Dark theme demo
 - Demo repo at `docs/demos/wt-select/out/.demo-select/` (gitignored)
 
-Theme colors are defined in `docs/demos/themes.py` to match the doc site's CSS variables.
-
-## Demo Goals
-
-The demo showcases `wt select` with **realistic variety in all columns**:
-
-```
-Branch         Status         HEAD±    main↕     main…±  Remote⇅  CI  Age
-@ main               ^                                              ○   now
-+ streaming      +           +54   -5                               ●   now
-+ doctor             ↕                  ↑1  ↓1  +320  -14           ●   2d
-+ llm-templates   !  ↕        +8        ↑1  ↓1  +263 -192               3d
-```
-
-Key demonstration points:
-- **CI column**: hollow ○ (branch CI) vs filled ● (PR CI) vs none
-- **HEAD± column**: Large staged diff (+54), small unstaged (+8), none
-- **Status column**: Staged changes (+), unstaged (!), ahead/behind (↕)
-- **main↕ column**: Some branches ahead-only, some ahead-and-behind
-- **main…± column**: Meaningful commit diffs (small to 300+ lines)
+Theme colors are defined in `docs/demos/shared/themes.py` to match the doc site's CSS variables.
 
 ## How It Works
 
-**IMPORTANT: The setup is carefully orchestrated. The sequence in `prepare_repo()` matters!**
+Uses the **unified demo infrastructure** (`prepare_demo_repo()` from `shared/lib.py`), same as wt-core and wt-merge demos. The repo is a synthetic "acme" Rust project with alpha/beta/hooks branches designed to showcase column variety.
 
-Uses **actual commits from this repository** cherry-picked onto v0.1.11:
+Branch setup (from shared infrastructure):
+- **alpha** - Large working tree changes, unpushed commits, PR CI
+- **beta** - Staged changes, behind main, branch CI
+- **hooks** - Staged+unstaged changes, no remote
 
-- **Base**: v0.1.11 tag (005db9ad)
-- **Branches via cherry-pick** (simple names, no `/` to avoid path mismatch):
-  - `streaming` - cf667917 (Handle BrokenPipe)
-  - `doctor` - e286e847 (Add --doctor option, +320/-14)
-  - `llm-templates` - 74fe46ff (Enhance squash messages, +263/-192)
-
-Special setup tricks:
-1. **Soft reset** streaming to main creates large staged HEAD± diff
-2. **Manual code additions** add more staged/unstaged changes
-3. **Fake CI cache** with future timestamps prevents expiration during recording
-
-## CI Cache Trick
-
-CI status is cached in `.git/wt-cache/ci-status/<branch>.json` files. To show CI without GitHub access:
-1. Write fake cache entries directly to the cache files
-2. Use **future timestamp** (1 hour ahead) so cache never expires
-3. VHS recording reads cached status
-
-Without the future timestamp, cache expires during recording → tries to fetch → fails → clears cache.
+The demo navigates to alpha to show the large committed diff in the main…± panel.
 
 ## Viewing Results
 
@@ -114,29 +80,8 @@ ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
 
 ## Files
 
-- `build` - Main build script
+- `build` - Main build script (uses shared infrastructure from `docs/demos/shared/`)
 - `demo.tape` - VHS tape file with recording script
 - `out/` - Output directory (gitignored)
 
-Starship config comes from shared `docs/demos/fixtures/`.
-
-## Updating Commits
-
-To update the cherry-picked commits, edit `CHERRY_PICKS` in `build`:
-
-```python
-CHERRY_PICKS = {
-    "branch-name": ("commit-hash", days_ago),
-    ...
-}
-```
-
-Test cherry-picks apply cleanly before updating:
-
-```bash
-cd /tmp && git clone --quiet /path/to/worktrunk test-repo
-cd test-repo && git checkout v0.1.11
-git cherry-pick --no-commit <new-commit-hash>
-```
-
-**Note:** Use simple branch names without `/` (e.g., `streaming` not `feature/streaming`) to avoid path mismatch issues in wt list.
+Starship config comes from shared `docs/demos/shared/fixtures/`.
