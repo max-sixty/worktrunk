@@ -9,6 +9,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -108,6 +109,19 @@ the worktree is preserved.
 
 Use [2m--no-commit[0m to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with [2mwt step[0m.
 Requires a clean working tree.
+
+[32mLocal CI
+
+Pre-merge hooks open the possibility of faster iteration — many small changes instead of few large ones.
+
+Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it
+guaranteed validation happened.
+
+[2mwt merge[0m brings that process local. Run it when ready — worktrunk runs the configured hooks and, if they pass, merges and cleans up.
+
+  [2m[pre-merge]
+  [2mtest = "cargo test"
+  [2mlint = "cargo clippy"
 
 [32mSee also
 

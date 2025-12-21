@@ -2344,6 +2344,20 @@ wt merge --no-commit
 
 Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 
+## Local CI
+
+Pre-merge hooks open the possibility of faster iteration — many small changes instead of few large ones.
+
+Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened.
+
+`wt merge` brings that process local. Run it when ready — worktrunk runs the configured hooks and, if they pass, merges and cleans up.
+
+```toml
+[pre-merge]
+test = "cargo test"
+lint = "cargo clippy"
+```
+
 ## See also
 
 - [wt step](@/step.md) — Run individual merge steps (commit, squash, rebase, push)
