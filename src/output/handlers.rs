@@ -292,8 +292,6 @@ fn get_flag_note(
 ///
 /// `target_branch`: The branch we checked integration against (Some = merge context, None = explicit remove)
 fn format_remove_worktree_message(
-    main_path: &std::path::Path,
-    changed_directory: bool,
     branch_name: &str,
     branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
@@ -303,7 +301,6 @@ fn format_remove_worktree_message(
     let flag_note = get_flag_note(deletion_mode, outcome, target_branch);
 
     let branch_display = branch.or(Some(branch_name));
-    let path_display = format_path_for_display(main_path);
 
     // Build message parallel to background format: "Removed {branch} worktree & branch{flag_note}"
     let branch_deleted = matches!(
@@ -328,17 +325,7 @@ fn format_remove_worktree_message(
     // flag_after contains integration symbols (like _) that render outside green in dim.
     let flag_text = &flag_note.text;
     let flag_after = flag_note.after_green();
-    let msg = if changed_directory {
-        if let Some(b) = branch_display {
-            cformat!(
-                "<green>✓ Removed <bold>{b}</> {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
-            )
-        } else {
-            cformat!(
-                "<green>✓ Removed {action_suffix}; changed directory to <bold>{path_display}</>{flag_text}</>{flag_after}"
-            )
-        }
-    } else if let Some(b) = branch_display {
+    let msg = if let Some(b) = branch_display {
         cformat!("<green>✓ Removed <bold>{b}</> {action_suffix}{flag_text}</>{flag_after}")
     } else {
         cformat!("<green>✓ Removed {action_suffix}{flag_text}</>{flag_after}")
@@ -676,28 +663,20 @@ fn handle_removed_worktree_output(
         let flag_text = &flag_note.text;
         let flag_after = flag_note.after_cyan();
 
-        // Directory change suffix: ". Changing directory to path" when we're moving the user
-        let dir_change = if changed_directory {
-            let path_display = format_path_for_display(main_path);
-            cformat!("<cyan>. Changing directory to <bold>{path_display}</></>")
-        } else {
-            String::new()
-        };
-
         // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
         // Note: We use FormattedMessage directly instead of progress_message() to control
         // where cyan styling ends. Symbol must be inside the <cyan> block to get proper coloring.
         let action = if deletion_mode.should_keep() {
             cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}{dir_change}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}"
             )
         } else if should_delete_branch {
             cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}{dir_change}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
             )
         } else {
             cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>{dir_change}"
+                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
             )
         };
         super::print(FormattedMessage::new(action))?;
@@ -707,6 +686,16 @@ fn handle_removed_worktree_output(
             let cmd = suggest_command("remove", &[branch_name], &["-D"]);
             super::print(hint_message(cformat!(
                 "To delete the unmerged branch, run <bright-black>{cmd}</>"
+            )))?;
+        }
+
+        // Show switch message when changing directory
+        if changed_directory
+            && let Ok(Some(dest_branch)) = Repository::at(main_path).current_branch()
+        {
+            let path_display = format_path_for_display(main_path);
+            super::print(info_message(cformat!(
+                "Switched to worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>"
             )))?;
         }
 
@@ -769,8 +758,6 @@ fn handle_removed_worktree_output(
 
         // Show success message (includes emoji and color)
         super::print(format_remove_worktree_message(
-            main_path,
-            changed_directory,
             branch_name,
             branch,
             deletion_mode,
@@ -783,6 +770,16 @@ fn handle_removed_worktree_output(
             let cmd = suggest_command("remove", &[branch_name], &["-D"]);
             super::print(hint_message(cformat!(
                 "To delete the unmerged branch, run <bright-black>{cmd}</>"
+            )))?;
+        }
+
+        // Show switch message when changing directory
+        if changed_directory
+            && let Ok(Some(dest_branch)) = Repository::at(main_path).current_branch()
+        {
+            let path_display = format_path_for_display(main_path);
+            super::print(info_message(cformat!(
+                "Switched to worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>"
             )))?;
         }
 
@@ -1073,12 +1070,8 @@ mod tests {
 
     #[test]
     fn test_format_remove_worktree_message() {
-        let main_path = PathBuf::from("/home/user/project");
-
         // Removed worktree and branch (integrated)
         let msg = format_remove_worktree_message(
-            &main_path,
-            false,
             "feature",
             Some("feature"),
             BranchDeletionMode::SafeDelete,
@@ -1092,8 +1085,6 @@ mod tests {
 
         // Removed worktree only (--no-delete-branch)
         let msg = format_remove_worktree_message(
-            &main_path,
-            false,
             "feature",
             Some("feature"),
             BranchDeletionMode::Keep,
@@ -1104,23 +1095,18 @@ mod tests {
         assert!(!msg.as_str().contains("& branch"));
         assert!(msg.as_str().contains("--no-delete-branch"));
 
-        // Removed with directory change
+        // Force deleted branch
         let msg = format_remove_worktree_message(
-            &main_path,
-            true,
             "feature",
             Some("feature"),
             BranchDeletionMode::ForceDelete,
             &BranchDeletionOutcome::ForceDeleted,
             None,
         );
-        assert!(msg.as_str().contains("changed directory"));
         assert!(msg.as_str().contains("--force-delete"));
 
         // Unmerged branch retained
         let msg = format_remove_worktree_message(
-            &main_path,
-            false,
             "feature",
             Some("feature"),
             BranchDeletionMode::SafeDelete,
