@@ -829,7 +829,7 @@ pub(crate) fn execute_streaming(
 
     // Determine stdout handling based on redirect flag
     // When redirecting, use Stdio::from(stderr) to redirect child stdout to our stderr at OS level.
-    // This keeps stdout clean for directive scripts while hook output goes to stderr.
+    // This keeps stdout reserved for data output while hook output goes to stderr.
     // Previously used shell-level `{ cmd } 1>&2` wrapping, but OS-level redirect is simpler
     // and may improve signal handling by removing an extra shell process layer.
     let stdout_mode = if redirect_stdout_to_stderr {

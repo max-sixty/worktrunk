@@ -178,7 +178,7 @@ fn run_command_streaming(
         .command(command)
         .current_dir(working_dir)
         .stdin(stdin_mode)
-        // Redirect stdout to stderr to keep stdout clean for directive scripts
+        // Redirect stdout to stderr to keep stdout reserved for data output
         // Note: Stdio::from(Stderr) works since Rust 1.74 (impl From<Stderr> for Stdio)
         .stdout(Stdio::from(std::io::stderr()))
         // Stream stderr to terminal in real-time
