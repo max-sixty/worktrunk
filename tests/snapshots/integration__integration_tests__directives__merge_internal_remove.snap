@@ -26,15 +26,13 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 2
 ----- stdout -----
-cd _REPO_
 
 ----- stderr -----
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
-[107m [0m * [33mfc12499[m Add feature file
-[107m [0m  feature.txt | 1 [32m+[m
-[107m [0m  1 file changed, 1 insertion(+)
-[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-[36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[1m[31merror:[0m unexpected argument '[1m[33m--internal[0m' found
+
+[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
+
+For more information, try '[1m[36m--help[0m'.

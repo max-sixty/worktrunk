@@ -1,6 +1,7 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd_with_global_flags, repo, repo_with_remote, set_temp_home_env,
-    setup_home_snapshot_settings, setup_snapshot_settings, temp_home, wt_command,
+    TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo, repo_with_remote,
+    set_temp_home_env, setup_home_snapshot_settings, setup_snapshot_settings, temp_home,
+    wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -10,32 +11,37 @@ use tempfile::TempDir;
 // Snapshot helpers
 
 fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
-    snapshot_switch_impl(test_name, repo, args, &[], None);
+    snapshot_switch_impl(test_name, repo, args, false, None);
 }
 
-fn snapshot_switch_with_global_flags(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    global_flags: &[&str],
-) {
-    snapshot_switch_impl(test_name, repo, args, global_flags, None);
+fn snapshot_switch_with_directive_file(test_name: &str, repo: &TestRepo, args: &[&str]) {
+    snapshot_switch_impl(test_name, repo, args, true, None);
 }
 
 fn snapshot_switch_from_dir(test_name: &str, repo: &TestRepo, args: &[&str], cwd: &Path) {
-    snapshot_switch_impl(test_name, repo, args, &[], Some(cwd));
+    snapshot_switch_impl(test_name, repo, args, false, Some(cwd));
 }
 
 fn snapshot_switch_impl(
     test_name: &str,
     repo: &TestRepo,
     args: &[&str],
-    global_flags: &[&str],
+    with_directive_file: bool,
     cwd: Option<&Path>,
 ) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd_with_global_flags(repo, "switch", args, cwd, global_flags);
+        // Directive file guard - declared at closure scope to live through command execution
+        let maybe_directive = if with_directive_file {
+            Some(directive_file())
+        } else {
+            None
+        };
+
+        let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
+        if let Some((ref directive_path, ref _guard)) = maybe_directive {
+            configure_directive_file(&mut cmd, directive_path);
+        }
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -155,11 +161,10 @@ fn test_switch_base_without_create_warning(repo: TestRepo) {
 // Internal mode tests
 #[rstest]
 fn test_switch_internal_mode(repo: TestRepo) {
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_internal_mode",
         &repo,
         &["--create", "internal-test"],
-        &["--internal"],
     );
 }
 
@@ -167,23 +172,17 @@ fn test_switch_internal_mode(repo: TestRepo) {
 fn test_switch_existing_worktree_internal(mut repo: TestRepo) {
     repo.add_worktree("existing-wt");
 
-    snapshot_switch_with_global_flags(
-        "switch_existing_internal",
-        &repo,
-        &["existing-wt"],
-        &["--internal"],
-    );
+    snapshot_switch_with_directive_file("switch_existing_internal", &repo, &["existing-wt"]);
 }
 
 #[rstest]
 fn test_switch_internal_with_execute(repo: TestRepo) {
     let execute_cmd = "echo 'line1'\necho 'line2'";
 
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_internal_with_execute",
         &repo,
         &["--create", "exec-internal", "--execute", execute_cmd],
-        &["--internal"],
     );
 }
 // Error tests
@@ -448,11 +447,10 @@ fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     // Switch to feature with shell integration - should NOT show any warning
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_no_warning_when_branch_matches",
         &repo,
         &["feature"],
-        &["--internal"],
     );
 }
 
@@ -477,12 +475,7 @@ fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
     .unwrap();
 
     // Switch to feature - should show hint about path mismatch
-    snapshot_switch_with_global_flags(
-        "switch_path_mismatch_shows_hint",
-        &repo,
-        &["feature"],
-        &["--internal"],
-    );
+    snapshot_switch_with_directive_file("switch_path_mismatch_shows_hint", &repo, &["feature"]);
 }
 
 /// Test that switching to a branch errors when path is occupied by worktree on different branch
@@ -519,11 +512,10 @@ fn test_switch_error_path_occupied_different_branch(repo: TestRepo) {
         .unwrap();
 
     // Switch to feature - should error since path is occupied by bugfix worktree
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_error_path_occupied_different_branch",
         &repo,
         &["feature"],
-        &["--internal"],
     );
 }
 
@@ -565,12 +557,7 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
         .unwrap();
 
     // Switch to feature - should error since path is occupied by detached worktree
-    snapshot_switch_with_global_flags(
-        "switch_error_path_occupied_detached",
-        &repo,
-        &["feature"],
-        &["--internal"],
-    );
+    snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
 }
 
 /// Test switching to default branch when main worktree is on a different branch
@@ -591,11 +578,10 @@ fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
         .unwrap();
 
     // Now try to switch to main - should error because main worktree is on feature
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_error_main_worktree_on_different_branch",
         &repo,
         &["main"],
-        &["--internal"],
     );
 }
 
@@ -606,11 +592,10 @@ fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
 fn test_switch_internal_execute_exit_code(repo: TestRepo) {
     // wt succeeds (exit 0), but shell script contains "exit 42"
     // Shell wrapper will eval and return 42
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_internal_execute_exit_code",
         &repo,
         &["--create", "exit-code-test", "--execute", "exit 42"],
-        &["--internal"],
     );
 }
 
@@ -622,11 +607,10 @@ fn test_switch_internal_execute_with_output_before_exit(repo: TestRepo) {
     // Execute command outputs then exits with code
     let cmd = "echo 'doing work'\nexit 7";
 
-    snapshot_switch_with_global_flags(
+    snapshot_switch_with_directive_file(
         "switch_internal_execute_output_then_exit",
         &repo,
         &["--create", "output-exit-test", "--execute", cmd],
-        &["--internal"],
     );
 }
 // History and ping-pong tests

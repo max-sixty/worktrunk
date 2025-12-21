@@ -1676,7 +1676,7 @@ fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
     settings.bind(|| {
         let mut cmd =
             make_snapshot_cmd(&repo, "merge", &["main", "--no-commit"], Some(&feature_wt));
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: false
         exit_code: 1
         ----- stdout -----

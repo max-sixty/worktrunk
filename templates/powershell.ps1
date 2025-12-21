@@ -8,7 +8,7 @@
 # Only initialize if wt is available
 if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
 
-    # wt wrapper function - captures stdout and executes as PowerShell
+    # wt wrapper function - uses temp file for directives
     function {{ cmd }} {
         param(
             [Parameter(ValueFromRemainingArguments = $true)]
@@ -25,16 +25,31 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
             return $LASTEXITCODE
         }
 
-        # Run wt with --internal=powershell
-        # stdout is captured for Invoke-Expression (contains Set-Location directives)
-        # stderr passes through to console in real-time (user messages, progress, errors)
-        # Note: We do NOT use 2>&1 as that would merge stderr into the script variable
-        $script = & $wtBin --internal=powershell @Arguments | Out-String
-        $exitCode = $LASTEXITCODE
+        $directiveFile = [System.IO.Path]::GetTempFileName()
 
-        # Execute the directive script (e.g., Set-Location) if command succeeded
-        if ($exitCode -eq 0 -and $script.Trim()) {
-            Invoke-Expression $script
+        try {
+            # Run wt with WT_DIRECTIVE_FILE env var
+            # stdout and stderr both go to console normally
+            $env:WT_DIRECTIVE_FILE = $directiveFile
+            & $wtBin @Arguments
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            Remove-Item Env:\WT_DIRECTIVE_FILE -ErrorAction SilentlyContinue
+        }
+
+        # Execute the directive script if it has content
+        try {
+            if ((Test-Path $directiveFile) -and (Get-Item $directiveFile).Length -gt 0) {
+                $script = Get-Content -Path $directiveFile -Raw
+                if ($script.Trim()) {
+                    Invoke-Expression $script
+                }
+            }
+        }
+        finally {
+            # Cleanup even if Invoke-Expression throws
+            Remove-Item $directiveFile -ErrorAction SilentlyContinue
         }
 
         # Propagate exit code so $? and $LASTEXITCODE are consistent for scripts/CI

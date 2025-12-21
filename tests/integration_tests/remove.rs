@@ -1,6 +1,6 @@
 use crate::common::{
-    TestRepo, canonicalize, make_snapshot_cmd_with_global_flags, repo, repo_with_remote,
-    setup_snapshot_settings, setup_temp_snapshot_settings, wt_command,
+    TestRepo, canonicalize, configure_directive_file, directive_file, make_snapshot_cmd, repo,
+    repo_with_remote, setup_snapshot_settings, setup_temp_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -11,20 +11,39 @@ use tempfile::TempDir;
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
-    snapshot_remove_with_global_flags(test_name, repo, args, cwd, &[]);
+    snapshot_remove_impl(test_name, repo, args, cwd, false);
 }
 
-/// Helper to create snapshot with global flags (e.g., --internal)
-fn snapshot_remove_with_global_flags(
+/// Helper to create snapshot with directive file (simulates shell wrapper)
+fn snapshot_remove_with_directive_file(
     test_name: &str,
     repo: &TestRepo,
     args: &[&str],
     cwd: Option<&std::path::Path>,
-    global_flags: &[&str],
+) {
+    snapshot_remove_impl(test_name, repo, args, cwd, true);
+}
+
+fn snapshot_remove_impl(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+    with_directive_file: bool,
 ) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
-        let mut cmd = make_snapshot_cmd_with_global_flags(repo, "remove", args, cwd, global_flags);
+        // Directive file guard - declared at closure scope to live through command execution
+        let maybe_directive = if with_directive_file {
+            Some(directive_file())
+        } else {
+            None
+        };
+
+        let mut cmd = make_snapshot_cmd(repo, "remove", args, cwd);
+        if let Some((ref directive_path, ref _guard)) = maybe_directive {
+            configure_directive_file(&mut cmd, directive_path);
+        }
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -60,13 +79,7 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
 fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");
 
-    snapshot_remove_with_global_flags(
-        "remove_internal_mode",
-        &repo,
-        &[],
-        Some(&worktree_path),
-        &["--internal"],
-    );
+    snapshot_remove_with_directive_file("remove_internal_mode", &repo, &[], Some(&worktree_path));
 }
 
 #[rstest]

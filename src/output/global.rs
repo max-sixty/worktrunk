@@ -1,56 +1,47 @@
-//! Global output context with thread-safe mode propagation
+//! Global output context with file-based directive passing
 //!
-//! This provides a logging-like API where you configure output mode once
-//! at program start, then use it anywhere without passing parameters.
+//! This provides a logging-like API where you configure output once
+//! at program start, then use output functions anywhere without passing parameters.
 //!
 //! # Implementation
 //!
 //! Uses a simple global approach:
-//! - `OnceLock<OutputMode>` stores the mode globally (set once at startup)
-//! - `OnceLock<Mutex<OutputState>>` stores stateful data (target_dir, exec_command)
-//! - All output functions check the mode and behave accordingly
+//! - `OnceLock<Mutex<OutputState>>` stores the directive file path and accumulated state
+//! - If `WT_DIRECTIVE_FILE` env var is set, directives are written to that file
+//! - Otherwise, commands execute directly
 //!
-//! # Output Modes
+//! # Shell Integration
 //!
-//! - **Interactive**: User messages to stderr, data (JSON) to stdout for piping
-//! - **Directive**: All output to stderr, stdout reserved for shell script at end
+//! When `WT_DIRECTIVE_FILE` is set (by the shell wrapper), wt writes shell commands
+//! (like `cd '/path'`) to that file. The shell wrapper sources the file after wt exits.
+//! This allows the parent shell to change directory.
 //!
 //! # Trade-offs
 //!
 //! - Zero parameter threading - call from anywhere
-//! - Single initialization point - set once in main()
-//! - Spawned threads automatically use correct mode
+//! - Lazy initialization - state initialized on first use
+//! - Spawned threads automatically use correct context
 //! - Simple implementation - no traits, no handler structs
+//! - stdout always available for data output (JSON, etc.)
 
 #[cfg(not(unix))]
 use super::handlers::execute_streaming;
-use crate::cli::DirectiveShell;
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
+use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{eprintln, hint_message, stderr};
 
-/// Output mode selection
-#[derive(Debug, Clone, Copy)]
-pub enum OutputMode {
-    Interactive,
-    /// Directive mode with shell type for output formatting
-    Directive(DirectiveShell),
-}
-
-/// Global output mode, set once at initialization.
-static GLOBAL_MODE: OnceLock<OutputMode> = OnceLock::new();
-
-/// Accumulated state for change_directory/execute/terminate_output.
-/// Only used by main thread - these operations are never called from spawned threads.
+/// Global output state, lazily initialized on first access.
 ///
 /// Uses `OnceLock<Mutex<T>>` pattern:
-/// - `OnceLock` provides one-time initialization (set in `initialize()`)
+/// - `OnceLock` provides one-time lazy initialization (via `get_or_init()`)
 /// - `Mutex` allows mutation after initialization
 /// - No unsafe code required
 ///
@@ -60,34 +51,47 @@ static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
 
 #[derive(Default)]
 struct OutputState {
+    /// Path to the directive file (from WT_DIRECTIVE_FILE env var)
+    /// If None, we're in interactive mode (no shell wrapper)
+    directive_file: Option<PathBuf>,
+    /// Buffered target directory for execute() in interactive mode
     target_dir: Option<PathBuf>,
-    exec_command: Option<String>,
 }
 
-/// Get the current output mode, defaulting to Interactive if not initialized.
-fn get_mode() -> OutputMode {
-    GLOBAL_MODE
-        .get()
-        .copied()
-        .unwrap_or(OutputMode::Interactive)
-}
-
-/// Initialize the global output context
+/// Get or lazily initialize the global output state.
 ///
-/// Call this once at program startup to set the output mode.
-/// All threads will automatically use the same mode.
-pub fn initialize(mode: OutputMode) {
-    let _ = GLOBAL_MODE.set(mode);
-    let _ = OUTPUT_STATE.set(Mutex::new(OutputState::default()));
+/// Reads `WT_DIRECTIVE_FILE` from environment on first access.
+/// Empty or whitespace-only strings are treated as "not set" to handle edge cases.
+fn get_state() -> &'static Mutex<OutputState> {
+    OUTPUT_STATE.get_or_init(|| {
+        let directive_file = std::env::var(DIRECTIVE_FILE_ENV_VAR)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from);
+
+        Mutex::new(OutputState {
+            directive_file,
+            target_dir: None,
+        })
+    })
+}
+
+/// Check if shell integration is active (directive file is set)
+fn has_directive_file() -> bool {
+    get_state()
+        .lock()
+        .expect("OUTPUT_STATE lock poisoned")
+        .directive_file
+        .is_some()
 }
 
 /// Display a shell integration hint
 ///
 /// Shell integration hints like "Run `wt config shell install` to enable automatic cd" are only
-/// shown in interactive mode. In directive mode, users already have shell integration.
+/// shown when shell integration is NOT active. When it is active, users already have it.
 /// This is the canonical check - call sites don't need to guard.
 pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
-    if matches!(get_mode(), OutputMode::Directive(_)) {
+    if has_directive_file() {
         return Ok(());
     }
     eprintln!("{}", hint_message(message.into()));
@@ -127,34 +131,24 @@ pub fn blank() -> io::Result<()> {
 
 /// Emit structured data output without emoji decoration
 ///
-/// Used for JSON, prompts, statuslines, and other pipeable data. Writes directly
-/// to stdout/stderr without anstream processing, preserving any ANSI codes.
-///
-/// - **Interactive**: writes to stdout (for piping to `jq`, `llm`, etc.)
-/// - **Directive**: writes to stderr (stdout reserved for shell script)
+/// Used for JSON, prompts, statuslines, and other pipeable data. Always writes to stdout.
+/// With WT_DIRECTIVE_FILE, stdout is never used for directives, so it's always
+/// available for data output.
 ///
 /// Example:
 /// ```rust,ignore
 /// output::data(json_string)?;
 /// ```
 pub fn data(content: impl Into<String>) -> io::Result<()> {
-    let content = content.into();
-    match get_mode() {
-        OutputMode::Interactive => {
-            writeln!(io::stdout(), "{content}")?;
-            io::stdout().flush()
-        }
-        OutputMode::Directive(_) => {
-            writeln!(io::stderr(), "{content}")?;
-            io::stderr().flush()
-        }
-    }
+    println!("{}", content.into());
+    io::stdout().flush()
 }
 
-/// Emit table/UI output to stderr
+/// Emit primary output to stdout
 ///
-/// Used for table rows and progress indicators that should appear on the same
-/// stream as progress bars. Both modes write to stderr.
+/// Used for the main data a command produces (table rows, formatted output).
+/// This is pipeable — `wt list | grep feature` works because table data
+/// goes to stdout while progress/warnings go to stderr.
 ///
 /// Example:
 /// ```rust,ignore
@@ -164,50 +158,70 @@ pub fn data(content: impl Into<String>) -> io::Result<()> {
 /// }
 /// ```
 pub fn table(content: impl Into<String>) -> io::Result<()> {
-    eprintln!("{}", content.into());
-    stderr().flush()
+    println!("{}", content.into());
+    io::stdout().flush()
+}
+
+/// Write a directive to the directive file (if set)
+fn write_directive(directive: &str) -> io::Result<()> {
+    // Copy path out of lock to avoid holding mutex during I/O
+    let path = {
+        let guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+        guard.directive_file.clone()
+    };
+
+    let Some(path) = path else {
+        return Ok(());
+    };
+
+    let mut file = OpenOptions::new().append(true).open(&path)?;
+    writeln!(file, "{}", directive)?;
+    file.flush()
 }
 
 /// Request directory change (for shell integration)
 ///
-/// In directive mode, buffers the path for the final shell script.
-/// In interactive mode, stores path for execute() to use as working directory.
-///
-/// No-op if called before initialize() - this is safe since main thread
-/// operations only happen after initialization.
+/// If shell integration is active (WT_DIRECTIVE_FILE set), writes `cd` command to the file.
+/// Also stores path for execute() to use as working directory.
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
-    if let Some(state) = OUTPUT_STATE.get() {
-        state.lock().expect("OUTPUT_STATE lock poisoned").target_dir =
-            Some(path.as_ref().to_path_buf());
+    let path = path.as_ref();
+    let mut guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+
+    // Store for execute() to use
+    guard.target_dir = Some(path.to_path_buf());
+
+    // Write to directive file if set
+    if guard.directive_file.is_some() {
+        drop(guard); // Release lock before I/O
+
+        let path_str = path.to_string_lossy();
+        // Always single-quote for consistent cross-platform behavior
+        let escaped = path_str.replace('\'', "'\\''");
+        write_directive(&format!("cd '{}'", escaped))?;
     }
+
     Ok(())
 }
 
 /// Request command execution
 ///
-/// In interactive mode, executes the command directly (replacing process on Unix).
-/// In directive mode, buffers the command for the final shell script.
+/// In interactive mode (no directive file), executes the command directly (replacing process on Unix).
+/// In shell integration mode, writes the command to the directive file.
 pub fn execute(command: impl Into<String>) -> anyhow::Result<()> {
     let command = command.into();
-    match get_mode() {
-        OutputMode::Interactive => {
-            // Get target directory (lock released before execute to avoid holding across I/O)
-            let target_dir = OUTPUT_STATE.get().and_then(|s| {
-                let guard = s.lock().expect("OUTPUT_STATE lock poisoned");
-                guard.target_dir.clone()
-            });
 
-            execute_command(command, target_dir.as_deref())
-        }
-        OutputMode::Directive(_) => {
-            if let Some(state) = OUTPUT_STATE.get() {
-                state
-                    .lock()
-                    .expect("OUTPUT_STATE lock poisoned")
-                    .exec_command = Some(command);
-            }
-            Ok(())
-        }
+    let (has_directive, target_dir) = {
+        let guard = get_state().lock().expect("OUTPUT_STATE lock poisoned");
+        (guard.directive_file.is_some(), guard.target_dir.clone())
+    };
+
+    if has_directive {
+        // Write to directive file
+        write_directive(&command)?;
+        Ok(())
+    } else {
+        // Execute directly
+        execute_command(command, target_dir.as_deref())
     }
 }
 
@@ -278,51 +292,26 @@ pub fn flush_for_stderr_prompt() -> io::Result<()> {
 
 /// Terminate command output
 ///
-/// In directive mode, emits the buffered shell script (cd and exec commands) to stdout.
-/// In interactive mode, this is a no-op.
+/// Resets ANSI state on stderr when shell integration is active.
+/// In interactive mode (no shell wrapper), message formatting functions
+/// already reset their own styles, so no global reset is needed.
 pub fn terminate_output() -> io::Result<()> {
-    match get_mode() {
-        OutputMode::Interactive => Ok(()),
-        OutputMode::Directive(shell) => {
-            let mut stderr = io::stderr();
-
-            // Reset ANSI state before returning to shell
-            write!(stderr, "{}", anstyle::Reset)?;
-            stderr.flush()?;
-
-            // Emit shell script to stdout with buffered directives
-            let mut stdout = io::stdout();
-
-            if let Some(state) = OUTPUT_STATE.get() {
-                let guard = state.lock().expect("OUTPUT_STATE lock poisoned");
-
-                // cd command
-                if let Some(ref path) = guard.target_dir {
-                    let path_str = path.to_string_lossy();
-                    match shell {
-                        DirectiveShell::Posix => {
-                            // Always single-quote for consistent cross-platform behavior
-                            // (shell_escape behaves differently on Windows vs Unix)
-                            let escaped = path_str.replace('\'', "'\\''");
-                            writeln!(stdout, "cd '{}'", escaped)?;
-                        }
-                        DirectiveShell::Powershell => {
-                            // PowerShell: double single quotes for escaping
-                            let escaped = path_str.replace('\'', "''");
-                            writeln!(stdout, "Set-Location '{}'", escaped)?;
-                        }
-                    }
-                }
-
-                // exec command
-                if let Some(ref cmd) = guard.exec_command {
-                    writeln!(stdout, "{}", cmd)?;
-                }
-            }
-
-            stdout.flush()
-        }
+    if !has_directive_file() {
+        return Ok(());
     }
+
+    let mut stderr = io::stderr();
+
+    // Reset ANSI state before returning to shell
+    write!(stderr, "{}", anstyle::Reset)?;
+    stderr.flush()
+}
+
+/// Check if we're in shell integration mode (directive file is set)
+///
+/// This is useful for handlers that need to know whether shell integration is active.
+pub fn is_shell_integration_active() -> bool {
+    has_directive_file()
 }
 
 #[cfg(test)]
@@ -331,27 +320,18 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_initialize_does_not_panic() {
-        use crate::cli::DirectiveShell;
-
-        // Verify initialize() doesn't panic when called (possibly multiple times in tests).
-        // Note: GLOBAL_MODE can only be set once per process.
-        // In production, initialize() is called exactly once.
-        initialize(OutputMode::Interactive);
-        initialize(OutputMode::Directive(DirectiveShell::Posix));
-        initialize(OutputMode::Directive(DirectiveShell::Powershell));
+    fn test_lazy_init_does_not_panic() {
+        // Verify lazy initialization doesn't panic.
+        // State is lazily initialized on first access.
+        let _ = has_directive_file();
     }
 
     #[test]
-    fn test_spawned_thread_uses_correct_mode() {
-        use crate::cli::DirectiveShell;
+    fn test_spawned_thread_uses_correct_state() {
         use std::sync::mpsc;
 
-        // Initialize mode (may already be set by another test, which is fine)
-        initialize(OutputMode::Directive(DirectiveShell::Posix));
-
         // Spawn a thread and verify it can access output without panicking.
-        // The thread reads the same GLOBAL_MODE.
+        // State is lazily initialized and shared across threads.
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             // Access output system in spawned thread
@@ -364,7 +344,7 @@ mod tests {
         rx.recv().unwrap();
     }
 
-    // Shell escaping tests (moved from directive.rs)
+    // Shell escaping tests
 
     #[test]
     fn test_shell_script_format() {
@@ -394,26 +374,6 @@ mod tests {
         let escaped = path_str.replace('\'', "'\\''");
         let cd_cmd = format!("cd '{}'", escaped);
         assert_eq!(cd_cmd, "cd '/test/my path/here'");
-    }
-
-    #[test]
-    fn test_powershell_path_format() {
-        // PowerShell uses Set-Location and doubles single quotes for escaping
-        let path = PathBuf::from("C:\\Users\\test\\path");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "''");
-        let ps_cmd = format!("Set-Location '{}'", escaped);
-        assert_eq!(ps_cmd, "Set-Location 'C:\\Users\\test\\path'");
-    }
-
-    #[test]
-    fn test_powershell_path_with_single_quotes() {
-        // PowerShell escapes single quotes by doubling them
-        let path = PathBuf::from("C:\\Users\\it's a test\\path");
-        let path_str = path.to_string_lossy();
-        let escaped = path_str.replace('\'', "''");
-        let ps_cmd = format!("Set-Location '{}'", escaped);
-        assert_eq!(ps_cmd, "Set-Location 'C:\\Users\\it''s a test\\path'");
     }
 
     /// Test that anstyle formatting is preserved

@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/list.rs
+source: tests/integration_tests/directives.rs
 info:
   program: wt
   args:
-    - list
-    - "--no-progressive"
+    - merge
+    - main
+    - "--no-remove"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -23,15 +24,17 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WT_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpGEw7bA/directives
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m             [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
-@ main         [2m^[22m                         .                         [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-+ [2mfeature[0m      [2m_[22m                         [2m../repo.feature[0m           [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
-
-[2m○[22m [2mShowing 2 worktrees
 
 ----- stderr -----
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
+[107m [0m * [33mfc12499[m Add feature file
+[107m [0m  feature.txt | 1 [32m+[m
+[107m [0m  1 file changed, 1 insertion(+)
+[32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
+[2m○[22m Worktree preserved (--no-remove)

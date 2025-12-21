@@ -27,7 +27,7 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -71,7 +71,7 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -115,7 +115,7 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -148,7 +148,7 @@ fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -203,7 +203,7 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir
 
         // Fish completions are inline in the init script, so when extension exists,
         // it should say "All shells already configured"
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -244,7 +244,7 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: false
         exit_code: 1
         ----- stdout -----
@@ -281,7 +281,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -341,7 +341,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -397,7 +397,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -454,7 +454,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -504,7 +504,7 @@ fn test_uninstall_shell_not_found(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -541,7 +541,7 @@ fn test_uninstall_shell_fish(repo: TestRepo, temp_home: TempDir) {
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -649,7 +649,7 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_ho
             .arg("--force")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -686,7 +686,7 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - user is a bash user, not zsh
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -724,7 +724,7 @@ fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo, temp_home: T
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - we're installing fish, not zsh
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -763,7 +763,7 @@ fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo, temp_
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - zsh is AlreadyExists, not newly added
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----
@@ -797,7 +797,7 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - can't determine user's shell
-        assert_cmd_snapshot!(cmd, @r"
+        assert_cmd_snapshot!(cmd, @"
         success: true
         exit_code: 0
         ----- stdout -----

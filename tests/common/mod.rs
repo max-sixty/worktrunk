@@ -617,6 +617,35 @@ pub fn configure_cli_command(cmd: &mut Command) {
     }
 }
 
+/// Create a temporary file for directive output.
+///
+/// The shell wrapper sets WT_DIRECTIVE_FILE to a temp file before running wt.
+/// Use `configure_directive_file()` to set this on a Command for testing.
+///
+/// Returns a tuple of (path, guard). The guard must be kept alive for the duration
+/// of the test - when dropped, the temp file is cleaned up.
+pub fn directive_file() -> (PathBuf, tempfile::TempPath) {
+    // Create temp file that persists until guard is dropped
+    let file = tempfile::NamedTempFile::new().expect("failed to create temp file");
+
+    // Get the path before we persist
+    let path = file.path().to_path_buf();
+
+    // Convert to TempPath - file persists until TempPath is dropped
+    let guard = file.into_temp_path();
+
+    (path, guard)
+}
+
+/// Configure a Command to use directive file mode.
+///
+/// Sets the WT_DIRECTIVE_FILE environment variable to the given path.
+/// The wt binary will write shell directives (like cd) to this file instead of
+/// executing them directly.
+pub fn configure_directive_file(cmd: &mut Command, path: &Path) {
+    cmd.env("WT_DIRECTIVE_FILE", path);
+}
+
 /// Configure a PTY CommandBuilder with isolated environment for testing.
 ///
 /// This is the PTY equivalent of `configure_cli_command()`. It:
@@ -2012,7 +2041,7 @@ pub fn setup_temp_snapshot_settings(temp_path: &std::path::Path) -> insta::Setti
 /// * `subcommand` - The subcommand to run (e.g., "switch", "remove")
 /// * `args` - Arguments to pass after the subcommand
 /// * `cwd` - Optional working directory (defaults to repo root)
-/// * `global_flags` - Optional global flags to pass before the subcommand (e.g., &["--internal"])
+/// * `global_flags` - Optional global flags to pass before the subcommand (e.g., &["--verbose"])
 pub fn make_snapshot_cmd_with_global_flags(
     repo: &TestRepo,
     subcommand: &str,

@@ -25,10 +25,13 @@ info:
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: true
-exit_code: 0
+success: false
+exit_code: 2
 ----- stdout -----
-Set-Location _REPO_
 
 ----- stderr -----
-[36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[1m[31merror:[0m unexpected argument '[1m[33m--internal[0m' found
+
+[1m[32mUsage:[0m [1m[36mwt[0m [36m[OPTIONS][0m [36m[COMMAND]
+
+For more information, try '[1m[36m--help[0m'.

@@ -3,59 +3,36 @@
 //! # Architecture
 //!
 //! Global context-based output system similar to logging frameworks (`log`, `tracing`).
-//! Initialize once at program start with `initialize(OutputMode)`, then use
-//! output functions anywhere: `print()`, `change_directory()`, `execute()`, etc.
+//! State is lazily initialized on first use — no explicit initialization required.
 //!
-//! ## Design
-//!
-//! **Global state** with `OnceLock`:
-//!
-//! ```rust,ignore
-//! static GLOBAL_MODE: OnceLock<OutputMode> = OnceLock::new();
-//! static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
-//! ```
-//!
-//! The mode is set once at initialization and readable by all threads.
-//! State (target_dir, exec_command) is stored globally for main thread operations.
-//!
-//! All output functions check the mode directly - no handler structs or traits.
-//!
-//! ## Usage Pattern
+//! ## Usage
 //!
 //! ```rust,ignore
 //! use worktrunk::styling::{success_message, error_message, hint_message};
 //!
-//! // 1. Initialize once in main()
-//! let mode = if internal {
-//!     OutputMode::Directive(shell)
-//! } else {
-//!     OutputMode::Interactive
-//! };
-//! output::initialize(mode);
-//!
-//! // 2. Use anywhere in the codebase
 //! output::print(success_message("Operation complete"));
 //! output::change_directory(&path);
 //! output::execute("git pull");
-//! output::flush();
 //! ```
 //!
-//! ## Output Modes
+//! ## Shell Integration
 //!
-//! - **Interactive**: Colors, emojis, shell hints, direct command execution
-//!   - Messages to stderr, data (JSON) to stdout for piping
-//! - **Directive**: Shell script protocol for shell integration
-//!   - All messages to stderr, stdout reserved for shell script at end
-//!   - stdout: Shell script emitted at end (e.g., `cd '/path'`)
-//!   - stderr: Success messages, progress updates, warnings (streams in real-time)
+//! When `WT_DIRECTIVE_FILE` env var is set (by shell wrapper):
+//! - Shell commands (cd, exec) are written to that file
+//! - Shell wrapper sources the file after wt exits
+//! - This allows the parent shell to change directory
+//!
+//! When not set (direct binary call):
+//! - Commands execute directly
+//! - Shell hints are shown for missing integration
 
 mod global;
 pub mod handlers;
 
 // Re-export the public API
 pub use global::{
-    OutputMode, blank, change_directory, data, execute, flush, flush_for_stderr_prompt, gutter,
-    initialize, print, shell_integration_hint, table, terminate_output,
+    blank, change_directory, data, execute, flush, flush_for_stderr_prompt, gutter,
+    is_shell_integration_active, print, shell_integration_hint, table, terminate_output,
 };
 // Re-export output handlers
 pub use handlers::{

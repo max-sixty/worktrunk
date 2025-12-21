@@ -14,7 +14,8 @@ impl RenderMode {
     ///
     /// * `progressive` - Rendering mode (Some(true) = --progressive, Some(false) = --no-progressive, None = auto)
     ///
-    /// Table output always goes to stderr (via output::table()), so we check stderr's TTY status.
+    /// Table output goes to stdout, so we check stdout's TTY status. When piped
+    /// (`wt list | grep`), we buffer; when interactive, we render progressively.
     pub fn detect(progressive: Option<bool>) -> Self {
         // Priority 1: Explicit CLI flag
         match progressive {
@@ -23,9 +24,9 @@ impl RenderMode {
             None => {} // Fall through to auto-detection
         }
 
-        // Priority 2: Auto-detect based on stderr TTY (table output always goes to stderr)
+        // Priority 2: Auto-detect based on stdout TTY
         use std::io::IsTerminal;
-        if std::io::stderr().is_terminal() {
+        if std::io::stdout().is_terminal() {
             // TODO: Check for pager in environment
             RenderMode::Progressive
         } else {

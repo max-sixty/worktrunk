@@ -4,16 +4,6 @@ use std::sync::OnceLock;
 
 use crate::commands::Shell;
 
-/// Shell type for directive output in --internal mode
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-pub enum DirectiveShell {
-    /// POSIX shells (bash, zsh, fish) - outputs `cd '/path'`
-    #[default]
-    Posix,
-    /// PowerShell - outputs `Set-Location '/path'`
-    Powershell,
-}
-
 /// Custom styles for help output - matches worktrunk's color scheme
 fn help_styles() -> Styles {
     Styles::styled()
@@ -181,11 +171,6 @@ pub struct Cli {
         help_heading = "Global Options"
     )]
     pub verbose: bool,
-
-    /// Shell wrapper mode (optionally specify shell type for directive output)
-    /// Usage: --internal (defaults to posix) or --internal=powershell
-    #[arg(long, global = true, hide = true, default_missing_value = "posix", num_args = 0..=1, require_equals = true)]
-    pub internal: Option<DirectiveShell>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,

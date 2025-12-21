@@ -44,12 +44,11 @@ fn run_statusline_from_dir(
 
     let output = child.wait_with_output().expect("failed to wait for output");
 
-    // Statusline outputs to stdout in interactive mode, stderr in directive mode
-    // For tests without --internal, we capture stdout
+    // Statusline outputs to stdout in interactive mode
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Return whichever has content (stdout for interactive, stderr for --internal)
+    // Return whichever has content (stdout for interactive, stderr for directive mode)
     if !stdout.is_empty() {
         stdout.to_string()
     } else {
@@ -196,33 +195,10 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 }
 
 // --- Directive Mode Tests ---
-
-#[rstest]
-fn test_statusline_directive_mode(repo: TestRepo) {
-    // When called with --internal, output goes to stderr (stdout empty for shell eval)
-    add_uncommitted_changes(&repo);
-
-    let mut cmd = wt_command();
-    cmd.current_dir(repo.root_path());
-    cmd.args(["--internal", "list", "statusline"]);
-    repo.clean_cli_env(&mut cmd);
-
-    let output = cmd.output().expect("failed to run command");
-
-    // stdout should be empty in directive mode
-    assert!(
-        output.stdout.is_empty(),
-        "stdout should be empty in directive mode, got: {:?}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-
-    // stderr should have the statusline
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.is_empty(),
-        "stderr should have statusline output in directive mode"
-    );
-}
+// Note: With the new WT_DIRECTIVE_FILE architecture, data output (like statusline)
+// still goes to stdout. The directive file is only used for shell directives like
+// `cd '/path'`. So this test is no longer needed - statusline behavior is the same
+// regardless of whether WT_DIRECTIVE_FILE is set.
 
 // --- Branch Display Tests ---
 

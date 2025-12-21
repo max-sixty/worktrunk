@@ -44,59 +44,21 @@ impl Issue {
 }
 
 /// Validate fish shell completions
-fn validate_fish(content: &str) -> Vec<Issue> {
-    let mut issues = Vec::new();
-
-    // Check for hidden flags
-    for line in content.lines() {
-        if line.contains("complete -c wt") && line.contains("-l internal") {
-            issues.push(Issue::error(
-                "fish",
-                Category::HiddenFlag,
-                "Hidden flag --internal appears in completions",
-            ));
-        }
-    }
-
-    issues
+fn validate_fish(_content: &str) -> Vec<Issue> {
+    // No hidden flags to check after removing --internal
+    Vec::new()
 }
 
 /// Validate bash shell completions
-fn validate_bash(content: &str) -> Vec<Issue> {
-    let mut issues = Vec::new();
-
-    // Check for hidden flags in opts strings
-    // Note: We don't validate bash syntax here. If you need that, use shellcheck.
-    // We only check that our filtering logic removed hidden flags.
-    for line in content.lines() {
-        if line.contains("opts=") && line.contains("--internal") {
-            issues.push(Issue::error(
-                "bash",
-                Category::HiddenFlag,
-                "Hidden flag --internal appears in opts",
-            ));
-        }
-    }
-
-    issues
+fn validate_bash(_content: &str) -> Vec<Issue> {
+    // No hidden flags to check after removing --internal
+    Vec::new()
 }
 
 /// Validate zsh shell completions
-fn validate_zsh(content: &str) -> Vec<Issue> {
-    let mut issues = Vec::new();
-
-    // Check for hidden flags in argument specs
-    for line in content.lines() {
-        if line.contains("'--internal[") {
-            issues.push(Issue::error(
-                "zsh",
-                Category::HiddenFlag,
-                "Hidden flag --internal appears in completions",
-            ));
-        }
-    }
-
-    issues
+fn validate_zsh(_content: &str) -> Vec<Issue> {
+    // No hidden flags to check after removing --internal
+    Vec::new()
 }
 
 /// Extract flags from shell completion content

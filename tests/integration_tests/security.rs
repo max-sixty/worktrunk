@@ -2,19 +2,22 @@
 //!
 //! # Attack Surface Analysis
 //!
-//! Worktrunk uses a shell script protocol for shell integration. Commands with `--internal`:
-//! - Stream all user-visible output (progress, errors, hints) to stderr in real-time
-//! - Emit a shell script to stdout at the end (cd commands, exec commands)
+//! Worktrunk uses a file-based directive protocol for shell integration. When `WT_DIRECTIVE_FILE`
+//! env var is set (pointing to a temp file), the wt binary:
+//! - Streams all user-visible output (progress, errors, hints) to stderr in real-time
+//! - Writes shell directives (cd commands, exec commands) to the directive file
 //!
-//! The shell wrapper captures stdout via command substitution and evals it:
+//! The shell wrapper sources the directive file after wt exits:
 //! ```bash
-//! script="$(wt --internal ... 2>&2)" && eval "$script"
+//! directive_file="$(mktemp)"
+//! WT_DIRECTIVE_FILE="$directive_file" wt ... || exit_code=$?
+//! source "$directive_file"
 //! ```
 //!
 //! ## Vulnerability: Shell Injection
 //!
 //! If external content (branch names, file paths, git output) can inject malicious shell
-//! code into stdout, the shell wrapper will execute it. This is analogous to SQL injection
+//! code into the directive file, the shell wrapper will execute it. This is analogous to SQL injection
 //! or command injection vulnerabilities.
 //!
 //! ## Attack Vectors
@@ -29,7 +32,7 @@
 //! ```bash
 //! # Create directory with malicious name
 //! mkdir "test'; rm -rf /; echo '"
-//! wt switch --internal branch  # If cd emits: cd 'test'; rm -rf /; echo ''
+//! WT_DIRECTIVE_FILE=/tmp/d wt switch branch  # If cd emits: cd 'test'; rm -rf /; echo ''
 //! ```
 //!
 //! **Protection:** All paths are escaped using `replace('\'', "'\\''")` pattern,
@@ -49,8 +52,8 @@
 //!
 //! **Shell script protocol with proper escaping:**
 //!
-//! 1. **Channel separation**: User messages go to stderr, shell script goes to stdout
-//!    - Shell wrapper only evals stdout: `script="$(... 2>&2)" && eval "$script"`
+//! 1. **Channel separation**: User messages go to stderr, shell directives go to a temp file
+//!    - Shell wrapper only sources the directive file
 //!    - Malicious content in stderr cannot be executed
 //!
 //! 2. **Path escaping**: All paths use single quotes with `'\''` escape pattern
@@ -75,13 +78,12 @@
 //!
 //! ## Security Model
 //!
-//! The new shell script protocol is simpler and more secure than the previous NUL-delimited
-//! directive protocol:
+//! The file-based directive protocol is secure:
 //!
-//! 1. **Simpler parsing**: No NUL byte parsing in shell, just command substitution + eval
-//! 2. **Channel separation**: Messages on stderr, script on stdout (not interleaved)
+//! 1. **Simpler parsing**: Just source a file, no command substitution needed
+//! 2. **Channel separation**: Messages on stderr, directives in temp file
 //! 3. **Standard escaping**: Uses well-understood POSIX single-quote escaping
-//! 4. **Smaller attack surface**: Only cd and exec commands in stdout, nothing else
+//! 4. **Smaller attack surface**: Only cd and exec commands in directive file
 //!
 //! ### Testing Limitations
 //!
@@ -96,7 +98,9 @@
 //! For comprehensive security testing, see `tests/integration_tests/shell_wrapper.rs` which
 //! tests the full shell integration pipeline.
 
-use crate::common::{TestRepo, repo, setup_snapshot_settings, wt_command};
+use crate::common::{
+    TestRepo, configure_directive_file, directive_file, repo, setup_snapshot_settings, wt_command,
+};
 use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -215,10 +219,11 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("switch")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
             .current_dir(repo.root_path());
@@ -253,10 +258,11 @@ fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("switch")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
             .current_dir(repo.root_path());
@@ -355,10 +361,11 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("switch")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
             .current_dir(repo.root_path());
@@ -379,10 +386,11 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("switch")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("switch")
             .arg(malicious_branch)
             .current_dir(repo.root_path());
 
@@ -399,7 +407,7 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
 /// Test that execute flag (-x) input is properly handled
 ///
 /// The -x flag is SUPPOSED to execute commands, so this tests that:
-/// 1. Commands from -x are emitted as shell script to stdout
+/// 1. Commands from -x are written to the directive file
 /// 2. User content in branch names that looks like old directives doesn't cause injection
 #[rstest]
 fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
@@ -422,17 +430,18 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     settings.set_snapshot_path("../snapshots");
 
     settings.bind(|| {
+        let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("switch")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("switch")
             .arg("--create")
             .arg(malicious_branch)
             .arg("-x")
             .arg("echo legitimate command")
             .current_dir(repo.root_path());
 
-        // The -x command should appear in stdout as shell script
+        // The -x command should be written to directive file
         // The branch name should NOT inject additional commands
         assert_cmd_snapshot!(cmd);
     });

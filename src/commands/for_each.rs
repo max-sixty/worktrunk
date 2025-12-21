@@ -183,6 +183,8 @@ fn run_command_streaming(
         .stdout(Stdio::from(std::io::stderr()))
         // Stream stderr to terminal in real-time
         .stderr(Stdio::inherit())
+        // Prevent subprocesses from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
         .map_err(|e| CommandError::SpawnFailed(e.to_string()))?;
 

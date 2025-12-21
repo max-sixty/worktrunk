@@ -506,8 +506,7 @@ fn prompt_for_confirmation(
     use worktrunk::styling::{eprint, eprintln};
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
-    // In directive mode, flushes both stdout (directives) and stderr (messages)
-    // In interactive mode, flushes both stdout and stderr
+    // Flushes both stdout (for data output) and stderr (for messages)
     crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
 
     let bold = Style::new().bold();
