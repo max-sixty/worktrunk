@@ -18,7 +18,7 @@ Worktrunk is a CLI for git worktree management, designed for parallel AI agent w
 
 Here's a quick demo:
 
-![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/wt-demo.gif)
+![Worktrunk Demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/wt-core.gif)
 
 > ## 📚 Full documentation at [worktrunk.dev](https://worktrunk.dev) 📚
 

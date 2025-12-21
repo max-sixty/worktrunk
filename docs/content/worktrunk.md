@@ -12,10 +12,10 @@ Here's a quick demo:
 
 <figure class="demo">
 <picture>
-  <source srcset="/assets/wt-demo-dark.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/wt-demo.gif" alt="Worktrunk demo showing wt list, wt switch, and wt merge" width="1600" height="900">
+  <source srcset="/assets/wt-core-dark.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/wt-core.gif" alt="Worktrunk demo showing wt list, wt switch, and hooks" width="1600" height="900">
 </picture>
-<figcaption>Listing worktrees, creating a worktree, working, merging back</figcaption>
+<figcaption>Listing worktrees, switching, and hooks in action</figcaption>
 </figure>
 
 ## Context: git worktrees

@@ -7,11 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from themes import THEMES, format_theme_for_vhs
-
 REAL_HOME = Path.home()
-DEMOS_DIR = Path(__file__).parent
-SHARED_DIR = DEMOS_DIR / "shared"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @dataclass
@@ -157,7 +154,7 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
         "[package]\nname = \"acme\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n"
     )
     (env.repo / "src").mkdir()
-    shutil.copy(SHARED_DIR / "lib.rs", env.repo / "src" / "lib.rs")
+    shutil.copy(FIXTURES_DIR / "lib.rs", env.repo / "src" / "lib.rs")
     (env.repo / ".gitignore").write_text("/target\n")
     git(["-C", str(env.repo), "add", ".gitignore", "Cargo.toml", "src/"])
     commit_dated(env.repo, "Add Rust project with tests", "6d")
@@ -239,7 +236,7 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     # Mock gh CLI with varied CI status per branch
     bin_dir = env.home / "bin"
     gh_mock = bin_dir / "gh"
-    shutil.copy(SHARED_DIR / "gh-mock.sh", gh_mock)
+    shutil.copy(FIXTURES_DIR / "gh-mock.sh", gh_mock)
     gh_mock.chmod(0o755)
 
     # Extra branches without worktrees (for --branches view)
@@ -309,7 +306,7 @@ Run `wt list` to see all worktrees.
     commit_dated(path, "docs: add FAQ section", "3d")
 
     # Working tree changes - large diff using shared fixture
-    shutil.copy(SHARED_DIR / "alpha-readme.md", path / "README.md")
+    shutil.copy(FIXTURES_DIR / "alpha-readme.md", path / "README.md")
     (path / "scratch.rs").write_text("// scratch\n")
 
 
@@ -334,7 +331,7 @@ def _create_branch_hooks(env: DemoEnv):
     path = env.work_base / f"acme.{branch}"
 
     git(["-C", str(env.repo), "checkout", "-q", "-b", branch, "main"])
-    shutil.copy(SHARED_DIR / "lib-hooks.rs", env.repo / "src" / "lib.rs")
+    shutil.copy(FIXTURES_DIR / "lib-hooks.rs", env.repo / "src" / "lib.rs")
     git(["-C", str(env.repo), "add", "src/lib.rs"])
     commit_dated(env.repo, "feat: add math operations, consolidate tests", "2H")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build script for simple worktrunk demo GIF.
+"""Build script for wt-core demo GIF.
 
 This demo shows the core workflow with hooks:
 1. wt list - see current worktrees with variety
@@ -22,11 +22,10 @@ SCRIPT_DIR = Path(__file__).parent
 DEMOS_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(DEMOS_DIR))
 
-from lib import (
-    DemoEnv, run, git, render_tape, record_vhs, REAL_HOME, SHARED_DIR,
-    prepare_demo_repo, commit_dated,
+from shared import (
+    DemoEnv, run, git, render_tape, record_vhs, REAL_HOME, FIXTURES_DIR,
+    prepare_demo_repo, commit_dated, THEMES, format_theme_for_vhs,
 )
-from themes import THEMES, format_theme_for_vhs
 
 REPO_ROOT = DEMOS_DIR.parent.parent
 OUT_DIR = SCRIPT_DIR / "out"
@@ -36,8 +35,8 @@ STARSHIP_CONFIG = OUT_DIR / "starship.toml"
 
 # Output GIF paths for light and dark variants
 OUTPUT_GIFS = {
-    "light": OUT_DIR / "demo-simple.gif",
-    "dark": OUT_DIR / "demo-simple-dark.gif",
+    "light": OUT_DIR / "wt-core.gif",
+    "dark": OUT_DIR / "wt-core-dark.gif",
 }
 
 
@@ -155,8 +154,8 @@ def main():
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Copy starship config from shared fixtures
-    shutil.copy(SHARED_DIR / "starship.toml", STARSHIP_CONFIG)
+    # Copy starship config from fixtures
+    shutil.copy(FIXTURES_DIR / "starship.toml", STARSHIP_CONFIG)
 
     # Create separate environments for text and VHS recording
     # so they don't interfere with each other

@@ -8,6 +8,13 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
+<figure class="demo">
+<picture>
+  <source srcset="/assets/wt-merge-dark.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/wt-merge.gif" alt="wt merge demo showing squash, rebase, and push" width="1600" height="900">
+</picture>
+</figure>
+
 ## Examples
 
 Basic merge to main:

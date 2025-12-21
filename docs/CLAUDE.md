@@ -267,9 +267,10 @@ Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid 
 **To regenerate demos** (required after CLI output changes):
 
 1. Build the vhs-keystrokes binary if missing (one-time setup, see below)
-2. Run both demo build scripts:
+2. Run the demo build scripts:
    ```bash
-   ./docs/demos/wt/build
+   ./docs/demos/wt-core/build
+   ./docs/demos/wt-merge/build
    ./docs/demos/wt-select/build
    ```
 3. Publish: `./dev/publish-assets`
@@ -297,10 +298,11 @@ The `wt-select/build` script will skip GIF recording if the binary is missing an
 ### Light/dark theme variants
 
 Each demo build generates both light and dark GIF variants:
-- `wt-demo.gif` / `wt-demo-dark.gif`
+- `wt-core.gif` / `wt-core-dark.gif`
+- `wt-merge.gif` / `wt-merge-dark.gif`
 - `wt-select.gif` / `wt-select-dark.gif`
 
-Theme definitions are in `docs/demos/themes.py`, matching the CSS variables in `_variables.html`.
+Theme definitions are in `docs/demos/shared/themes.py`, matching the CSS variables in `_variables.html`.
 
 In markdown, use `<picture>` with media queries:
 ```html

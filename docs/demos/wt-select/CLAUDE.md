@@ -116,8 +116,9 @@ ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
 
 - `build` - Main build script
 - `demo.tape` - VHS tape file with recording script
-- `fixtures/` - Starship config and other fixtures
 - `out/` - Output directory (gitignored)
+
+Starship config comes from shared `docs/demos/fixtures/`.
 
 ## Updating Commits
 
