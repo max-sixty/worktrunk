@@ -76,12 +76,6 @@ _wt_exec() {
 
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
-            # If stdout is not a terminal (piped/redirected), run directly.
-            # This allows `wt list --format=json | jq` to work.
-            if [[ ! -t 1 ]]; then
-                cargo run --bin wt --quiet -- "${args[@]}"
-                return
-            fi
             local directive_file exit_code=0
             directive_file="$(mktemp)"
             WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin wt --quiet -- "${args[@]}" || exit_code=$?
@@ -93,13 +87,6 @@ _wt_exec() {
             fi
             rm -f "$directive_file"
             return "$exit_code"
-        fi
-
-        # If stdout is not a terminal (piped/redirected), run directly.
-        # This allows `wt list --format=json | jq` to work.
-        if [[ ! -t 1 ]]; then
-            command "${WORKTRUNK_BIN:-wt}" "${args[@]}"
-            return
         fi
 
         _wt_exec "${args[@]}"

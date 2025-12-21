@@ -59,8 +59,8 @@ pub fn get_shell_binary(shell: &str) -> &str {
 
 /// Execute a script in the given shell with the repo's isolated environment.
 ///
-/// Uses a PTY so that stdout appears as a terminal to the shell. This is required
-/// for shell wrapper tests since the wrapper uses `[[ ! -t 1 ]]` to detect piping.
+/// Uses a PTY so that stdout appears as a terminal to the shell. This simulates
+/// real terminal behavior for shell wrapper tests (combined stdout/stderr, ANSI codes).
 #[cfg(unix)]
 pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> String {
     use portable_pty::CommandBuilder;

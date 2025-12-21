@@ -25,12 +25,6 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
-            # If stdout is not a terminal (piped/redirected), run directly.
-            # This allows `wt list --format=json | jq` to work.
-            if [[ ! -t 1 ]]; then
-                cargo run --bin {{ cmd }} --quiet -- "${args[@]}"
-                return
-            fi
             local directive_file exit_code=0
             directive_file="$(mktemp)"
             WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
@@ -42,13 +36,6 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             fi
             rm -f "$directive_file"
             return "$exit_code"
-        fi
-
-        # If stdout is not a terminal (piped/redirected), run directly.
-        # This allows `wt list --format=json | jq` to work.
-        if [[ ! -t 1 ]]; then
-            command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}"
-            return
         fi
 
         _{{ cmd|safe_fn }}_exec "${args[@]}"

@@ -16,15 +16,6 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
         )
 
         $wtBin = (Get-Command {{ cmd }} -CommandType Application).Source
-
-        # If output is redirected (piped), run directly without wrapper.
-        # This allows `wt list --format=json | ConvertFrom-Json` to work - the output
-        # flows through instead of being captured and Invoke-Expression'd.
-        if ([Console]::IsOutputRedirected) {
-            & $wtBin @Arguments
-            return $LASTEXITCODE
-        }
-
         $directiveFile = [System.IO.Path]::GetTempFileName()
 
         try {

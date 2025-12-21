@@ -40,12 +40,6 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
 
         # --source: use cargo run (builds from source)
         if test $use_source = true
-            # If stdout is not a terminal (piped/redirected), run directly.
-            # This allows `wt list --format=json | jq` to work.
-            if not isatty stdout
-                cargo run --bin {{ cmd }} --quiet -- $args
-                return $status
-            end
             set -l directive_file (mktemp)
             WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
             set -l exit_code $status
@@ -57,14 +51,6 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
             end
             rm -f "$directive_file"
             return $exit_code
-        end
-
-        # If stdout is not a terminal (piped/redirected), run directly.
-        # This allows `wt list --format=json | jq` to work.
-        if not isatty stdout
-            test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd }})
-            command $WORKTRUNK_BIN $args
-            return $status
         end
 
         _{{ cmd|safe_fn }}_exec $args
