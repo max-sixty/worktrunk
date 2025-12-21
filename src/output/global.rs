@@ -195,8 +195,18 @@ pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
         drop(guard); // Release lock before I/O
 
         let path_str = path.to_string_lossy();
-        // Always single-quote for consistent cross-platform behavior
-        let escaped = path_str.replace('\'', "'\\''");
+        // Escape based on shell type. Both shell families use single-quoted strings
+        // where contents are literal, but they escape embedded quotes differently:
+        // - PowerShell: double the quote ('it''s')
+        // - POSIX (bash/zsh/fish): end quote, escaped quote, start quote ('it'\''s')
+        let is_powershell = std::env::var("WORKTRUNK_SHELL")
+            .map(|v| v.eq_ignore_ascii_case("powershell"))
+            .unwrap_or(false);
+        let escaped = if is_powershell {
+            path_str.replace('\'', "''")
+        } else {
+            path_str.replace('\'', "'\\''")
+        };
         write_directive(&format!("cd '{}'", escaped))?;
     }
 

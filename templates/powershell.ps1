@@ -29,13 +29,16 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
 
         try {
             # Run wt with WORKTRUNK_DIRECTIVE_FILE env var
+            # WORKTRUNK_SHELL tells the binary to use PowerShell-compatible escaping
             # stdout and stderr both go to console normally
             $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
+            $env:WORKTRUNK_SHELL = "powershell"
             & $wtBin @Arguments
             $exitCode = $LASTEXITCODE
         }
         finally {
             Remove-Item Env:\WORKTRUNK_DIRECTIVE_FILE -ErrorAction SilentlyContinue
+            Remove-Item Env:\WORKTRUNK_SHELL -ErrorAction SilentlyContinue
         }
 
         # Execute the directive script if it has content

@@ -188,22 +188,6 @@ impl ProgressiveTable {
         Ok(())
     }
 
-    /// Finalize for non-TTY: clear all and print final static table.
-    ///
-    /// # Arguments
-    /// * `final_lines` - Final rendered lines (header + rows + spacer + footer)
-    pub fn finalize_non_tty(&self, final_lines: Vec<String>) -> std::io::Result<()> {
-        let mut stderr = stderr();
-
-        // For non-TTY, we just print the final table
-        // (initial output was suppressed)
-        for line in final_lines {
-            writeln!(stderr, "{}", line)?;
-        }
-
-        stderr.flush()
-    }
-
     /// Check if output is going to a TTY.
     pub fn is_tty(&self) -> bool {
         self.is_tty
@@ -341,26 +325,6 @@ mod tests {
 
         // Note: In non-TTY mode, finalize_tty returns early, so footer won't change
         // This tests that the method doesn't panic
-    }
-
-    #[test]
-    fn test_finalize_non_tty() {
-        let table = ProgressiveTable::new(
-            "header".to_string(),
-            vec!["row".to_string()],
-            "loading".to_string(),
-            80,
-        );
-
-        let final_lines = vec![
-            "Final Header".to_string(),
-            "Final Row".to_string(),
-            "".to_string(),
-            "Complete".to_string(),
-        ];
-
-        // Should not panic (writes to stderr which may fail in some test envs)
-        let _ = table.finalize_non_tty(final_lines);
     }
 
     #[test]
