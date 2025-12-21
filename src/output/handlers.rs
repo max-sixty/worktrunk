@@ -922,6 +922,13 @@ pub(crate) fn execute_streaming(
 /// If `stdin_content` is provided, it will be piped to the command's stdin. This is used to pass
 /// hook context as JSON to hook commands.
 ///
+/// ## Signal Handling
+///
+/// For POSIX shells, the command is wrapped with a signal trap so that SIGINT/SIGTERM
+/// immediately exit the shell process. Without this, `sh -c 'cmd1; cmd2'` would continue
+/// to `cmd2` after `cmd1` is killed by SIGINT (standard POSIX shell behavior — non-interactive
+/// shells don't exit when a foreground job is killed by signal).
+///
 /// ## Color Bleeding Prevention
 ///
 /// This function explicitly resets ANSI codes on stderr before executing child commands.
@@ -943,6 +950,7 @@ pub fn execute_command_in_worktree(
     stdin_content: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::io::Write;
+    use worktrunk::shell_exec::ShellConfig;
     use worktrunk::styling::{eprint, stderr};
 
     // Flush stdout before executing command to ensure all our messages appear
@@ -955,9 +963,21 @@ pub fn execute_command_in_worktree(
     eprint!("{}", anstyle::Reset);
     stderr().flush().ok(); // Ignore flush errors - reset is best-effort, command execution should proceed
 
+    // Wrap command with signal trap for POSIX shells to ensure proper signal propagation.
+    // Without this, `sh -c 'sleep 30; echo done'` would continue to `echo done` after
+    // `sleep` is killed by SIGINT (non-interactive shells continue on foreground job death).
+    // Exit code 130 = 128 + 2 (SIGINT), following Unix convention.
+    let shell = ShellConfig::get();
+    let wrapped_command = if shell.is_posix() {
+        format!("trap 'exit 130' INT TERM; {}", command)
+    } else {
+        // PowerShell handles signals differently and doesn't have the same continuation issue
+        command.to_string()
+    };
+
     // Execute with stdout→stderr redirect for deterministic ordering
     // Hooks don't need stdin inheritance (inherit_stdin=false)
-    execute_streaming(command, worktree_path, true, stdin_content, false)?;
+    execute_streaming(&wrapped_command, worktree_path, true, stdin_content, false)?;
 
     // Flush to ensure all output appears before we continue
     super::flush()?;
