@@ -1,0 +1,47 @@
+format = "$directory$character"
+palette = "gh_light"
+
+[palettes.gh_light]
+fg = "#1f2328"
+bg = "#ffffff"
+blue = "#0969da"
+yellow = "#d29922"
+green = "#2ea043"
+red = "#d73a49"
+muted = "#57606a"
+gold = "#d97706"
+
+[directory]
+style = "bold fg:gold"
+truncation_length = 3
+truncate_to_repo = true
+home_symbol = "~"
+
+[git_branch]
+style = "fg:muted"
+symbol = " "
+format = " [$symbol$branch]($style)"
+
+[git_status]
+style = "fg:red"
+format = " [$all_status$ahead_behind]($style)"
+conflicted = "⇕"
+ahead = "⇡"
+behind = "⇣"
+staged = "+"
+modified = "!"
+untracked = "?"
+
+[cmd_duration]
+min_time = 500
+# Keep duration but drop the timer icon to reduce prompt noise.
+format = " [$duration]($style)"
+style = "fg:muted"
+
+[character]
+success_symbol = "[❯](fg:gold)"
+error_symbol = "[❯](fg:red)"
+vicmd_symbol = "[❮](fg:gold)"
+
+[time]
+disabled = true
