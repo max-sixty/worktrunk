@@ -396,6 +396,67 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     );
 }
 
+/// Test that hooks receive SIGTERM and do not continue after termination.
+#[rstest]
+#[cfg(unix)]
+fn test_pre_merge_hook_receives_sigterm(repo: TestRepo) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::io::Read;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    repo.commit("Initial commit");
+
+    // Project pre-merge hook: write start, then sleep, then write done (if not interrupted)
+    repo.write_project_config(
+        r#"[pre-merge]
+long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
+"#,
+    );
+    repo.commit("Add pre-merge hook");
+
+    // Spawn wt in its own process group (so SIGTERM to that group doesn't kill the test)
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.args(["hook", "pre-merge", "--force"]);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0); // wt becomes leader of its own process group
+    let mut child = cmd.spawn().expect("failed to spawn wt hook pre-merge");
+
+    // Wait until hook writes "start" to hook.log (verifies the hook is running)
+    let hook_log = repo.root_path().join("hook.log");
+    wait_for_file_content(&hook_log, Duration::from_secs(5));
+
+    // Send SIGTERM to wt's process group (wt's PID == its PGID since it's the leader)
+    let wt_pgid = Pid::from_raw(child.id() as i32);
+    kill(Pid::from_raw(-wt_pgid.as_raw()), Signal::SIGTERM)
+        .expect("failed to send SIGTERM to pgrp");
+
+    let status = child.wait().expect("failed to wait for wt");
+
+    // wt was killed by signal, so code() returns None and we check the signal
+    use std::os::unix::process::ExitStatusExt;
+    assert!(
+        status.signal() == Some(15) || status.code() == Some(143),
+        "wt should be killed by SIGTERM (signal 15) or exit 143, got: {status:?}"
+    );
+
+    // Give the (killed) hook a moment; it must not append "done"
+    thread::sleep(Duration::from_millis(500));
+
+    let mut contents = String::new();
+    std::fs::File::open(&hook_log)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    assert!(
+        contents.trim() == "start",
+        "hook should not have reached 'done'; got: {contents:?}"
+    );
+}
+
 // ============================================================================
 // User Post-Merge Hook Tests
 // ============================================================================

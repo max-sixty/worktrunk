@@ -271,7 +271,7 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
     // On non-Unix platforms, fall back to spawn-and-wait.
     // This uses the shell abstraction (Git Bash if available).
     let exec_dir = target_dir.unwrap_or_else(|| Path::new("."));
-    if let Err(err) = execute_streaming(&command, exec_dir, false, None, true) {
+    if let Err(err) = execute_streaming(&command, exec_dir, false, None, true, false) {
         // If the command failed with an exit code, just exit with that code.
         // This matches Unix behavior where exec() replaces the process and
         // the shell's exit code becomes the process exit code (no error message).

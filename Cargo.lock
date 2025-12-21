@@ -3094,6 +3094,7 @@ dependencies = [
  "shell-escape",
  "shellexpand",
  "shlex",
+ "signal-hook",
  "skim",
  "strum",
  "synoptic",
