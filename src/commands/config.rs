@@ -658,12 +658,16 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             let status_str: &'static str = ci_status.into();
             crate::output::data(status_str)?;
         }
+        // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
             let git_common_dir = repo.git_common_dir()?;
             let log_dir = git_common_dir.join("wt-logs");
+            let log_dir_display = format_path_for_display(&log_dir);
+            let heading = format_heading("LOG FILES", Some(&format!("@ {log_dir_display}")));
 
             if !log_dir.exists() {
-                crate::output::print(info_message("No logs"))?;
+                crate::output::table(heading)?;
+                crate::output::table(format_with_gutter("(none)", "", None))?;
                 return Ok(());
             }
 
@@ -675,9 +679,13 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 .collect();
 
             if entries.is_empty() {
-                crate::output::print(info_message("No logs"))?;
+                crate::output::table(heading)?;
+                crate::output::table(format_with_gutter("(none)", "", None))?;
                 return Ok(());
             }
+
+            // Show heading before the table
+            crate::output::table(heading)?;
 
             // Sort by modification time (newest first), then by name for stability
             entries.sort_by(|a, b| {
@@ -1126,10 +1134,11 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show log files
     let git_common_dir = repo.git_common_dir()?;
     let log_dir = git_common_dir.join("wt-logs");
+    let log_dir_display = format_path_for_display(&log_dir);
     writeln!(
         out,
         "{}",
-        format_heading("LOG FILES", Some("@ .git/wt-logs"))
+        format_heading("LOG FILES", Some(&format!("@ {log_dir_display}")))
     )?;
 
     if !log_dir.exists() {
