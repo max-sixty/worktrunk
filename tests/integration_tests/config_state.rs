@@ -426,9 +426,10 @@ fn test_state_get_logs_empty(repo: TestRepo) {
         stderr.contains("LOG FILES"),
         "Expected LOG FILES heading: {stderr}"
     );
+    // Path separator varies by platform, so check for either / or \
     assert!(
-        stderr.contains(".git/wt-logs"),
-        "Expected .git/wt-logs in output: {stderr}"
+        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
+        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
     );
 }
 
@@ -453,9 +454,10 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
         stderr.contains("LOG FILES"),
         "Expected LOG FILES heading: {stderr}"
     );
+    // Path separator varies by platform, so check for either / or \
     assert!(
-        stderr.contains(".git/wt-logs"),
-        "Expected .git/wt-logs in output: {stderr}"
+        stderr.contains(".git/wt-logs") || stderr.contains(".git\\wt-logs"),
+        "Expected .git/wt-logs or .git\\wt-logs in output: {stderr}"
     );
     assert!(stderr.contains("File"));
     assert!(stderr.contains("Size"));
