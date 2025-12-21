@@ -2298,7 +2298,9 @@ Removal runs in the background by default (returns immediately). Logs are writte
     /// Merge worktree into target branch
     ///
     /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
-    #[command(after_long_help = r#"## Examples
+    #[command(after_long_help = r#"<!-- demo: wt-merge.gif 1600x900 -->
+
+## Examples
 
 Basic merge to main:
 

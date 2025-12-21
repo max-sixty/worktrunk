@@ -11,7 +11,7 @@ group = "Commands"
 <figure class="demo">
 <picture>
   <source srcset="/assets/wt-merge-dark.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/wt-merge.gif" alt="wt merge demo showing squash, rebase, and push" width="1600" height="900">
+  <img src="/assets/wt-merge.gif" alt="wt merge demo" width="1600" height="900">
 </picture>
 </figure>
 
