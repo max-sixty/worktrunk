@@ -619,7 +619,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
 
 /// Create a temporary file for directive output.
 ///
-/// The shell wrapper sets WT_DIRECTIVE_FILE to a temp file before running wt.
+/// The shell wrapper sets WORKTRUNK_DIRECTIVE_FILE to a temp file before running wt.
 /// Use `configure_directive_file()` to set this on a Command for testing.
 ///
 /// Returns a tuple of (path, guard). The guard must be kept alive for the duration
@@ -639,11 +639,11 @@ pub fn directive_file() -> (PathBuf, tempfile::TempPath) {
 
 /// Configure a Command to use directive file mode.
 ///
-/// Sets the WT_DIRECTIVE_FILE environment variable to the given path.
+/// Sets the WORKTRUNK_DIRECTIVE_FILE environment variable to the given path.
 /// The wt binary will write shell directives (like cd) to this file instead of
 /// executing them directly.
 pub fn configure_directive_file(cmd: &mut Command, path: &Path) {
-    cmd.env("WT_DIRECTIVE_FILE", path);
+    cmd.env("WORKTRUNK_DIRECTIVE_FILE", path);
 }
 
 /// Configure a PTY CommandBuilder with isolated environment for testing.

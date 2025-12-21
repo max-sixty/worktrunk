@@ -195,10 +195,10 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 }
 
 // --- Directive Mode Tests ---
-// Note: With the new WT_DIRECTIVE_FILE architecture, data output (like statusline)
+// Note: With the new WORKTRUNK_DIRECTIVE_FILE architecture, data output (like statusline)
 // still goes to stdout. The directive file is only used for shell directives like
 // `cd '/path'`. So this test is no longer needed - statusline behavior is the same
-// regardless of whether WT_DIRECTIVE_FILE is set.
+// regardless of whether WORKTRUNK_DIRECTIVE_FILE is set.
 
 // --- Branch Display Tests ---
 

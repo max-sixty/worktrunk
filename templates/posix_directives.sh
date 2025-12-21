@@ -1,11 +1,11 @@
 # Execute wt command with file-based directive passing.
-# Creates a temp file, passes path via WT_DIRECTIVE_FILE, sources it after.
+# Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, sources it after.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 wt_exec() {
     local directive_file exit_code=0
     directive_file="$(mktemp)"
 
-    WT_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-{{ cmd }}}" "$@" || exit_code=$?
+    WORKTRUNK_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-{{ cmd }}}" "$@" || exit_code=$?
 
     if [[ -s "$directive_file" ]]; then
         source "$directive_file"

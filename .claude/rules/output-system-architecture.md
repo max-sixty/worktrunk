@@ -5,11 +5,11 @@
 Worktrunk uses file-based directive passing for shell integration:
 
 1. Shell wrapper creates a temp file via `mktemp`
-2. Shell wrapper sets `WT_DIRECTIVE_FILE` env var to the file path
+2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE` env var to the file path
 3. wt writes shell commands (like `cd '/path'`) to that file
 4. Shell wrapper sources the file after wt exits
 
-When `WT_DIRECTIVE_FILE` is not set (direct binary call), commands execute
+When `WORKTRUNK_DIRECTIVE_FILE` is not set (direct binary call), commands execute
 directly and shell integration hints are shown.
 
 ## The Cardinal Rule: Never Check Mode in Command Code
@@ -68,7 +68,7 @@ For the complete API, see `src/output/global.rs` and `src/styling/constants.rs`.
 
 ## Security: Protecting the Directive File
 
-The `WT_DIRECTIVE_FILE` environment variable is automatically removed from all
+The `WORKTRUNK_DIRECTIVE_FILE` environment variable is automatically removed from all
 spawned subprocesses. This prevents hooks from discovering and writing to the
 directive file.
 

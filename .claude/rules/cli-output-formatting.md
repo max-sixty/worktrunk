@@ -262,7 +262,7 @@ is for status messages about the operation. This separation allows piping
 - **stdout**: Primary output (table data, JSON, statusline)
 - **stderr**: Status messages (progress, success, errors, hints, warnings)
 
-Shell integration writes directives (cd, exec) to `WT_DIRECTIVE_FILE`, keeping
+Shell integration writes directives (cd, exec) to `WORKTRUNK_DIRECTIVE_FILE`, keeping
 stdout completely free for data.
 
 Use the output system (`output::print()` with message formatting functions).

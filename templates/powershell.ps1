@@ -28,14 +28,14 @@ if (Get-Command {{ cmd }} -ErrorAction SilentlyContinue) {
         $directiveFile = [System.IO.Path]::GetTempFileName()
 
         try {
-            # Run wt with WT_DIRECTIVE_FILE env var
+            # Run wt with WORKTRUNK_DIRECTIVE_FILE env var
             # stdout and stderr both go to console normally
-            $env:WT_DIRECTIVE_FILE = $directiveFile
+            $env:WORKTRUNK_DIRECTIVE_FILE = $directiveFile
             & $wtBin @Arguments
             $exitCode = $LASTEXITCODE
         }
         finally {
-            Remove-Item Env:\WT_DIRECTIVE_FILE -ErrorAction SilentlyContinue
+            Remove-Item Env:\WORKTRUNK_DIRECTIVE_FILE -ErrorAction SilentlyContinue
         }
 
         # Execute the directive script if it has content

@@ -7,12 +7,12 @@
 //!
 //! Uses a simple global approach:
 //! - `OnceLock<Mutex<OutputState>>` stores the directive file path and accumulated state
-//! - If `WT_DIRECTIVE_FILE` env var is set, directives are written to that file
+//! - If `WORKTRUNK_DIRECTIVE_FILE` env var is set, directives are written to that file
 //! - Otherwise, commands execute directly
 //!
 //! # Shell Integration
 //!
-//! When `WT_DIRECTIVE_FILE` is set (by the shell wrapper), wt writes shell commands
+//! When `WORKTRUNK_DIRECTIVE_FILE` is set (by the shell wrapper), wt writes shell commands
 //! (like `cd '/path'`) to that file. The shell wrapper sources the file after wt exits.
 //! This allows the parent shell to change directory.
 //!
@@ -51,7 +51,7 @@ static OUTPUT_STATE: OnceLock<Mutex<OutputState>> = OnceLock::new();
 
 #[derive(Default)]
 struct OutputState {
-    /// Path to the directive file (from WT_DIRECTIVE_FILE env var)
+    /// Path to the directive file (from WORKTRUNK_DIRECTIVE_FILE env var)
     /// If None, we're in interactive mode (no shell wrapper)
     directive_file: Option<PathBuf>,
     /// Buffered target directory for execute() in interactive mode
@@ -60,7 +60,7 @@ struct OutputState {
 
 /// Get or lazily initialize the global output state.
 ///
-/// Reads `WT_DIRECTIVE_FILE` from environment on first access.
+/// Reads `WORKTRUNK_DIRECTIVE_FILE` from environment on first access.
 /// Empty or whitespace-only strings are treated as "not set" to handle edge cases.
 fn get_state() -> &'static Mutex<OutputState> {
     OUTPUT_STATE.get_or_init(|| {
@@ -132,7 +132,7 @@ pub fn blank() -> io::Result<()> {
 /// Emit structured data output without emoji decoration
 ///
 /// Used for JSON, prompts, statuslines, and other pipeable data. Always writes to stdout.
-/// With WT_DIRECTIVE_FILE, stdout is never used for directives, so it's always
+/// With WORKTRUNK_DIRECTIVE_FILE, stdout is never used for directives, so it's always
 /// available for data output.
 ///
 /// Example:
@@ -181,7 +181,7 @@ fn write_directive(directive: &str) -> io::Result<()> {
 
 /// Request directory change (for shell integration)
 ///
-/// If shell integration is active (WT_DIRECTIVE_FILE set), writes `cd` command to the file.
+/// If shell integration is active (WORKTRUNK_DIRECTIVE_FILE set), writes `cd` command to the file.
 /// Also stores path for execute() to use as working directory.
 pub fn change_directory(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();

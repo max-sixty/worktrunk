@@ -201,14 +201,14 @@ fn find_git_bash() -> Option<PathBuf> {
 
 /// Environment variable removed from spawned subprocesses for security.
 /// Hooks and other child processes should not be able to write to the directive file.
-pub const DIRECTIVE_FILE_ENV_VAR: &str = "WT_DIRECTIVE_FILE";
+pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 
 /// Execute a command with timing and debug logging.
 ///
 /// This is the **only** way to run external commands in worktrunk. All command execution
 /// must go through this function to ensure consistent logging and tracing.
 ///
-/// The `WT_DIRECTIVE_FILE` environment variable is automatically removed from spawned
+/// The `WORKTRUNK_DIRECTIVE_FILE` environment variable is automatically removed from spawned
 /// processes to prevent hooks from discovering and writing to the directive file.
 ///
 /// ```text
@@ -222,7 +222,7 @@ pub const DIRECTIVE_FILE_ENV_VAR: &str = "WT_DIRECTIVE_FILE";
 pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::process::Output> {
     use std::time::Instant;
 
-    // Remove WT_DIRECTIVE_FILE to prevent hooks from writing to it
+    // Remove WORKTRUNK_DIRECTIVE_FILE to prevent hooks from writing to it
     cmd.env_remove(DIRECTIVE_FILE_ENV_VAR);
 
     // Build command string for logging

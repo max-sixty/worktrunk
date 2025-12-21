@@ -3,7 +3,7 @@
 # Only initialize if {{ cmd }} is available (in PATH or via WORKTRUNK_BIN)
 if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
     # Execute wt command with file-based directive passing.
-    # Creates a temp file, passes path via WT_DIRECTIVE_FILE, evals it after.
+    # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, evals it after.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     #
     # Note: We use `eval (cat ... | string collect)` instead of `source` because:
@@ -14,7 +14,7 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
         test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd }})
 
         set -l directive_file (mktemp)
-        WT_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $argv
+        WORKTRUNK_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $argv
         set -l exit_code $status
 
         if test -s "$directive_file"
@@ -46,7 +46,7 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
                 return $status
             end
             set -l directive_file (mktemp)
-            WT_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
+            WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
             set -l exit_code $status
             if test -s "$directive_file"
                 eval (cat "$directive_file" | string collect)

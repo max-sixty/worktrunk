@@ -36,7 +36,7 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
             fi
             local directive_file exit_code=0
             directive_file="$(mktemp)"
-            WT_DIRECTIVE_FILE="$directive_file" cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
+            WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
             if [[ -s "$directive_file" ]]; then
                 source "$directive_file"
                 if [[ $exit_code -eq 0 ]]; then

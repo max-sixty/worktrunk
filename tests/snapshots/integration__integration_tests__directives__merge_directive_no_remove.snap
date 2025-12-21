@@ -24,7 +24,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WT_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpGEw7bA/directives
+    WORKTRUNK_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpG9gkyL
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true

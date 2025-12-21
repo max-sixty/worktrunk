@@ -36,13 +36,13 @@ exit_code: 0
 if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 
 # Execute wt command with file-based directive passing.
-# Creates a temp file, passes path via WT_DIRECTIVE_FILE, sources it after.
+# Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, sources it after.
 # WORKTRUNK_BIN can override the binary path (for testing dev builds).
 wt_exec() {
     local directive_file exit_code=0
     directive_file="$(mktemp)"
 
-    WT_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-wt}" "$@" || exit_code=$?
+    WORKTRUNK_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-wt}" "$@" || exit_code=$?
 
     if [[ -s "$directive_file" ]]; then
         source "$directive_file"
@@ -83,7 +83,7 @@ wt_exec() {
             fi
             local directive_file exit_code=0
             directive_file="$(mktemp)"
-            WT_DIRECTIVE_FILE="$directive_file" cargo run --bin wt --quiet -- "${args[@]}" || exit_code=$?
+            WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin wt --quiet -- "${args[@]}" || exit_code=$?
             if [[ -s "$directive_file" ]]; then
                 source "$directive_file"
                 if [[ $exit_code -eq 0 ]]; then

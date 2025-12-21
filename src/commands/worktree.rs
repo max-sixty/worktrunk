@@ -12,10 +12,10 @@
 //!
 //! # Solution: File-Based Directive Passing
 //!
-//! Shell wrappers create a temp file and set `WT_DIRECTIVE_FILE` to its path:
+//! Shell wrappers create a temp file and set `WORKTRUNK_DIRECTIVE_FILE` to its path:
 //!
 //! 1. Shell wrapper creates temp file via `mktemp`
-//! 2. Shell wrapper sets `WT_DIRECTIVE_FILE=/path/to/temp`
+//! 2. Shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE=/path/to/temp`
 //! 3. wt binary writes commands like `cd '/path'` to that file
 //! 4. Shell wrapper sources the file after wt exits
 //!
@@ -46,7 +46,7 @@
 //!
 //! When shell integration is enabled (`eval "$(wt config shell init bash)"`), the shell wrapper:
 //!
-//! 1. Creates a temp file and sets `WT_DIRECTIVE_FILE` to its path
+//! 1. Creates a temp file and sets `WORKTRUNK_DIRECTIVE_FILE` to its path
 //! 2. Runs the wt binary (which writes `cd '/path'` to the temp file)
 //! 3. Sources the temp file after wt exits
 //!

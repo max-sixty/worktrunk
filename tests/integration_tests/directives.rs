@@ -8,7 +8,7 @@ use rstest::rstest;
 // ============================================================================
 // Directive File Tests
 // ============================================================================
-// These tests verify that WT_DIRECTIVE_FILE env var causes directives to be
+// These tests verify that WORKTRUNK_DIRECTIVE_FILE env var causes directives to be
 // written to the file. The shell wrapper sources this file after wt exits.
 
 /// Test that switch with directive file writes cd command to file
@@ -97,7 +97,7 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 }
 
 // ============================================================================
-// Non-Directive Mode Tests (no WT_DIRECTIVE_FILE)
+// Non-Directive Mode Tests (no WORKTRUNK_DIRECTIVE_FILE)
 // ============================================================================
 
 /// Test switch without directive file (error case - branch not found)

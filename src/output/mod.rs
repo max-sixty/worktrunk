@@ -17,7 +17,7 @@
 //!
 //! ## Shell Integration
 //!
-//! When `WT_DIRECTIVE_FILE` env var is set (by shell wrapper):
+//! When `WORKTRUNK_DIRECTIVE_FILE` env var is set (by shell wrapper):
 //! - Shell commands (cd, exec) are written to that file
 //! - Shell wrapper sources the file after wt exits
 //! - This allows the parent shell to change directory

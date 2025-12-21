@@ -2,7 +2,7 @@
 //!
 //! # Attack Surface Analysis
 //!
-//! Worktrunk uses a file-based directive protocol for shell integration. When `WT_DIRECTIVE_FILE`
+//! Worktrunk uses a file-based directive protocol for shell integration. When `WORKTRUNK_DIRECTIVE_FILE`
 //! env var is set (pointing to a temp file), the wt binary:
 //! - Streams all user-visible output (progress, errors, hints) to stderr in real-time
 //! - Writes shell directives (cd commands, exec commands) to the directive file
@@ -10,7 +10,7 @@
 //! The shell wrapper sources the directive file after wt exits:
 //! ```bash
 //! directive_file="$(mktemp)"
-//! WT_DIRECTIVE_FILE="$directive_file" wt ... || exit_code=$?
+//! WORKTRUNK_DIRECTIVE_FILE="$directive_file" wt ... || exit_code=$?
 //! source "$directive_file"
 //! ```
 //!
@@ -32,7 +32,7 @@
 //! ```bash
 //! # Create directory with malicious name
 //! mkdir "test'; rm -rf /; echo '"
-//! WT_DIRECTIVE_FILE=/tmp/d wt switch branch  # If cd emits: cd 'test'; rm -rf /; echo ''
+//! WORKTRUNK_DIRECTIVE_FILE=/tmp/d wt switch branch  # If cd emits: cd 'test'; rm -rf /; echo ''
 //! ```
 //!
 //! **Protection:** All paths are escaped using `replace('\'', "'\\''")` pattern,
