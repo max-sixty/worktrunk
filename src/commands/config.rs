@@ -597,6 +597,73 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
     Ok(cleared)
 }
 
+/// Render the LOG FILES section (heading + table or "(none)") into the output buffer
+fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    let git_common_dir = repo.git_common_dir()?;
+    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir_display = format_path_for_display(&log_dir);
+
+    writeln!(
+        out,
+        "{}",
+        format_heading("LOG FILES", Some(&format!("@ {log_dir_display}")))
+    )?;
+
+    if !log_dir.exists() {
+        write!(out, "{}", format_with_gutter("(none)", "", None))?;
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
+        .collect();
+
+    if entries.is_empty() {
+        write!(out, "{}", format_with_gutter("(none)", "", None))?;
+        return Ok(());
+    }
+
+    // Sort by modification time (newest first), then by name for stability
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time
+            .cmp(&a_time)
+            .then_with(|| a.file_name().cmp(&b.file_name()))
+    });
+
+    // Build table
+    let mut table = String::from("| File | Size | Age |\n");
+    table.push_str("|------|------|-----|\n");
+
+    for entry in entries {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let meta = entry.metadata().ok();
+
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let size_str = if size < 1024 {
+            format!("{size}B")
+        } else {
+            format!("{}K", size / 1024)
+        };
+
+        let age = meta
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| format_relative_time_short(d.as_secs() as i64))
+            .unwrap_or_else(|| "?".to_string());
+
+        table.push_str(&format!("| {name} | {size_str} | {age} |\n"));
+    }
+
+    let rendered = crate::md_help::render_markdown_table(&table);
+    write!(out, "{}", rendered.trim_end())?;
+
+    Ok(())
+}
+
 /// Handle the state get command
 pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> anyhow::Result<()> {
     use super::list::ci_status::PrStatus;
@@ -658,63 +725,15 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             let status_str: &'static str = ci_status.into();
             crate::output::data(status_str)?;
         }
+        // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
-            let git_common_dir = repo.git_common_dir()?;
-            let log_dir = git_common_dir.join("wt-logs");
+            let mut out = String::new();
+            render_log_files(&mut out, &repo)?;
 
-            if !log_dir.exists() {
-                crate::output::print(info_message("No logs"))?;
-                return Ok(());
+            // Display through pager (fall back to stderr if pager unavailable)
+            if show_help_in_pager(&out).is_err() {
+                worktrunk::styling::eprintln!("{}", out);
             }
-
-            let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log")
-                })
-                .collect();
-
-            if entries.is_empty() {
-                crate::output::print(info_message("No logs"))?;
-                return Ok(());
-            }
-
-            // Sort by modification time (newest first), then by name for stability
-            entries.sort_by(|a, b| {
-                let a_time = a.metadata().and_then(|m| m.modified()).ok();
-                let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time
-                    .cmp(&a_time)
-                    .then_with(|| a.file_name().cmp(&b.file_name()))
-            });
-
-            // Build table
-            let mut table = String::from("| File | Size | Age |\n");
-            table.push_str("|------|------|-----|\n");
-
-            for entry in entries {
-                let path = entry.path();
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let meta = entry.metadata().ok();
-
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let size_str = if size < 1024 {
-                    format!("{size}B")
-                } else {
-                    format!("{}K", size / 1024)
-                };
-
-                let age = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| format_relative_time_short(d.as_secs() as i64))
-                    .unwrap_or_else(|| "?".to_string());
-
-                table.push_str(&format!("| {name} | {size_str} | {age} |\n"));
-            }
-
-            let rendered = crate::md_help::render_markdown_table(&table);
-            crate::output::table(rendered.trim_end())?;
         }
         _ => {
             anyhow::bail!(
@@ -1124,63 +1143,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
 
     // Show log files
-    let git_common_dir = repo.git_common_dir()?;
-    let log_dir = git_common_dir.join("wt-logs");
-    writeln!(
-        out,
-        "{}",
-        format_heading("LOG FILES", Some("@ .git/wt-logs"))
-    )?;
-
-    if !log_dir.exists() {
-        write!(out, "{}", format_with_gutter("(none)", "", None))?;
-    } else {
-        let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "log"))
-            .collect();
-
-        if entries.is_empty() {
-            write!(out, "{}", format_with_gutter("(none)", "", None))?;
-        } else {
-            // Sort by modification time (newest first), then by name for stability
-            entries.sort_by(|a, b| {
-                let a_time = a.metadata().and_then(|m| m.modified()).ok();
-                let b_time = b.metadata().and_then(|m| m.modified()).ok();
-                b_time
-                    .cmp(&a_time)
-                    .then_with(|| a.file_name().cmp(&b.file_name()))
-            });
-
-            // Build table
-            let mut table = String::from("| File | Size | Age |\n");
-            table.push_str("|------|------|-----|\n");
-
-            for entry in entries {
-                let path = entry.path();
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let meta = entry.metadata().ok();
-
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                let size_str = if size < 1024 {
-                    format!("{size}B")
-                } else {
-                    format!("{}K", size / 1024)
-                };
-
-                let age = meta
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| format_relative_time_short(d.as_secs() as i64))
-                    .unwrap_or_else(|| "?".to_string());
-
-                table.push_str(&format!("| {name} | {size_str} | {age} |\n"));
-            }
-
-            let rendered = crate::md_help::render_markdown_table(&table);
-            write!(out, "{}", rendered.trim_end())?;
-        }
-    }
+    render_log_files(&mut out, repo)?;
 
     // Display through pager (fall back to stderr if pager unavailable)
     if let Err(e) = show_help_in_pager(&out) {

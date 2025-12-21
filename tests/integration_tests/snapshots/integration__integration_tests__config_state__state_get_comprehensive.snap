@@ -1,6 +1,6 @@
 ---
 source: tests/integration_tests/config_state.rs
-expression: "String::from_utf8_lossy(&output.stderr)"
+expression: "normalize_log_path(&String::from_utf8_lossy(&output.stderr))"
 ---
 [36mDEFAULT BRANCH[39m
 [107m [0m main
@@ -19,7 +19,7 @@ expression: "String::from_utf8_lossy(&output.stderr)"
  ─────── ────── ─── ──────── 
  feature passed now abc12345
 
-[36mLOG FILES[39m  @ .git/wt-logs
+[36mLOG FILES[39m  @ <PATH>
             File            Size  Age   
  ────────────────────────── ──── ────── 
  bugfix-remove.log          13B  future 
