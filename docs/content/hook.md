@@ -86,7 +86,7 @@ build = "cargo build --release"
 
 ### post-merge
 
-Runs after successful merge in the **main worktree**, **best-effort**. Failures are logged but don't abort.
+Runs after successful merge in the **worktree for the target branch** if it exists, otherwise the **main worktree**, **best-effort**. Failures are logged but don't abort.
 
 **Use cases**: Deployment, notifications, installing updated binaries.
 
@@ -402,12 +402,11 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
 
 ### How Approvals Work
 
-Commands from project hooks (`.config/wt.toml`) and LLM configuration require
-approval on first run. This prevents untrusted projects from running arbitrary
-commands.
+Commands from project hooks (`.config/wt.toml`) require approval on first run.
+This prevents untrusted projects from running arbitrary commands.
 
 **Approval flow:**
-1. Command is shown with expanded template variables
+1. Command is shown as a template (variables not expanded)
 2. User approves or denies
 3. Approved commands are saved to user config under `[projects."project-id"]`
 

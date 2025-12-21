@@ -99,7 +99,8 @@ stage = "all"    # "all" (default), "tracked", or "none"
 [merge]
 # These flags are on by default; set to false to disable
 squash = false  # Preserve individual commits (--no-squash)
-commit = false  # Skip committing uncommitted changes (--no-commit)
+commit = false  # Skip committing uncommitted changes (also disables squash)
+rebase = false  # Skip rebase (fails if not already rebased)
 remove = false  # Keep worktree after merge (--no-remove)
 verify = false  # Skip hooks (--no-verify)
 ```
@@ -318,7 +319,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 # List Command Defaults
 # Configure default behavior for `wt list`
 [list]
-full = false       # Show CI and `main` diffstat by default
+full = false       # Show CI and default-branch merge-base diffstat (`main…±` column) by default
 branches = false   # Include branches without worktrees by default
 remotes = false    # Include remote branches by default
 
@@ -330,13 +331,14 @@ stage = "all"          # What to stage: "all", "tracked", or "none"
 # Note: `stage` defaults from [commit] section above
 [merge]
 squash = true          # Squash commits when merging
-commit = true          # Commit, squash, and rebase during merge
+commit = true          # Commit uncommitted changes during merge (disables squash when false)
+rebase = true          # Rebase onto target before merging
 remove = true          # Remove worktree after merge
 verify = true          # Run project hooks
 
 # Approved Commands
-# Commands approved for automatic execution after switching worktrees
-# Auto-populated when you use: wt switch --execute "command" --force
+# Commands approved for project hooks in this repo
+# Auto-populated when you approve hooks (prompt on first run) or run: wt hook approvals add
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 
@@ -478,7 +480,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 #   {{ repo_root }} - Absolute path to the repository root
 #
 # Merge-related hooks also support:
-#   {{ target }}    - Target branch for the merge (e.g., "main")
+#   {{ target }}    - Target branch for the merge (e.g., "main" default branch)
 #
 # Filters:
 #   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
@@ -542,7 +544,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # build = "cargo build --release"
 
 # Post-Merge Hook
-# Runs SEQUENTIALLY in the main worktree after successful merge (blocking)
+# Runs SEQUENTIALLY in the worktree for the target branch if it exists, otherwise the main worktree (blocking)
 # Runs after push and cleanup complete
 # Use for: updating production builds, notifications, cleanup
 #
@@ -622,7 +624,7 @@ Use `wt config show` to view file-based configuration.
 
 - **default-branch**: The repository's default branch (main, master, etc.)
 - **previous-branch**: Previous branch for `wt switch -`
-- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
+- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
 - **logs**: Background operation logs
 
@@ -765,7 +767,8 @@ Caches GitHub/GitLab CI status for display in [wt list](@/list.md#ci-status).
 | `running` | Checks in progress |
 | `failed` | Checks failed |
 | `conflicts` | PR has merge conflicts |
-| `noci` | No checks configured |
+| `no-ci` | No checks configured |
+| `error` | Fetch error (rate limit, network, auth) |
 
 See [wt list CI status](@/list.md#ci-status) for display symbols and colors.
 

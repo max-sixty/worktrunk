@@ -56,8 +56,8 @@ Custom emoji markers show agent state in `wt list`. The Claude Code plugin sets 
 Set status manually for any workflow:
 
 ```bash
-wt config var set marker "🚧"                   # Current branch
-wt config var set marker "✅" --branch feature  # Specific branch
+wt config state marker set "🚧"                   # Current branch
+wt config state marker set "✅" --branch feature  # Specific branch
 git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
@@ -103,7 +103,7 @@ wt remove @                              # Remove current worktree
 
 ## Stacked branches
 
-Branch from current HEAD instead of main:
+Branch from current HEAD instead of the default branch:
 
 ```bash
 wt switch --create feature-part2 --base=@

@@ -43,13 +43,13 @@ Branches delete automatically when merging them would add nothing. This works wi
 
 Worktrunk checks five conditions (in order of cost):
 
-1. **Same commit** — Branch HEAD equals main. Shows `_` in `wt list`.
+1. **Same commit** — Branch HEAD equals the default branch. Shows `_` in `wt list`.
 2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-Check 1 compares against main. Checks 2-5 compare against **target** — main, or origin/main when it's strictly ahead (catching branches merged remotely before pulling).
+Check 1 compares against the default branch. Checks 2-5 compare against **target** — the default branch, or its upstream (e.g., origin/<default>) when it's strictly ahead (catching branches merged remotely before pulling).
 
 Branches showing `_` or `⊂` are dimmed as safe to delete.
 
@@ -61,7 +61,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Shortcuts
 
-`@` (current), `-` (previous), `^` (main worktree). See [wt switch](@/switch.md#shortcuts).
+`@` (current), `-` (previous), `^` (default branch). See [wt switch](@/switch.md#shortcuts).
 
 ## See also
 

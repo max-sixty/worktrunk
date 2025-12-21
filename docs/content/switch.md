@@ -51,7 +51,7 @@ wt switch --create temp --no-verify      # Skip hooks
 
 ```bash
 wt switch -                      # Back to previous
-wt switch ^                      # Main worktree
+wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
 
@@ -60,7 +60,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
 - [wt select](@/select.md) — Interactive worktree selection
 - [wt list](@/list.md) — View all worktrees
 - [wt remove](@/remove.md) — Delete worktrees when done
-- [wt merge](@/merge.md) — Integrate changes back to main
+- [wt merge](@/merge.md) — Integrate changes back to the default branch
 
 ## Command reference
 
@@ -73,7 +73,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
   <span class=c>&lt;BRANCH&gt;</span>
           Branch or worktree name
 
-          Shortcuts: &#39;^&#39; (main), &#39;-&#39; (previous), &#39;@&#39; (current)
+          Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current)
 
   <span class=c>[EXECUTE_ARGS]...</span>
           Additional arguments for --execute command (after --)

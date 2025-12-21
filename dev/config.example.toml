@@ -47,7 +47,7 @@ worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 # List Command Defaults
 # Configure default behavior for `wt list`
 [list]
-full = false       # Show CI and `main` diffstat by default
+full = false       # Show CI and default-branch merge-base diffstat (`main…±` column) by default
 branches = false   # Include branches without worktrees by default
 remotes = false    # Include remote branches by default
 
@@ -59,13 +59,14 @@ stage = "all"          # What to stage: "all", "tracked", or "none"
 # Note: `stage` defaults from [commit] section above
 [merge]
 squash = true          # Squash commits when merging
-commit = true          # Commit, squash, and rebase during merge
+commit = true          # Commit uncommitted changes during merge (disables squash when false)
+rebase = true          # Rebase onto target before merging
 remove = true          # Remove worktree after merge
 verify = true          # Run project hooks
 
 # Approved Commands
-# Commands approved for automatic execution after switching worktrees
-# Auto-populated when you use: wt switch --execute "command" --force
+# Commands approved for project hooks in this repo
+# Auto-populated when you approve hooks (prompt on first run) or run: wt hook approvals add
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 

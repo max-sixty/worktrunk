@@ -42,14 +42,14 @@ $ claude plugin install worktrunk@worktrunk
 Set status markers manually for any workflow:
 
 ```bash
-$ wt config var set marker "🚧"                   # Current branch
-$ wt config var set marker "✅" --branch feature  # Specific branch
+$ wt config state marker set "🚧"                   # Current branch
+$ wt config state marker set "✅" --branch feature  # Specific branch
 $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Direct
 ```
 
 ## Statusline
 
-`wt list statusline --claude-code` outputs a single-line status for the Claude Code statusline. This fetches CI status from the network (1-2 seconds), making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
+`wt list statusline --claude-code` outputs a single-line status for the Claude Code statusline. This may fetch CI status from the network when the cache is stale (often ~1–2 seconds), making it suitable for async statuslines but too slow for synchronous shell prompts. If a faster version would be helpful, please [open an issue](https://github.com/max-sixty/worktrunk/issues).
 
 <code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  | Opus</code>
 

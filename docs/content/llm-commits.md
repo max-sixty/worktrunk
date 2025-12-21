@@ -67,7 +67,7 @@ These examples assume a feature worktree with changes to commit.
 
 ### wt merge
 
-Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to main:
+Squashes all changes (uncommitted + existing commits) into one commit with an LLM-generated message, then merges to the default branch:
 
 ```bash
 $ wt merge

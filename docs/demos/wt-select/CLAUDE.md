@@ -30,7 +30,7 @@ Key demonstration points:
 - **HEAD± column**: Large staged diff (+54), small unstaged (+8), none
 - **Status column**: Staged changes (+), unstaged (!), ahead/behind (↕)
 - **main↕ column**: Some branches ahead-only, some ahead-and-behind
-- **main…± column**: Meaningful commit diffs (small to 300+ lines)
+- **main…± column**: Meaningful merge-base diffstats (small to 300+ lines)
 
 ## How It Works
 

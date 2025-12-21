@@ -239,7 +239,7 @@ This expands during `--help-page` generation to:
 
 **Use cases:**
 - `wt config create` — Shows the actual config file templates (via `include_str!`)
-- `wt config var get` — Shows per-variable examples not in the parent
+- `wt config state marker` — Shows per-key examples not in the parent
 
 All AUTO-GENERATED markers use a consistent format with START and END tags:
 ```html

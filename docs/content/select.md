@@ -30,8 +30,8 @@ wt select
 Toggle between views with number keys:
 
 1. **HEAD±** — Diff of uncommitted changes
-2. **log** — Recent commits; commits already on main have dimmed hashes
-3. **main…±** — Diff of all changes vs main branch
+2. **log** — Recent commits; commits already on the default branch have dimmed hashes
+3. **main…±** — Diff of changes since the merge-base with the default branch
 
 ## Keybindings
 

@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt list --help-page` — edit cli.rs to update -->
 
-Show all worktrees with their status. The table includes uncommitted changes, divergence from main and remote, and optional CI status.
+Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
@@ -77,14 +77,16 @@ $ wt list --format=json
 | Branch | Branch name |
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
-| main↕ | Commits ahead/behind main |
-| main…± | Line diffs in commits ahead of main (`--full`) |
+| main↕ | Commits ahead/behind default branch |
+| main…± | Line diffs since the merge-base with the default branch (`--full`) |
 | Path | Worktree directory |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status (`--full`) |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
+
+Note: `main↕` and `main…±` refer to the default branch (header label stays `main` for compactness). `main…±` uses a merge-base (three-dot) diff.
 
 ### CI status
 
@@ -118,14 +120,14 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⚑` | Worktree path doesn't match branch name |
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
-| Main | `^` | Is the default branch |
-| | `✗` | Would conflict if merged to main |
-| | `_` | Same commit as main, clean |
-| | `–` | Same commit as main, uncommitted changes |
-| | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into main or target |
-| | `↕` | Diverged from main |
-| | `↑` | Ahead of main |
-| | `↓` | Behind main |
+| Default branch | `^` | Is the default branch |
+| | `✗` | Would conflict if merged to the default branch |
+| | `_` | Same commit as the default branch, clean |
+| | `–` | Same commit as the default branch, uncommitted changes |
+| | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or target |
+| | `↕` | Diverged from the default branch |
+| | `↑` | Ahead of the default branch |
+| | `↓` | Behind the default branch |
 | Remote | `\|` | In sync with remote |
 | | `⇅` | Diverged from remote |
 | | `⇡` | Ahead of remote |
@@ -147,7 +149,7 @@ wt list --format=json | jq '.[] | select(.working_tree.modified)'
 # Current worktree
 wt list --format=json | jq '.[] | select(.is_current)'
 
-# Branches ahead of main
+# Branches ahead of the default branch
 wt list --format=json | jq '.[] | select(.main.ahead > 0)'
 
 # Integrated branches (ready to clean up)
@@ -163,10 +165,10 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `kind` | string | `"worktree"` or `"branch"` |
 | `commit` | object | Commit info (see below) |
 | `working_tree` | object | Working tree state (see below) |
-| `main_state` | string | Relation to main (see below) |
+| `main_state` | string | Relation to the default branch (see below) |
 | `integration_reason` | string | Why branch is integrated (see below) |
 | `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"` (absent when clean) |
-| `main` | object | Relationship to main branch (see below, absent when is_main) |
+| `main` | object | Relationship to the default branch (see below, absent when is_main) |
 | `remote` | object | Tracking branch info (see below, absent when no tracking) |
 | `worktree` | object | Worktree metadata (see below) |
 | `is_main` | boolean | Is the main worktree |
@@ -195,15 +197,15 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `renamed` | boolean | Has renamed files |
 | `deleted` | boolean | Has deleted files |
 | `diff` | object | Lines changed vs HEAD: `{added, deleted}` |
-| `diff_vs_main` | object | Lines changed vs main: `{added, deleted}` |
+| `diff_vs_main` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### main object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ahead` | number | Commits ahead of main |
-| `behind` | number | Commits behind main |
-| `diff` | object | Lines changed vs main: `{added, deleted}` |
+| `ahead` | number | Commits ahead of the default branch |
+| `behind` | number | Commits behind the default branch |
+| `diff` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### remote object
 
@@ -232,6 +234,8 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `url` | string | URL to the PR/MR page |
 
 ### main_state values
+
+These values describe relation to the default branch.
 
 `"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
 
@@ -271,7 +275,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Include remote branches
 
       <b><span class=c>--full</span></b>
-          Show CI and <b>main</b> diffstat
+          Show CI and default-branch merge-base diffstat (<b>main…±</b> column)
 
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info

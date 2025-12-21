@@ -14,7 +14,7 @@ Worktrunk executes commands in three contexts:
 2. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
 3. **--execute flag** — Commands you provide explicitly
 
-Commands from project hooks and LLM configuration require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
+Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
 
 ### Example approval prompt
 

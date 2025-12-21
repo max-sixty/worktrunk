@@ -12,7 +12,7 @@
 #   {{ repo_root }} - Absolute path to the repository root
 #
 # Merge-related hooks also support:
-#   {{ target }}    - Target branch for the merge (e.g., "main")
+#   {{ target }}    - Target branch for the merge (e.g., "main" default branch)
 #
 # Filters:
 #   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
@@ -76,7 +76,7 @@
 # build = "cargo build --release"
 
 # Post-Merge Hook
-# Runs SEQUENTIALLY in the main worktree after successful merge (blocking)
+# Runs SEQUENTIALLY in the worktree for the target branch if it exists, otherwise the main worktree (blocking)
 # Runs after push and cleanup complete
 # Use for: updating production builds, notifications, cleanup
 #

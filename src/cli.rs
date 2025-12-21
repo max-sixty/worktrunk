@@ -135,7 +135,7 @@ Getting started
 
   wt switch --create feature    Create worktree and branch
   wt switch feature             Switch to existing worktree
-  wt merge                      Squash, rebase, and merge to main
+  wt merge                      Squash, rebase, and merge to the default branch
 
 Run `wt config shell` to set up directory switching.
 
@@ -382,7 +382,7 @@ Use `wt config show` to view file-based configuration.
 
 - **default-branch**: The repository's default branch (main, master, etc.)
 - **previous-branch**: Previous branch for `wt switch -`
-- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, noci)
+- **ci-status**: CI/PR status for a branch (passed, running, failed, conflicts, no-ci, error)
 - **marker**: Custom status marker for a branch (shown in `wt list`)
 - **logs**: Background operation logs
 
@@ -514,7 +514,8 @@ Without a subcommand, runs `get`."#
 | `running` | Checks in progress |
 | `failed` | Checks failed |
 | `conflicts` | PR has merge conflicts |
-| `noci` | No checks configured |
+| `no-ci` | No checks configured |
+| `error` | Fetch error (rate limit, network, auth) |
 
 See [wt list CI status](@/list.md#ci-status) for display symbols and colors.
 
@@ -1083,12 +1084,11 @@ pub enum HookCommand {
     /// Manage command approvals
     #[command(after_long_help = r#"## How Approvals Work
 
-Commands from project hooks (`.config/wt.toml`) and LLM configuration require
-approval on first run. This prevents untrusted projects from running arbitrary
-commands.
+Commands from project hooks (`.config/wt.toml`) require approval on first run.
+This prevents untrusted projects from running arbitrary commands.
 
 **Approval flow:**
-1. Command is shown with expanded template variables
+1. Command is shown as a template (variables not expanded)
 2. User approves or denies
 3. Approved commands are saved to user config under `[projects."project-id"]`
 
@@ -1235,7 +1235,8 @@ stage = "all"    # "all" (default), "tracked", or "none"
 [merge]
 # These flags are on by default; set to false to disable
 squash = false  # Preserve individual commits (--no-squash)
-commit = false  # Skip committing uncommitted changes (--no-commit)
+commit = false  # Skip committing uncommitted changes (also disables squash)
+rebase = false  # Skip rebase (fails if not already rebased)
 remove = false  # Keep worktree after merge (--no-remove)
 verify = false  # Skip hooks (--no-verify)
 ```
@@ -1408,7 +1409,7 @@ wt step push
 - `commit` — Stage and commit with [LLM-generated message](@/llm-commits.md)
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
-- `push` — Push to target branch (default: main)
+- `push` — Push to target branch (defaults to the default branch)
 - `for-each` — [experimental] Run a command in every worktree
 
 ## See also
@@ -1505,7 +1506,7 @@ build = "cargo build --release"
 
 ### post-merge
 
-Runs after successful merge in the **main worktree**, **best-effort**. Failures are logged but don't abort.
+Runs after successful merge in the **worktree for the target branch** if it exists, otherwise the **main worktree**, **best-effort**. Failures are logged but don't abort.
 
 **Use cases**: Deployment, notifications, installing updated binaries.
 
@@ -1815,8 +1816,8 @@ wt select
 Toggle between views with number keys:
 
 1. **HEAD±** — Diff of uncommitted changes
-2. **log** — Recent commits; commits already on main have dimmed hashes
-3. **main…±** — Diff of all changes vs main branch
+2. **log** — Recent commits; commits already on the default branch have dimmed hashes
+3. **main…±** — Diff of changes since the merge-base with the default branch
 
 ## Keybindings
 
@@ -1842,7 +1843,7 @@ Branches without worktrees are included — selecting one creates a worktree. (`
 
     /// List worktrees and optionally branches
     #[command(
-        after_long_help = r#"Show all worktrees with their status. The table includes uncommitted changes, divergence from main and remote, and optional CI status.
+        after_long_help = r#"Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
@@ -1882,14 +1883,16 @@ $ wt list --format=json
 | Branch | Branch name |
 | Status | Compact symbols (see below) |
 | HEAD± | Uncommitted changes: +added -deleted lines |
-| main↕ | Commits ahead/behind main |
-| main…± | Line diffs in commits ahead of main (`--full`) |
+| main↕ | Commits ahead/behind default branch |
+| main…± | Line diffs since the merge-base with the default branch (`--full`) |
 | Path | Worktree directory |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | Pipeline status (`--full`) |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
 | Message | Last commit message (truncated) |
+
+Note: `main↕` and `main…±` refer to the default branch (header label stays `main` for compactness). `main…±` uses a merge-base (three-dot) diff.
 
 ### CI status
 
@@ -1923,14 +1926,14 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⚑` | Worktree path doesn't match branch name |
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
-| Main | `^` | Is the default branch |
-| | `✗` | Would conflict if merged to main |
-| | `_` | Same commit as main, clean |
-| | `–` | Same commit as main, uncommitted changes |
-| | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into main or target |
-| | `↕` | Diverged from main |
-| | `↑` | Ahead of main |
-| | `↓` | Behind main |
+| Default branch | `^` | Is the default branch |
+| | `✗` | Would conflict if merged to the default branch |
+| | `_` | Same commit as the default branch, clean |
+| | `–` | Same commit as the default branch, uncommitted changes |
+| | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or target |
+| | `↕` | Diverged from the default branch |
+| | `↑` | Ahead of the default branch |
+| | `↓` | Behind the default branch |
 | Remote | `\|` | In sync with remote |
 | | `⇅` | Diverged from remote |
 | | `⇡` | Ahead of remote |
@@ -1952,7 +1955,7 @@ wt list --format=json | jq '.[] | select(.working_tree.modified)'
 # Current worktree
 wt list --format=json | jq '.[] | select(.is_current)'
 
-# Branches ahead of main
+# Branches ahead of the default branch
 wt list --format=json | jq '.[] | select(.main.ahead > 0)'
 
 # Integrated branches (ready to clean up)
@@ -1968,10 +1971,10 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `kind` | string | `"worktree"` or `"branch"` |
 | `commit` | object | Commit info (see below) |
 | `working_tree` | object | Working tree state (see below) |
-| `main_state` | string | Relation to main (see below) |
+| `main_state` | string | Relation to the default branch (see below) |
 | `integration_reason` | string | Why branch is integrated (see below) |
 | `operation_state` | string | `"conflicts"`, `"rebase"`, or `"merge"` (absent when clean) |
-| `main` | object | Relationship to main branch (see below, absent when is_main) |
+| `main` | object | Relationship to the default branch (see below, absent when is_main) |
 | `remote` | object | Tracking branch info (see below, absent when no tracking) |
 | `worktree` | object | Worktree metadata (see below) |
 | `is_main` | boolean | Is the main worktree |
@@ -2000,15 +2003,15 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `renamed` | boolean | Has renamed files |
 | `deleted` | boolean | Has deleted files |
 | `diff` | object | Lines changed vs HEAD: `{added, deleted}` |
-| `diff_vs_main` | object | Lines changed vs main: `{added, deleted}` |
+| `diff_vs_main` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### main object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ahead` | number | Commits ahead of main |
-| `behind` | number | Commits behind main |
-| `diff` | object | Lines changed vs main: `{added, deleted}` |
+| `ahead` | number | Commits ahead of the default branch |
+| `behind` | number | Commits behind the default branch |
+| `diff` | object | Lines changed vs the default branch: `{added, deleted}` |
 
 ### remote object
 
@@ -2037,6 +2040,8 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `url` | string | URL to the PR/MR page |
 
 ### main_state values
+
+These values describe relation to the default branch.
 
 `"is_main"` `"would_conflict"` `"empty"` `"same_commit"` `"integrated"` `"diverged"` `"ahead"` `"behind"`
 
@@ -2074,7 +2079,7 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
         #[arg(long)]
         remotes: bool,
 
-        /// Show CI and `main` diffstat
+        /// Show CI and default-branch merge-base diffstat (`main…±` column)
         #[arg(long)]
         full: bool,
 
@@ -2135,7 +2140,7 @@ wt switch --create temp --no-verify      # Skip hooks
 
 ```console
 wt switch -                      # Back to previous
-wt switch ^                      # Main worktree
+wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
 
@@ -2144,13 +2149,13 @@ wt switch --create fix --base=@  # Branch from current HEAD
 - [wt select](@/select.md) — Interactive worktree selection
 - [wt list](@/list.md) — View all worktrees
 - [wt remove](@/remove.md) — Delete worktrees when done
-- [wt merge](@/merge.md) — Integrate changes back to main
+- [wt merge](@/merge.md) — Integrate changes back to the default branch
 "#
     )]
     Switch {
         /// Branch or worktree name
         ///
-        /// Shortcuts: '^' (main), '-' (previous), '@' (current)
+        /// Shortcuts: '^' (default branch), '-' (previous), '@' (current)
         #[arg(add = crate::completion::worktree_branch_completer())]
         branch: String,
 
@@ -2240,13 +2245,13 @@ Branches delete automatically when merging them would add nothing. This works wi
 
 Worktrunk checks five conditions (in order of cost):
 
-1. **Same commit** — Branch HEAD equals main. Shows `_` in `wt list`.
+1. **Same commit** — Branch HEAD equals the default branch. Shows `_` in `wt list`.
 2. **Ancestor** — Branch is in target's history (fast-forward or rebase case). Shows `⊂`.
 3. **No added changes** — Three-dot diff (`target...branch`) is empty. Shows `⊂`.
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-Check 1 compares against main. Checks 2-5 compare against **target** — main, or origin/main when it's strictly ahead (catching branches merged remotely before pulling).
+Check 1 compares against the default branch. Checks 2-5 compare against **target** — the default branch, or its upstream (e.g., origin/<default>) when it's strictly ahead (catching branches merged remotely before pulling).
 
 Branches showing `_` or `⊂` are dimmed as safe to delete.
 
@@ -2258,7 +2263,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Shortcuts
 
-`@` (current), `-` (previous), `^` (main worktree). See [wt switch](@/switch.md#shortcuts).
+`@` (current), `-` (previous), `^` (default branch). See [wt switch](@/switch.md#shortcuts).
 
 ## See also
 
@@ -2299,7 +2304,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Examples
 
-Basic merge to main:
+Basic merge to the default branch:
 
 ```console
 wt merge
@@ -2323,7 +2328,7 @@ Preserve commit history (no squash):
 wt merge --no-squash
 ```
 
-Skip git operations, only run hooks and push:
+Skip committing/squashing (rebase still runs unless --no-rebase):
 
 ```console
 wt merge --no-commit
@@ -2341,7 +2346,7 @@ wt merge --no-commit
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
 
-Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and merge. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless you pass `--no-rebase`. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 
 ## Local CI
 
@@ -2349,7 +2354,7 @@ For personal projects, pre-merge hooks open up the possibility of a workflow wit
 
 Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
 
-The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to main and the worktree cleans up.
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
 [pre-merge]
