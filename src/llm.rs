@@ -282,7 +282,9 @@ fn execute_llm_command(command: &str, args: &[String], prompt: &str) -> anyhow::
 
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // Prevent subprocesses from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
 
     // Log execution
     log::debug!("$ {} {}", command, args.join(" "));

@@ -1235,54 +1235,6 @@ fn test_complete_version_flag_all_shells(repo: TestRepo) {
     }
 }
 
-/// Verify --internal never appears in completions across all supported shells.
-///
-/// The --internal flag is used by shell wrappers and should never be exposed to users.
-/// This is a regression test for a bug where global hidden args would appear in completions
-/// due to clap's "all hidden = all shown" behavior when completing `--`.
-#[rstest]
-fn test_complete_internal_flag_never_shown(repo: TestRepo) {
-    repo.commit("initial");
-
-    for shell in ["bash", "zsh", "fish"] {
-        // Test: wt --<cursor> - should NOT show --internal
-        let output = repo
-            .completion_cmd_for_shell(&["wt", "--"], shell)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{shell}: completion failed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            !stdout.contains("--internal"),
-            "{shell}: --internal should NEVER appear in completions, got:\n{stdout}"
-        );
-
-        // Test: wt config --<cursor> - should NOT show --internal on subcommands either
-        let output = repo
-            .completion_cmd_for_shell(&["wt", "config", "--"], shell)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{shell}: completion failed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            !stdout.contains("--internal"),
-            "{shell}: --internal should NEVER appear in subcommand completions, got:\n{stdout}"
-        );
-
-        // Test: wt -<cursor> - should NOT show --internal even with single dash
-        let output = repo
-            .completion_cmd_for_shell(&["wt", "-"], shell)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{shell}: completion failed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            !stdout.contains("--internal"),
-            "{shell}: --internal should NEVER appear in single-dash completions, got:\n{stdout}"
-        );
-    }
-}
-
 /// Verify single dash '-' shows both short AND long flags.
 ///
 /// When completing `wt -`, users should see both short flags like `-h` and long flags

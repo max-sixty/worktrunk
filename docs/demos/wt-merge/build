@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Build script for wt-merge demo GIF."""
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# Add docs/demos/ to path for shared library
+SCRIPT_DIR = Path(__file__).parent
+DEMOS_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(DEMOS_DIR))
+
+from shared import (
+    DemoEnv, run, git, render_tape, record_vhs, REAL_HOME, FIXTURES_DIR,
+    prepare_demo_repo, THEMES, format_theme_for_vhs,
+)
+
+REPO_ROOT = DEMOS_DIR.parent.parent
+OUT_DIR = SCRIPT_DIR / "out"
+TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
+TAPE_RENDERED = OUT_DIR / ".rendered.tape"
+STARSHIP_CONFIG = OUT_DIR / "starship.toml"
+
+# Output GIF paths for light and dark variants
+OUTPUT_GIFS = {
+    "light": OUT_DIR / "wt-merge.gif",
+    "dark": OUT_DIR / "wt-merge-dark.gif",
+}
+
+
+def prepare_repo(env: DemoEnv):
+    """Set up the demo repository using shared setup plus wt-specific config."""
+    # Use shared rich repo setup
+    prepare_demo_repo(env, REPO_ROOT)
+
+    # wt demo-specific: user config with llm commit generation
+    config_dir = env.home / ".config" / "worktrunk"
+    project_id = str(env.bare_remote).removesuffix(".git")
+    (config_dir / "config.toml").write_text(f'''[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+
+[projects."{project_id}"]
+approved-commands = ["cargo nextest run"]
+''')
+
+
+def record_text(demo_env: DemoEnv):
+    """Record text output by running demo commands."""
+    # Extract commands from tape
+    commands = []
+    for line in TAPE_TEMPLATE.read_text().splitlines():
+        if line.startswith("Type "):
+            cmd = line[5:].strip().strip('"').strip("'")
+            # Skip setup commands (fish uses 'set -gx' instead of 'export')
+            if not any(cmd.startswith(p) for p in ["set -gx", "export ", "eval ", "cd ", "clear", "exit", "starship init", "wt config shell init"]):
+                commands.append(cmd)
+
+    # Set up environment
+    env = os.environ.copy()
+    env.update({
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8",
+        "COLUMNS": "160",
+        "RUSTUP_HOME": str(REAL_HOME / ".rustup"),
+        "CARGO_HOME": str(REAL_HOME / ".cargo"),
+        "HOME": str(demo_env.home),
+        "PATH": f"{REPO_ROOT}/target/debug:{demo_env.home}/bin:{os.environ['PATH']}",
+        "STARSHIP_CONFIG": str(STARSHIP_CONFIG),
+        "STARSHIP_CACHE": str(demo_env.root / "starship-cache"),
+        "NO_COLOR": "1",
+        "CLICOLOR": "0",
+        "NEXTEST_STATUS_LEVEL": "none",
+        "NEXTEST_FINAL_STATUS_LEVEL": "flaky",
+        "NEXTEST_NO_FAIL_FAST": "1",
+    })
+
+    (demo_env.root / "starship-cache").mkdir(exist_ok=True)
+
+    # Run commands and capture output using fish with shell init
+    script = '''wt config shell init fish | source
+'''
+    for cmd in commands:
+        script += f'{cmd}\n'
+        if cmd.startswith("wt merge"):
+            script += 'sleep 2\n'
+
+    result = subprocess.run(
+        ["fish", "-c", script],
+        cwd=demo_env.repo, env=env,
+        capture_output=True, text=True
+    )
+    output = [result.stdout + result.stderr]
+
+    # Clean output
+    raw = "".join(output)
+    clean = re.sub(r"\x1B\[[0-9;?]*[A-Za-z]", "", raw)  # Strip ANSI
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", clean)  # Strip control chars
+    clean = clean.replace("^D", "")
+
+    (OUT_DIR / "run.txt").write_text(clean)
+
+
+def main():
+    # Check dependencies
+    for cmd in ["wt", "vhs", "starship"]:
+        if not shutil.which(cmd):
+            raise SystemExit(f"Missing dependency: {cmd}")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Copy starship config from fixtures
+    shutil.copy(FIXTURES_DIR / "starship.toml", STARSHIP_CONFIG)
+
+    # Create separate environments for text and VHS recording
+    # so they don't interfere with each other (different LLM-generated commits)
+    text_env = DemoEnv(name="text", out_dir=OUT_DIR, repo_name="acme")
+    vhs_env = DemoEnv(name="vhs", out_dir=OUT_DIR, repo_name="acme")
+
+    prepare_repo(text_env)
+    record_text(text_env)
+
+    prepare_repo(vhs_env)
+
+    # Record both light and dark variants
+    docs_assets = REPO_ROOT / "docs" / "static" / "assets"
+    docs_assets.mkdir(parents=True, exist_ok=True)
+
+    for theme_name, output_gif in OUTPUT_GIFS.items():
+        theme = THEMES[theme_name]
+        replacements = {
+            "DEMO_REPO": vhs_env.repo,
+            "DEMO_HOME": vhs_env.home,
+            "REAL_HOME": REAL_HOME,
+            "STARSHIP_CONFIG": STARSHIP_CONFIG,
+            "OUTPUT_GIF": output_gif,
+            "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
+            "THEME": format_theme_for_vhs(theme),
+        }
+        render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements)
+        print(f"\nRecording {theme_name} GIF...")
+        record_vhs(TAPE_RENDERED)
+        TAPE_RENDERED.unlink(missing_ok=True)
+        print(f"GIF saved to {output_gif}")
+
+        # Copy to docs for local preview
+        asset_name = output_gif.name
+        shutil.copy(output_gif, docs_assets / asset_name)
+        print(f"Copied to {docs_assets / asset_name}")
+
+    print(f"\nText log saved to {OUT_DIR / 'run.txt'}")
+
+
+if __name__ == "__main__":
+    main()

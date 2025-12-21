@@ -34,32 +34,33 @@ exit_code: 0
 
 # Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
 if type -q wt; or test -n "$WORKTRUNK_BIN"
-    # Capture stdout (shell script), eval in parent shell. stderr streams to terminal.
+    # Execute wt command with file-based directive passing.
+    # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, evals it after.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
     #
-    # We use pipeline capture (`| read`) instead of command substitution (`(...)`)
-    # because fish's command substitution runs in its own pipeline where stderr
-    # doesn't inherit caller redirects. With pipeline capture, stderr flows through
-    # normally and respects redirects like `wt --help &>file`.
+    # Note: We use `eval (cat ... | string collect)` instead of `source` because:
+    # 1. fish's `source` doesn't propagate `exit` to the parent function
+    # 2. `eval (cat ...)` without `string collect` splits on newlines, breaking multiline directives
+    # With `string collect`, `exit 42` properly exits the function with code 42.
     function wt_exec
         test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P wt)
 
-        # Pipeline capture: stderr streams through, stdout captured via read
-        # -z (null delimiter) ensures we capture all lines, not just the first
-        command $WORKTRUNK_BIN $argv | string collect --allow-empty | read --local -z script
-        set -l exit_code $pipestatus[1]
+        set -l directive_file (mktemp)
+        WORKTRUNK_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $argv
+        set -l exit_code $status
 
-        if test -n "$script"
-            eval $script
+        if test -s "$directive_file"
+            eval (cat "$directive_file" | string collect)
             if test $exit_code -eq 0
                 set exit_code $status
             end
         end
 
+        rm -f "$directive_file"
         return $exit_code
     end
 
-    # Override wt command to add --internal flag
+    # Override wt command
     function wt
         set -l use_source false
         set -l args
@@ -70,18 +71,22 @@ if type -q wt; or test -n "$WORKTRUNK_BIN"
 
         # --source: use cargo run (builds from source)
         if test $use_source = true
+            # If stdout is not a terminal (piped/redirected), run directly.
+            # This allows `wt list --format=json | jq` to work.
             if not isatty stdout
                 cargo run --bin wt --quiet -- $args
                 return $status
             end
-            cargo run --bin wt --quiet -- --internal $args | string collect --allow-empty | read --local -z script
-            set -l exit_code $pipestatus[1]
-            if test -n "$script"
-                eval $script
+            set -l directive_file (mktemp)
+            WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin wt --quiet -- $args
+            set -l exit_code $status
+            if test -s "$directive_file"
+                eval (cat "$directive_file" | string collect)
                 if test $exit_code -eq 0
                     set exit_code $status
                 end
             end
+            rm -f "$directive_file"
             return $exit_code
         end
 
@@ -93,7 +98,7 @@ if type -q wt; or test -n "$WORKTRUNK_BIN"
             return $status
         end
 
-        wt_exec --internal $args
+        wt_exec $args
     end
 
     # Completions are in ~/.config/fish/completions/wt.fish (installed by `wt config shell install`)

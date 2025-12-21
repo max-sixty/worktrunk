@@ -70,6 +70,7 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
+
 [32mExamples
 
 Basic merge to main:
@@ -112,12 +113,14 @@ Requires a clean working tree.
 
 [32mLocal CI
 
-Pre-merge hooks open the possibility of faster iteration — many small changes instead of few large ones.
+For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes
+instead of fewer large ones.
 
 Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it
-guaranteed validation happened.
+guaranteed validation happened. [2mwt merge[0m brings that guarantee local.
 
-[2mwt merge[0m brings that process local. Run it when ready — worktrunk runs the configured hooks and, if they pass, merges and cleans up.
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge
+hooks validate before merging — if they pass, the branch goes to main and the worktree cleans up.
 
   [2m[pre-merge]
   [2mtest = "cargo test"

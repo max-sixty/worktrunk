@@ -1,6 +1,5 @@
 /target
-docs/demos/wt/out/
-docs/demos/wt-select/out/
+docs/demos/*/out/
 docs/static/assets/
 
 # Lychee link checker cache

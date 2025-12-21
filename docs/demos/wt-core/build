@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Build script for wt-core demo GIF.
+
+This demo shows the core workflow with hooks:
+1. wt list - see current worktrees with variety
+2. wt switch - switch between worktrees
+3. Show the post-start/pre-remove config
+4. wt switch --create - create worktree with post-start running
+5. wt list --full - show CI status
+6. wt remove - remove worktree with pre-remove hook
+"""
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# Add docs/demos/ to path for shared library
+SCRIPT_DIR = Path(__file__).parent
+DEMOS_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(DEMOS_DIR))
+
+from shared import (
+    DemoEnv, run, git, render_tape, record_vhs, REAL_HOME, FIXTURES_DIR,
+    prepare_demo_repo, commit_dated, THEMES, format_theme_for_vhs,
+)
+
+REPO_ROOT = DEMOS_DIR.parent.parent
+OUT_DIR = SCRIPT_DIR / "out"
+TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
+TAPE_RENDERED = OUT_DIR / ".rendered.tape"
+STARSHIP_CONFIG = OUT_DIR / "starship.toml"
+
+# Output GIF paths for light and dark variants
+OUTPUT_GIFS = {
+    "light": OUT_DIR / "wt-core.gif",
+    "dark": OUT_DIR / "wt-core-dark.gif",
+}
+
+
+def prepare_repo(env: DemoEnv):
+    """Set up the demo repository with branches and worktrees."""
+    # Use shared rich repo setup with custom hooks config
+    hooks_config = '''[post-start]
+dev = "npm run dev"
+
+[pre-remove]
+cleanup = "flyctl scale count 0"
+'''
+    prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
+
+    # Demo-specific: mock CLIs for hooks
+    bin_dir = env.home / "bin"
+
+    npm_mock = bin_dir / "npm"
+    npm_mock.write_text("""#!/bin/bash
+if [[ "$1" == "run" && "$2" == "dev" ]]; then
+    echo ""
+    echo "  VITE v5.4.2  ready in 342 ms"
+    echo ""
+    echo "  ➜  Local:   http://localhost:3000/"
+    echo "  ➜  Network: http://192.168.1.42:3000/"
+fi
+""")
+    npm_mock.chmod(0o755)
+
+    flyctl_mock = bin_dir / "flyctl"
+    flyctl_mock.write_text("""#!/bin/bash
+if [[ "$1" == "scale" && "$2" == "count" && "$3" == "0" ]]; then
+    echo "Scaling app to 0 machines"
+fi
+""")
+    flyctl_mock.chmod(0o755)
+
+    # Demo-specific: user config with approved commands
+    # Project ID for local path is the path without .git suffix
+    config_dir = env.home / ".config" / "worktrunk"
+    project_id = str(env.bare_remote).removesuffix(".git")
+    (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
+approved-commands = ["npm run dev", "flyctl scale count 0"]
+''')
+
+    # Add billing branch (at same commit as main = merged)
+    create_branch_billing(env)
+
+
+def create_branch_billing(env: DemoEnv):
+    """Create billing branch that's already merged (at same commit as main)."""
+    branch = "billing"
+    path = env.work_base / f"acme.{branch}"
+
+    # Create worktree at main's commit (so it shows as merged/safe to delete)
+    git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
+    git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
+
+
+def record_text(demo_env: DemoEnv):
+    """Record text output by running demo commands."""
+    # Commands to run (matching demo.tape)
+    commands = [
+        "wt list",
+        "wt switch alpha",
+        "cat .config/wt.toml",
+        "wt switch --create api",
+        "wt list --full",
+        "wt switch billing",
+        "wt remove",
+    ]
+
+    # Set up environment
+    env = os.environ.copy()
+    env.update({
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8",
+        "COLUMNS": "140",
+        "RUSTUP_HOME": str(REAL_HOME / ".rustup"),
+        "CARGO_HOME": str(REAL_HOME / ".cargo"),
+        "HOME": str(demo_env.home),
+        "PATH": f"{REPO_ROOT}/target/debug:{demo_env.home}/bin:{os.environ['PATH']}",
+        "STARSHIP_CONFIG": str(STARSHIP_CONFIG),
+        "STARSHIP_CACHE": str(demo_env.root / "starship-cache"),
+        "NO_COLOR": "1",
+        "CLICOLOR": "0",
+    })
+
+    (demo_env.root / "starship-cache").mkdir(exist_ok=True)
+
+    # Run commands and capture output using fish with shell init
+    script = "wt config shell init fish | source\n"
+    for cmd in commands:
+        script += f"echo '$ {cmd}'\n{cmd}\necho ''\n"
+
+    result = subprocess.run(
+        ["fish", "-c", script],
+        cwd=demo_env.repo, env=env,
+        capture_output=True, text=True
+    )
+    output = result.stdout + result.stderr
+
+    # Clean output
+    clean = re.sub(r"\x1B\[[0-9;?]*[A-Za-z]", "", output)  # Strip ANSI
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", clean)  # Strip control chars
+
+    (OUT_DIR / "run.txt").write_text(clean)
+
+
+def main():
+    # Check dependencies
+    for cmd in ["wt", "vhs", "starship", "bat"]:
+        if not shutil.which(cmd):
+            raise SystemExit(f"Missing dependency: {cmd}")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Copy starship config from fixtures
+    shutil.copy(FIXTURES_DIR / "starship.toml", STARSHIP_CONFIG)
+
+    # Create separate environments for text and VHS recording
+    # so they don't interfere with each other
+    text_env = DemoEnv(name="text", out_dir=OUT_DIR, repo_name="acme")
+    vhs_env = DemoEnv(name="vhs", out_dir=OUT_DIR, repo_name="acme")
+
+    prepare_repo(text_env)
+    record_text(text_env)
+
+    prepare_repo(vhs_env)
+
+    # Record both light and dark variants
+    docs_assets = REPO_ROOT / "docs" / "static" / "assets"
+    docs_assets.mkdir(parents=True, exist_ok=True)
+
+    for theme_name, output_gif in OUTPUT_GIFS.items():
+        theme = THEMES[theme_name]
+        replacements = {
+            "DEMO_REPO": vhs_env.repo,
+            "DEMO_HOME": vhs_env.home,
+            "REAL_HOME": REAL_HOME,
+            "STARSHIP_CONFIG": STARSHIP_CONFIG,
+            "OUTPUT_GIF": output_gif,
+            "TARGET_DEBUG": REPO_ROOT / "target" / "debug",
+            "THEME": format_theme_for_vhs(theme),
+        }
+        render_tape(TAPE_TEMPLATE, TAPE_RENDERED, replacements)
+        print(f"\nRecording {theme_name} GIF...")
+        record_vhs(TAPE_RENDERED)
+        TAPE_RENDERED.unlink(missing_ok=True)
+        print(f"GIF saved to {output_gif}")
+
+        # Copy to docs for local preview
+        asset_name = output_gif.name
+        shutil.copy(output_gif, docs_assets / asset_name)
+        print(f"Copied to {docs_assets / asset_name}")
+
+    print(f"\nText log saved to {OUT_DIR / 'run.txt'}")
+
+
+if __name__ == "__main__":
+    main()

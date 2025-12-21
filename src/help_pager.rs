@@ -81,8 +81,8 @@ fn detect_help_pager() -> Option<String> {
 /// - Pager spawn fails (prints to stderr)
 ///
 /// Note: All fallbacks output to stderr for consistency with pager behavior
-/// (which sends output to stderr via `>&2`). This ensures `config show --internal`
-/// works correctly in directive mode where stdout is reserved for shell directives.
+/// (which sends output to stderr via `>&2`). This ensures `config show`
+/// works correctly since stdout is reserved for data output.
 pub fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     let Some(pager_cmd) = detect_help_pager() else {
         log::debug!("No pager configured, printing help directly to stderr");
@@ -116,6 +116,8 @@ pub fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
     // Falls back to direct output if pager unavailable (e.g., less not installed)
     let shell = ShellConfig::get();
     let mut cmd = shell.command(&final_cmd);
+    // Prevent subprocesses from writing to the directive file
+    cmd.env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
     let mut child = match cmd.stdin(Stdio::piped()).env("LESS", &less_flags).spawn() {
         Ok(child) => child,
         Err(e) => {

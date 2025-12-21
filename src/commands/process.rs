@@ -156,6 +156,8 @@ fn spawn_detached_unix(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
+        // Prevent hooks from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .process_group(0) // New process group, not in PTY's foreground group
         .spawn()
         .context("Failed to spawn detached process")?;
@@ -232,6 +234,8 @@ fn spawn_detached_windows(
                 .context("Failed to clone log file handle")?,
         ))
         .stderr(Stdio::from(log_file))
+        // Prevent hooks from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
         .spawn()
         .context("Failed to spawn detached process")?;

@@ -3,7 +3,6 @@ source: tests/integration_tests/switch.rs
 info:
   program: wt
   args:
-    - "--internal"
     - switch
     - feature
   env:
@@ -24,12 +23,12 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpthQdH1
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-cd _REPO_.feature
 
 ----- stderr -----
 [2m○[22m Switched to worktree for [1mfeature[22m @ [1m_REPO_.feature[22m

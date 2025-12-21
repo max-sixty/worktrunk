@@ -62,11 +62,12 @@ SCRIPT_DIR = Path(__file__).parent
 DEMOS_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(DEMOS_DIR))
 
-from lib import DemoEnv, run, git, render_tape, record_vhs, build_wt, REAL_HOME
-from themes import THEMES, format_theme_for_vhs
+from shared import (
+    DemoEnv, run, git, render_tape, record_vhs, build_wt, REAL_HOME, FIXTURES_DIR,
+    THEMES, format_theme_for_vhs,
+)
 
 REPO_ROOT = DEMOS_DIR.parent.parent
-FIXTURES_DIR = SCRIPT_DIR / "fixtures"
 OUT_DIR = SCRIPT_DIR / "out"
 TAPE_TEMPLATE = SCRIPT_DIR / "demo.tape"
 TAPE_RENDERED = OUT_DIR / ".rendered.tape"

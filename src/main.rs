@@ -556,7 +556,7 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
     use color_print::ceprintln;
 
     // Enhance `wt switch` missing argument error with shortcut hints.
-    // Safe in directive mode: hints go to stderr, only stdout is eval'd.
+    // Hints go to stderr, which is safe since stdout is reserved for data output.
     // Check for both "wt switch" and "wt.exe switch" (Windows)
     let err_str = format!("{err}");
     let is_switch_missing_arg = err.kind() == ErrorKind::MissingRequiredArgument
@@ -607,13 +607,6 @@ fn main() {
     if let Some(path) = cli.config {
         set_config_path(path);
     }
-
-    // Initialize output context based on --internal flag
-    let output_mode = match cli.internal {
-        Some(shell) => output::OutputMode::Directive(shell),
-        None => output::OutputMode::Interactive,
-    };
-    output::initialize(output_mode);
 
     // Configure logging based on --verbose flag or RUST_LOG env var
     env_logger::Builder::from_env(
@@ -1130,7 +1123,7 @@ fn main() {
             },
         },
         #[cfg(unix)]
-        Commands::Select => handle_select(cli.internal.is_some()),
+        Commands::Select => handle_select(),
         Commands::List {
             subcommand,
             format,
@@ -1240,13 +1233,7 @@ fn main() {
                 )?;
 
                 // Show success message (temporal locality: immediately after worktree creation)
-                // Pass cli.internal to indicate whether shell integration is active
-                handle_switch_output(
-                    &result,
-                    &branch_info,
-                    execute.is_some(),
-                    cli.internal.is_some(),
-                )?;
+                handle_switch_output(&result, &branch_info, execute.is_some())?;
 
                 // Now spawn post-start hooks (background processes, after success message)
                 // Only run post-start commands when creating a NEW worktree, not when switching to existing
@@ -1504,11 +1491,6 @@ fn main() {
             }),
     };
 
-    // Emit shell script (directive mode) or no-op (interactive mode)
-    // Must be called before error handling so cd happens even on failure
-    // (matches shell wrapper behavior which evals script regardless of exit code)
-    let _ = output::terminate_output();
-
     if let Err(e) = result {
         // GitError, WorktrunkError, and HookErrorWithHint produce styled output via Display
         if let Some(err) = e.downcast_ref::<worktrunk::git::GitError>() {
@@ -1549,6 +1531,12 @@ fn main() {
 
         // Preserve exit code from child processes (especially for signals like SIGINT)
         let code = exit_code(&e).unwrap_or(1);
+
+        // Reset ANSI state before exiting
+        let _ = output::terminate_output();
         process::exit(code);
     }
+
+    // Reset ANSI state before returning to shell (success case)
+    let _ = output::terminate_output();
 }

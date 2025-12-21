@@ -3,7 +3,6 @@ source: tests/integration_tests/directives.rs
 info:
   program: wt
   args:
-    - "--internal=powershell"
     - merge
     - main
   env:
@@ -24,12 +23,12 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpk1oHzo
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
-Set-Location _REPO_
 
 ----- stderr -----
 [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m

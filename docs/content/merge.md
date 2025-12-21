@@ -8,6 +8,13 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
+<figure class="demo">
+<picture>
+  <source srcset="/assets/wt-merge-dark.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/wt-merge.gif" alt="wt merge demo" width="1600" height="900">
+</picture>
+</figure>
+
 ## Examples
 
 Basic merge to main:
@@ -56,11 +63,11 @@ Use `--no-commit` to skip all git operations (steps 1-2) and only run hooks and 
 
 ## Local CI
 
-Pre-merge hooks open the possibility of faster iteration — many small changes instead of few large ones.
+For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
 
-Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened.
+Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
 
-`wt merge` brings that process local. Run it when ready — worktrunk runs the configured hooks and, if they pass, merges and cleans up.
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to main and the worktree cleans up.
 
 ```toml
 [pre-merge]

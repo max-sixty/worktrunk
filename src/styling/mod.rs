@@ -7,11 +7,11 @@
 //!
 //! ## stdout vs stderr principle
 //!
-//! - **stdout**: ALL worktrunk output (messages, errors, warnings, directives, data)
-//! - **stderr**: ALL child process output (git, npm, user commands)
-//! - **Exception**: Interactive prompts use stderr so they appear even when stdout is redirected
+//! - **stdout**: Primary data output (table data, JSON, statusline)
+//! - **stderr**: Status messages (progress, success, errors, hints, warnings)
 //!
-//! Use `println!` for all worktrunk messages. Use `eprintln!` only for interactive prompts.
+//! This separation allows piping (`wt list | grep foo`) without status messages interfering.
+//! Use `output::table()` for primary output, `output::print()` for status messages.
 
 mod constants;
 mod format;
@@ -42,10 +42,10 @@ const DEFAULT_TERMINAL_WIDTH: usize = 80;
 /// Prefers direct terminal size detection over COLUMNS environment variable,
 /// because tools like cargo may set COLUMNS incorrectly.
 ///
-/// Checks stderr first since that's where table output goes, then stdout.
+/// Checks stderr first (for status messages), then stdout (for table output).
 pub fn get_terminal_width() -> usize {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
-    // Check stderr first (where table output goes), then stdout
+    // Check stderr first (status messages), then stdout (table output)
     if let Some((terminal_size::Width(w), _)) =
         terminal_size::terminal_size_of(std::io::stderr()).or_else(terminal_size::terminal_size)
     {

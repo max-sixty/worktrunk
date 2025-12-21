@@ -1,17 +1,18 @@
 //! Guard test to prevent stdout leaks in command code
 //!
-//! In directive mode (`--internal`), stdout is reserved for shell script output.
-//! Any `println!` or `print!` in command code would leak into the script and
-//! potentially be eval'd by the shell wrapper.
+//! stdout is reserved for data output (e.g., JSON). User-visible messages go to stderr.
+//! When shell integration is active (`WORKTRUNK_DIRECTIVE_FILE` is set), directives are written
+//! to the file, not stdout.
 //!
 //! This test enforces: **No stdout writes in command code except via output system**
 //!
 //! Allowed:
-//! - `output::*` functions (route to correct stream based on mode)
+//! - `output::*` functions (route to correct stream)
 //! - `eprintln!` / `eprint!` (stderr is safe)
 //!
 //! Exceptions:
-//! - `init.rs` - intentionally outputs shell code to stdout for `eval`
+//! - `init.rs` - outputs shell integration code to stdout for `eval`
+//! - `statusline.rs` - outputs status line text to stdout for shell prompts
 
 use std::fs;
 use std::path::Path;
@@ -44,8 +45,8 @@ fn check_no_stdout_in_commands() {
     if !violations.is_empty() {
         panic!(
             "stdout writes found in command code (use output::* instead):\n\n{}\n\n\
-             In directive mode, stdout is reserved for shell script output.\n\
-             Use output::info(), output::hint(), output::data(), etc. instead.",
+             stdout is reserved for data output (JSON, tables).\n\
+             Use output::print(), output::table(), output::data(), etc. instead.",
             violations.join("\n")
         );
     }

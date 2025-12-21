@@ -425,6 +425,8 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         .arg(probe_cmd)
         .stdout(Stdio::piped())
         .stderr(Stdio::null()) // Suppress user's zsh startup messages
+        // Prevent subprocesses from writing to the directive file
+        .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
         .ok()?;
 

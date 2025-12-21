@@ -121,6 +121,8 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
         .arg(&pipeline)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // Prevent subprocesses from writing to the directive file
+        .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
     {
         Ok(child) => child,
@@ -806,7 +808,7 @@ where
     }
 }
 
-pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
+pub fn handle_select() -> anyhow::Result<()> {
     let repo = Repository::current();
 
     // Initialize preview mode state file (auto-cleanup on drop)
@@ -985,15 +987,14 @@ pub fn handle_select(is_directive_mode: bool) -> anyhow::Result<()> {
             handle_switch(&identifier, false, None, false, false, false, &config)?;
 
         // Clear the terminal screen after skim exits to prevent artifacts
-        // Use stderr for terminal control sequences - in directive mode, stdout goes to a FIFO
-        // for directive parsing, so terminal control must go through stderr to reach the TTY
+        // Use stderr for terminal control - stdout is reserved for data output
         use crossterm::{execute, terminal};
         use std::io::stderr;
         execute!(stderr(), terminal::Clear(terminal::ClearType::All))?;
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
-        // Show success message; emit cd directive if in directive mode
-        handle_switch_output(&result, &branch_info, false, is_directive_mode)?;
+        // Show success message; emit cd directive if shell integration is active
+        handle_switch_output(&result, &branch_info, false)?;
     }
 
     Ok(())

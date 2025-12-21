@@ -1,123 +1,109 @@
 use crate::common::{
-    TestRepo, repo, repo_with_feature_worktree, repo_with_remote, repo_with_remote_and_feature,
-    setup_snapshot_settings, wt_command,
+    TestRepo, configure_directive_file, directive_file, repo, repo_with_feature_worktree,
+    repo_with_remote, repo_with_remote_and_feature, setup_snapshot_settings, wt_command,
 };
-use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
 // ============================================================================
-// PowerShell Directive Tests
+// Directive File Tests
 // ============================================================================
-// These tests verify that --internal=powershell produces correct PowerShell syntax.
-// The PowerShell directive mode outputs:
-// - `Set-Location 'path'` instead of `cd 'path'`
-// - Proper single-quote escaping ('' instead of '\'' for embedded quotes)
+// These tests verify that WORKTRUNK_DIRECTIVE_FILE env var causes directives to be
+// written to the file. The shell wrapper sources this file after wt exits.
 
-/// Test that switch with --internal=powershell outputs PowerShell Set-Location syntax
+/// Test that switch with directive file writes cd command to file
 #[rstest]
-fn test_switch_internal_powershell_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
+fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
 
     let mut settings = setup_snapshot_settings(&repo);
-    // Normalize the PowerShell Set-Location path
-    settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal=powershell")
-            .arg("switch")
-            .arg("feature")
-            .current_dir(repo.root_path());
-
-        // Use file-based snapshot since inline snapshots don't handle
-        // path normalization and ANSI codes well
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// Test merge with --internal=powershell (switch back to main after merge)
-#[rstest]
-fn test_merge_internal_powershell_directive(mut repo_with_remote_and_feature: TestRepo) {
-    let repo = &mut repo_with_remote_and_feature;
-    let feature_wt = &repo.worktrees["feature"];
-
-    let mut settings = setup_snapshot_settings(repo);
-    // Normalize the PowerShell Set-Location path
-    settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal=powershell")
-            .arg("merge")
-            .arg("main")
-            .current_dir(feature_wt);
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-/// Test that remove with --internal=powershell outputs PowerShell Set-Location syntax
-#[rstest]
-fn test_remove_internal_powershell_directive(#[from(repo_with_remote)] mut repo: TestRepo) {
-    let feature_wt = repo.add_worktree("feature");
-
-    let mut settings = setup_snapshot_settings(&repo);
-    // Normalize the PowerShell Set-Location path
-    settings.add_filter(r"Set-Location '[^']+'", "Set-Location '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal=powershell")
-            .arg("remove")
-            .current_dir(&feature_wt);
-
-        assert_cmd_snapshot!(cmd);
-    });
-}
-
-// ============================================================================
-// POSIX Directive Tests (existing tests)
-// ============================================================================
-
-/// Test the directive protocol for switch command
-#[rstest]
-fn test_switch_internal_directive(repo: TestRepo) {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-
-    // Normalize the shell script cd path output
+    // Normalize the directive file cd path
     settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("switch")
-            .arg("my-feature")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("switch")
+            .arg("feature")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
-        success: false
-        exit_code: 1
-        ----- stdout -----
+        assert_cmd_snapshot!(cmd);
 
-        ----- stderr -----
-        [0m[31m✗[39m [31mBranch [1mmy-feature[22m not found[39m
-
-        [2m↳[22m [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
-        ");
+        // Verify directive file contains cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Directive file should contain cd command, got: {}",
+            directives
+        );
     });
 }
 
-/// Test switch without internal flag (should show help message)
+/// Test merge with directive file (switch back to main after merge)
 #[rstest]
-fn test_switch_without_internal(repo: TestRepo) {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
+    let repo = &mut repo_with_remote_and_feature;
+    let feature_wt = &repo.worktrees["feature"];
+    let (directive_path, _guard) = directive_file();
+
+    let mut settings = setup_snapshot_settings(repo);
+    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("merge").arg("main").current_dir(feature_wt);
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file contains cd command (back to main)
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Directive file should contain cd command, got: {}",
+            directives
+        );
+    });
+}
+
+/// Test that remove with directive file writes cd command to file
+#[rstest]
+fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    let (directive_path, _guard) = directive_file();
+
+    let mut settings = setup_snapshot_settings(&repo);
+    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
+
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("remove").current_dir(&feature_wt);
+
+        assert_cmd_snapshot!(cmd);
+
+        // Verify directive file contains cd command (back to main)
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Directive file should contain cd command, got: {}",
+            directives
+        );
+    });
+}
+
+// ============================================================================
+// Non-Directive Mode Tests (no WORKTRUNK_DIRECTIVE_FILE)
+// ============================================================================
+
+/// Test switch without directive file (error case - branch not found)
+#[rstest]
+fn test_switch_without_directive_file(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
@@ -126,97 +112,52 @@ fn test_switch_without_internal(repo: TestRepo) {
             .arg("my-feature")
             .current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
-        success: false
-        exit_code: 1
-        ----- stdout -----
-
-        ----- stderr -----
-        [31m✗[39m [31mBranch [1mmy-feature[22m not found[39m
-
-        [2m↳[22m [2mTo create a new branch, run [90mwt switch my-feature --create[39m; to list branches, run [90mwt list --branches --remotes[39m[22m
-        ");
+        assert_cmd_snapshot!(cmd);
     });
 }
 
-/// Test remove command with internal flag
+/// Test remove without directive file (error case - main worktree)
 #[rstest]
-fn test_remove_internal_directive(repo: TestRepo) {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
-
-    // Normalize the shell script cd path output
-    settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
-
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("remove")
-            .current_dir(repo.root_path());
-
-        assert_cmd_snapshot!(cmd, @r"
-        success: false
-        exit_code: 1
-        ----- stdout -----
-
-        ----- stderr -----
-        [0m[31m✗[39m [31mThe main worktree cannot be removed[39m
-        ");
-    });
-}
-
-/// Test remove without internal flag
-#[rstest]
-fn test_remove_without_internal(repo: TestRepo) {
-    let mut settings = Settings::clone_current();
-    settings.set_snapshot_path("../snapshots");
+fn test_remove_without_directive_file(repo: TestRepo) {
+    let settings = setup_snapshot_settings(&repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
         cmd.arg("remove").current_dir(repo.root_path());
 
-        assert_cmd_snapshot!(cmd, @r"
-        success: false
-        exit_code: 1
-        ----- stdout -----
-
-        ----- stderr -----
-        [31m✗[39m [31mThe main worktree cannot be removed[39m
-        ");
+        assert_cmd_snapshot!(cmd);
     });
 }
 
-/// Test merge command with internal flag and --no-remove
+/// Test merge with directive file and --no-remove
 #[rstest]
-fn test_merge_internal_no_remove(mut repo_with_feature_worktree: TestRepo) {
+fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];
+    let (directive_path, _guard) = directive_file();
 
     let settings = setup_snapshot_settings(repo);
 
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("merge")
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("merge")
             .arg("main")
             .arg("--no-remove")
             .current_dir(feature_wt);
 
-        // Note: Using file snapshot instead of inline because multiline inline snapshots
-        // don't work well with NUL bytes (\0) in the output
         assert_cmd_snapshot!(cmd);
     });
 }
 
-/// Test merge command with internal flag (removes worktree, emits cd shell script)
-/// This test verifies that the shell script output is correctly formatted
+/// Test merge with directive file (removes worktree, writes cd to file)
 #[rstest]
-fn test_merge_internal_remove(mut repo_with_feature_worktree: TestRepo) {
+fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
     let feature_wt = &repo.worktrees["feature"];
+    let (directive_path, _guard) = directive_file();
 
     let mut settings = setup_snapshot_settings(repo);
     settings.add_filter(r"cd '[^']+'", "cd '[PATH]'");
@@ -224,11 +165,17 @@ fn test_merge_internal_remove(mut repo_with_feature_worktree: TestRepo) {
     settings.bind(|| {
         let mut cmd = wt_command();
         repo.clean_cli_env(&mut cmd);
-        cmd.arg("--internal")
-            .arg("merge")
-            .arg("main")
-            .current_dir(feature_wt);
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd.arg("merge").arg("main").current_dir(feature_wt);
 
         assert_cmd_snapshot!(cmd);
+
+        // Verify directive file contains cd command
+        let directives = std::fs::read_to_string(&directive_path).unwrap_or_default();
+        assert!(
+            directives.contains("cd '"),
+            "Directive file should contain cd command, got: {}",
+            directives
+        );
     });
 }

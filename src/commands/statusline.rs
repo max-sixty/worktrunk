@@ -123,9 +123,8 @@ fn format_directory_fish_style(path: &Path) -> String {
 
 /// Run the statusline command.
 ///
-/// Output uses `output::data()` which routes based on mode:
-/// - Interactive: stdout (for shell prompts)
-/// - Directive: stderr (stdout reserved for shell script)
+/// Output uses `output::data()` for raw stdout (bypasses anstream color detection).
+/// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(claude_code: bool) -> Result<()> {
     // Get context - either from stdin (claude-code mode) or current directory
     let (cwd, model_name) = if claude_code {
@@ -196,7 +195,7 @@ pub fn run(claude_code: bool) -> Result<()> {
         output.push_str(&model);
     }
 
-    // Output via output system (routes based on mode: interactive→stdout, directive→stderr)
+    // Output via data() - shell prompts and Claude Code always expect ANSI codes
     if !output.is_empty() {
         use worktrunk::styling::fix_dim_after_color_reset;
         let reset = anstyle::Reset;

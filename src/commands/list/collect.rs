@@ -967,15 +967,16 @@ pub fn collect(
             }
             table.finalize_tty(final_msg)?;
         } else {
-            // Non-TTY: print final static table
-            let mut final_lines = Vec::new();
-            final_lines.push(layout.format_header_line());
+            // Non-TTY: output to stdout (same as buffered mode)
+            // Progressive skeleton was suppressed; now output the final table
+            crate::output::table(layout.format_header_line())?;
             for item in &all_items {
-                final_lines.push(layout.format_list_item_line(item, previous_branch.as_deref()));
+                crate::output::table(
+                    layout.format_list_item_line(item, previous_branch.as_deref()),
+                )?;
             }
-            final_lines.push(String::new()); // Spacer
-            final_lines.push(final_msg);
-            table.finalize_non_tty(final_lines)?;
+            crate::output::table("")?;
+            crate::output::table(final_msg)?;
         }
     } else if render_table {
         // Buffered mode: render final table

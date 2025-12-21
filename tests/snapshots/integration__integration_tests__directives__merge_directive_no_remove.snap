@@ -3,7 +3,6 @@ source: tests/integration_tests/directives.rs
 info:
   program: wt
   args:
-    - "--internal"
     - merge
     - main
     - "--no-remove"
@@ -25,6 +24,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_DIRECTIVE_FILE: /var/folders/wf/s6ycxvvs4ln8qsdbfx40hnc40000gn/T/.tmpG9gkyL
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
