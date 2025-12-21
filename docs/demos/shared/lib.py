@@ -223,7 +223,7 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
                       If None, uses default pre-merge hook.
 
     After calling this, main is at the latest commit and worktrees exist for
-    alpha, beta, hooks. Demos can then add their own branches/config.
+    alpha, beta, hooks. Demos can then add their own config.
     """
     # Base setup: git repo, Rust project, bat wrapper, wt binary
     prepare_base_repo(env, repo_root)
@@ -297,6 +297,15 @@ Run `wt list` to see all worktrees.
     readme.write_text(readme.read_text() + "\n## License\n\nMIT\n")
     git(["-C", str(env.repo), "add", "README.md"])
     commit_dated(env.repo, "docs: add license", "3d")
+
+    # Add utils module with substantial content
+    shutil.copy(FIXTURES_DIR / "alpha-utils.rs", env.repo / "src" / "utils.rs")
+    # Update lib.rs to include the module
+    lib_rs = env.repo / "src" / "lib.rs"
+    lib_content = lib_rs.read_text()
+    lib_rs.write_text("pub mod utils;\n\n" + lib_content)
+    git(["-C", str(env.repo), "add", "src/utils.rs", "src/lib.rs"])
+    commit_dated(env.repo, "feat: add utility functions module", "3d")
 
     git(["-C", str(env.repo), "push", "-u", "origin", branch, "-q"])
     git(["-C", str(env.repo), "checkout", "-q", "main"])

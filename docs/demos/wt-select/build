@@ -1,36 +1,15 @@
 #!/usr/bin/env python3
 """Build script for wt select demo GIF.
 
-Creates a demo environment using cherry-picked commits from this repo,
-records the GIF, and saves output to docs/demos/wt-select/out/.
-
-DEMO GOALS
-==========
-The demo showcases `wt select` with realistic variety in the list columns.
-The target output looks like:
-
-    Branch         Status         HEAD±    main↕     main…±  Remote⇅  CI  Age
-    @ main               ^                                              ○   now
-    + streaming      +           +54   -5                               ●   now
-    + doctor             ↕                  ↑1  ↓1  +320  -14           ●   2d
-    + llm-templates   !  ↕        +8        ↑1  ↓1  +263 -192               3d
-
-Key demonstration points:
-- **CI column variety**: hollow ○ (branch CI) vs filled ● (PR CI) vs none
-- **HEAD± column**: Large staged diff (+54), small unstaged (+8), none
-- **Status column**: Staged changes (+), unstaged (!), ahead/behind (↕)
-- **main↕ column**: Some branches ahead-only, some ahead-and-behind
-- **main…± column**: Meaningful commit diffs ranging from small to 300+ lines
+Uses the shared prepare_demo_repo() infrastructure with alpha/beta/hooks branches,
+same as wt-core and wt-merge demos.
 
 See CLAUDE.md for full setup details.
 """
 
-import json
 import os
 import shutil
 import sys
-import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add docs/demos/ to path for shared library
@@ -39,7 +18,8 @@ DEMOS_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(DEMOS_DIR))
 
 from shared import (
-    DemoEnv, run, git, build_wt,
+    DemoEnv,
+    prepare_demo_repo,
     check_dependencies, setup_demo_output, record_all_themes,
 )
 
@@ -55,252 +35,14 @@ OUTPUT_GIFS = {
 # Custom VHS binary with keystroke overlay
 VHS_BINARY = os.environ.get("VHS_KEYSTROKES", str(SCRIPT_DIR / "vhs-keystrokes" / "vhs-keystrokes"))
 
-# Base point for demo - v0.1.11 release
-BASE_COMMIT = "005db9ad"
-
-# Commit to advance main (makes feature branches "behind" main)
-MAIN_ADVANCE_COMMIT = "50ffe925"  # feat(tests): test env vars (+19/-20)
-
-# Branch configuration - real commits to cherry-pick onto branches
-CHERRY_PICKS = {
-    "streaming": ("cf667917", 1),        # Handle BrokenPipe when LLM ignores stdin
-    "doctor": ("e286e847", 2),           # Add wt config show --doctor option
-    "llm-templates": ("74fe46ff", 3),    # Enhance squash message generation
-}
-
-
-def commit_dated(repo, days_ago):
-    """Amend commit with a date offset in days."""
-    now = datetime.now()
-    delta = timedelta(days=days_ago)
-    date_str = (now - delta).strftime("%Y-%m-%dT%H:%M:%S")
-    env = os.environ.copy()
-    env["GIT_AUTHOR_DATE"] = date_str
-    env["GIT_COMMITTER_DATE"] = date_str
-    git(["-C", str(repo), "commit", "--amend", "--no-edit", "--date", date_str], env=env)
-
-
-def prepare_repo(env: DemoEnv):
-    """Set up the demo repository with variety in all columns."""
-    # Clean previous
-    shutil.rmtree(env.root, ignore_errors=True)
-    env.root.mkdir(parents=True)
-    env.work_base.mkdir(parents=True)
-
-    # Clone with enough depth to have the commits we need
-    print(f"Cloning to {env.repo}...")
-    run(["git", "clone", "--quiet", "--depth", "200", str(REPO_ROOT), str(env.repo)])
-
-    # Configure repo
-    git(["-C", str(env.repo), "config", "user.name", "Demo User"])
-    git(["-C", str(env.repo), "config", "user.email", "demo@example.com"])
-    git(["-C", str(env.repo), "config", "commit.gpgsign", "false"])
-
-    # Get current branch name and rename to main if needed
-    current_branch = run(["git", "-C", str(env.repo), "rev-parse", "--abbrev-ref", "HEAD"], capture=True).strip()
-    if current_branch != "main":
-        git(["-C", str(env.repo), "branch", "-m", current_branch, "main"])
-
-    # Reset main to base commit (v0.1.12)
-    git(["-C", str(env.repo), "reset", "--hard", BASE_COMMIT])
-
-    # Remove origin to avoid remote comparisons
-    git(["-C", str(env.repo), "remote", "remove", "origin"])
-
-    # User config for wt
-    config_dir = env.home / ".config" / "worktrunk"
-    config_dir.mkdir(parents=True)
-    (config_dir / "config.toml").write_text("""# Demo config
-[worktree]
-base-path = "~/w"
-""")
-
-    # Create feature branches with cherry-picked commits
-    for branch_name, (commit_hash, days_ago) in CHERRY_PICKS.items():
-        create_branch_with_cherry_pick(env, branch_name, commit_hash, days_ago)
-
-    # Advance main so some branches are "behind"
-    advance_main(env)
-
-    # Make streaming also have the advance commit (so it's only ahead, not behind)
-    add_commit_to_branch(env, "streaming", MAIN_ADVANCE_COMMIT)
-
-    # Soft reset streaming to main - all committed work becomes uncommitted
-    soft_reset_to_main(env, "streaming")
-
-    # Add uncommitted working tree changes
-    add_uncommitted_changes(env)
-
-    # Add fake CI status for demo
-    add_ci_status(env)
-
-
-def create_branch_with_cherry_pick(env: DemoEnv, branch_name: str, commit_hash: str, days_ago: int):
-    """Create a branch with a cherry-picked commit and worktree."""
-    print(f"Creating branch {branch_name} (cherry-pick {commit_hash})...")
-
-    git(["-C", str(env.repo), "checkout", "-q", "main"])
-    git(["-C", str(env.repo), "checkout", "-q", "-b", branch_name])
-    git(["-C", str(env.repo), "cherry-pick", "--no-commit", commit_hash])
-
-    msg = run(["git", "-C", str(env.repo), "log", "-1", "--format=%s", commit_hash], capture=True).strip()
-    git(["-C", str(env.repo), "commit", "-m", msg])
-    commit_dated(env.repo, days_ago)
-
-    worktree_path = env.work_base / f"worktrunk.{branch_name}"
-    git(["-C", str(env.repo), "checkout", "-q", "main"])
-    git(["-C", str(env.repo), "worktree", "add", "-q", str(worktree_path), branch_name])
-
-
-def advance_main(env: DemoEnv):
-    """Advance main branch so feature branches are behind."""
-    print(f"Advancing main with {MAIN_ADVANCE_COMMIT}...")
-    git(["-C", str(env.repo), "checkout", "-q", "main"])
-    git(["-C", str(env.repo), "cherry-pick", "--no-commit", MAIN_ADVANCE_COMMIT])
-    msg = run(["git", "-C", str(env.repo), "log", "-1", "--format=%s", MAIN_ADVANCE_COMMIT], capture=True).strip()
-    git(["-C", str(env.repo), "commit", "-m", msg])
-
-
-def add_commit_to_branch(env: DemoEnv, branch_name: str, commit_hash: str):
-    """Add a commit to an existing branch (in its worktree)."""
-    print(f"Adding {commit_hash} to {branch_name}...")
-    worktree_path = env.work_base / f"worktrunk.{branch_name}"
-    git(["-C", str(worktree_path), "cherry-pick", "--no-commit", commit_hash])
-    msg = run(["git", "-C", str(worktree_path), "log", "-1", "--format=%s", commit_hash], capture=True).strip()
-    git(["-C", str(worktree_path), "commit", "-m", msg])
-
-
-def soft_reset_to_main(env: DemoEnv, branch_name: str):
-    """Soft reset a branch to main, keeping all changes as uncommitted."""
-    print(f"Soft resetting {branch_name} to main...")
-    worktree_path = env.work_base / f"worktrunk.{branch_name}"
-    git(["-C", str(worktree_path), "reset", "--soft", "main"])
-
-
-def add_uncommitted_changes(env: DemoEnv):
-    """Add uncommitted working tree changes manually."""
-    # streaming: Add substantial staged changes
-    streaming_path = env.work_base / "worktrunk.streaming"
-    error_file = streaming_path / "src" / "error_handling.rs"
-    print("Adding staged changes to streaming...")
-    error_file.write_text('''//! Error handling utilities for pipe operations.
-//!
-//! This module provides robust error handling for cases where
-//! the LLM process ignores stdin or terminates unexpectedly.
-
-use std::io::{self, ErrorKind};
-
-/// Errors that can occur during pipe operations.
-#[derive(Debug)]
-pub enum PipeError {
-    /// The receiving end closed the pipe.
-    BrokenPipe,
-    /// The operation timed out.
-    Timeout { elapsed_ms: u64 },
-    /// An I/O error occurred.
-    Io(io::Error),
-}
-
-impl From<io::Error> for PipeError {
-    fn from(err: io::Error) -> Self {
-        match err.kind() {
-            ErrorKind::BrokenPipe => PipeError::BrokenPipe,
-            ErrorKind::TimedOut => PipeError::Timeout { elapsed_ms: 0 },
-            _ => PipeError::Io(err),
-        }
-    }
-}
-
-impl std::fmt::Display for PipeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PipeError::BrokenPipe => write!(f, "pipe closed by receiver"),
-            PipeError::Timeout { elapsed_ms } => {
-                write!(f, "operation timed out after {}ms", elapsed_ms)
-            }
-            PipeError::Io(e) => write!(f, "I/O error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for PipeError {}
-
-/// Check if an error indicates the pipe was broken.
-pub fn is_broken_pipe(err: &io::Error) -> bool {
-    err.kind() == ErrorKind::BrokenPipe
-}
-''')
-    git(["-C", str(streaming_path), "add", "src/error_handling.rs"])
-
-    # llm-templates: Add unstaged changes
-    templates_path = env.work_base / "worktrunk.llm-templates"
-    llm_file = templates_path / "src" / "llm.rs"
-    if llm_file.exists():
-        print("Adding uncommitted changes to llm-templates...")
-        content = llm_file.read_text()
-        content = content.replace(
-            "use std::io::Write;",
-            """use std::io::Write;
-
-// TODO(wip): Add template validation before rendering
-fn validate_template(template: &str) -> Result<(), String> {
-    if template.is_empty() {
-        return Err("Template cannot be empty".to_string());
-    }
-    Ok(())
-}""",
-        )
-        llm_file.write_text(content)
-
-
-def add_ci_status(env: DemoEnv):
-    """Add fake CI status to file-based cache for demo."""
-    # Use future timestamp to prevent cache expiration
-    future_time = int(time.time()) + 3600
-
-    def get_head(branch):
-        if branch == "main":
-            return run(["git", "-C", str(env.repo), "rev-parse", "HEAD"], capture=True).strip()
-        worktree = env.work_base / f"worktrunk.{branch}"
-        return run(["git", "-C", str(worktree), "rev-parse", "HEAD"], capture=True).strip()
-
-    ci_configs = {
-        "main": {
-            "status": {"ci_status": "passed", "source": "branch", "is_stale": False, "url": None},
-            "checked_at": future_time,
-            "head": get_head("main"),
-        },
-        "streaming": {
-            "status": {"ci_status": "passed", "source": "pullrequest", "is_stale": False,
-                       "url": "https://github.com/example/worktrunk/pull/85"},
-            "checked_at": future_time,
-            "head": get_head("streaming"),
-        },
-        "doctor": {
-            "status": {"ci_status": "running", "source": "pullrequest", "is_stale": False,
-                       "url": "https://github.com/example/worktrunk/pull/92"},
-            "checked_at": future_time,
-            "head": get_head("doctor"),
-        },
-    }
-
-    print("Adding CI status cache...")
-    cache_dir = env.repo / ".git" / "wt-cache" / "ci-status"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    for branch, config in ci_configs.items():
-        (cache_dir / f"{branch}.json").write_text(json.dumps(config))
-
 
 def main():
     check_dependencies(["git"])
     setup_demo_output(OUT_DIR)
 
-    # Build wt binary
-    build_wt(REPO_ROOT)
-
-    # Create demo environment
-    demo_env = DemoEnv(name="select", out_dir=OUT_DIR)
-    prepare_repo(demo_env)
+    # Create demo environment (uses shared infrastructure like other demos)
+    demo_env = DemoEnv(name="select", out_dir=OUT_DIR, repo_name="acme")
+    prepare_demo_repo(demo_env, REPO_ROOT)
 
     print(f"\nDemo repo created at: {demo_env.repo}")
     print(f"Worktrees at: {demo_env.work_base}")

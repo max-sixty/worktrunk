@@ -1124,8 +1124,8 @@ fn main() {
                 handle_rebase(target.as_deref()).and_then(|result| match result {
                     RebaseResult::Rebased => Ok(()),
                     RebaseResult::UpToDate(branch) => {
-                        crate::output::print(info_message(format!(
-                            "Already up-to-date with {branch}"
+                        crate::output::print(info_message(cformat!(
+                            "Already up to date with <bold>{branch}</>"
                         )))?;
                         Ok(())
                     }

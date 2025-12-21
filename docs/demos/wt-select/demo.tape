@@ -47,7 +47,7 @@ Type "wt select"
 Enter
 Sleep 2s
 
-# Navigate to doctor branch (has large main…± diff: +320 -14)
+# Navigate to alpha branch (has large main…± diff and working tree changes)
 Down
 Sleep 1s
 Down
@@ -66,7 +66,7 @@ Ctrl+d
 Sleep 1.5s
 
 # Filter to narrow down and select
-Type "str"
+Type "alp"
 Sleep 1.5s
 Enter
 Sleep 2s
