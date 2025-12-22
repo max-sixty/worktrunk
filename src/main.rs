@@ -1144,6 +1144,9 @@ fn main() {
             HookCommand::PostStart { name, force } => {
                 run_hook(HookType::PostStart, force, name.as_deref())
             }
+            HookCommand::PostSwitch { name, force } => {
+                run_hook(HookType::PostSwitch, force, name.as_deref())
+            }
             HookCommand::PreCommit { name, force } => {
                 run_hook(HookType::PreCommit, force, name.as_deref())
             }
@@ -1230,10 +1233,10 @@ fn main() {
         } => WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
-                // "Approve at the Gate": collect and approve hooks upfront when creating
+                // "Approve at the Gate": collect and approve hooks upfront
                 // This ensures approval happens once at the command entry point
-                // If user declines, skip hooks but continue with worktree creation
-                let approved = if create && verify {
+                // If user declines, skip hooks but continue with worktree operation
+                let approved = if verify {
                     let repo = Repository::current();
                     let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     // Compute worktree path for template expansion in approval prompt
@@ -1246,19 +1249,34 @@ fn main() {
                         &repo_root,
                         force,
                     );
-                    approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart])?
+                    // Approve different hooks based on whether we're creating or switching
+                    if create {
+                        approve_hooks(
+                            &ctx,
+                            &[
+                                HookType::PostCreate,
+                                HookType::PostStart,
+                                HookType::PostSwitch,
+                            ],
+                        )?
+                    } else {
+                        // When switching to existing, only post-switch needs approval
+                        approve_hooks(&ctx, &[HookType::PostSwitch])?
+                    }
                 } else {
-                    true // No hooks to approve = considered approved
+                    true // --no-verify: skip all hooks
                 };
 
-                // Skip hooks if --no-hooks or user declined approval
+                // Skip hooks if --no-verify or user declined approval
                 let skip_hooks = !verify || !approved;
 
                 // Show message if user declined approval
                 if !approved {
-                    crate::output::print(info_message(
-                        "Commands declined, continuing worktree creation",
-                    ))?;
+                    crate::output::print(info_message(if create {
+                        "Commands declined, continuing worktree creation"
+                    } else {
+                        "Commands declined"
+                    }))?;
                 }
 
                 // Execute switch operation (creates worktree, runs post-create hooks if approved)
@@ -1272,24 +1290,31 @@ fn main() {
                     &config,
                 )?;
 
-                // Show success message (temporal locality: immediately after worktree creation)
+                // Show success message (temporal locality: immediately after worktree operation)
                 handle_switch_output(&result, &branch_info, execute.is_some())?;
 
-                // Now spawn post-start hooks (background processes, after success message)
-                // Only run post-start commands when creating a NEW worktree, not when switching to existing
-                // Hooks only run if --no-hooks wasn't passed and approval was granted (or --force used)
-                if !skip_hooks && let SwitchResult::Created { path, .. } = &result {
+                // Spawn background hooks after success message
+                // - post-switch: runs on ALL switches (Created, Existing, AlreadyAt)
+                // - post-start: runs only when creating a NEW worktree
+                if !skip_hooks {
                     let repo = Repository::current();
                     let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
                         Some(branch_info.branch()),
-                        path,
+                        result.path(),
                         &repo_root,
                         force,
                     );
-                    ctx.spawn_post_start_commands(true)?;
+
+                    // Post-switch runs first (immediate "I'm here" signal)
+                    ctx.spawn_post_switch_commands(true)?;
+
+                    // Post-start runs only on creation (setup tasks)
+                    if matches!(&result, SwitchResult::Created { .. }) {
+                        ctx.spawn_post_start_commands(true)?;
+                    }
                 }
 
                 // Execute user command after post-start hooks have been spawned

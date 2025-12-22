@@ -1003,7 +1003,7 @@ pub enum HookCommand {
     /// Lists user and project hooks. Project hooks show approval status (❓ = needs approval).
     Show {
         /// Hook type to show (default: all)
-        #[arg(value_parser = ["post-create", "post-start", "pre-commit", "pre-merge", "post-merge", "pre-remove"])]
+        #[arg(value_parser = ["post-create", "post-start", "post-switch", "pre-commit", "pre-merge", "post-merge", "pre-remove"])]
         hook_type: Option<String>,
 
         /// Show expanded commands with current variables
@@ -1028,6 +1028,19 @@ pub enum HookCommand {
     ///
     /// Background — runs without blocking.
     PostStart {
+        /// Run only this command from hook config
+        #[arg(add = crate::completion::hook_command_name_completer())]
+        name: Option<String>,
+
+        /// Skip approval prompts
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Run post-switch hooks
+    ///
+    /// Background — runs without blocking.
+    PostSwitch {
         /// Run only this command from hook config
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
@@ -1445,6 +1458,7 @@ wt hook pre-merge --force   # Skip approval prompts (for CI)
 |------|------|----------|-----------|
 | `post-create` | After worktree created | Yes | No |
 | `post-start` | After worktree created | No (background) | No |
+| `post-switch` | After every switch | No (background) | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
 | `post-merge` | After successful merge | Yes | No |
@@ -1479,6 +1493,18 @@ server = "npm run dev"
 ```
 
 Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log` (source is `user` or `project`).
+
+### post-switch
+
+Runs after **every** switch operation, **in background**. Triggers on all switch results: creating new worktrees, switching to existing ones, or switching to the current worktree.
+
+**Use cases**: Renaming terminal tabs, updating tmux window names, IDE notifications.
+
+```toml
+post-switch = "echo 'Switched to {{ branch }}'"
+```
+
+Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log` (source is `user` or `project`).
 
 ### pre-commit
 

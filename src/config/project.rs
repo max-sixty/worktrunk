@@ -50,6 +50,14 @@ pub struct ProjectConfig {
     #[serde(default, rename = "post-start")]
     pub post_start: Option<CommandConfig>,
 
+    /// Commands to execute after switching to a worktree (non-blocking, background)
+    /// Runs on every switch, including to existing worktrees and newly created ones
+    /// Supports string (single command) or table (named, parallel)
+    ///
+    /// Available template variables: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ worktree_name }}`, `{{ repo_root }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ upstream }}`
+    #[serde(default, rename = "post-switch")]
+    pub post_switch: Option<CommandConfig>,
+
     /// Commands to execute before committing changes during merge (blocking, fail-fast validation)
     /// Supports string (single command) or table (named, sequential)
     /// All commands must exit with code 0 for commit to proceed
@@ -134,6 +142,7 @@ mod tests {
         let config = ProjectConfig::default();
         assert!(config.post_create.is_none());
         assert!(config.post_start.is_none());
+        assert!(config.post_switch.is_none());
         assert!(config.pre_commit.is_none());
         assert!(config.pre_merge.is_none());
         assert!(config.post_merge.is_none());
@@ -203,6 +212,7 @@ test = "cargo test"
         let contents = r#"
 post-create = "npm install"
 post-start = "npm run watch"
+post-switch = "rename-tab"
 pre-commit = "cargo fmt --check"
 pre-merge = "cargo test"
 post-merge = "git push"
@@ -211,6 +221,7 @@ pre-remove = "echo bye"
         let config: ProjectConfig = toml::from_str(contents).unwrap();
         assert!(config.post_create.is_some());
         assert!(config.post_start.is_some());
+        assert!(config.post_switch.is_some());
         assert!(config.pre_commit.is_some());
         assert!(config.pre_merge.is_some());
         assert!(config.post_merge.is_some());

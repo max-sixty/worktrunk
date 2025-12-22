@@ -25,6 +25,7 @@ wt hook pre-merge --force   # Skip approval prompts (for CI)
 |------|------|----------|-----------|
 | `post-create` | After worktree created | Yes | No |
 | `post-start` | After worktree created | No (background) | No |
+| `post-switch` | After every switch | No (background) | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
 | `post-merge` | After successful merge | Yes | No |
@@ -59,6 +60,18 @@ server = "npm run dev"
 ```
 
 Output logged to `.git/wt-logs/{branch}-{source}-post-start-{name}.log` (source is `user` or `project`).
+
+### post-switch
+
+Runs after **every** switch operation, **in background**. Triggers on all switch results: creating new worktrees, switching to existing ones, or switching to the current worktree.
+
+**Use cases**: Renaming terminal tabs, updating tmux window names, IDE notifications.
+
+```toml
+post-switch = "echo 'Switched to {{ branch }}'"
+```
+
+Output logged to `.git/wt-logs/{branch}-{source}-post-switch-{name}.log` (source is `user` or `project`).
 
 ### pre-commit
 
@@ -377,6 +390,7 @@ Usage: <b><span class=c>wt hook</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>show</span></b>         Show configured hooks
   <b><span class=c>post-create</span></b>  Run post-create hooks
   <b><span class=c>post-start</span></b>   Run post-start hooks
+  <b><span class=c>post-switch</span></b>  Run post-switch hooks
   <b><span class=c>pre-commit</span></b>   Run pre-commit hooks
   <b><span class=c>pre-merge</span></b>    Run pre-merge hooks
   <b><span class=c>post-merge</span></b>   Run post-merge hooks

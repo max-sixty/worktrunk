@@ -168,6 +168,14 @@ pub struct WorktrunkConfig {
     )]
     pub post_start: Option<CommandConfig>,
 
+    /// Commands to execute after switching to a worktree (background)
+    #[serde(
+        default,
+        rename = "post-switch",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub post_switch: Option<CommandConfig>,
+
     /// Commands to execute before committing during merge (blocking, fail-fast)
     #[serde(
         default,
@@ -342,6 +350,7 @@ impl Default for WorktrunkConfig {
             merge: None,
             post_create: None,
             post_start: None,
+            post_switch: None,
             pre_commit: None,
             pre_merge: None,
             post_merge: None,
@@ -805,6 +814,9 @@ run = "npm install"
 
 [post-start]
 run = "npm run build"
+
+[post-switch]
+rename-tab = "echo 'switched'"
 "#;
         let keys = find_unknown_keys(content);
         assert!(keys.is_empty());

@@ -286,6 +286,7 @@ pub(crate) use parse::DefaultBranchName;
 pub enum HookType {
     PostCreate,
     PostStart,
+    PostSwitch,
     PreCommit,
     PreMerge,
     PostMerge,

@@ -101,6 +101,20 @@ pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> 
                 name_filter,
             )
         }
+        HookType::PostSwitch => {
+            let user_config = user_hook!(post_switch);
+            let project_config = project_config.as_ref().and_then(|c| c.post_switch.as_ref());
+            require_hooks(user_config, project_config, hook_type)?;
+            run_hook_with_filter(
+                &ctx,
+                user_config,
+                project_config,
+                hook_type,
+                &[],
+                HookFailureStrategy::FailFast,
+                name_filter,
+            )
+        }
         HookType::PreCommit => {
             let user_config = user_hook!(pre_commit);
             let project_config = project_config.as_ref().and_then(|c| c.pre_commit.as_ref());
@@ -656,6 +670,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
     let filter: Option<HookType> = hook_type_filter.map(|s| match s {
         "post-create" => HookType::PostCreate,
         "post-start" => HookType::PostStart,
+        "post-switch" => HookType::PostSwitch,
         "pre-commit" => HookType::PreCommit,
         "pre-merge" => HookType::PreMerge,
         "post-merge" => HookType::PostMerge,
@@ -725,6 +740,7 @@ fn render_user_hooks(
     let hooks = [
         (HookType::PostCreate, &config.post_create),
         (HookType::PostStart, &config.post_start),
+        (HookType::PostSwitch, &config.post_switch),
         (HookType::PreCommit, &config.pre_commit),
         (HookType::PreMerge, &config.pre_merge),
         (HookType::PostMerge, &config.post_merge),
@@ -784,6 +800,7 @@ fn render_project_hooks(
     let hooks = [
         (HookType::PostCreate, &config.post_create),
         (HookType::PostStart, &config.post_start),
+        (HookType::PostSwitch, &config.post_switch),
         (HookType::PreCommit, &config.pre_commit),
         (HookType::PreMerge, &config.pre_merge),
         (HookType::PostMerge, &config.post_merge),

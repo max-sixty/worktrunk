@@ -848,6 +848,47 @@ impl<'a> CommandContext<'a> {
             None,
         )
     }
+
+    /// Spawn post-switch commands in parallel as background processes (non-blocking)
+    ///
+    /// Spawns user hooks first, then project hooks. Skips all hooks if verify is false.
+    /// Runs on every switch, including to existing worktrees and newly created ones.
+    pub fn spawn_post_switch_commands(&self, verify: bool) -> anyhow::Result<()> {
+        if !verify {
+            return Ok(());
+        }
+
+        let pipeline = HookPipeline::new(*self);
+
+        // Spawn user hooks first (no approval required)
+        if let Some(user_config) = &self.config.post_switch {
+            pipeline.spawn_background(
+                user_config,
+                HookType::PostSwitch,
+                HookSource::User,
+                &[],
+                None,
+            )?;
+        }
+
+        // Then spawn project hooks (approval checked at gate, not here)
+        let project_config = match self.repo.load_project_config()? {
+            Some(cfg) => cfg,
+            None => return Ok(()),
+        };
+
+        let Some(post_switch_config) = &project_config.post_switch else {
+            return Ok(());
+        };
+
+        pipeline.spawn_background(
+            post_switch_config,
+            HookType::PostSwitch,
+            HookSource::Project,
+            &[],
+            None,
+        )
+    }
 }
 
 /// Push changes to target branch

@@ -707,6 +707,7 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"show"), "Missing show");
     assert!(subcommands.contains(&"post-create"), "Missing post-create");
     assert!(subcommands.contains(&"post-start"), "Missing post-start");
+    assert!(subcommands.contains(&"post-switch"), "Missing post-switch");
     assert!(subcommands.contains(&"pre-commit"), "Missing pre-commit");
     assert!(subcommands.contains(&"pre-merge"), "Missing pre-merge");
     assert!(subcommands.contains(&"post-merge"), "Missing post-merge");
@@ -714,8 +715,8 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"approvals"), "Missing approvals");
     assert_eq!(
         subcommands.len(),
-        8,
-        "Should have exactly 8 hook subcommands"
+        9,
+        "Should have exactly 9 hook subcommands"
     );
 
     // Test 2: Partial input "po" - filters to post-* subcommands
@@ -725,6 +726,7 @@ fn test_complete_hook_subcommands(repo: TestRepo) {
     let subcommands = value_suggestions(&stdout);
     assert!(subcommands.contains(&"post-create"));
     assert!(subcommands.contains(&"post-start"));
+    assert!(subcommands.contains(&"post-switch"));
     assert!(subcommands.contains(&"post-merge"));
     assert!(!subcommands.contains(&"pre-commit"));
     assert!(!subcommands.contains(&"pre-merge"));
