@@ -26,6 +26,9 @@ Here's a quick demo:
 
 ## Context: git worktrees
 
+[![Run in Smithery](https://smithery.ai/badge/skills/max-sixty)](https://smithery.ai/skills?ns=max-sixty&utm_source=github&utm_medium=badge)
+
+
 AI agents like Claude Code and Codex can handle longer tasks without
 supervision, such that it's possible to manage 5-10+ in parallel. Git worktrees
 give each agent its own working directory; no stepping on each other's changes.
