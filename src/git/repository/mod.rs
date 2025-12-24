@@ -102,6 +102,11 @@ impl Repository {
         Self::at(base_path().clone())
     }
 
+    /// Get the base path this repository was created with.
+    pub fn base_path(&self) -> &Path {
+        &self.path
+    }
+
     /// Get the repository layout, initializing it if needed.
     fn layout(&self) -> anyhow::Result<&RepositoryLayout> {
         if let Some(layout) = self.layout.get() {
@@ -412,21 +417,41 @@ impl Repository {
     /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`)
     ///
     /// Uses a hybrid approach:
-    /// 1. Try local cache (`git rev-parse origin/HEAD`) first - fast, no network
-    /// 2. If not cached, query remote (`git ls-remote`) - may take 100ms-2s depending on network
-    /// 3. Cache the result (`git remote set-head`) for future invocations
-    /// 4. If no remote available, infer from local branches (no caching, shows hint)
+    /// 1. Check worktrunk cache (`git config worktrunk.default-branch`) — single command
+    /// 2. Detect primary remote, try its cache (e.g., `origin/HEAD`)
+    /// 3. Query remote (`git ls-remote`) — may take 100ms-2s
+    /// 4. Infer from local branches if no remote
+    ///
+    /// Detection results are cached to `worktrunk.default-branch` for future calls.
     pub fn default_branch(&self) -> anyhow::Result<String> {
-        // Try to get default branch from remote
+        // Fast path: check worktrunk's own cache (single git config read)
+        if let Ok(branch) = self.run_command(&["config", "--get", "worktrunk.default-branch"]) {
+            let branch = branch.trim();
+            if !branch.is_empty() {
+                return Ok(branch.to_string());
+            }
+        }
+
+        // Detect and cache the default branch
+        let branch = self.detect_default_branch()?;
+        let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
+        Ok(branch)
+    }
+
+    /// Detect the default branch without using worktrunk's cache.
+    ///
+    /// Used by `default_branch()` to populate the cache, and by
+    /// `wt config state get default-branch --refresh` to force re-detection.
+    pub fn detect_default_branch(&self) -> anyhow::Result<String> {
+        // Try to get from the primary remote
         if let Ok(remote) = self.primary_remote() {
-            // Try local cache first (fast path)
+            // Try git's cache for this remote (e.g., origin/HEAD)
             if let Ok(branch) = self.get_local_default_branch(&remote) {
                 return Ok(branch);
             }
 
-            // Query remote and cache it
+            // Query remote (no caching to git's remote HEAD - we only manage worktrunk's cache)
             if let Ok(branch) = self.query_remote_default_branch(&remote) {
-                let _ = self.cache_default_branch(&remote, &branch);
                 return Ok(branch);
             }
         }
@@ -434,7 +459,7 @@ impl Repository {
         // Fallback: No remote or remote query failed, try to infer locally
         // TODO: Show message to user when using inference fallback:
         //   "No remote configured. Using inferred default branch: {branch}"
-        //   "To cache the default branch, set up a remote and run: wt config state get default-branch --refresh"
+        //   "To set explicitly, run: wt config state default-branch set <branch>"
         // Problem: git.rs is in lib crate, output module is in binary.
         // Options: (1) Return info about whether fallback was used, let callers show message
         //          (2) Add messages in specific commands (merge.rs, worktree.rs)
@@ -455,10 +480,9 @@ impl Repository {
     ///
     /// Uses local heuristics when no remote is available:
     /// 1. If only one local branch exists, use it
-    /// 2. Check what HEAD points to (current branch in main worktree)
-    /// 3. Check user's git config init.defaultBranch
-    /// 4. Look for common branch names (main, master, develop)
-    /// 5. Fail if none of the above work
+    /// 2. Check user's git config init.defaultBranch
+    /// 3. Look for common branch names (main, master, develop, trunk)
+    /// 4. Fail if none of the above work
     fn infer_default_branch_locally(&self) -> anyhow::Result<String> {
         // 1. If there's only one local branch, use it
         let branches = self.local_branches()?;
@@ -481,7 +505,7 @@ impl Repository {
             }
         }
 
-        // 4. Give up - can't infer
+        // 4. Give up — can't infer
         Err(GitError::Other {
             message:
                 "Could not infer default branch. Please specify target branch explicitly or set up a remote."
@@ -705,6 +729,38 @@ impl Repository {
     pub fn commit_timestamp(&self, commit: &str) -> anyhow::Result<i64> {
         let stdout = self.run_command(&["show", "-s", "--format=%ct", commit])?;
         stdout.trim().parse().context("Failed to parse timestamp")
+    }
+
+    /// Get commit timestamps for multiple commits in a single git command.
+    ///
+    /// Returns a map from commit SHA to timestamp. More efficient than calling
+    /// `commit_timestamp` multiple times when you have many commits.
+    pub fn commit_timestamps(
+        &self,
+        commits: &[&str],
+    ) -> anyhow::Result<std::collections::HashMap<String, i64>> {
+        use std::collections::HashMap;
+
+        if commits.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Build command: git show -s --format='%H %ct' sha1 sha2 sha3 ...
+        let mut args = vec!["show", "-s", "--format=%H %ct"];
+        args.extend(commits);
+
+        let stdout = self.run_command(&args)?;
+
+        let mut result = HashMap::with_capacity(commits.len());
+        for line in stdout.lines() {
+            if let Some((sha, timestamp_str)) = line.split_once(' ')
+                && let Ok(timestamp) = timestamp_str.parse::<i64>()
+            {
+                result.insert(sha.to_string(), timestamp);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Get commit message (subject line) for a commit.
@@ -1335,34 +1391,30 @@ impl Repository {
     pub fn refresh_default_branch(&self) -> anyhow::Result<String> {
         let remote = self.primary_remote()?;
         let branch = self.query_remote_default_branch(&remote)?;
-        self.cache_default_branch(&remote, &branch)?;
+        // Update worktrunk's cache
+        let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
         Ok(branch)
     }
 
     /// Set the default branch manually.
     ///
-    /// This sets the local cache (`refs/remotes/<remote>/HEAD`) to point to the
-    /// specified branch. Use `--refresh` to re-query the remote and overwrite
-    /// this value.
+    /// This sets worktrunk's cache (`worktrunk.default-branch`). Use `--refresh`
+    /// to re-query the remote and update git's cache.
     pub fn set_default_branch(&self, branch: &str) -> anyhow::Result<()> {
-        let remote = self.primary_remote()?;
-        self.cache_default_branch(&remote, branch)
+        self.run_command(&["config", "worktrunk.default-branch", branch])?;
+        Ok(())
     }
 
     /// Clear the default branch cache.
     ///
-    /// Removes `refs/remotes/<remote>/HEAD` so the next call to `default_branch()`
-    /// will re-query the remote.
+    /// Clears worktrunk's cache (`worktrunk.default-branch`). The next call to
+    /// `default_branch()` will re-detect (using git's cache or querying remote).
     ///
     /// Returns `true` if cache was cleared, `false` if no cache existed.
     pub fn clear_default_branch_cache(&self) -> anyhow::Result<bool> {
-        let remote = self.primary_remote()?;
-        if self.get_local_default_branch(&remote).is_ok() {
-            self.run_command(&["remote", "set-head", "-d", &remote])?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        Ok(self
+            .run_command(&["config", "--unset", "worktrunk.default-branch"])
+            .is_ok())
     }
 
     /// Check if two refs have identical tree content (same files/directories).
@@ -1405,11 +1457,6 @@ impl Repository {
     fn query_remote_default_branch(&self, remote: &str) -> anyhow::Result<String> {
         let stdout = self.run_command(&["ls-remote", "--symref", remote, "HEAD"])?;
         DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
-    }
-
-    fn cache_default_branch(&self, remote: &str, branch: &str) -> anyhow::Result<()> {
-        self.run_command(&["remote", "set-head", remote, branch])?;
-        Ok(())
     }
 
     /// Get a project identifier for approval tracking.

@@ -22,19 +22,29 @@ fn test_get_default_branch_without_origin_head(#[from(repo_with_remote)] repo: T
     let branch = Repository::at(repo.root_path()).default_branch().unwrap();
     assert_eq!(branch, "main");
 
-    // Verify that origin/HEAD is now cached
-    assert!(repo.has_origin_head());
+    // Verify that worktrunk's cache is now set
+    let cached = repo
+        .git_command(&["config", "--get", "worktrunk.default-branch"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&cached.stdout).trim(), "main");
 }
 
 #[rstest]
 fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRepo) {
-    // Clear origin/HEAD
+    // Clear both caches to force remote query
     repo.clear_origin_head();
-    assert!(!repo.has_origin_head());
+    let _ = repo
+        .git_command(&["config", "--unset", "worktrunk.default-branch"])
+        .output();
 
-    // First call queries remote and caches
+    // First call queries remote and caches to worktrunk config
     Repository::at(repo.root_path()).default_branch().unwrap();
-    assert!(repo.has_origin_head());
+    let cached = repo
+        .git_command(&["config", "--get", "worktrunk.default-branch"])
+        .output()
+        .unwrap();
+    assert!(cached.status.success());
 
     // Second call uses cache (fast path)
     let branch = Repository::at(repo.root_path()).default_branch().unwrap();

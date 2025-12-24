@@ -238,25 +238,81 @@ pub fn compute_worktree_path(
 /// would generate for its branch. Detached HEAD always returns false (no expected path).
 ///
 /// Uses canonicalization to handle symlinks and relative paths correctly.
-pub fn is_worktree_at_expected_path(
+///
+/// Note: For hot paths where default_branch and is_bare are already known,
+/// use `is_worktree_at_expected_path_with` to avoid redundant git calls.
+fn is_worktree_at_expected_path(
     wt: &worktrunk::git::Worktree,
     repo: &Repository,
     config: &WorktrunkConfig,
 ) -> bool {
+    // Compute default_branch and is_bare once, then delegate to the optimized variant
+    let default_branch = repo.default_branch().unwrap_or_else(|_| String::new());
+    let is_bare = repo.is_bare().unwrap_or(false);
+    is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare)
+}
+
+/// Check if a worktree is at its expected path, with pre-computed values.
+///
+/// Use this when `default_branch` and `is_bare` are already known (e.g., in list command)
+/// to avoid redundant git calls.
+pub fn is_worktree_at_expected_path_with(
+    wt: &worktrunk::git::Worktree,
+    repo: &Repository,
+    config: &WorktrunkConfig,
+    default_branch: &str,
+    is_bare: bool,
+) -> bool {
     use dunce::canonicalize;
 
     match &wt.branch {
-        Some(branch) => compute_worktree_path(repo, branch, config)
-            .map(|expected| {
-                // Use canonicalization to handle symlinks
-                match (canonicalize(&wt.path), canonicalize(&expected)) {
+        Some(branch) => compute_worktree_path_with(repo, branch, config, default_branch, is_bare)
+            .map(
+                |expected| match (canonicalize(&wt.path), canonicalize(&expected)) {
                     (Ok(actual), Ok(expected)) => actual == expected,
-                    _ => wt.path == expected, // Fallback to direct comparison
-                }
-            })
+                    _ => wt.path == expected,
+                },
+            )
             .unwrap_or(false),
-        None => false, // Detached HEAD has no expected path
+        None => false,
     }
+}
+
+/// Optimized variant of `compute_worktree_path` that accepts pre-computed values.
+///
+/// Use this when `default_branch` and `is_bare` are already known to avoid
+/// redundant git calls.
+fn compute_worktree_path_with(
+    repo: &Repository,
+    branch: &str,
+    config: &WorktrunkConfig,
+    default_branch: &str,
+    is_bare: bool,
+) -> anyhow::Result<PathBuf> {
+    let repo_root = repo.worktree_base()?;
+
+    // Default branch lives at repo root (main worktree), not a templated path.
+    // Exception: bare repos have no main worktree, so all branches use templated paths.
+    if !is_bare && branch == default_branch {
+        return Ok(repo_root);
+    }
+
+    let repo_name = repo_root
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Repository path has no filename: {}", repo_root.display()))?
+        .to_str()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Repository path contains invalid UTF-8: {}",
+                repo_root.display()
+            )
+        })?;
+
+    let relative_path = config
+        .format_path(repo_name, branch)
+        .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
+
+    Ok(repo_root.join(relative_path).normalize())
 }
 
 /// Compute a user-facing display name for a worktree.

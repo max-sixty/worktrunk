@@ -5,6 +5,27 @@
 //! - Parallel operations within each worktree (using scoped threads)
 //! - Progressive updates via channels (update UI as each worktree completes)
 //!
+//! ## Skeleton Performance (IMPORTANT)
+//!
+//! The skeleton (placeholder table with loading indicators) must render as fast as possible
+//! to give users immediate feedback. Every git command before skeleton adds latency.
+//!
+//! **Minimal pre-skeleton operations (keep this list small!):**
+//! 1. `git worktree list` — get list of worktrees (essential)
+//! 2. `git config worktrunk.default-branch` — identify main worktree for sorting
+//! 3. Path comparison — detect current worktree (NO git command, just canonicalize paths)
+//! 4. `git branch` / `git branch -r` — only if `--branches` / `--remotes` flags
+//! 5. `git show -s --format='%H %ct'` — batch timestamp fetch for sorting
+//! 6. `git rev-parse --is-bare-repository` — for layout (path column visibility)
+//!
+//! **Deferred until after skeleton:**
+//! - `get_switch_previous()` — previous branch detection (updates gutter symbol)
+//! - `effective_integration_target()` — upstream vs local target check
+//! - All computed fields (ahead/behind, diffs, CI status, etc.)
+//!
+//! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
+//! The skeleton shows `·` placeholder for gutter symbols, filled in when data loads.
+//!
 //! ## Unified Collection Architecture
 //!
 //! Progressive and buffered modes use the same collection and rendering code.
@@ -27,7 +48,7 @@ use rayon::prelude::*;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
-use crate::commands::is_worktree_at_expected_path;
+use crate::commands::is_worktree_at_expected_path_with;
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -599,9 +620,6 @@ pub fn collect(
     let default_branch = repo
         .default_branch()
         .context("Failed to determine default branch")?;
-    // Effective target for integration checks: upstream if ahead of local, else local.
-    // This handles the case where a branch was merged remotely but user hasn't pulled yet.
-    let integration_target = repo.effective_integration_target(&default_branch);
     // Main worktree is the worktree on the default branch (if exists), else first worktree
     let main_worktree = worktrees
         .worktrees
@@ -609,37 +627,72 @@ pub fn collect(
         .find(|wt| wt.branch.as_deref() == Some(default_branch.as_str()))
         .cloned()
         .unwrap_or_else(|| worktrees.main().clone());
-    let current_worktree_path = repo.worktree_root().ok();
-    let previous_branch = repo.get_switch_previous();
 
-    // Sort worktrees: current first, main second, then by timestamp descending
-    let sorted_worktrees = sort_worktrees(
-        worktrees.worktrees.clone(),
-        &main_worktree,
-        current_worktree_path.as_ref(),
-    );
+    // Detect current worktree by checking if repo path is inside any worktree.
+    // This avoids a git command - we just compare canonicalized paths.
+    let repo_path_canonical = canonicalize(repo.base_path()).ok();
+    let current_worktree_path = repo_path_canonical.as_ref().and_then(|repo_path| {
+        worktrees.worktrees.iter().find_map(|wt| {
+            canonicalize(&wt.path)
+                .ok()
+                .filter(|wt_path| repo_path.starts_with(wt_path))
+        })
+    });
+
+    // Defer previous_branch lookup until after skeleton - set is_previous later
+    // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
     // Get branches early for layout calculation and skeleton creation (when --branches is used)
-    // Sort by timestamp (most recent first)
     let branches_without_worktrees = if show_branches {
-        let branches = get_branches_without_worktrees(repo, &worktrees.worktrees)?;
-        sort_by_timestamp_desc(branches, |(_, sha)| repo.commit_timestamp(sha).unwrap_or(0))
+        get_branches_without_worktrees(repo, &worktrees.worktrees)?
     } else {
         Vec::new()
     };
 
     // Get remote branches (when --remotes is used)
-    // Sort by timestamp (most recent first)
     let remote_branches = if show_remotes {
-        let branches = get_remote_branches(repo, &worktrees.worktrees)?;
-        sort_by_timestamp_desc(branches, |(_, sha)| repo.commit_timestamp(sha).unwrap_or(0))
+        get_remote_branches(repo, &worktrees.worktrees)?
     } else {
         Vec::new()
     };
 
+    // Batch fetch all timestamps in a single git command for sorting efficiency.
+    // Collect unique commit SHAs from worktrees and branches.
+    let all_shas: Vec<&str> = worktrees
+        .worktrees
+        .iter()
+        .map(|wt| wt.head.as_str())
+        .chain(
+            branches_without_worktrees
+                .iter()
+                .map(|(_, sha)| sha.as_str()),
+        )
+        .chain(remote_branches.iter().map(|(_, sha)| sha.as_str()))
+        .collect();
+    let timestamps = repo.commit_timestamps(&all_shas).unwrap_or_default();
+
+    // Sort worktrees: current first, main second, then by timestamp descending
+    let sorted_worktrees = sort_worktrees_with_cache(
+        worktrees.worktrees.clone(),
+        &main_worktree,
+        current_worktree_path.as_ref(),
+        &timestamps,
+    );
+
+    // Sort branches by timestamp (most recent first)
+    let branches_without_worktrees =
+        sort_by_timestamp_desc_with_cache(branches_without_worktrees, &timestamps, |(_, sha)| {
+            sha.as_str()
+        });
+    let remote_branches =
+        sort_by_timestamp_desc_with_cache(remote_branches, &timestamps, |(_, sha)| sha.as_str());
+
     // Pre-canonicalize main_worktree.path for is_main comparison
     // (paths from git worktree list may differ based on symlinks or working directory)
     let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
+
+    // Pre-compute is_bare for path mismatch checks (avoids redundant git calls in the loop)
+    let is_bare = repo.is_bare().unwrap_or(false);
 
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
@@ -656,12 +709,13 @@ pub fn collect(
             let is_current = current_worktree_path
                 .as_ref()
                 .is_some_and(|cp| wt_canonical.as_ref() == Some(cp));
-            let is_previous = previous_branch
-                .as_deref()
-                .is_some_and(|prev| wt.branch.as_deref() == Some(prev));
+            // is_previous set to false initially - computed after skeleton
+            let is_previous = false;
 
             // Check if worktree is at its expected path based on config template
-            let path_mismatch = !is_worktree_at_expected_path(wt, repo, config);
+            // Use optimized variant with pre-computed default_branch and is_bare
+            let path_mismatch =
+                !is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare);
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
@@ -768,6 +822,25 @@ pub fn collect(
     if std::env::var("WORKTRUNK_SKELETON_ONLY").is_ok() {
         return Ok(None);
     }
+
+    // === Post-skeleton computations (deferred to minimize time-to-skeleton) ===
+
+    // Compute previous_branch and update is_previous on items
+    let previous_branch = repo.get_switch_previous();
+    if let Some(prev) = previous_branch.as_deref() {
+        for item in &mut all_items {
+            if item.branch.as_deref() == Some(prev)
+                && let Some(wt_data) = item.worktree_data_mut()
+            {
+                wt_data.is_previous = true;
+            }
+        }
+    }
+
+    // Effective target for integration checks: upstream if ahead of local, else local.
+    // This handles the case where a branch was merged remotely but user hasn't pulled yet.
+    // Deferred until after skeleton to avoid blocking initial render.
+    let integration_target = repo.effective_integration_target(&default_branch);
 
     // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
     //
@@ -1037,35 +1110,38 @@ pub fn collect(
     }))
 }
 
-/// Sort items by timestamp descending (most recent first).
-/// Uses parallel timestamp collection for performance.
-fn sort_by_timestamp_desc<T, F>(items: Vec<T>, get_timestamp: F) -> Vec<T>
+/// Sort items by timestamp descending using pre-fetched timestamps.
+fn sort_by_timestamp_desc_with_cache<T, F>(
+    items: Vec<T>,
+    timestamps: &std::collections::HashMap<String, i64>,
+    get_sha: F,
+) -> Vec<T>
 where
-    T: Send + Sync,
-    F: Fn(&T) -> i64 + Send + Sync,
+    F: Fn(&T) -> &str,
 {
-    let timestamps: Vec<i64> = items.par_iter().map(&get_timestamp).collect();
     let mut indexed: Vec<_> = items.into_iter().enumerate().collect();
-    indexed.sort_by_key(|(idx, _)| std::cmp::Reverse(timestamps[*idx]));
+    let item_timestamps: Vec<i64> = indexed
+        .iter()
+        .map(|(_, item)| *timestamps.get(get_sha(item)).unwrap_or(&0))
+        .collect();
+    indexed.sort_by_key(|(idx, _)| std::cmp::Reverse(item_timestamps[*idx]));
     indexed.into_iter().map(|(_, item)| item).collect()
 }
 
 /// Sort worktrees: current first, main second, then by timestamp descending.
-fn sort_worktrees(
+/// Uses pre-fetched timestamps for efficiency.
+fn sort_worktrees_with_cache(
     worktrees: Vec<Worktree>,
     main_worktree: &Worktree,
     current_path: Option<&std::path::PathBuf>,
+    timestamps: &std::collections::HashMap<String, i64>,
 ) -> Vec<Worktree> {
-    let timestamps: Vec<i64> = worktrees
-        .par_iter()
-        .map(|wt| {
-            Repository::at(&wt.path)
-                .commit_timestamp(&wt.head)
-                .unwrap_or(0)
-        })
+    let mut indexed: Vec<_> = worktrees.into_iter().enumerate().collect();
+    let wt_timestamps: Vec<i64> = indexed
+        .iter()
+        .map(|(_, wt)| *timestamps.get(&wt.head).unwrap_or(&0))
         .collect();
 
-    let mut indexed: Vec<_> = worktrees.into_iter().enumerate().collect();
     indexed.sort_by_key(|(idx, wt)| {
         let priority = if current_path.is_some_and(|cp| &wt.path == cp) {
             0 // Current first
@@ -1074,7 +1150,7 @@ fn sort_worktrees(
         } else {
             2 // Rest by timestamp
         };
-        (priority, std::cmp::Reverse(timestamps[*idx]))
+        (priority, std::cmp::Reverse(wt_timestamps[*idx]))
     });
 
     indexed.into_iter().map(|(_, wt)| wt).collect()

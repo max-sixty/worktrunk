@@ -312,6 +312,13 @@ impl ListItem {
         }
     }
 
+    pub fn worktree_data_mut(&mut self) -> Option<&mut WorktreeData> {
+        match &mut self.kind {
+            ItemKind::Worktree(data) => Some(data),
+            ItemKind::Branch => None,
+        }
+    }
+
     pub fn worktree_path(&self) -> Option<&PathBuf> {
         self.worktree_data().map(|data| &data.path)
     }

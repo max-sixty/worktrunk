@@ -441,16 +441,17 @@ pub enum StateCommand {
 
 Worktrunk detects the default branch automatically:
 
-1. **Local cache** — Checks `git rev-parse origin/HEAD` (fast, no network)
-2. **Remote query** — If not cached, queries `git ls-remote` (100ms–2s)
-3. **Cache result** — Stores via `git remote set-head` for future calls
+1. **Worktrunk cache** — Checks `git config worktrunk.default-branch` (single command)
+2. **Git cache** — Detects primary remote and checks its HEAD (e.g., `origin/HEAD`)
+3. **Remote query** — If not cached, queries `git ls-remote` (100ms–2s)
 4. **Local inference** — If no remote, infers from local branches
+
+Once detected, the result is cached in `worktrunk.default-branch` for fast access.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
-- Checks what HEAD points to in main worktree
 - Checks `git config init.defaultBranch`
-- Looks for common names: main, master, develop
+- Looks for common names: main, master, develop, trunk
 
 ## When to use
 

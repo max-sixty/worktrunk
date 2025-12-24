@@ -11,6 +11,7 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
@@ -46,16 +47,17 @@ Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMM
 
 Worktrunk detects the default branch automatically:
 
-1. [1mLocal cache[0m — Checks [2mgit rev-parse origin/HEAD[0m (fast, no network)
-2. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m (100ms–2s)
-3. [1mCache result[0m — Stores via [2mgit remote set-head[0m for future calls
+1. [1mWorktrunk cache[0m — Checks [2mgit config worktrunk.default-branch[0m (single command)
+2. [1mGit cache[0m — Detects primary remote and checks its HEAD (e.g., [2morigin/HEAD[0m)
+3. [1mRemote query[0m — If not cached, queries [2mgit ls-remote[0m (100ms–2s)
 4. [1mLocal inference[0m — If no remote, infers from local branches
+
+Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast access.
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
-- Checks what HEAD points to in main worktree
 - Checks [2mgit config init.defaultBranch
-- Looks for common names: main, master, develop
+- Looks for common names: main, master, develop, trunk
 
 [32mWhen to use
 

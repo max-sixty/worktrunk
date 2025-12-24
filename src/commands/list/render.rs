@@ -399,9 +399,6 @@ impl LayoutConfig {
 
         let branch = item.branch_name();
         let wt_data = item.worktree_data();
-        let is_main = item.is_main();
-        let is_current = wt_data.is_some_and(|d| d.is_current);
-        let is_previous = wt_data.is_some_and(|d| d.is_previous);
         let shortened_path = item
             .worktree_path()
             .map(|p| shorten_path(p, &self.main_worktree_path))
@@ -415,20 +412,14 @@ impl LayoutConfig {
 
             match col.kind {
                 ColumnKind::Gutter => {
-                    // Show actual gutter symbol even in skeleton
-                    // Priority: @ (current) > ^ (main) > - (previous) > + (regular worktree) > space (branch)
-                    let symbol = if is_current {
-                        "@ "
-                    } else if is_main {
-                        "^ "
-                    } else if is_previous {
-                        "- "
-                    } else if wt_data.is_some() {
-                        "+ " // Regular worktree
+                    // Skeleton shows placeholder gutter - actual symbols appear when data loads.
+                    // This allows deferring previous_branch lookup until after skeleton.
+                    let symbol = if wt_data.is_some() {
+                        "· " // Placeholder for worktrees
                     } else {
                         "  " // Branch without worktree (two spaces to match width)
                     };
-                    cell.push_raw(symbol.to_string());
+                    cell.push_styled(symbol, dim);
                 }
                 ColumnKind::Branch => {
                     // Show actual branch name (no dim - start normal, gray out later if removable)

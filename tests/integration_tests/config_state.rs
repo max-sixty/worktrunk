@@ -79,50 +79,40 @@ fn test_state_get_default_branch_no_remote(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_state_set_default_branch(mut repo: TestRepo) {
-    // First set up a remote so set_default_branch works
-    repo.setup_remote("main");
-
-    // Create and push a develop branch so we can set it as default
-    repo.git_command(&["checkout", "-b", "develop"])
-        .status()
-        .unwrap();
-    repo.git_command(&["push", "origin", "develop"])
-        .status()
-        .unwrap();
-    repo.git_command(&["checkout", "main"]).status().unwrap();
-
+fn test_state_set_default_branch(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "default-branch", "set", &["develop"])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mSet default branch to [1mdevelop[22m[39m");
 
-    // Verify it was set by checking origin/HEAD
+    // Verify it was set in worktrunk's cache
     let output = repo
-        .git_command(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .git_command(&["config", "--get", "worktrunk.default-branch"])
         .output()
         .unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "refs/remotes/origin/develop"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "develop");
 }
 
 #[rstest]
 fn test_state_clear_default_branch(mut repo: TestRepo) {
-    // Set up remote and set default branch first
+    // Set up remote and populate worktrunk's cache
     repo.setup_remote("main");
+    // Trigger cache population by reading default branch
+    let _ = wt_state_cmd(&repo, "default-branch", "get", &[])
+        .output()
+        .unwrap();
 
+    // Now clear the cache
     let output = wt_state_cmd(&repo, "default-branch", "clear", &[])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared default branch cache[39m");
 
-    // Verify it was cleared - origin/HEAD should not exist
+    // Verify worktrunk's cache was cleared
     let output = repo
-        .git_command(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .git_command(&["config", "--get", "worktrunk.default-branch"])
         .output()
         .unwrap();
     assert!(!output.status.success());
