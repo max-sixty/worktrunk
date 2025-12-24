@@ -59,6 +59,11 @@ fn base_path() -> &'static PathBuf {
 ///
 /// These values don't change during a process run, so we cache them
 /// after the first lookup to avoid repeated git command spawns.
+///
+/// TODO: Consider macro-based caching (e.g., `#[cached]`) if more methods need caching.
+/// Current approach uses per-instance `OnceCell` which is simpler and auto-frees on drop.
+/// Macro crates use static caches keyed by args, which would require path-based keys and
+/// never free memory. Trade-off: ~10 lines/method here vs ~5 lines with macros.
 #[derive(Debug, Default)]
 struct RepoCache {
     git_common_dir: OnceCell<PathBuf>,
