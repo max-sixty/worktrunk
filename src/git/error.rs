@@ -267,7 +267,7 @@ impl std::fmt::Display for GitError {
                         "Directory already exists: <bold>{path_display}</>"
                     )),
                     hint_message(cformat!(
-                        "To remove manually, run <bright-black>rm -rf {path_escaped}</>; to retry with backup, run <bright-black>{switch_cmd}</>"
+                        "To remove manually, run <bright-black>rm -rf {path_escaped}</>; to overwrite (with backup), run <bright-black>{switch_cmd}</>"
                     ))
                 )
             }
@@ -717,10 +717,10 @@ mod tests {
             branch: "feature".to_string(),
             path: PathBuf::from("/some/path"),
         };
-        assert_snapshot!(err.to_string(), @r"
+        assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mDirectory already exists: [1m/some/path[22m[39m
 
-        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to retry with backup, run [90mwt switch feature --clobber[39m[22m
+        [2m↳[22m [2mTo remove manually, run [90mrm -rf /some/path[39m; to overwrite (with backup), run [90mwt switch feature --clobber[39m[22m
         ");
     }
 
