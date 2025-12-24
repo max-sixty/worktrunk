@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use once_cell::sync::OnceCell;
+
 use anyhow::{Context, bail};
 use normalize_path::NormalizePath;
 
@@ -53,6 +55,17 @@ fn base_path() -> &'static PathBuf {
         .unwrap_or_else(|| DEFAULT.get_or_init(|| PathBuf::from(".")))
 }
 
+/// Cached values for expensive git queries.
+///
+/// These values don't change during a process run, so we cache them
+/// after the first lookup to avoid repeated git command spawns.
+#[derive(Debug, Default)]
+struct RepoCache {
+    git_common_dir: OnceCell<PathBuf>,
+    worktree_root: OnceCell<PathBuf>,
+    current_branch: OnceCell<Option<String>>,
+}
+
 /// Internal layout information for a repository.
 ///
 /// Cached to avoid repeated git queries.
@@ -83,6 +96,7 @@ struct RepositoryLayout {
 pub struct Repository {
     path: PathBuf,
     layout: OnceLock<RepositoryLayout>,
+    cache: RepoCache,
 }
 
 impl Repository {
@@ -91,6 +105,7 @@ impl Repository {
         Self {
             path: path.into(),
             layout: OnceLock::new(),
+            cache: RepoCache::default(),
         }
     }
 
@@ -114,7 +129,7 @@ impl Repository {
         }
 
         let git_common_dir =
-            canonicalize(&self.git_common_dir()?).context("Failed to canonicalize path")?;
+            canonicalize(self.git_common_dir()?).context("Failed to canonicalize path")?;
 
         let is_bare = self.is_bare_repo()?;
 
@@ -254,22 +269,27 @@ impl Repository {
     }
 
     /// Get the current branch name, or None if in detached HEAD state.
-    pub fn current_branch(&self) -> anyhow::Result<Option<String>> {
-        let stdout = self.run_command(&["branch", "--show-current"])?;
-        let branch = stdout.trim();
-
-        if branch.is_empty() {
-            Ok(None) // Detached HEAD
-        } else {
-            Ok(Some(branch.to_string()))
-        }
+    /// Result is cached for the lifetime of this Repository instance.
+    pub fn current_branch(&self) -> anyhow::Result<Option<&str>> {
+        self.cache
+            .current_branch
+            .get_or_try_init(|| {
+                let stdout = self.run_command(&["branch", "--show-current"])?;
+                let branch = stdout.trim();
+                Ok(if branch.is_empty() {
+                    None // Detached HEAD
+                } else {
+                    Some(branch.to_string())
+                })
+            })
+            .map(|opt| opt.as_deref())
     }
 
     /// Get the current branch name, or error if in detached HEAD state.
     ///
     /// `action` describes what requires being on a branch (e.g., "merge").
     pub fn require_current_branch(&self, action: &str) -> anyhow::Result<String> {
-        self.current_branch()?.ok_or_else(|| {
+        self.current_branch()?.map(str::to_string).ok_or_else(|| {
             GitError::DetachedHead {
                 action: Some(action.into()),
             }
@@ -341,7 +361,7 @@ impl Repository {
     /// - `Err` if "-" but no previous branch in history
     pub fn resolve_worktree_name(&self, name: &str) -> anyhow::Result<String> {
         match name {
-            "@" => self.current_branch()?.ok_or_else(|| {
+            "@" => self.current_branch()?.map(str::to_string).ok_or_else(|| {
                 GitError::DetachedHead {
                     action: Some("resolve '@' to current branch".into()),
                 }
@@ -384,7 +404,7 @@ impl Repository {
         match name {
             "@" => {
                 // Current worktree by path - works even in detached HEAD
-                let path = self.worktree_root()?;
+                let path = self.worktree_root()?.to_path_buf();
                 let worktrees = self.list_worktrees()?;
                 let branch = worktrees
                     .worktrees
@@ -525,16 +545,21 @@ impl Repository {
     /// Get the git common directory (the actual .git directory for the repository).
     ///
     /// Always returns an absolute path, resolving any relative paths returned by git.
-    pub fn git_common_dir(&self) -> anyhow::Result<PathBuf> {
-        let stdout = self.run_command(&["rev-parse", "--git-common-dir"])?;
-        let path = PathBuf::from(stdout.trim());
-
-        // Resolve relative paths against the repo's directory
-        if path.is_relative() {
-            canonicalize(self.path.join(&path)).context("Failed to resolve git common directory")
-        } else {
-            Ok(path)
-        }
+    /// Result is cached for the lifetime of this Repository instance.
+    pub fn git_common_dir(&self) -> anyhow::Result<&Path> {
+        self.cache
+            .git_common_dir
+            .get_or_try_init(|| {
+                let stdout = self.run_command(&["rev-parse", "--git-common-dir"])?;
+                let path = PathBuf::from(stdout.trim());
+                if path.is_relative() {
+                    canonicalize(self.path.join(&path))
+                        .context("Failed to resolve git common directory")
+                } else {
+                    Ok(path)
+                }
+            })
+            .map(PathBuf::as_path)
     }
 
     /// Get the git directory (may be different from common-dir in worktrees).
@@ -600,10 +625,16 @@ impl Repository {
     ///
     /// Returns the canonicalized absolute path to the top-level directory of the
     /// current working tree. This could be the main worktree or a linked worktree.
-    pub fn worktree_root(&self) -> anyhow::Result<PathBuf> {
-        let stdout = self.run_command(&["rev-parse", "--show-toplevel"])?;
-        let path = PathBuf::from(stdout.trim());
-        canonicalize(&path).context("Failed to canonicalize worktree root")
+    /// Result is cached for the lifetime of this Repository instance.
+    pub fn worktree_root(&self) -> anyhow::Result<&Path> {
+        self.cache
+            .worktree_root
+            .get_or_try_init(|| {
+                let stdout = self.run_command(&["rev-parse", "--show-toplevel"])?;
+                let path = PathBuf::from(stdout.trim());
+                canonicalize(&path).context("Failed to canonicalize worktree root")
+            })
+            .map(PathBuf::as_path)
     }
 
     /// Check if the path is in a worktree (vs the main repository).

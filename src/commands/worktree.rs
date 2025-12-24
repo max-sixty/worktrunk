@@ -151,7 +151,7 @@ pub fn resolve_worktree_arg(
     match name {
         "@" => {
             // Current worktree by path - works even in detached HEAD
-            let path = repo.worktree_root()?;
+            let path = repo.worktree_root()?.to_path_buf();
             let worktrees = repo.list_worktrees()?;
             let branch = worktrees
                 .worktrees
@@ -557,7 +557,7 @@ pub fn handle_switch(
     // Branch-first lookup: check if branch has a worktree anywhere
     match repo.worktree_for_branch(&resolved_branch)? {
         Some(existing_path) if existing_path.exists() => {
-            let _ = repo.record_switch_previous(new_previous.as_deref());
+            let _ = repo.record_switch_previous(new_previous);
             return Ok(switch_to_existing(existing_path));
         }
         Some(_) => {
@@ -720,7 +720,7 @@ pub fn handle_switch(
     // (see main.rs switch handler for temporal locality)
 
     // Record successful switch in history for `wt switch -` support
-    let _ = repo.record_switch_previous(new_previous.as_deref());
+    let _ = repo.record_switch_previous(new_previous);
 
     Ok((
         SwitchResult::Created {
@@ -808,7 +808,8 @@ pub fn handle_remove_by_path(
     // We're not in this worktree, so no directory change needed
     let current_path = repo
         .worktree_root()
-        .context("Failed to determine current worktree")?;
+        .context("Failed to determine current worktree")?
+        .to_path_buf();
 
     Ok(RemoveResult::RemovedWorktree {
         main_path: current_path,

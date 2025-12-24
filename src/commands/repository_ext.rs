@@ -61,14 +61,14 @@ pub trait RepositoryCliExt {
 impl RepositoryCliExt for Repository {
     fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
         let repo_root = self.worktree_root()?;
-        load_project_config_at(&repo_root)
+        load_project_config_at(repo_root)
     }
 
     fn require_project_config(&self) -> anyhow::Result<ProjectConfig> {
         let repo_root = self.worktree_root()?;
         let config_path = repo_root.join(".config").join("wt.toml");
 
-        match load_project_config_at(&repo_root)? {
+        match load_project_config_at(repo_root)? {
             Some(cfg) => Ok(cfg),
             None => Err(GitError::ProjectConfigNotFound { config_path }.into()),
         }
@@ -124,7 +124,7 @@ impl RepositoryCliExt for Repository {
         let target_repo = Repository::at(&worktree_path);
         target_repo.ensure_clean_working_tree(Some("remove worktree"), Some(branch_name))?;
 
-        let current_worktree = self.worktree_root()?;
+        let current_worktree = self.worktree_root()?.to_path_buf();
         let removing_current = current_worktree == worktree_path;
 
         // Cannot remove the main working tree (only linked worktrees can be removed)
@@ -185,7 +185,7 @@ impl RepositoryCliExt for Repository {
         }
 
         // Get current worktree path
-        let current_path = self.worktree_root()?;
+        let current_path = self.worktree_root()?.to_path_buf();
 
         // Find this worktree in the list to get its metadata
         let worktrees = self.list_worktrees()?;

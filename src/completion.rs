@@ -243,7 +243,7 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
     // Load project config and add project hook names
     let repo = Repository::current();
     if let Ok(repo_root) = repo.worktree_root()
-        && let Ok(Some(project_config)) = ProjectConfig::load(&repo_root)
+        && let Ok(Some(project_config)) = ProjectConfig::load(repo_root)
     {
         let project_command_config = match hook_type {
             "post-create" => &project_config.post_create,

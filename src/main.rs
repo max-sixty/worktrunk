@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::FromArgMatches;
 use color_print::cformat;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use worktrunk::config::{WorktrunkConfig, set_config_path};
 use worktrunk::git::{Repository, exit_code, set_base_path};
@@ -1371,7 +1371,7 @@ fn main() {
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
-                        current_branch.as_deref(),
+                        current_branch,
                         &worktree_path,
                         &repo_root,
                         force,
@@ -1399,7 +1399,7 @@ fn main() {
                     use worktrunk::git::ResolvedWorktree;
                     // When removing multiple worktrees, we need to handle the current worktree last
                     // to avoid deleting the directory we're currently in
-                    let current_worktree = repo.worktree_root().ok();
+                    let current_worktree = repo.worktree_root().ok().map(Path::to_path_buf);
 
                     // Partition worktrees into current, others, and branch-only.
                     // Track all errors (resolution + removal) so we can report them and continue.

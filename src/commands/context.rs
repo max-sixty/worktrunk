@@ -57,7 +57,8 @@ impl CommandEnv {
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
         let branch = repo
             .current_branch()
-            .context("Failed to determine current branch")?;
+            .context("Failed to determine current branch")?
+            .map(str::to_string);
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let repo_root = repo
             .worktree_base()

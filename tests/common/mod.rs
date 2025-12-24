@@ -2085,7 +2085,7 @@ pub fn make_snapshot_cmd(
 /// The common git directory path
 pub fn resolve_git_common_dir(worktree_path: &Path) -> PathBuf {
     let repo = worktrunk::git::Repository::at(worktree_path);
-    repo.git_common_dir().unwrap()
+    repo.git_common_dir().unwrap().to_path_buf()
 }
 
 /// Validates ANSI escape sequences for the specific nested reset pattern that causes color leaks

@@ -15,7 +15,7 @@
 
 use crossbeam_channel::Sender;
 use std::fmt::Display;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 
@@ -525,6 +525,7 @@ impl Task for CiStatusTask {
         let repo_path = repo
             .worktree_root()
             .ok()
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| ctx.repo_path.clone());
 
         let pr_status = ctx.branch.as_deref().and_then(|branch| {

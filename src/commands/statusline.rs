@@ -218,7 +218,7 @@ fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
     let Some(wt) = current_worktree else {
         // Not in a worktree - just show branch name
         if let Ok(Some(branch)) = repo.current_branch() {
-            return Ok(Some(branch));
+            return Ok(Some(branch.to_string()));
         }
         return Ok(None);
     };

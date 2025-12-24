@@ -510,7 +510,7 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     let prepared = prepare_diff(diff_output, diff_stat);
 
     // Get current branch
-    let current_branch = repo.current_branch()?.unwrap_or_else(|| "HEAD".to_string());
+    let current_branch = repo.current_branch()?.unwrap_or("HEAD");
 
     // Get repo name from directory
     let repo_root = repo.worktree_root()?;
@@ -524,7 +524,7 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,
-        branch: &current_branch,
+        branch: current_branch,
         recent_commits: recent_commits.as_ref(),
         repo_name,
         commits: &[],

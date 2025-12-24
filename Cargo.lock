@@ -3096,6 +3096,7 @@ dependencies = [
  "minijinja",
  "nix 0.30.1",
  "normalize-path",
+ "once_cell",
  "osc8",
  "pathdiff",
  "portable-pty",

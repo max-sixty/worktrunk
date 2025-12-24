@@ -231,7 +231,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         repo.ensure_clean_working_tree(Some("remove worktree after merge"), Some(&current_branch))?;
 
         // STEP 2: Remove worktree via shared remove output handler so final message matches wt remove
-        let worktree_root = repo.worktree_root()?;
+        let worktree_root = repo.worktree_root()?.to_path_buf();
         // After a successful merge, compute integration reason from main_path
         let main_repo = worktrunk::git::Repository::at(&destination_path);
         let effective_target = main_repo.effective_integration_target(&target_branch);
