@@ -59,27 +59,18 @@ fn base_path() -> &'static PathBuf {
 ///
 /// These values don't change during a process run, so we cache them
 /// after the first lookup to avoid repeated git command spawns.
-///
-/// TODO: Consider macro-based caching (e.g., `#[cached]`) if more methods need caching.
-/// Current approach uses per-instance `OnceCell` which is simpler and auto-frees on drop.
-/// Macro crates use static caches keyed by args, which would require path-based keys and
-/// never free memory. Trade-off: ~10 lines/method here vs ~5 lines with macros.
+/// See `.claude/rules/caching-strategy.md` for what should/shouldn't be cached.
 #[derive(Debug, Default)]
 struct RepoCache {
     git_common_dir: OnceCell<PathBuf>,
     worktree_root: OnceCell<PathBuf>,
     current_branch: OnceCell<Option<String>>,
-}
-
-/// Internal layout information for a repository.
-///
-/// Cached to avoid repeated git queries.
-#[derive(Debug, Clone)]
-struct RepositoryLayout {
+    primary_remote: OnceCell<String>,
+    project_identifier: OnceCell<String>,
     /// Base path for worktrees (repo root for normal repos, bare repo path for bare repos)
-    worktree_base: PathBuf,
+    worktree_base: OnceCell<PathBuf>,
     /// Whether this is a bare repository
-    is_bare: bool,
+    is_bare: OnceCell<bool>,
 }
 
 /// Repository context for git operations.
@@ -100,7 +91,6 @@ struct RepositoryLayout {
 #[derive(Debug)]
 pub struct Repository {
     path: PathBuf,
-    layout: OnceLock<RepositoryLayout>,
     cache: RepoCache,
 }
 
@@ -109,7 +99,6 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            layout: OnceLock::new(),
             cache: RepoCache::default(),
         }
     }
@@ -127,91 +116,48 @@ impl Repository {
         &self.path
     }
 
-    /// Get the repository layout, initializing it if needed.
-    fn layout(&self) -> anyhow::Result<&RepositoryLayout> {
-        if let Some(layout) = self.layout.get() {
-            return Ok(layout);
-        }
-
-        let git_common_dir =
-            canonicalize(self.git_common_dir()?).context("Failed to canonicalize path")?;
-
-        let is_bare = self.is_bare_repo()?;
-
-        let worktree_base = if is_bare {
-            git_common_dir.clone()
-        } else {
-            git_common_dir
-                .parent()
-                .ok_or_else(|| {
-                    anyhow::Error::from(GitError::Other {
-                        message: format!(
-                            "Git directory has no parent: {}",
-                            git_common_dir.display()
-                        ),
-                    })
-                })?
-                .to_path_buf()
-        };
-
-        let layout = RepositoryLayout {
-            worktree_base,
-            is_bare,
-        };
-
-        // set() returns Err if already set, but we checked above, so ignore the result
-        let _ = self.layout.set(layout);
-
-        // Now get() will succeed
-        Ok(self.layout.get().unwrap())
-    }
-
-    /// Check if this is a bare repository (no working tree).
-    fn is_bare_repo(&self) -> anyhow::Result<bool> {
-        let output = self.run_command(&["config", "--bool", "core.bare"])?;
-        Ok(output.trim() == "true")
-    }
-
     /// Get the primary remote name for this repository.
     ///
+    /// Returns a consistent value across all worktrees (not branch-specific).
+    ///
     /// Uses the following strategy:
-    /// 1. If the current branch has an upstream, use its remote
-    ///    (Note: Detached HEAD falls through to step 2)
-    /// 2. Use git's `checkout.defaultRemote` config if set and has a URL
-    /// 3. Otherwise, get the first remote with a configured URL
-    /// 4. Fall back to "origin" if no remotes exist
-    pub fn primary_remote(&self) -> anyhow::Result<String> {
-        // Try to get the remote from HEAD's upstream (single command)
-        // @{u} refers to the upstream of the current branch
-        if let Ok(upstream) = self.run_command(&["rev-parse", "--abbrev-ref", "@{u}"])
-            && let Some((remote, _)) = upstream.trim().split_once('/')
-        {
-            return Ok(remote.to_string());
-        }
+    /// 1. Use git's [`checkout.defaultRemote`][1] config if set and has a URL
+    /// 2. Otherwise, get the first remote with a configured URL
+    /// 3. Fall back to "origin" if no remotes exist
+    ///
+    /// Result is cached for the lifetime of this Repository instance.
+    ///
+    /// [1]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-checkoutdefaultRemote
+    pub fn primary_remote(&self) -> anyhow::Result<&str> {
+        self.cache
+            .primary_remote
+            .get_or_try_init(|| {
+                // Check git's checkout.defaultRemote config
+                if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"])
+                {
+                    let default_remote = default_remote.trim();
+                    if !default_remote.is_empty() && self.remote_has_url(default_remote) {
+                        return Ok(default_remote.to_string());
+                    }
+                }
 
-        // Check git's checkout.defaultRemote config
-        if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"]) {
-            let default_remote = default_remote.trim();
-            if !default_remote.is_empty() && self.remote_has_url(default_remote) {
-                return Ok(default_remote.to_string());
-            }
-        }
+                // Fall back to first remote with a configured URL
+                // Use git config to find remotes with URLs, filtering out phantom remotes
+                // from global config (e.g., `remote.origin.prunetags=true` without a URL)
+                let output = self
+                    .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
+                    .unwrap_or_default();
+                let first_remote = output.lines().next().and_then(|line| {
+                    // Parse "remote.<name>.url <value>" format
+                    // Use ".url " as delimiter to handle remote names with dots (e.g., "my.remote")
+                    line.strip_prefix("remote.")
+                        .and_then(|s| s.split_once(".url "))
+                        .map(|(name, _)| name)
+                });
 
-        // Fall back to first remote with a configured URL
-        // Use git config to find remotes with URLs, filtering out phantom remotes
-        // from global config (e.g., `remote.origin.prunetags=true` without a URL)
-        let output = self
-            .run_command(&["config", "--get-regexp", r"remote\..+\.url"])
-            .unwrap_or_default();
-        let first_remote = output.lines().next().and_then(|line| {
-            // Parse "remote.<name>.url <value>" format
-            // Use ".url " as delimiter to handle remote names with dots (e.g., "my.remote")
-            line.strip_prefix("remote.")
-                .and_then(|s| s.split_once(".url "))
-                .map(|(name, _)| name)
-        });
-
-        Ok(first_remote.unwrap_or("origin").to_string())
+                Ok(first_remote.unwrap_or("origin").to_string())
+            })
+            .map(String::as_str)
     }
 
     /// Check if a remote has a URL configured.
@@ -471,12 +417,12 @@ impl Repository {
         // Try to get from the primary remote
         if let Ok(remote) = self.primary_remote() {
             // Try git's cache for this remote (e.g., origin/HEAD)
-            if let Ok(branch) = self.get_local_default_branch(&remote) {
+            if let Ok(branch) = self.get_local_default_branch(remote) {
                 return Ok(branch);
             }
 
             // Query remote (no caching to git's remote HEAD - we only manage worktrunk's cache)
-            if let Ok(branch) = self.query_remote_default_branch(&remote) {
+            if let Ok(branch) = self.query_remote_default_branch(remote) {
                 return Ok(branch);
             }
         }
@@ -549,8 +495,14 @@ impl Repository {
 
     /// Get the git common directory (the actual .git directory for the repository).
     ///
+    /// For linked worktrees, this returns the shared `.git` directory in the main
+    /// worktree, not the per-worktree `.git/worktrees/<name>` directory.
+    /// See [`--git-common-dir`][1] for details.
+    ///
     /// Always returns an absolute path, resolving any relative paths returned by git.
     /// Result is cached for the lifetime of this Repository instance.
+    ///
+    /// [1]: https://git-scm.com/docs/git-rev-parse#Documentation/git-rev-parse.txt---git-common-dir
     pub fn git_common_dir(&self) -> anyhow::Result<&Path> {
         self.cache
             .git_common_dir
@@ -588,16 +540,46 @@ impl Repository {
     /// For bare repositories: the bare repository directory itself.
     ///
     /// This is the path that should be used when constructing worktree paths.
+    /// Result is cached for the lifetime of this Repository instance.
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
-        Ok(self.layout()?.worktree_base.clone())
+        self.cache
+            .worktree_base
+            .get_or_try_init(|| {
+                let git_common_dir =
+                    canonicalize(self.git_common_dir()?).context("Failed to canonicalize path")?;
+
+                if self.is_bare()? {
+                    Ok(git_common_dir)
+                } else {
+                    git_common_dir
+                        .parent()
+                        .ok_or_else(|| {
+                            anyhow::Error::from(GitError::Other {
+                                message: format!(
+                                    "Git directory has no parent: {}",
+                                    git_common_dir.display()
+                                ),
+                            })
+                        })
+                        .map(Path::to_path_buf)
+                }
+            })
+            .cloned()
     }
 
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
+    /// Result is cached for the lifetime of this Repository instance.
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        Ok(self.layout()?.is_bare)
+        self.cache
+            .is_bare
+            .get_or_try_init(|| {
+                let output = self.run_command(&["config", "--bool", "core.bare"])?;
+                Ok(output.trim() == "true")
+            })
+            .copied()
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -684,6 +666,10 @@ impl Repository {
     }
 
     /// Check if base is an ancestor of head (i.e., would be a fast-forward).
+    ///
+    /// See [`--is-ancestor`][1] for details.
+    ///
+    /// [1]: https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
     pub fn is_ancestor(&self, base: &str, head: &str) -> anyhow::Result<bool> {
         self.run_command_check(&["merge-base", "--is-ancestor", base, head])
     }
@@ -700,8 +686,10 @@ impl Repository {
 
     /// Check if a branch has file changes beyond the merge-base with target.
     ///
-    /// Uses three-dot diff (`target...branch`) which shows files changed from merge-base
-    /// to branch. Returns false when the diff is empty (no added changes).
+    /// Uses [three-dot diff][1] (`target...branch`) which shows files changed from
+    /// merge-base to branch. Returns false when the diff is empty (no added changes).
+    ///
+    /// [1]: https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgtltcommitgtltcommitgt--telepathhellip
     pub fn has_added_changes(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
         // git diff --name-only target...branch shows files changed from merge-base to branch
         let range = format!("{target}...{branch}");
@@ -806,6 +794,10 @@ impl Repository {
     }
 
     /// Get the upstream tracking branch for the given branch.
+    ///
+    /// Uses [`@{upstream}` syntax][1] to resolve the tracking branch.
+    ///
+    /// [1]: https://git-scm.com/docs/gitrevisions#Documentation/gitrevisions.txt-emltaboranchgtemuaboranchgtupaboranchgtupstream
     pub fn upstream_branch(&self, branch: &str) -> anyhow::Result<Option<String>> {
         let result = self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}@{{u}}", branch)]);
 
@@ -1186,9 +1178,7 @@ impl Repository {
             local_branches.iter().map(|(n, _)| n.clone()).collect();
 
         // Get remote branches with timestamps
-        let remote = self
-            .primary_remote()
-            .unwrap_or_else(|_| "origin".to_string());
+        let remote = self.primary_remote().unwrap_or("origin");
         let remote_ref_path = format!("refs/remotes/{}/", remote);
         let remote_prefix = format!("{}/", remote);
 
@@ -1217,7 +1207,7 @@ impl Repository {
                         return None;
                     }
                     let timestamp = parts[1].parse().unwrap_or(0);
-                    Some((local_name.to_string(), remote.clone(), timestamp))
+                    Some((local_name.to_string(), remote.to_string(), timestamp))
                 } else {
                     None
                 }
@@ -1426,7 +1416,7 @@ impl Repository {
     /// Returns the refreshed default branch name.
     pub fn refresh_default_branch(&self) -> anyhow::Result<String> {
         let remote = self.primary_remote()?;
-        let branch = self.query_remote_default_branch(&remote)?;
+        let branch = self.query_remote_default_branch(remote)?;
         // Update worktrunk's cache
         let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
         Ok(branch)
@@ -1502,67 +1492,74 @@ impl Repository {
     ///
     /// This identifier is used to track which commands have been approved
     /// for execution in this project.
-    pub fn project_identifier(&self) -> anyhow::Result<String> {
-        // Try to get the remote URL first
-        let remote = self.primary_remote()?;
+    ///
+    /// Result is cached for the lifetime of this Repository instance.
+    pub fn project_identifier(&self) -> anyhow::Result<&str> {
+        self.cache
+            .project_identifier
+            .get_or_try_init(|| {
+                // Try to get the remote URL first
+                let remote = self.primary_remote()?;
 
-        if let Ok(url) = self.run_command(&["remote", "get-url", &remote]) {
-            let url = url.trim();
+                if let Ok(url) = self.run_command(&["remote", "get-url", remote]) {
+                    let url = url.trim();
 
-            // Parse common git URL formats:
-            // - https://github.com/user/repo.git
-            // - git@github.com:user/repo.git
-            // - ssh://git@github.com/user/repo.git
+                    // Parse common git URL formats:
+                    // - https://github.com/user/repo.git
+                    // - git@github.com:user/repo.git
+                    // - ssh://git@github.com/user/repo.git
 
-            // Remove .git suffix if present
-            let url = url.strip_suffix(".git").unwrap_or(url);
+                    // Remove .git suffix if present
+                    let url = url.strip_suffix(".git").unwrap_or(url);
 
-            // Handle SSH format (git@host:path)
-            if let Some(ssh_part) = url.strip_prefix("git@")
-                && let Some((host, path)) = ssh_part.split_once(':')
-            {
-                return Ok(format!("{}/{}", host, path));
-            }
+                    // Handle SSH format (git@host:path)
+                    if let Some(ssh_part) = url.strip_prefix("git@")
+                        && let Some((host, path)) = ssh_part.split_once(':')
+                    {
+                        return Ok(format!("{}/{}", host, path));
+                    }
 
-            // Handle HTTPS/HTTP format
-            if let Some(https_part) = url
-                .strip_prefix("https://")
-                .or_else(|| url.strip_prefix("http://"))
-            {
-                return Ok(https_part.to_string());
-            }
+                    // Handle HTTPS/HTTP format
+                    if let Some(https_part) = url
+                        .strip_prefix("https://")
+                        .or_else(|| url.strip_prefix("http://"))
+                    {
+                        return Ok(https_part.to_string());
+                    }
 
-            // Handle ssh:// format
-            if let Some(ssh_part) = url.strip_prefix("ssh://") {
-                // Remove git@ prefix if present
-                let ssh_part = ssh_part.strip_prefix("git@").unwrap_or(ssh_part);
-                // Replace first : with /
-                if let Some(colon_pos) = ssh_part.find(':') {
-                    let (host, path) = ssh_part.split_at(colon_pos);
-                    return Ok(format!("{}{}", host, path.replacen(':', "/", 1)));
+                    // Handle ssh:// format
+                    if let Some(ssh_part) = url.strip_prefix("ssh://") {
+                        // Remove git@ prefix if present
+                        let ssh_part = ssh_part.strip_prefix("git@").unwrap_or(ssh_part);
+                        // Replace first : with /
+                        if let Some(colon_pos) = ssh_part.find(':') {
+                            let (host, path) = ssh_part.split_at(colon_pos);
+                            return Ok(format!("{}{}", host, path.replacen(':', "/", 1)));
+                        }
+                        return Ok(ssh_part.to_string());
+                    }
+
+                    // If we can't parse it, use the URL as-is
+                    return Ok(url.to_string());
                 }
-                return Ok(ssh_part.to_string());
-            }
 
-            // If we can't parse it, use the URL as-is
-            return Ok(url.to_string());
-        }
+                // Fall back to repository name (use worktree base for consistency across all worktrees)
+                let repo_root = self.worktree_base()?;
+                let repo_name = repo_root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| {
+                        anyhow::Error::from(GitError::Other {
+                            message: format!(
+                                "Repository directory has no valid name: {}",
+                                repo_root.display()
+                            ),
+                        })
+                    })?;
 
-        // Fall back to repository name (use worktree base for consistency across all worktrees)
-        let repo_root = self.worktree_base()?;
-        let repo_name = repo_root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                anyhow::Error::from(GitError::Other {
-                    message: format!(
-                        "Repository directory has no valid name: {}",
-                        repo_root.display()
-                    ),
-                })
-            })?;
-
-        Ok(repo_name.to_string())
+                Ok(repo_name.to_string())
+            })
+            .map(String::as_str)
     }
 
     /// Get a short display name for this repository, used in logging context.

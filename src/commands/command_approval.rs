@@ -201,5 +201,5 @@ pub fn approve_hooks_filtered(
     }
 
     let project_id = ctx.repo.project_identifier()?;
-    approve_command_batch(&commands, &project_id, ctx.config, ctx.force, false)
+    approve_command_batch(&commands, project_id, ctx.config, ctx.force, false)
 }

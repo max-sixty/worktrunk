@@ -55,7 +55,7 @@ impl<'a> MergeCommandCollector<'a> {
         let mut all_commands = Vec::new();
         let project_config = match self.repo.load_project_config()? {
             Some(cfg) => cfg,
-            None => return Ok((all_commands, self.repo.project_identifier()?)),
+            None => return Ok((all_commands, self.repo.project_identifier()?.to_string())),
         };
 
         // Collect original commands (not expanded) for approval
@@ -79,7 +79,7 @@ impl<'a> MergeCommandCollector<'a> {
 
         all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
 
-        let project_id = self.repo.project_identifier()?;
+        let project_id = self.repo.project_identifier()?.to_string();
         Ok((all_commands, project_id))
     }
 }

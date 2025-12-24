@@ -573,7 +573,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let commands_to_approve = if !show_all {
         let unapproved: Vec<_> = commands
             .into_iter()
-            .filter(|cmd| !config.is_command_approved(&project_id, &cmd.template))
+            .filter(|cmd| !config.is_command_approved(project_id, &cmd.template))
             .collect();
 
         if unapproved.is_empty() {
@@ -590,7 +590,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     // When show_all=true, we've already included all commands in commands_to_approve
     // When show_all=false, we've already filtered to unapproved commands
     // So we pass skip_approval_filter=true to prevent double-filtering
-    let approved = approve_command_batch(&commands_to_approve, &project_id, &config, false, true)?;
+    let approved = approve_command_batch(&commands_to_approve, project_id, &config, false, true)?;
 
     // Show result
     if approved {
@@ -630,7 +630,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         let project_id = repo.project_identifier()?;
 
         // Check if project has any approvals
-        let had_approvals = config.projects.contains_key(&project_id);
+        let had_approvals = config.projects.contains_key(project_id);
 
         if !had_approvals {
             crate::output::print(info_message("No approvals to clear for this project"))?;
@@ -640,12 +640,12 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         // Count approvals before removing
         let approval_count = config
             .projects
-            .get(&project_id)
+            .get(project_id)
             .map(|p| p.approved_commands.len())
             .unwrap_or(0);
 
         config
-            .revoke_project(&project_id)
+            .revoke_project(project_id)
             .context("Failed to clear project approvals")?;
 
         crate::output::print(success_message(format!(
@@ -700,7 +700,7 @@ pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyho
         &repo,
         project_config.as_ref(),
         &config,
-        project_id.as_deref(),
+        project_id,
         filter,
         ctx.as_ref(),
     )?;

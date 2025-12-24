@@ -79,7 +79,8 @@ fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
     repo.setup_custom_remote("upstream", "develop");
 
     // Test that primary_remote detects the custom remote name
-    let remote = Repository::at(repo.root_path()).primary_remote().unwrap();
+    let git_repo = Repository::at(repo.root_path());
+    let remote = git_repo.primary_remote().unwrap();
     assert_eq!(remote, "upstream");
 }
 
