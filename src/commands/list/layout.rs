@@ -1288,4 +1288,59 @@ mod tests {
         // Path visibility depends on terminal width and column priorities
         // At narrow widths (80 columns default in tests), Path may not fit
     }
+
+    #[test]
+    fn test_estimate_url_width_no_template() {
+        // No template returns 0
+        assert_eq!(estimate_url_width(None, Some("feature")), 0);
+        assert_eq!(estimate_url_width(None, None), 0);
+    }
+
+    #[test]
+    fn test_estimate_url_width_with_hash_port() {
+        let template = "http://localhost:{{ branch | hash_port }}";
+
+        // With a branch name, expands template and measures
+        let width = estimate_url_width(Some(template), Some("feature"));
+        // "http://localhost:" (17) + 5-digit port = 22
+        assert_eq!(width, 22);
+
+        // Longer branch doesn't affect hash_port width (always 5 digits)
+        let width = estimate_url_width(Some(template), Some("very-long-feature-branch-name"));
+        assert_eq!(width, 22);
+    }
+
+    #[test]
+    fn test_estimate_url_width_with_branch_variable() {
+        let template = "http://localhost:8080/{{ branch }}";
+
+        // Width includes the branch name
+        let width = estimate_url_width(Some(template), Some("feature"));
+        // "http://localhost:8080/" (22) + "feature" (7) = 29
+        assert_eq!(width, 29);
+
+        // Longer branch increases width
+        let width = estimate_url_width(Some(template), Some("long-feature-branch"));
+        // "http://localhost:8080/" (22) + "long-feature-branch" (19) = 41
+        assert_eq!(width, 41);
+    }
+
+    #[test]
+    fn test_estimate_url_width_fallback() {
+        let template = "http://localhost:{{ branch | hash_port }}";
+
+        // No branch name triggers fallback estimation
+        let width = estimate_url_width(Some(template), None);
+        // Fallback replaces {{ branch | hash_port }} with "12345"
+        // "http://localhost:12345" = 22
+        assert_eq!(width, 22);
+    }
+
+    #[test]
+    fn test_estimate_url_width_static_template() {
+        // Template with no variables
+        let template = "http://localhost:3000";
+        let width = estimate_url_width(Some(template), Some("feature"));
+        assert_eq!(width, 21);
+    }
 }

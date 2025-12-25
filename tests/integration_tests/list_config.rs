@@ -206,3 +206,122 @@ url = "http://localhost:{{ branch | hash_port }}"
         assert_cmd_snapshot!(cmd);
     });
 }
+
+/// Test `wt list --format=json` includes URL fields when template configured
+#[rstest]
+fn test_list_json_url_fields(repo: TestRepo, temp_home: TempDir) {
+    // Create project config with URL template
+    repo.write_project_config(
+        r#"[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"#,
+    );
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.clean_cli_env(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse JSON and verify URL fields
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+
+    let first = &items[0];
+    // URL should be present and contain the hash_port result
+    assert!(first.get("url").is_some());
+    let url = first["url"].as_str().unwrap();
+    assert!(url.starts_with("http://localhost:"));
+    // Port should be 5 digits (10000-19999)
+    let port: u16 = url.split(':').next_back().unwrap().parse().unwrap();
+    assert!((10000..=19999).contains(&port));
+
+    // url_active should be present (false since no server listening)
+    assert!(first.get("url_active").is_some());
+    assert_eq!(first["url_active"].as_bool(), Some(false));
+}
+
+/// Test `wt list --format=json` has null URL fields when no template configured
+#[rstest]
+fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
+    // Create user config WITHOUT URL template
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.clean_cli_env(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse JSON and verify URL fields are null
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert!(!items.is_empty());
+
+    let first = &items[0];
+    // URL should be null when no template configured
+    assert!(first["url"].is_null());
+    assert!(first["url_active"].is_null());
+}
+
+/// Test URL with {{ branch }} variable (not hash_port)
+#[rstest]
+fn test_list_url_with_branch_variable(repo: TestRepo, temp_home: TempDir) {
+    // Create project config with {{ branch }} in URL
+    repo.write_project_config(
+        r#"[list]
+url = "http://localhost:8080/{{ branch }}"
+"#,
+    );
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.clean_cli_env(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["list", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse JSON and verify URL contains branch name
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    let first = &items[0];
+
+    let url = first["url"].as_str().unwrap();
+    assert_eq!(url, "http://localhost:8080/main");
+}
