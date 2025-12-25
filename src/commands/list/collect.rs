@@ -539,9 +539,16 @@ fn drain_results(
                 item.pr_status = Some(pr_status);
             }
             TaskResult::UrlStatus { url, active, .. } => {
-                // URL expanded in task spawning (post-skeleton)
-                item.url = url;
-                item.url_active = active;
+                // Two-phase URL rendering:
+                // 1. First result (from spawning code): url=Some, active=None → URL appears in normal styling
+                // 2. Second result (from health check): url=None, active=Some → dims if inactive
+                // Only update non-None fields to preserve values from earlier results.
+                if url.is_some() {
+                    item.url = url;
+                }
+                if active.is_some() {
+                    item.url_active = active;
+                }
             }
         }
 
@@ -798,6 +805,7 @@ pub fn collect(
         &all_items,
         &effective_skip_tasks,
         &main_worktree.path,
+        url_template.as_deref(),
     );
 
     // Single-line invariant: use safe width to prevent line wrapping

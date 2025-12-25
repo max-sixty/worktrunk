@@ -847,6 +847,7 @@ pub fn handle_select() -> anyhow::Result<()> {
         &skip_tasks,
         skim_list_width,
         &list_data.main_worktree_path,
+        None, // URL column not shown in select
     );
 
     // Render header using layout system (need both plain and styled text for skim)

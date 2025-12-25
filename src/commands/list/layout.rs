@@ -452,6 +452,33 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
+/// Estimate URL column width by expanding the template with a sample branch.
+///
+/// Uses the longest branch name to get an accurate width estimate for the URL column.
+/// Falls back to 22 chars ("http://localhost:12345") if expansion fails.
+fn estimate_url_width(url_template: Option<&str>, longest_branch: Option<&str>) -> usize {
+    let Some(template) = url_template else {
+        return 0;
+    };
+
+    // Try to expand the template with the longest branch name
+    if let Some(branch) = longest_branch {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("branch", branch);
+        if let Ok(expanded) = worktrunk::config::expand_template(template, &vars, false) {
+            return expanded.width();
+        }
+    }
+
+    // Fallback: estimate based on template structure
+    // {{ branch | hash_port }} becomes a 5-digit port (10000-19999)
+    // {{ branch }} becomes the branch name (unknown length, use 10 as average)
+    template
+        .replace("{{ branch | hash_port }}", "12345")
+        .replace("{{ branch }}", "feature-xx")
+        .len()
+}
+
 /// Build pre-allocated column width estimates.
 ///
 /// Uses generous fixed allocations for expensive-to-compute columns (status, diffs, time, CI)
@@ -461,6 +488,7 @@ fn build_estimated_widths(
     max_branch: usize,
     skip_tasks: &HashSet<TaskKind>,
     has_path_mismatch: bool,
+    url_width: usize,
 ) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
     // Values exceeding these widths use compact notation (K suffix)
@@ -493,12 +521,8 @@ fn build_estimated_widths(
         path: has_path_mismatch,
     };
 
-    // URL estimate: "http://localhost:12345" = 22 chars
-    let url_estimate = if skip_tasks.contains(&TaskKind::UrlStatus) {
-        0
-    } else {
-        fit_header(HEADER_URL, 22)
-    };
+    // URL width estimated from template + longest branch (or fallback)
+    let url_estimate = fit_header(HEADER_URL, url_width);
 
     let widths = ColumnWidths {
         branch: max_branch,
@@ -734,12 +758,20 @@ fn allocate_columns_with_priority(
 /// - Age: 4 chars ("11mo" short format)
 /// - CI: 1 char (indicator symbol)
 /// - Message: flexible (20-100 chars)
+/// - URL: estimated from template + longest branch
 pub fn calculate_layout_from_basics(
     items: &[super::model::ListItem],
     skip_tasks: &HashSet<TaskKind>,
     main_worktree_path: &Path,
+    url_template: Option<&str>,
 ) -> LayoutConfig {
-    calculate_layout_with_width(items, skip_tasks, get_safe_list_width(), main_worktree_path)
+    calculate_layout_with_width(
+        items,
+        skip_tasks,
+        get_safe_list_width(),
+        main_worktree_path,
+        url_template,
+    )
 }
 
 /// Calculate layout with explicit width (for contexts like skim where available width differs)
@@ -748,16 +780,16 @@ pub fn calculate_layout_with_width(
     skip_tasks: &HashSet<TaskKind>,
     terminal_width: usize,
     main_worktree_path: &Path,
+    url_template: Option<&str>,
 ) -> LayoutConfig {
     // Calculate actual widths for things we know
     // Include branch names from both worktrees and standalone branches
-    let max_branch = items
+    let longest_branch = items
         .iter()
         .filter_map(|item| item.branch.as_deref())
-        .map(|b| b.width())
-        .max()
-        .unwrap_or(0);
+        .max_by_key(|b| b.width());
 
+    let max_branch = longest_branch.map(|b| b.width()).unwrap_or(0);
     let max_branch = fit_header(HEADER_BRANCH, max_branch);
 
     let path_data_width = items
@@ -778,8 +810,11 @@ pub fn calculate_layout_with_width(
         .filter_map(|item| item.worktree_data())
         .any(|data| data.path_mismatch);
 
+    // Estimate URL width from template + longest branch
+    let url_width = estimate_url_width(url_template, longest_branch);
+
     // Build pre-allocated width estimates (same as buffered mode)
-    let metadata = build_estimated_widths(max_branch, skip_tasks, has_path_mismatch);
+    let metadata = build_estimated_widths(max_branch, skip_tasks, has_path_mismatch, url_width);
 
     let commit_width = fit_header(HEADER_COMMIT, COMMIT_HASH_WIDTH);
 
@@ -1018,7 +1053,8 @@ mod tests {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
         // Empty skip set means all tasks are computed (equivalent to --full)
         // has_path_mismatch=true to test the path flag is passed through
-        let metadata = build_estimated_widths(20, &HashSet::new(), true);
+        // url_width=0 since we're not testing URL column here
+        let metadata = build_estimated_widths(20, &HashSet::new(), true, 0);
         let widths = metadata.widths;
 
         // Line diffs (Signs variant: +/-) allocate 3 digits for 100-999 range
@@ -1135,7 +1171,7 @@ mod tests {
             .into_iter()
             .collect();
         let main_worktree_path = PathBuf::from("/test");
-        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path);
+        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path, None);
 
         assert!(
             !layout.columns.is_empty(),
@@ -1233,7 +1269,7 @@ mod tests {
             .into_iter()
             .collect();
         let main_worktree_path = PathBuf::from("/home/user/project");
-        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path);
+        let layout = calculate_layout_from_basics(&items, &skip_tasks, &main_worktree_path, None);
 
         assert!(
             layout

@@ -48,11 +48,16 @@ Everything else runs after the skeleton appears:
 
 These operations update cells progressively as they complete.
 
-**URL column example:** The skeleton allocates space for the URL column (based on
-the config check in Phase 1), but shows empty cells. URL template expansion
-happens in task spawning (Phase 3), parallelized across worktrees. When
-`UrlStatusTask` completes for each item, it returns both the expanded URL and
-the health check result, updating the cell.
+**URL column example:** The skeleton allocates space for the URL column (width
+estimated from template + longest branch in Phase 1). URL template expansion
+happens in task spawning (Phase 3), parallelized across worktrees. Two-phase
+update:
+
+1. URL appears immediately in normal styling (sent before health check task)
+2. If health check fails (port not listening), URL dims
+
+This ensures URLs appear as fast as possible — users see the URL right away,
+then it dims only if the dev server isn't running.
 
 ## Adding New Features
 

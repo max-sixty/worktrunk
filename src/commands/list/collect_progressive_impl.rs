@@ -551,7 +551,11 @@ impl Task for CiStatusTask {
     }
 }
 
-/// Task 13: URL status (compute URL from template and check port availability)
+/// Task 13: URL health check (port availability).
+///
+/// The URL itself is sent immediately after template expansion (in spawning code)
+/// so it appears in normal styling right away. This task only checks if the port
+/// is listening, and if not, the URL dims.
 pub struct UrlStatusTask;
 
 impl Task for UrlStatusTask {
@@ -561,7 +565,7 @@ impl Task for UrlStatusTask {
         use std::net::{SocketAddr, TcpStream};
         use std::time::Duration;
 
-        // URL expanded in task spawning (post-skeleton); check connectivity if present
+        // URL already sent in spawning code; this task only checks port availability
         let Some(ref url) = ctx.item_url else {
             return Ok(TaskResult::UrlStatus {
                 item_idx: ctx.item_idx,
@@ -577,9 +581,10 @@ impl Task for UrlStatusTask {
             TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
         });
 
+        // Return only active status (url=None to avoid overwriting the already-sent URL)
         Ok(TaskResult::UrlStatus {
             item_idx: ctx.item_idx,
-            url: Some(url.clone()),
+            url: None,
             active,
         })
     }
@@ -626,6 +631,16 @@ pub fn collect_worktree_progressive(
             worktrunk::config::expand_template(template, &vars, false).ok()
         })
     });
+
+    // Send URL immediately (before health check) so it appears in normal styling right away.
+    // The health check task will later send url_active to dim if inactive.
+    if let Some(ref url) = item_url {
+        let _ = tx.send(Ok(TaskResult::UrlStatus {
+            item_idx,
+            url: Some(url.clone()),
+            active: None,
+        }));
+    }
 
     let ctx = TaskContext {
         repo_path: wt.path.clone(),
@@ -674,6 +689,16 @@ pub fn collect_branch_progressive(
         vars.insert("branch", branch_name);
         worktrunk::config::expand_template(template, &vars, false).ok()
     });
+
+    // Send URL immediately (before health check) so it appears in normal styling right away.
+    // The health check task will later send url_active to dim if inactive.
+    if let Some(ref url) = item_url {
+        let _ = tx.send(Ok(TaskResult::UrlStatus {
+            item_idx,
+            url: Some(url.clone()),
+            active: None,
+        }));
+    }
 
     let ctx = TaskContext {
         repo_path: repo_path.to_path_buf(),
