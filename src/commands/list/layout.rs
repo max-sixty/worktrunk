@@ -522,7 +522,12 @@ fn build_estimated_widths(
     };
 
     // URL width estimated from template + longest branch (or fallback)
-    let url_estimate = fit_header(HEADER_URL, url_width);
+    // When url_width is 0 (no template), don't allocate any space for URL column
+    let url_estimate = if url_width > 0 {
+        fit_header(HEADER_URL, url_width)
+    } else {
+        0
+    };
 
     let widths = ColumnWidths {
         branch: max_branch,
