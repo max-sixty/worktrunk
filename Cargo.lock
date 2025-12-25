@@ -1787,6 +1787,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rayon-join-macro"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64d145ddcd53ddc86a24a4ad646702cf9a08ea7f708bee54b8893fa67cb59a1"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3101,6 +3110,7 @@ dependencies = [
  "pathdiff",
  "portable-pty",
  "rayon",
+ "rayon-join-macro",
  "regex",
  "rstest",
  "serde",

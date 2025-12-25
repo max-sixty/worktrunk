@@ -47,6 +47,7 @@ use color_print::cformat;
 use crossbeam_channel as chan;
 use dunce::canonicalize;
 use rayon::prelude::*;
+use rayon_join_macro::join;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
@@ -639,21 +640,11 @@ pub fn collect(
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
 
+    // Phase 1: Get worktree list (required for everything else)
     let worktrees = repo.list_worktrees().context("Failed to list worktrees")?;
     if worktrees.worktrees.is_empty() {
         return Ok(None);
     }
-
-    let default_branch = repo
-        .default_branch()
-        .context("Failed to determine default branch")?;
-    // Main worktree is the worktree on the default branch (if exists), else first worktree
-    let main_worktree = worktrees
-        .worktrees
-        .iter()
-        .find(|wt| wt.branch.as_deref() == Some(default_branch.as_str()))
-        .cloned()
-        .unwrap_or_else(|| worktrees.main().clone());
 
     // Detect current worktree by checking if repo path is inside any worktree.
     // This avoids a git command - we just compare canonicalized paths.
@@ -666,25 +657,46 @@ pub fn collect(
         })
     });
 
+    // Phase 2: Parallel fetch of independent git data
+    // These operations don't depend on each other, only on worktree list.
+    // Running them in parallel reduces pre-skeleton time (e.g., ~46ms to ~28ms).
+    let (default_branch, is_bare, branches_without_worktrees, remote_branches) = join!(
+        || {
+            repo.default_branch()
+                .context("Failed to determine default branch")
+        },
+        || repo.is_bare().unwrap_or(false),
+        || {
+            if show_branches {
+                get_branches_without_worktrees(repo, &worktrees.worktrees)
+            } else {
+                Ok(Vec::new())
+            }
+        },
+        || {
+            if show_remotes {
+                get_remote_branches(repo, &worktrees.worktrees)
+            } else {
+                Ok(Vec::new())
+            }
+        }
+    );
+    let default_branch = default_branch?;
+    let branches_without_worktrees = branches_without_worktrees?;
+    let remote_branches = remote_branches?;
+
+    // Main worktree is the worktree on the default branch (if exists), else first worktree
+    let main_worktree = worktrees
+        .worktrees
+        .iter()
+        .find(|wt| wt.branch.as_deref() == Some(default_branch.as_str()))
+        .cloned()
+        .unwrap_or_else(|| worktrees.main().clone());
+
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
-    // Get branches early for layout calculation and skeleton creation (when --branches is used)
-    let branches_without_worktrees = if show_branches {
-        get_branches_without_worktrees(repo, &worktrees.worktrees)?
-    } else {
-        Vec::new()
-    };
-
-    // Get remote branches (when --remotes is used)
-    let remote_branches = if show_remotes {
-        get_remote_branches(repo, &worktrees.worktrees)?
-    } else {
-        Vec::new()
-    };
-
-    // Batch fetch all timestamps in a single git command for sorting efficiency.
-    // Collect unique commit SHAs from worktrees and branches.
+    // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
     let all_shas: Vec<&str> = worktrees
         .worktrees
         .iter()
@@ -718,9 +730,6 @@ pub fn collect(
     // (paths from git worktree list may differ based on symlinks or working directory)
     let main_worktree_canonical = canonicalize(&main_worktree.path).ok();
 
-    // Pre-compute is_bare for path mismatch checks (avoids redundant git calls in the loop)
-    let is_bare = repo.is_bare().unwrap_or(false);
-
     // Check if URL template is configured (for layout column allocation).
     // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
     let url_template = repo
@@ -729,7 +738,6 @@ pub fn collect(
         .and_then(|root| worktrunk::config::ProjectConfig::load(root).ok().flatten())
         .and_then(|config| config.list)
         .and_then(|list| list.url);
-
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()

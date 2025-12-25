@@ -105,6 +105,7 @@ which = "8.0"
 # which external tools like git cannot handle. On Unix, it's a no-op wrapper.
 dunce = "1.0"
 termimad = "0.34.1"
+rayon-join-macro = "0.1.1"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
