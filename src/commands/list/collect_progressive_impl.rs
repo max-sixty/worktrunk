@@ -41,6 +41,10 @@ pub struct CollectOptions {
     /// - Task spawning (in `collect_worktree_progressive`/`collect_branch_progressive`)
     /// - Column visibility (layout filters columns via `ColumnSpec::requires_task`)
     pub skip_tasks: std::collections::HashSet<super::collect::TaskKind>,
+
+    /// URL template from project config (e.g., "http://localhost:{{ branch | hash_port }}").
+    /// Expanded per-item in task spawning (post-skeleton) to minimize time-to-skeleton.
+    pub url_template: Option<String>,
 }
 
 /// Context for task computation. Cloned and moved into spawned threads.
@@ -58,6 +62,9 @@ pub struct TaskContext {
     /// May be upstream (e.g., "origin/main") if it's ahead of local, catching remotely-merged branches.
     pub target: Option<String>,
     pub item_idx: usize,
+    /// Expanded URL for this item (from project config template).
+    /// UrlStatusTask uses this to check if the port is listening.
+    pub item_url: Option<String>,
 }
 
 impl TaskContext {
@@ -184,6 +191,10 @@ impl TaskSpawner {
         }
         if !skip.contains(&TaskKind::WouldMergeAdd) {
             self.spawn::<WouldMergeAddTask>(scope, ctx);
+        }
+        // URL status only runs if this item has a URL
+        if !skip.contains(&TaskKind::UrlStatus) && ctx.item_url.is_some() {
+            self.spawn::<UrlStatusTask>(scope, ctx);
         }
     }
 }
@@ -540,6 +551,52 @@ impl Task for CiStatusTask {
     }
 }
 
+/// Task 13: URL status (compute URL from template and check port availability)
+pub struct UrlStatusTask;
+
+impl Task for UrlStatusTask {
+    const KIND: TaskKind = TaskKind::UrlStatus;
+
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        use std::net::{SocketAddr, TcpStream};
+        use std::time::Duration;
+
+        // URL expanded in task spawning (post-skeleton); check connectivity if present
+        let Some(ref url) = ctx.item_url else {
+            return Ok(TaskResult::UrlStatus {
+                item_idx: ctx.item_idx,
+                url: None,
+                active: None,
+            });
+        };
+
+        // Parse port from URL and check if it's listening
+        let active = parse_port_from_url(url).map(|port| {
+            // Quick TCP connect check with 50ms timeout
+            let addr = SocketAddr::from(([127, 0, 0, 1], port));
+            TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+        });
+
+        Ok(TaskResult::UrlStatus {
+            item_idx: ctx.item_idx,
+            url: Some(url.clone()),
+            active,
+        })
+    }
+}
+
+/// Parse port number from a URL string (e.g., "http://localhost:12345" -> 12345)
+fn parse_port_from_url(url: &str) -> Option<u16> {
+    // Strip scheme
+    let url = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))?;
+    // Extract host:port (before path, query, or fragment)
+    let host_port = url.split(&['/', '?', '#'][..]).next()?;
+    let (_host, port_str) = host_port.rsplit_once(':')?;
+    port_str.parse().ok()
+}
+
 // ============================================================================
 // Collection Entry Points
 // ============================================================================
@@ -561,6 +618,15 @@ pub fn collect_worktree_progressive(
     tx: Sender<Result<TaskResult, TaskError>>,
     expected_results: &Arc<ExpectedResults>,
 ) {
+    // Expand URL template for this item (deferred from pre-skeleton)
+    let item_url = options.url_template.as_ref().and_then(|template| {
+        wt.branch.as_ref().and_then(|branch| {
+            let mut vars = std::collections::HashMap::new();
+            vars.insert("branch", branch.as_str());
+            worktrunk::config::expand_template(template, &vars, false).ok()
+        })
+    });
+
     let ctx = TaskContext {
         repo_path: wt.path.clone(),
         commit_sha: wt.head.clone(),
@@ -568,6 +634,7 @@ pub fn collect_worktree_progressive(
         default_branch: Some(default_branch.to_string()),
         target: Some(target.to_string()),
         item_idx,
+        item_url,
     };
 
     let spawner = TaskSpawner::new(tx, expected_results.clone());
@@ -601,6 +668,13 @@ pub fn collect_branch_progressive(
     tx: Sender<Result<TaskResult, TaskError>>,
     expected_results: &Arc<ExpectedResults>,
 ) {
+    // Expand URL template for this item (deferred from pre-skeleton)
+    let item_url = options.url_template.as_ref().and_then(|template| {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("branch", branch_name);
+        worktrunk::config::expand_template(template, &vars, false).ok()
+    });
+
     let ctx = TaskContext {
         repo_path: repo_path.to_path_buf(),
         commit_sha: commit_sha.to_string(),
@@ -608,6 +682,7 @@ pub fn collect_branch_progressive(
         default_branch: Some(default_branch.to_string()),
         target: Some(target.to_string()),
         item_idx,
+        item_url,
     };
 
     let spawner = TaskSpawner::new(tx, expected_results.clone());
@@ -804,5 +879,38 @@ mod tests {
             status.modified,
             "should show modified symbol for worktree modification"
         );
+    }
+
+    #[test]
+    fn test_parse_port_from_url_basic() {
+        assert_eq!(parse_port_from_url("http://localhost:12345"), Some(12345));
+        assert_eq!(parse_port_from_url("https://localhost:8080"), Some(8080));
+    }
+
+    #[test]
+    fn test_parse_port_from_url_with_path() {
+        assert_eq!(
+            parse_port_from_url("http://localhost:12345/path/to/page"),
+            Some(12345)
+        );
+        assert_eq!(parse_port_from_url("http://localhost:3000/"), Some(3000));
+    }
+
+    #[test]
+    fn test_parse_port_from_url_no_port() {
+        assert_eq!(parse_port_from_url("http://localhost"), None);
+        assert_eq!(parse_port_from_url("http://localhost/path"), None);
+    }
+
+    #[test]
+    fn test_parse_port_from_url_no_scheme() {
+        // Without http:// or https:// prefix, returns None
+        assert_eq!(parse_port_from_url("localhost:8080"), None);
+    }
+
+    #[test]
+    fn test_parse_port_from_url_edge_cases() {
+        assert_eq!(parse_port_from_url("http://127.0.0.1:9000"), Some(9000));
+        assert_eq!(parse_port_from_url("http://0.0.0.0:5000"), Some(5000));
     }
 }

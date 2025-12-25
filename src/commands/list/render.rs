@@ -645,6 +645,26 @@ impl ColumnLayout {
 
                 cell
             }
+            ColumnKind::Url => {
+                // URL column: shows dev server URL from project config template
+                // - dim if not available/active
+                // - normal if available and active
+                match (&ctx.item.url, ctx.item.url_active) {
+                    (None, _) => StyledLine::new(), // No URL configured
+                    (Some(url), Some(true)) => {
+                        // Active: normal styling
+                        let mut cell = StyledLine::new();
+                        cell.push_raw(url.clone());
+                        cell.truncate_to_width(self.width)
+                    }
+                    (Some(url), _) => {
+                        // Not active or unknown: dim styling
+                        let mut cell = StyledLine::new();
+                        cell.push_styled(url.clone(), Style::new().dimmed());
+                        cell.truncate_to_width(self.width)
+                    }
+                }
+            }
             ColumnKind::CiStatus => {
                 // Check display field first for pending indicators during progressive rendering
                 // (works for both worktrees and branches)

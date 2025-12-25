@@ -175,3 +175,34 @@ fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
         assert_cmd_snapshot!(cmd);
     });
 }
+
+/// Test `wt list` with project config URL template
+#[rstest]
+fn test_list_project_url_column(repo: TestRepo, temp_home: TempDir) {
+    // Create project config with URL template
+    repo.write_project_config(
+        r#"[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"#,
+    );
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.arg("list").current_dir(repo.root_path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}

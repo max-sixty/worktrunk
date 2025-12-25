@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -162,8 +162,7 @@ See wt hook for complete documentation.
 
 [32mProject config
 
-The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version
-control and shared across the team.
+The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
 
 Create [2m.config/wt.toml[0m in the repository root:
 
@@ -175,6 +174,16 @@ Create [2m.config/wt.toml[0m in the repository root:
   [2mlint = "npm run lint"
 
 See wt hook for complete documentation on hook types, execution order, template variables, and JSON context.
+
+[1mDev server URL
+
+The [2m[list][0m section adds a URL column to [2mwt list[0m:
+
+  [2m[list]
+  [2murl = "http://localhost:{{ branch | hash_port }}"
+
+URLs are dimmed when the port isn't listening. The template supports [2m{{ branch }}[0m with filters [2mhash_port[0m (port 10000-19999) and [2msanitize
+(filesystem-safe).
 
 [32mShell integration
 

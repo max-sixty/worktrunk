@@ -81,6 +81,7 @@ $ wt list --format=json
 | main…± | Line diffs since the merge-base with the default branch (`--full`) |
 | Path | Worktree directory |
 | Remote⇅ | Commits ahead/behind tracking branch |
+| URL | Dev server URL from project config (dimmed if port not listening) |
 | CI | Pipeline status (`--full`) |
 | Commit | Short hash (8 chars) |
 | Age | Time since last commit |
@@ -175,6 +176,8 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 | `is_current` | boolean | Is the current worktree |
 | `is_previous` | boolean | Previous worktree from wt switch |
 | `ci` | object | CI status (see below, absent when no CI) |
+| `url` | string | Dev server URL from project config (absent when not configured) |
+| `url_active` | boolean | Whether the URL's port is listening (absent when not configured) |
 | `statusline` | string | Pre-formatted status with ANSI colors |
 | `symbols` | string | Raw status symbols without colors (e.g., `"!?↓"`) |
 

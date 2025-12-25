@@ -7,6 +7,38 @@ use serde::{Deserialize, Serialize};
 
 use super::commands::CommandConfig;
 
+/// Project-level configuration for `wt list` output.
+///
+/// This is distinct from user-level `ListConfig` which controls CLI defaults.
+/// Project-level config is for project-specific features like dev server URLs.
+///
+/// # Example
+///
+/// ```toml
+/// [list]
+/// url = "http://localhost:{{ branch | hash_port }}"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct ProjectListConfig {
+    /// URL template for dev server links shown in `wt list`.
+    ///
+    /// Available variable: `{{ branch }}` (the branch name).
+    /// Available filters: `{{ branch | hash_port }}` (deterministic port 10000-19999),
+    /// `{{ branch | sanitize }}` (filesystem-safe name).
+    ///
+    /// The URL is displayed with health-check styling: dim if the port is not
+    /// listening, normal if it is.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+impl ProjectListConfig {
+    /// Returns true if any list configuration is set.
+    pub fn is_configured(&self) -> bool {
+        self.url.is_some()
+    }
+}
+
 /// Project-specific configuration with hooks.
 ///
 /// This config is stored at `<repo>/.config/wt.toml` within the repository and
@@ -91,6 +123,10 @@ pub struct ProjectConfig {
     #[serde(default, rename = "pre-remove")]
     pub pre_remove: Option<CommandConfig>,
 
+    /// Configuration for `wt list` output
+    #[serde(default)]
+    pub list: Option<ProjectListConfig>,
+
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
     unknown: std::collections::HashMap<String, toml::Value>,
@@ -147,6 +183,7 @@ mod tests {
         assert!(config.pre_merge.is_none());
         assert!(config.post_merge.is_none());
         assert!(config.pre_remove.is_none());
+        assert!(config.list.is_none());
     }
 
     // ============================================================================
@@ -226,6 +263,45 @@ pre-remove = "echo bye"
         assert!(config.pre_merge.is_some());
         assert!(config.post_merge.is_some());
         assert!(config.pre_remove.is_some());
+    }
+
+    // ============================================================================
+    // ListConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_list_url() {
+        let contents = r#"
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.list.is_some());
+        let list = config.list.unwrap();
+        assert_eq!(
+            list.url.as_deref(),
+            Some("http://localhost:{{ branch | hash_port }}")
+        );
+        assert!(list.is_configured());
+    }
+
+    #[test]
+    fn test_deserialize_list_empty() {
+        let contents = r#"
+[list]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.list.is_some());
+        let list = config.list.unwrap();
+        assert!(list.url.is_none());
+        assert!(!list.is_configured());
+    }
+
+    #[test]
+    fn test_list_config_default() {
+        let config = ProjectListConfig::default();
+        assert!(config.url.is_none());
+        assert!(!config.is_configured());
     }
 
     // ============================================================================

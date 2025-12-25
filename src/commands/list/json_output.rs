@@ -82,6 +82,14 @@ pub struct JsonItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ci: Option<JsonCi>,
 
+    /// Dev server URL from project config template
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// Whether the dev server URL's port is listening
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_active: Option<bool>,
+
     /// Pre-formatted statusline for statusline tools (tmux, starship)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statusline: Option<String>,
@@ -342,6 +350,8 @@ impl JsonItem {
             is_current,
             is_previous,
             ci,
+            url: item.url.clone(),
+            url_active: item.url_active,
             statusline,
             symbols,
         }

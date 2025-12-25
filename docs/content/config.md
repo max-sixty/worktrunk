@@ -149,7 +149,7 @@ See [wt hook](@/hook.md#user-hooks) for complete documentation.
 
 ## Project config
 
-The project config defines lifecycle hooks — commands that run at specific points during worktree operations. This file is checked into version control and shared across the team.
+The project config defines lifecycle hooks and project-specific settings. This file is checked into version control and shared across the team.
 
 Create `.config/wt.toml` in the repository root:
 
@@ -163,6 +163,17 @@ lint = "npm run lint"
 ```
 
 See [wt hook](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
+
+### Dev server URL
+
+The `[list]` section adds a URL column to `wt list`:
+
+```toml
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+```
+
+URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999) and `sanitize` (filesystem-safe).
 
 ## Shell integration
 

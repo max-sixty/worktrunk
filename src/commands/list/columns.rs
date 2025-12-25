@@ -11,9 +11,10 @@ pub enum ColumnKind {
     BranchDiff,
     Path,
     Upstream,
-    Time,
+    Url, // Dev server URL from project config template
     CiStatus,
     Commit,
+    Time,
     Message,
 }
 
@@ -91,20 +92,33 @@ pub const COLUMN_SPECS: &[ColumnSpec] = &[
         7,
     ),
     ColumnSpec::new(
-        ColumnKind::CiStatus,
-        super::layout::HEADER_CI,
+        ColumnKind::Url,
+        super::layout::HEADER_URL,
         8,
-        Some(TaskKind::CiStatus),
+        Some(TaskKind::UrlStatus),
         8,
     ),
-    ColumnSpec::new(ColumnKind::Commit, super::layout::HEADER_COMMIT, 9, None, 9),
-    ColumnSpec::new(ColumnKind::Time, super::layout::HEADER_AGE, 10, None, 10),
+    ColumnSpec::new(
+        ColumnKind::CiStatus,
+        super::layout::HEADER_CI,
+        9,
+        Some(TaskKind::CiStatus),
+        9,
+    ),
+    ColumnSpec::new(
+        ColumnKind::Commit,
+        super::layout::HEADER_COMMIT,
+        10,
+        None,
+        10,
+    ),
+    ColumnSpec::new(ColumnKind::Time, super::layout::HEADER_AGE, 11, None, 11),
     ColumnSpec::new(
         ColumnKind::Message,
         super::layout::HEADER_MESSAGE,
-        11,
+        12,
         None,
-        11,
+        12,
     ),
 ];
 
@@ -125,6 +139,7 @@ mod tests {
             ColumnKind::BranchDiff,
             ColumnKind::Path,
             ColumnKind::Upstream,
+            ColumnKind::Url,
             ColumnKind::CiStatus,
             ColumnKind::Commit,
             ColumnKind::Time,
@@ -149,6 +164,12 @@ mod tests {
             .unwrap();
         assert_eq!(branch_diff.requires_task, Some(TaskKind::BranchDiff));
 
+        let url = COLUMN_SPECS
+            .iter()
+            .find(|c| c.kind == ColumnKind::Url)
+            .unwrap();
+        assert_eq!(url.requires_task, Some(TaskKind::UrlStatus));
+
         let ci_status = COLUMN_SPECS
             .iter()
             .find(|c| c.kind == ColumnKind::CiStatus)
@@ -157,7 +178,10 @@ mod tests {
 
         // All other columns should not require a background task to render
         for spec in COLUMN_SPECS {
-            if spec.kind != ColumnKind::BranchDiff && spec.kind != ColumnKind::CiStatus {
+            if spec.kind != ColumnKind::BranchDiff
+                && spec.kind != ColumnKind::Url
+                && spec.kind != ColumnKind::CiStatus
+            {
                 assert!(
                     spec.requires_task.is_none(),
                     "{:?} unexpectedly requires a task",

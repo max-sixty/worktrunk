@@ -196,6 +196,7 @@ pub const HEADER_AHEAD_BEHIND: &str = "main↕";
 pub const HEADER_BRANCH_DIFF: &str = "main…±";
 pub const HEADER_PATH: &str = "Path";
 pub const HEADER_UPSTREAM: &str = "Remote⇅";
+pub const HEADER_URL: &str = "URL";
 pub const HEADER_AGE: &str = "Age";
 pub const HEADER_CI: &str = "CI";
 pub const HEADER_COMMIT: &str = "Commit";
@@ -259,6 +260,7 @@ pub struct ColumnWidths {
     pub branch: usize,
     pub status: usize, // Includes both git status symbols and user-defined status
     pub time: usize,
+    pub url: usize,
     pub ci_status: usize,
     pub message: usize,
     pub ahead_behind: DiffWidths,
@@ -275,6 +277,7 @@ pub struct ColumnDataFlags {
     pub ahead_behind: bool,
     pub branch_diff: bool,
     pub upstream: bool,
+    pub url: bool,
     pub ci_status: bool,
     pub path: bool, // True if any worktree has path_mismatch (path doesn't match template)
 }
@@ -332,6 +335,7 @@ impl ColumnKind {
             ColumnKind::BranchDiff => flags.branch_diff,
             ColumnKind::Path => flags.path,
             ColumnKind::Upstream => flags.upstream,
+            ColumnKind::Url => flags.url,
             ColumnKind::Time => true,
             ColumnKind::CiStatus => flags.ci_status,
             ColumnKind::Commit => true,
@@ -351,6 +355,7 @@ impl ColumnKind {
             ColumnKind::Status => ColumnIdeal::text(widths.status),
             ColumnKind::Path => ColumnIdeal::text(max_path_width),
             ColumnKind::Time => ColumnIdeal::text(widths.time),
+            ColumnKind::Url => ColumnIdeal::text(widths.url),
             ColumnKind::CiStatus => ColumnIdeal::text(widths.ci_status),
             ColumnKind::Commit => ColumnIdeal::text(commit_width),
             ColumnKind::Message => None,
@@ -483,14 +488,23 @@ fn build_estimated_widths(
         ahead_behind: true,
         branch_diff: !skip_tasks.contains(&TaskKind::BranchDiff),
         upstream: true,
+        url: !skip_tasks.contains(&TaskKind::UrlStatus),
         ci_status: !skip_tasks.contains(&TaskKind::CiStatus),
         path: has_path_mismatch,
+    };
+
+    // URL estimate: "http://localhost:12345" = 22 chars
+    let url_estimate = if skip_tasks.contains(&TaskKind::UrlStatus) {
+        0
+    } else {
+        fit_header(HEADER_URL, 22)
     };
 
     let widths = ColumnWidths {
         branch: max_branch,
         status: status_fixed,
         time: age_estimate,
+        url: url_estimate,
         ci_status: ci_estimate,
         message: 50, // Will be flexible during allocation
         // Commit counts (Arrows): compact notation, 2 digits covers up to 99
@@ -833,6 +847,7 @@ mod tests {
             ahead_behind: true,
             branch_diff: true,
             upstream: true,
+            url: true,
             ci_status: true,
             path: true,
         };
@@ -842,6 +857,7 @@ mod tests {
             ahead_behind: false,
             branch_diff: false,
             upstream: false,
+            url: false,
             ci_status: false,
             path: false,
         };
@@ -864,6 +880,8 @@ mod tests {
         assert!(!ColumnKind::BranchDiff.has_data(&all_false));
         assert!(ColumnKind::Upstream.has_data(&all_true));
         assert!(!ColumnKind::Upstream.has_data(&all_false));
+        assert!(ColumnKind::Url.has_data(&all_true));
+        assert!(!ColumnKind::Url.has_data(&all_false));
         assert!(ColumnKind::CiStatus.has_data(&all_true));
         assert!(!ColumnKind::CiStatus.has_data(&all_false));
         assert!(ColumnKind::Path.has_data(&all_true));
@@ -936,6 +954,7 @@ mod tests {
             branch: 15,
             status: 8,
             time: 4,
+            url: 0,
             ci_status: 2,
             message: 50,
             ahead_behind: DiffWidths {
@@ -1091,6 +1110,8 @@ mod tests {
             is_ancestor: None,
             upstream: Some(UpstreamStatus::from_parts(Some("origin".to_string()), 4, 2)),
             pr_status: None,
+            url: None,
+            url_active: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {
@@ -1187,6 +1208,8 @@ mod tests {
             is_ancestor: None,
             upstream: Some(UpstreamStatus::default()),
             pr_status: None,
+            url: None,
+            url_active: None,
             status_symbols: Some(StatusSymbols::default()),
             display: DisplayFields::default(),
             kind: ItemKind::Worktree(Box::new(WorktreeData {

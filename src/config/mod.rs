@@ -25,7 +25,9 @@ mod user;
 // Re-export public types
 pub use commands::{Command, CommandConfig, CommandPhase};
 pub use expansion::{expand_template, sanitize_branch_name};
-pub use project::{ProjectConfig, find_unknown_keys as find_unknown_project_keys};
+pub use project::{
+    ProjectConfig, ProjectListConfig, find_unknown_keys as find_unknown_project_keys,
+};
 pub use user::{
     CommitGenerationConfig, StageMode, UserProjectConfig, WorktrunkConfig,
     find_unknown_keys as find_unknown_user_keys, get_config_path, set_config_path,

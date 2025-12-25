@@ -17,10 +17,12 @@
 //! 4. `git branch` / `git branch -r` — only if `--branches` / `--remotes` flags
 //! 5. `git show -s --format='%H %ct'` — batch timestamp fetch for sorting
 //! 6. `git rev-parse --is-bare-repository` — for layout (path column visibility)
+//! 7. Project config check — only reads file to check if URL column needed (no expansion)
 //!
 //! **Deferred until after skeleton:**
 //! - `get_switch_previous()` — previous branch detection (updates gutter symbol)
 //! - `effective_integration_target()` — upstream vs local target check
+//! - URL template expansion — parallelized in task spawning
 //! - All computed fields (ahead/behind, diffs, CI status, etc.)
 //!
 //! When adding new features, ask: "Can this be computed after skeleton?" If yes, defer it.
@@ -164,6 +166,14 @@ pub(super) enum TaskResult {
         item_idx: usize,
         pr_status: Option<PrStatus>,
     },
+    /// URL status (expanded URL and health check result)
+    UrlStatus {
+        item_idx: usize,
+        /// Expanded URL from template (None if no template or no branch)
+        url: Option<String>,
+        /// Whether the port is listening (None if no URL or couldn't parse port)
+        active: Option<bool>,
+    },
 }
 
 impl TaskResult {
@@ -182,7 +192,8 @@ impl TaskResult {
             | TaskResult::GitOperation { item_idx, .. }
             | TaskResult::UserMarker { item_idx, .. }
             | TaskResult::Upstream { item_idx, .. }
-            | TaskResult::CiStatus { item_idx, .. } => *item_idx,
+            | TaskResult::CiStatus { item_idx, .. }
+            | TaskResult::UrlStatus { item_idx, .. } => *item_idx,
         }
     }
 }
@@ -337,6 +348,10 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
         TaskKind::CiStatus => {
             // Some(None) means "loaded but no CI"
             items[idx].pr_status = Some(None);
+        }
+        TaskKind::UrlStatus => {
+            // URL is set at item creation, only default url_active
+            items[idx].url_active = None;
         }
     }
 }
@@ -523,6 +538,11 @@ fn drain_results(
                 // Wrap in Some() to indicate "loaded" (Some(None) = no CI, Some(Some(status)) = has CI)
                 item.pr_status = Some(pr_status);
             }
+            TaskResult::UrlStatus { url, active, .. } => {
+                // URL expanded in task spawning (post-skeleton)
+                item.url = url;
+                item.url_active = active;
+            }
         }
 
         // Invoke callback (progressive mode re-renders rows, buffered mode does nothing)
@@ -694,6 +714,15 @@ pub fn collect(
     // Pre-compute is_bare for path mismatch checks (avoids redundant git calls in the loop)
     let is_bare = repo.is_bare().unwrap_or(false);
 
+    // Check if URL template is configured (for layout column allocation).
+    // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
+    let url_template = repo
+        .worktree_root()
+        .ok()
+        .and_then(|root| worktrunk::config::ProjectConfig::load(root).ok().flatten())
+        .and_then(|config| config.list)
+        .and_then(|list| list.url);
+
     // Initialize worktree items with identity fields and None for computed fields
     let mut all_items: Vec<ListItem> = sorted_worktrees
         .iter()
@@ -721,6 +750,7 @@ pub fn collect(
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
             worktree_data.path_mismatch = path_mismatch;
 
+            // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {
                 head: wt.head.clone(),
                 branch: wt.branch.clone(),
@@ -733,6 +763,8 @@ pub fn collect(
                 is_ancestor: None,
                 upstream: None,
                 pr_status: None,
+                url: None,
+                url_active: None,
                 status_symbols: None,
                 display: DisplayFields::default(),
                 kind: ItemKind::Worktree(Box::new(worktree_data)),
@@ -740,7 +772,7 @@ pub fn collect(
         })
         .collect();
 
-    // Initialize branch items (local and remote)
+    // Initialize branch items (local and remote) - URLs expanded post-skeleton
     let branch_start_idx = all_items.len();
     all_items.extend(
         branches_without_worktrees
@@ -755,16 +787,26 @@ pub fn collect(
             .map(|(name, sha)| ListItem::new_branch(sha.clone(), name.clone())),
     );
 
+    // If no URL template configured, add UrlStatus to skip_tasks
+    let mut effective_skip_tasks = skip_tasks.clone();
+    if url_template.is_none() {
+        effective_skip_tasks.insert(TaskKind::UrlStatus);
+    }
+
     // Calculate layout from items (worktrees, local branches, and remote branches)
-    let layout =
-        super::layout::calculate_layout_from_basics(&all_items, skip_tasks, &main_worktree.path);
+    let layout = super::layout::calculate_layout_from_basics(
+        &all_items,
+        &effective_skip_tasks,
+        &main_worktree.path,
+    );
 
     // Single-line invariant: use safe width to prevent line wrapping
     let max_width = super::layout::get_safe_list_width();
 
     // Create collection options from skip set
     let options = super::collect_progressive_impl::CollectOptions {
-        skip_tasks: skip_tasks.clone(), // Clone for thread spawns
+        skip_tasks: effective_skip_tasks,
+        url_template: url_template.clone(),
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -841,6 +883,9 @@ pub fn collect(
     // This handles the case where a branch was merged remotely but user hasn't pulled yet.
     // Deferred until after skeleton to avoid blocking initial render.
     let integration_target = repo.effective_integration_target(&default_branch);
+
+    // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
+    // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
 
     // Pre-start fsmonitor daemons on macOS to avoid auto-start races.
     //
@@ -1184,6 +1229,8 @@ pub fn build_worktree_item(
         is_ancestor: None,
         upstream: None,
         pr_status: None,
+        url: None,
+        url_active: None,
         status_symbols: None,
         display: DisplayFields::default(),
         kind: ItemKind::Worktree(Box::new(WorktreeData::from_worktree(

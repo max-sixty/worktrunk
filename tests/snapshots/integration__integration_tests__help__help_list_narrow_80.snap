@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "80"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -88,19 +88,20 @@ Output as JSON for scripting:
 
 [32mColumns
 
-   Column                               Shows                               
-   ─────── ──────────────────────────────────────────────────────────────── 
-   Branch  Branch name                                                      
-   Status  Compact symbols (see below)                                      
-   HEAD±   Uncommitted changes: +added -deleted lines                       
-   main↕   Commits ahead/behind default branch                              
-   main…±  Line diffs since the merge-base with the default branch (--full) 
-   Path    Worktree directory                                               
-   Remote⇅ Commits ahead/behind tracking branch                             
-   CI      Pipeline status (--full)                                         
-   Commit  Short hash (8 chars)                                             
-   Age     Time since last commit                                           
-   Message Last commit message (truncated)                                  
+   Column                                Shows                               
+   ─────── ───────────────────────────────────────────────────────────────── 
+   Branch  Branch name                                                       
+   Status  Compact symbols (see below)                                       
+   HEAD±   Uncommitted changes: +added -deleted lines                        
+   main↕   Commits ahead/behind default branch                               
+   main…±  Line diffs since the merge-base with the default branch (--full)  
+   Path    Worktree directory                                                
+   Remote⇅ Commits ahead/behind tracking branch                              
+   URL     Dev server URL from project config (dimmed if port not listening) 
+   CI      Pipeline status (--full)                                          
+   Commit  Short hash (8 chars)                                              
+   Age     Time since last commit                                            
+   Message Last commit message (truncated)                                   
 
 Note: [2mmain↕[0m and [2mmain…±[0m refer to the default branch (header label stays
 [2mmain[0m for compactness). [2mmain…±[0m uses a merge-base (three-dot) diff.
@@ -197,14 +198,18 @@ when clean) |
 | [2mmain[0m | object | Relationship to the default branch (see below, absent when
 is_main) |
 | [2mremote[0m | object | Tracking branch info (see below, absent when no tracking)
-   ─────────── ─────── ─────────────────────────────────────────────── 
-   worktree    object  Worktree metadata (see below)                   
-   is_main     boolean Is the main worktree                            
-   is_current  boolean Is the current worktree                         
-   is_previous boolean Previous worktree from wt switch                
-   ci          object  CI status (see below, absent when no CI)        
-   statusline  string  Pre-formatted status with ANSI colors           
-   symbols     string  Raw status symbols without colors (e.g., "!?↓") 
+   ─────────── ─────── ──────────────────────────────────────── 
+   worktree    object  Worktree metadata (see below)            
+   is_main     boolean Is the main worktree                     
+   is_current  boolean Is the current worktree                  
+   is_previous boolean Previous worktree from wt switch         
+   ci          object  CI status (see below, absent when no CI) 
+| [2murl[0m | string | Dev server URL from project config (absent when not
+configured) |
+| [2murl_active[0m | boolean | Whether the URL's port is listening (absent when not
+configured) |
+   statusline string      Pre-formatted status with ANSI colors      
+    symbols   string Raw status symbols without colors (e.g., "!?↓") 
 
 [1mcommit object
 

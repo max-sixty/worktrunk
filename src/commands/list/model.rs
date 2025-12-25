@@ -234,6 +234,14 @@ pub struct ListItem {
 
     /// CI/PR status: None = not loaded, Some(None) = no CI, Some(Some(status)) = has CI
     pub pr_status: Option<Option<PrStatus>>,
+
+    /// Dev server URL computed from project config template
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Whether the URL's port is actively listening
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_active: Option<bool>,
+
     /// Git status symbols - None until all dependencies are ready.
     /// Note: This field is not serialized directly. JSON output converts to JsonItem first.
     #[serde(skip)]
@@ -271,6 +279,8 @@ impl ListItem {
             is_ancestor: None,
             upstream: None,
             pr_status: None,
+            url: None,
+            url_active: None,
             status_symbols: None,
             display: DisplayFields::default(),
             kind: ItemKind::Branch,
