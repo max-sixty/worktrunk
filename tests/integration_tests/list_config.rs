@@ -288,6 +288,55 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
     assert!(first["url_active"].is_null());
 }
 
+/// Test URL column with --branches flag
+#[rstest]
+fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
+    // Create a branch without a worktree
+    let mut cmd = std::process::Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["branch", "feature"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // Create project config with URL template
+    repo.write_project_config(
+        r#"[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"#,
+    );
+
+    // Create user config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = wt_command();
+    repo.clean_cli_env(&mut cmd);
+    set_temp_home_env(&mut cmd, temp_home.path());
+    cmd.args(["list", "--branches", "--format=json"])
+        .current_dir(repo.root_path());
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse JSON and verify both worktree and branch have URLs
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 2); // main worktree + feature branch
+
+    // Both items should have URLs
+    for item in items {
+        let url = item["url"].as_str().unwrap();
+        assert!(url.starts_with("http://localhost:"));
+    }
+}
+
 /// Test URL with {{ branch }} variable (not hash_port)
 #[rstest]
 fn test_list_url_with_branch_variable(repo: TestRepo, temp_home: TempDir) {
