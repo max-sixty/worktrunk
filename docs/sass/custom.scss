@@ -442,12 +442,17 @@ main {
         font-family: var(--wt-font-mono);
         font-size: 0.875rem;
         line-height: 1.6;
-        color: var(--wt-color-text);
+        // Note: color is NOT set here to allow syntax highlighting themes to apply
     }
 }
 
 .content pre {
     @extend %code-block-base;
+
+    // Override .content code color to allow syntax highlighting
+    code {
+        color: inherit;
+    }
 }
 
 // Copy button for code blocks
@@ -485,6 +490,7 @@ main {
     font-family: var(--wt-font-mono);
     font-size: 0.875rem;
     line-height: 1.5;
+    color: var(--wt-color-text);  // Default text color for terminal (not syntax-highlighted)
 
     .prompt {
         color: var(--wt-color-text-soft);
