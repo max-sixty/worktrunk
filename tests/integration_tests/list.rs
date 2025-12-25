@@ -1745,6 +1745,48 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     );
 }
 
+/// Generate tips example: Dev server URL workflow
+///
+/// Shows how post-start hooks + URL templates create a complete dev workflow:
+/// - post-start runs the dev server in background
+/// - list.url shows the URL for each worktree
+/// - Different branches get different ports via hash_port
+///
+/// Output: tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap
+#[rstest]
+fn test_tips_dev_server_workflow(mut repo: TestRepo) {
+    // Create project config with post-start hook and URL template
+    repo.write_project_config(
+        r#"# Start dev server in background when worktree is created
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }} &"
+
+# Show dev server URLs in wt list
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+"#,
+    );
+    repo.commit("Add dev server config");
+
+    // Create feature worktrees
+    repo.add_worktree("feature-auth");
+    repo.add_worktree("feature-api");
+
+    // Add some changes to make it realistic
+    let auth_path = repo.worktree_path("feature-auth");
+    std::fs::write(auth_path.join("auth.rs"), "// Auth implementation").unwrap();
+
+    let api_path = repo.worktree_path("feature-api");
+    std::fs::write(api_path.join("api.rs"), "// API implementation").unwrap();
+
+    // Run from main worktree
+    run_snapshot(
+        setup_snapshot_settings(&repo),
+        "tips_dev_server_workflow",
+        list_snapshots::command_readme(&repo, repo.root_path()),
+    );
+}
+
 #[rstest]
 fn test_list_progressive_flag(mut repo: TestRepo) {
     repo.add_worktree("feature-a");

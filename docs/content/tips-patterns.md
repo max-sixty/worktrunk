@@ -29,6 +29,37 @@ wsc new-feature  # Creates worktree, runs hooks, launches Claude
 
 See [Worktrunk's own `.config/wt.toml`](https://github.com/max-sixty/worktrunk/blob/main/.config/wt.toml) for a complete example.
 
+## Dev server per worktree
+
+Each worktree can run its own dev server on a deterministic port. The `hash_port` filter generates a stable port (10000-19999) from the branch name:
+
+```toml
+# .config/wt.toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }} &"
+
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+```
+
+`post-start` runs when switching to a worktree (unlike `post-create` which runs only once). The URL column in `wt list` shows each worktree's dev server:
+
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap — edit source to update -->
+
+{% terminal() %}
+<span class="prompt">$</span> <span class="cmd">wt list</span>
+  <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
+@ main              <span class=d>^</span>                                  <span class=d>http://localhost:12107</span>  <span class=d>d5b75b42</span>  <span class=d>1d</span>
++ feature-api     <span class=c>?</span> <span class=d>–</span>                                  <span class=d>http://localhost:10703</span>  <span class=d>d5b75b42</span>  <span class=d>1d</span>
++ feature-auth    <span class=c>?</span> <span class=d>–</span>                                  <span class=d>http://localhost:18283</span>  <span class=d>d5b75b42</span>  <span class=d>1d</span>
+
+<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 columns hidden</span>
+{% end %}
+
+<!-- END AUTO-GENERATED -->
+
+Ports are deterministic — `feature-auth` always gets port 18283, regardless of which machine or when. The URL dims if the server isn't running.
+
 ## Local CI gate
 
 `pre-merge` hooks run before merging. Failures abort the merge:
