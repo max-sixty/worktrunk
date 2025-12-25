@@ -42,23 +42,23 @@ server = "npm run dev -- --port {{ branch | hash_port }} &"
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-`post-start` runs when switching to a worktree (unlike `post-create` which runs only once). The URL column in `wt list` shows each worktree's dev server:
+`post-start` runs in background after worktree creation (like `post-create`, but non-blocking). The URL column in `wt list` shows each worktree's dev server:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap — edit source to update -->
 
 {% terminal() %}
 <span class="prompt">$</span> <span class="cmd">wt list</span>
-  <b>Branch</b>        <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
-@ main              <span class=d>^</span>                                  <span class=d>http://localhost:12107</span>  <span class=d>d5b75b42</span>  <span class=d>1d</span>
-+ feature-api     <span class=c>?</span> <span class=d>–</span>                                  <span class=d>http://localhost:10703</span>  <span class=d>d5b75b42</span>  <span class=d>1d</span>
-+ feature-auth    <span class=c>?</span> <span class=d>–</span>                                  <span class=d>http://localhost:18283</span>  <span class=d>d5b75b42</span>  <span class=d>1d</span>
+  <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Remote⇅</b>  <b>URL</b>                     <b>Commit</b>    <b>Age</b>
+@ main           <span class=c>?</span> <span class=d>^</span><span class=d>⇅</span>                         <span class=g>⇡1</span>  <span class=d><span class=r>⇣1</span></span>  <span class=d>http://localhost:12107</span>  <span class=d>6088adb3</span>  <span class=d>4d</span>
++ feature-api  <span class=c>+</span>   <span class=d>↕</span><span class=d>⇡</span>     <span class=g>+54</span>   <span class=r>-5</span>   <span class=g>↑4</span>  <span class=d><span class=r>↓1</span></span>   <span class=g>⇡3</span>      <span class=d>http://localhost:10703</span>  <span class=d>ec97decc</span>  <span class=d>30m</span>
++ fix-auth         <span class=d>↕</span><span class=d>|</span>                <span class=g>↑2</span>  <span class=d><span class=r>↓1</span></span>     <span class=d>|</span>     <span class=d>http://localhost:16460</span>  <span class=d>127407de</span>  <span class=d>5h</span>
 
-<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 columns hidden</span>
+<span class=d>○</span> <span class=d>Showing 3 worktrees, 2 with changes, 2 ahead, 2 columns hidden</span>
 {% end %}
 
 <!-- END AUTO-GENERATED -->
 
-Ports are deterministic — `feature-auth` always gets port 18283, regardless of which machine or when. The URL dims if the server isn't running.
+Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
 
 ## Local CI gate
 
@@ -110,7 +110,7 @@ wt list --format=json
 
 Structured output for dashboards, statuslines, and scripts. See [wt list](@/list.md) for query examples.
 
-## Side-effects of using Worktrunk
+## Reuse `default-branch`
 
 Worktrunk maintains useful state. Default branch [detection](@/config.md#wt-config-state-default-branch), for instance, means scripts work on any repo — no need to hardcode `main` or `master`:
 

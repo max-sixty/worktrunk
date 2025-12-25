@@ -1745,41 +1745,26 @@ fn test_readme_example_list_branches(mut repo: TestRepo) {
     );
 }
 
-/// Generate tips example: Dev server URL workflow
+/// Generate tips-patterns.md example: dev server per worktree workflow
 ///
-/// Shows how post-start hooks + URL templates create a complete dev workflow:
-/// - post-start runs the dev server in background
-/// - list.url shows the URL for each worktree
-/// - Different branches get different ports via hash_port
-///
-/// Output: tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap
+/// Uses the realistic README example repo and adds URL config.
+/// URLs appear dimmed (no servers running) - realistic for documentation.
 #[rstest]
 fn test_tips_dev_server_workflow(mut repo: TestRepo) {
-    // Create project config with post-start hook and URL template
+    // Set up the realistic README example repo
+    let _feature_api = setup_readme_example_repo(&mut repo);
+
+    // Add project config with URL template for dev servers
     repo.write_project_config(
-        r#"# Start dev server in background when worktree is created
-[post-start]
+        r#"[post-start]
 server = "npm run dev -- --port {{ branch | hash_port }} &"
 
-# Show dev server URLs in wt list
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 "#,
     );
-    repo.commit("Add dev server config");
 
-    // Create feature worktrees
-    repo.add_worktree("feature-auth");
-    repo.add_worktree("feature-api");
-
-    // Add some changes to make it realistic
-    let auth_path = repo.worktree_path("feature-auth");
-    std::fs::write(auth_path.join("auth.rs"), "// Auth implementation").unwrap();
-
-    let api_path = repo.worktree_path("feature-api");
-    std::fs::write(api_path.join("api.rs"), "// API implementation").unwrap();
-
-    // Run from main worktree
+    // Run from main worktree (URLs dim since no servers running)
     run_snapshot(
         setup_snapshot_settings(&repo),
         "tips_dev_server_workflow",
