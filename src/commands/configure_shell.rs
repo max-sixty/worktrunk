@@ -829,9 +829,15 @@ fn uninstall_from_file(
         }));
     }
 
-    // Remove matching lines
-    let indices_to_remove: std::collections::HashSet<usize> =
+    // Remove matching lines and any immediately preceding blank line
+    // (install adds "\n{line}\n", so we remove both the blank and the integration line)
+    let mut indices_to_remove: std::collections::HashSet<usize> =
         integration_lines.iter().map(|(i, _)| *i).collect();
+    for &(i, _) in &integration_lines {
+        if i > 0 && lines[i - 1].trim().is_empty() {
+            indices_to_remove.insert(i - 1);
+        }
+    }
     let new_lines: Vec<&str> = lines
         .iter()
         .enumerate()

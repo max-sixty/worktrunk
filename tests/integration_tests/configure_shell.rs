@@ -623,6 +623,76 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
     );
 }
 
+/// Test that install/uninstall cycle doesn't accumulate blank lines
+#[rstest]
+fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: TempDir) {
+    // Create initial config file matching the user's real zshrc structure
+    let zshrc_path = temp_home.path().join(".zshrc");
+    let initial_content =
+        "[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh\n\nautoload -Uz compinit && compinit\n";
+    fs::write(&zshrc_path, initial_content).unwrap();
+
+    // Install
+    {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.args(["config", "shell", "install", "zsh", "--force"]);
+        cmd.current_dir(repo.root_path());
+        let output = cmd.output().expect("Failed to execute command");
+        assert!(output.status.success(), "Install should succeed");
+    }
+
+    let after_install = fs::read_to_string(&zshrc_path).unwrap();
+    assert!(
+        after_install.contains("wt config shell init zsh"),
+        "Integration should be added"
+    );
+
+    // Uninstall
+    {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.args(["config", "shell", "uninstall", "zsh", "--force"]);
+        cmd.current_dir(repo.root_path());
+        let output = cmd.output().expect("Failed to execute command");
+        assert!(output.status.success(), "Uninstall should succeed");
+    }
+
+    let after_uninstall = fs::read_to_string(&zshrc_path).unwrap();
+    assert_eq!(
+        initial_content, after_uninstall,
+        "Uninstall should restore original content"
+    );
+
+    // Re-install
+    {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+        cmd.args(["config", "shell", "install", "zsh", "--force"]);
+        cmd.current_dir(repo.root_path());
+        let output = cmd.output().expect("Failed to execute command");
+        assert!(output.status.success(), "Re-install should succeed");
+    }
+
+    let after_reinstall = fs::read_to_string(&zshrc_path).unwrap();
+
+    // Key assertion: re-install should produce the same result as initial install
+    // (no accumulation of blank lines)
+    assert_eq!(
+        after_install, after_reinstall,
+        "Re-install should produce same result as initial install.\n\
+         After first install:\n{after_install}\n---\n\
+         After uninstall:\n{after_uninstall}\n---\n\
+         After re-install:\n{after_reinstall}"
+    );
+}
+
 /// Test that compinit warning does NOT show when .zshrc has compinit enabled
 #[rstest]
 fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_home: TempDir) {
