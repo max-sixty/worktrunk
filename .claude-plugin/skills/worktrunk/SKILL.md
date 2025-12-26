@@ -3,6 +3,8 @@ name: worktrunk
 description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up LLM", "configuring hooks", "automating tasks", or general worktrunk questions.
 ---
 
+<!-- worktrunk-skill-version: 0.6.1 -->
+
 # Worktrunk
 
 Help users work with Worktrunk, a CLI tool for managing git worktrees.
@@ -14,6 +16,8 @@ Help users work with Worktrunk, a CLI tool for managing git worktrees.
 - **reference/*.md**: Detailed configuration and hook specifications
 
 For general usage, consult reference/README.md. For configuration, follow the workflows below.
+
+**For command-specific options**: Run `wt <command> --help` for detailed flags and usage. This skill provides conceptual guidance; the CLI provides authoritative reference.
 
 ## Two Types of Configuration
 
