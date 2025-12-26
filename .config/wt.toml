@@ -1,42 +1,24 @@
-# Post-start hooks for worktree setup
-# These run after creating a new worktree
-#
-# Available template variables:
-#   {{ repo }}      - Repository name (e.g., "worktrunk.project-config")
-#   {{ branch }}    - Branch name with slashes replaced by dashes
-#   {{ worktree }}  - Path to the new worktree
-#   {{ repo_root }} - Path to the main repository root
-# Post-start commands run in parallel after switching to a worktree
 [post-start]
-# Seed compiled dependencies from base worktree using CoW (copy-on-write)
-# Copies essential files (~7.5k), skipping 184k+ .rcgu.o incremental objects
-# Result: ~3 seconds instead of ~68 seconds
-# macOS: uses cp -c (clonefile on APFS)
+# Seed compiled deps from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = """
 [ -d {{ repo_root }}/target/debug/deps ] && [ ! -e target ] &&
 mkdir -p target/debug/deps &&
 cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps/*.rmeta target/debug/deps/ &&
 cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build target/debug/
 """
-# Fetch demo assets for docs development
 assets = "./dev/fetch-assets"
+docs = "cd {{ worktree }}/docs && zola serve -p {{ branch | hash_port }}"
 
-# Post-merge hooks
-# These run in the main worktree after successful merge and push
-# Available template variables: {{ repo }}, {{ branch }}, {{ worktree }}, {{ repo_root }}, {{ target }}
 [post-merge]
 build = "cargo build --all-targets"
 install = "cargo install --path ."
 sync = 'if [ "{{ target }}" = "main" ]; then git pull && git push; fi'
 
-# Pre-merge hooks
-# These run sequentially before merging to main
-# All commands must exit with code 0 for merge to proceed
-# Note: This must come AFTER post-merge because [pre-merge] starts
-# a TOML table section, and everything after it would be inside that section
 [pre-merge]
-# Skip lychee on Windows (MSYSTEM is set in Git Bash/MSYS2 environments)
 pre-commit = "if [ -n \"$MSYSTEM\" ]; then SKIP=lychee-system pre-commit run --all-files; else pre-commit run --all-files; fi"
 insta = "RUSTFLAGS='-D warnings' NEXTEST_STATUS_LEVEL=fail NEXTEST_SUCCESS_OUTPUT=never NEXTEST_NO_INPUT_HANDLER=1 cargo insta test --dnd --check --features shell-integration-tests"
 doctest = "RUSTDOCFLAGS='-Dwarnings' cargo test --doc"
 doc = "RUSTDOCFLAGS='-Dwarnings' cargo doc --no-deps"
+
+[list]
+url = "http://127.0.0.1:{{ branch | hash_port }}"
