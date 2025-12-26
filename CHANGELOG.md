@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+### Improved
+
+- **Working tree conflict detection**: `wt list --full` now detects conflicts using uncommitted working tree changes, not just committed content. This catches conflicts earlier—before committing changes that would conflict with the target branch.
+- **Dev server URL column**: New optional URL column in `wt list` configured via `[list] url` template in project config (`.config/wt.toml`). URLs show with health-check styling: normal if the port is listening, dimmed otherwise.
+- **Shell integration simplification**: The shell wrapper is now self-contained with all directive handling inlined. Removes the separate helper function that could become unavailable if shell initialization order changed.
+- **Performance**: Repository caching reduces git subprocess spawns; parallelized pre-skeleton operations for faster initial display.
+- **Improved error hints**: When a worktree path already exists during creation, the error hint now correctly suggests `--create --clobber`.
+
+### Fixed
+
+- **Docs syntax highlighting**: Fixed syntax highlighting colors being stripped by 1Password browser extension on the documentation site.
+
 ## 0.6.1
 
 ### Improved

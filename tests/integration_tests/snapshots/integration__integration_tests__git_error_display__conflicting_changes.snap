@@ -2,7 +2,7 @@
 source: tests/integration_tests/git_error_display.rs
 expression: err.to_string()
 ---
-[31m✗[39m [31mCannot push: conflicting uncommitted changes in:[39m
+[31m✗[39m [31mCan't push to local [1mmain[22m branch: conflicting uncommitted changes[39m
 [107m [0m src/main.rs
 [107m [0m src/lib.rs
 

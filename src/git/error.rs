@@ -92,6 +92,7 @@ pub enum GitError {
 
     // Merge/push errors
     ConflictingChanges {
+        target_branch: String,
         files: Vec<String>,
         worktree_path: PathBuf,
     },
@@ -108,6 +109,7 @@ pub enum GitError {
         target_branch: String,
     },
     PushFailed {
+        target_branch: String,
         error: String,
     },
 
@@ -317,13 +319,16 @@ impl std::fmt::Display for GitError {
             }
 
             GitError::ConflictingChanges {
+                target_branch,
                 files,
                 worktree_path,
             } => {
                 writeln!(
                     f,
                     "{}",
-                    error_message("Cannot push: conflicting uncommitted changes in:")
+                    error_message(cformat!(
+                        "Can't push to local <bold>{target_branch}</> branch: conflicting uncommitted changes"
+                    ))
                 )?;
                 if !files.is_empty() {
                     let joined_files = files.join("\n");
@@ -413,8 +418,13 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::PushFailed { error } => {
-                let header = error_message("Push failed");
+            GitError::PushFailed {
+                target_branch,
+                error,
+            } => {
+                let header = error_message(cformat!(
+                    "Can't push to local <bold>{target_branch}</> branch"
+                ));
                 write!(f, "{}", format_error_block(header, error))
             }
 
@@ -965,10 +975,13 @@ mod tests {
     #[test]
     fn test_git_error_conflicting_changes() {
         let err = GitError::ConflictingChanges {
+            target_branch: "main".into(),
             files: vec!["file1.rs".into(), "file2.rs".into()],
             worktree_path: PathBuf::from("/tmp/repo"),
         };
         let display = err.to_string();
+        assert!(display.contains("push to local"));
+        assert!(display.contains("main"));
         assert!(display.contains("conflicting"));
         assert!(display.contains("file1.rs"));
     }
@@ -1028,10 +1041,12 @@ mod tests {
     #[test]
     fn test_git_error_push_failed() {
         let err = GitError::PushFailed {
+            target_branch: "main".into(),
             error: "rejected".into(),
         };
         let display = err.to_string();
-        assert!(display.contains("Push failed"));
+        assert!(display.contains("push to local"));
+        assert!(display.contains("main"));
         assert!(display.contains("rejected"));
     }
 
@@ -1187,6 +1202,7 @@ mod tests {
     fn test_git_error_conflicting_changes_empty_files() {
         // Test with empty files list
         let err = GitError::ConflictingChanges {
+            target_branch: "main".into(),
             files: vec![],
             worktree_path: PathBuf::from("/tmp/repo"),
         };

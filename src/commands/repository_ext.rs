@@ -252,6 +252,7 @@ impl RepositoryCliExt for Repository {
 
         if !overlapping.is_empty() {
             return Err(GitError::ConflictingChanges {
+                target_branch: target_branch.to_string(),
                 files: overlapping,
                 worktree_path: wt_path.clone(),
             }

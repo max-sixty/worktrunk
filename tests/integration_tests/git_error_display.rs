@@ -140,6 +140,7 @@ fn display_invalid_reference() {
 #[test]
 fn display_push_failed() {
     let err = GitError::PushFailed {
+        target_branch: "main".into(),
         error: "To /Users/user/workspace/repo/.git\n ! [remote rejected] HEAD -> main (Up-to-date check failed)\nerror: failed to push some refs to '/Users/user/workspace/repo/.git'".into(),
     };
 
@@ -149,6 +150,7 @@ fn display_push_failed() {
 #[test]
 fn display_conflicting_changes() {
     let err = GitError::ConflictingChanges {
+        target_branch: "main".into(),
         files: vec!["src/main.rs".into(), "src/lib.rs".into()],
         worktree_path: PathBuf::from("/tmp/repo.main"),
     };

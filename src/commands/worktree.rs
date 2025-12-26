@@ -1073,6 +1073,7 @@ pub fn handle_push(
         }
         // CommandFailed contains raw git output, wrap in PushFailed for proper formatting
         return Err(GitError::PushFailed {
+            target_branch: target_branch.clone(),
             error: e.to_string(),
         }
         .into());
