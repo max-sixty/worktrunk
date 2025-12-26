@@ -1,18 +1,20 @@
 # Hook Types Reference
 
-Detailed behavior and use cases for all five Worktrunk hook types.
+Detailed behavior and use cases for all seven Worktrunk hook types.
 
 ## Hook Type Comparison
 
 | Hook | When | Blocking? | Fail-Fast? | Variables | Execution |
 |------|------|-----------|------------|-----------|-----------|
 | `post-create` | After creating worktree | Yes | No | Basic | Sequential |
-| `post-start` | When switching to worktree | No | No | Basic | Parallel |
+| `post-start` | After creating worktree | No (background) | No | Basic | Parallel |
+| `post-switch` | After every switch | No (background) | No | Basic | Parallel |
 | `pre-commit` | Before committing during merge | Yes | Yes | Basic + Merge | Sequential |
 | `pre-merge` | Before merging to target | Yes | Yes | Basic + Merge | Sequential |
 | `post-merge` | After successful merge | Yes | No | Basic + Merge | Sequential |
+| `pre-remove` | Before worktree removed | Yes | Yes | Basic | Sequential |
 
-**Basic variables**: `{{ repo }}`, `{{ branch }}` (raw), `{{ worktree }}`, `{{ repo_root }}`
+**Basic variables**: `{{ repo }}`, `{{ branch }}`, `{{ worktree }}`, `{{ worktree_name }}`, `{{ repo_root }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ remote_url }}`, `{{ upstream }}`
 **Merge variables**: Basic + `{{ target }}`
 **Filters**: `{{ branch | sanitize }}` (replace `/` `\` with `-`), `{{ branch | hash_port }}` (port 10000-19999)
 
@@ -69,6 +71,29 @@ sync = "git pull origin main"
 ```
 
 **What happens**: User runs `wt switch --create feature-x`. After creation completes, all three commands start immediately in parallel in background. User can work while they run. Check `.git/wt-logs/` for output.
+
+### post-switch
+
+**When it runs**: After every switch operation (creating new, switching to existing, or switching to current).
+
+**Behavior**:
+- Runs in background, doesn't block user
+- Multiple commands run in parallel
+- Output logged to `.git/wt-logs/`
+- Triggers on all switch results
+
+**Use cases**:
+- Renaming terminal tabs
+- Updating tmux window names
+- IDE notifications
+- Any per-switch automation
+
+**Example**:
+```toml
+post-switch = "echo 'Switched to {{ branch }}'"
+```
+
+**What happens**: Every time the user runs `wt switch`, this fires in the background. Unlike post-start, it runs on every switch, not just when creating new worktrees.
 
 ### pre-commit
 
@@ -148,6 +173,31 @@ notify = "./scripts/notify-slack.sh"
 
 **What happens**: User runs `wt merge`. After merge succeeds and push completes, commands run in main worktree. Then cleanup happens (branch deletion, worktree removal).
 
+### pre-remove
+
+**When it runs**: Before worktree removal during `wt remove`.
+
+**Behavior**:
+- Blocks until all commands complete
+- Commands run sequentially
+- ANY failure aborts the removal (fail-fast)
+- Exit code 0 required from all commands
+
+**Use cases**:
+- Cleanup tasks (temp files, caches)
+- Saving state before removal
+- Notifying external systems
+- Stopping services
+
+**Example**:
+```toml
+[pre-remove]
+cleanup = "rm -rf /tmp/cache/{{ branch }}"
+stop = "docker-compose down"
+```
+
+**What happens**: User runs `wt remove`. Before the worktree is removed, commands run. If any fails, removal is aborted.
+
 ## Execution Order During Merge
 
 Full sequence when running `wt merge`:
@@ -161,7 +211,8 @@ Full sequence when running `wt merge`:
 7. Merge branch into target
 8. Push to remote
 9. **Run `post-merge`** (best-effort)
-10. Clean up (delete branch, remove worktree)
+10. **Run `pre-remove`** (fail-fast, if cleanup enabled)
+11. Clean up (delete branch, remove worktree)
 
 ## Format Variants
 
@@ -183,9 +234,11 @@ services = "docker-compose up -d"
 Behavior:
 - `post-create`: Sequential execution
 - `post-start`: Parallel execution
+- `post-switch`: Parallel execution
 - `pre-commit`: Sequential execution
 - `pre-merge`: Sequential execution
 - `post-merge`: Sequential execution
+- `pre-remove`: Sequential execution
 
 Named commands appear in output with their labels, making it easier to identify which command succeeded or failed.
 
@@ -201,7 +254,14 @@ Available:
 - `{{ repo }}` - Repository name (e.g., "my-project")
 - `{{ branch }}` - Branch name (e.g., "feature-auth")
 - `{{ worktree }}` - Absolute path to worktree
+- `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-auth")
 - `{{ repo_root }}` - Absolute path to repository root
+- `{{ default_branch }}` - Default branch name (e.g., "main")
+- `{{ commit }}` - Full HEAD commit SHA
+- `{{ short_commit }}` - Short HEAD commit SHA (7 chars)
+- `{{ remote }}` - Primary remote name (e.g., "origin")
+- `{{ remote_url }}` - Remote URL (e.g., "git@github.com:user/repo.git")
+- `{{ upstream }}` - Upstream tracking branch (e.g., "origin/feature")
 
 ### Merge Variables (Merge Hooks Only)
 
@@ -227,6 +287,31 @@ elif [ "{{ target }}" = "staging" ]; then
 else
     npm run test:unit
 fi
+"""
+```
+
+### JSON Context
+
+Hooks also receive context as JSON on stdin, enabling hooks in any language:
+
+```python
+import json, sys
+ctx = json.load(sys.stdin)
+print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
+```
+
+The JSON includes all template variables plus `hook_type` and `hook_name`. This enables repository-specific behavior in user hooks:
+
+```toml
+# ~/.config/worktrunk/config.toml
+[post-switch]
+notify = """
+python3 -c '
+import json, sys
+ctx = json.load(sys.stdin)
+if "work-project" in ctx.get("repo", ""):
+    print(f"Switched to work project: {ctx[\"branch\"]}")
+'
 """
 ```
 

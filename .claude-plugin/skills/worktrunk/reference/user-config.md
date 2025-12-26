@@ -49,7 +49,7 @@ For Claude (via llm):
 llm install llm-anthropic
 llm keys set anthropic
 # User pastes API key from: https://console.anthropic.com/settings/keys
-llm models default claude-haiku-4-5-20251001
+llm models default claude-haiku-4.5
 ```
 
 For OpenAI (via llm):
@@ -212,6 +212,29 @@ worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 command = "llm"
 args = ["-m", "claude-haiku-4.5"]
 
+# Command Settings (configure default flags)
+[list]
+full = true       # --full
+branches = true   # --branches
+remotes = true    # --remotes
+
+[commit]
+stage = "all"     # "all", "tracked", or "none"
+
+[merge]
+squash = true     # Squash commits (default: true)
+commit = true     # Commit uncommitted changes (default: true)
+rebase = true     # Rebase onto target (default: true)
+remove = true     # Remove worktree after merge (default: true)
+verify = true     # Run hooks (default: true)
+
+# User Hooks (run for all repositories, no approval required)
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+
 # Optional: Custom prompt template (inline, Jinja2 syntax)
 template = "..."
 
@@ -252,6 +275,78 @@ approved-commands = ["npm install"]
 
 - Approved commands are auto-populated when using `wt switch --execute "cmd" --force`
 - Manual editing is possible but discouraged (use the tool's approval system)
+
+## User Hooks
+
+Personal hooks that run for all repositories. These don't require approval and run before project hooks.
+
+```toml
+[post-create]
+setup = "echo 'Setting up worktree...'"
+
+[pre-merge]
+notify = "notify-send 'Merging {{ branch }}'"
+```
+
+User hooks support the same hook types and template variables as project hooks. Use `--no-verify` to skip.
+
+**Key differences from project hooks:**
+
+| Aspect | User hooks | Project hooks |
+|--------|------------|--------------|
+| Location | `~/.config/worktrunk/config.toml` | `.config/wt.toml` |
+| Scope | All repositories | Single repository |
+| Approval | Not required | Required |
+| Execution order | First | After user hooks |
+
+**Filtering by repository:**
+
+User hooks receive JSON context on stdin, enabling repository-specific behavior:
+
+```toml
+[post-switch]
+notify = """
+python3 -c '
+import json, sys
+ctx = json.load(sys.stdin)
+if "work-project" in ctx.get("repo", ""):
+    print(f"Switched to work project: {ctx[\"branch\"]}")
+'
+"""
+```
+
+## Command Settings
+
+Configure default flag values for commands. These apply unless explicitly overridden.
+
+### `[list]` section
+
+```toml
+[list]
+full = false       # Show CI and main-diffstat columns (--full)
+branches = false   # Include branches without worktrees (--branches)
+remotes = false    # Include remote branches (--remotes)
+```
+
+### `[commit]` section
+
+Shared by `wt step commit`, `wt step squash`, and `wt merge`:
+
+```toml
+[commit]
+stage = "all"      # What to stage: "all", "tracked", or "none"
+```
+
+### `[merge]` section
+
+```toml
+[merge]
+squash = true      # Squash commits when merging
+commit = true      # Commit uncommitted changes (disables squash when false)
+rebase = true      # Rebase onto target before merging
+remove = true      # Remove worktree after merge
+verify = true      # Run project hooks
+```
 
 ## Key Commands
 

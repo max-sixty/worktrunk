@@ -133,11 +133,13 @@ cat .config/wt.toml
 ### Step 2: Determine Appropriate Hook Type
 
 Ask: When should this run?
-- Creating worktree → `post-create`
-- Switching to worktree → `post-start`
+- Creating worktree (blocking) → `post-create`
+- Creating worktree (background) → `post-start`
+- Every switch operation → `post-switch`
 - Before committing → `pre-commit`
 - Before merging → `pre-merge`
 - After merging → `post-merge`
+- Before worktree removal → `pre-remove`
 
 ### Step 3: Handle Format Conversion if Needed
 
@@ -188,7 +190,14 @@ Available in all hook types:
 - `{{ repo }}` - Repository name (e.g., "my-project")
 - `{{ branch }}` - Raw branch name (e.g., "feature/auth")
 - `{{ worktree }}` - Absolute path to worktree
+- `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-auth")
 - `{{ repo_root }}` - Absolute path to repository root
+- `{{ default_branch }}` - Default branch name (e.g., "main")
+- `{{ commit }}` - Full HEAD commit SHA
+- `{{ short_commit }}` - Short HEAD commit SHA (7 chars)
+- `{{ remote }}` - Primary remote name (e.g., "origin")
+- `{{ remote_url }}` - Remote URL (e.g., "git@github.com:user/repo.git")
+- `{{ upstream }}` - Upstream tracking branch (e.g., "origin/feature")
 
 ### Filters
 
@@ -254,15 +263,17 @@ services = "docker-compose up -d"
 Behavior:
 - `post-create`: Sequential
 - `post-start`: Parallel
+- `post-switch`: Parallel
 - `pre-commit`: Sequential
 - `pre-merge`: Sequential
 - `post-merge`: Sequential
+- `pre-remove`: Sequential
 
 Named commands appear in output with their labels, which helps identify which command succeeded or failed.
 
 ## Hook Types
 
-Five hook types with different timing and behavior:
+Seven hook types with different timing and behavior:
 
 ### post-create
 
@@ -304,6 +315,26 @@ migrate = "npm run db:migrate"
 [post-start]
 build = "npm run build"
 services = "docker-compose up -d"
+```
+
+</example>
+
+### post-switch
+
+**When**: After every switch operation (background)
+**Blocking**: No (runs in background)
+**Fail-fast**: No
+**Execution**: Parallel
+
+**Use for**:
+- Renaming terminal tabs
+- Updating tmux window names
+- IDE notifications
+
+<example type="post-switch">
+
+```toml
+post-switch = "echo 'Switched to {{ branch }}'"
 ```
 
 </example>
@@ -370,6 +401,28 @@ post-merge = "npm run deploy"
 
 </example>
 
+### pre-remove
+
+**When**: Before worktree removal during `wt remove`
+**Blocking**: Yes
+**Fail-fast**: Yes (any failure aborts removal)
+**Execution**: Sequential
+
+**Use for**:
+- Cleanup tasks (temp files, caches)
+- Saving state
+- Notifying external systems
+- Stopping services
+
+<example type="pre-remove">
+
+```toml
+[pre-remove]
+cleanup = "rm -rf /tmp/cache/{{ branch }}"
+```
+
+</example>
+
 See `hook-types-reference.md` for complete behavioral details.
 
 ## Validation & Safety
@@ -413,7 +466,7 @@ Reject obviously dangerous commands:
 Check sequence:
 1. Verify `.config/wt.toml` exists: `ls -la .config/wt.toml`
 2. Check TOML syntax: `cat .config/wt.toml`
-3. Verify hook name spelling matches one of the five types
+3. Verify hook name spelling matches one of the seven types
 4. Test command manually in terminal
 
 ### Hook Failing
@@ -449,6 +502,23 @@ post-start = "npm run build"  # Slow, background
 wt config list                    # View project config
 cat .config/wt.toml               # Read config directly
 wt switch --create test-hooks     # Test hooks work
+```
+
+## Dev Server URL
+
+Add a URL column to `wt list` showing dev server links per worktree:
+
+```toml
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+```
+
+URLs are dimmed when the port isn't listening. The template supports all variables plus filters.
+
+Example with subdomain:
+```toml
+[list]
+url = "http://{{ branch }}.lvh.me:3000"
 ```
 
 ## Config File Location

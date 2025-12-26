@@ -22,7 +22,7 @@ Worktrunk uses two separate config files with different scopes and behaviors:
 ### User Config (`~/.config/worktrunk/config.toml`)
 - **Scope**: Personal preferences for the individual developer
 - **Location**: `~/.config/worktrunk/config.toml` (never checked into git)
-- **Contains**: LLM integration, worktree path templates, approved commands
+- **Contains**: LLM integration, worktree path templates, command settings, user hooks, approved commands
 - **Permission model**: Always propose changes and get consent before editing
 - **See**: `reference/user-config.md` for detailed guidance
 
@@ -71,7 +71,7 @@ Most common request. Follow this sequence:
    ```bash
    llm install llm-anthropic
    llm keys set anthropic
-   llm models default claude-haiku-4-5-20251001
+   llm models default claude-haiku-4.5
    ```
 
 4. **Propose config change**
@@ -108,10 +108,13 @@ Common request for workflow automation. Follow discovery process:
    - For Rust: Common cargo commands
    - For Python: Check pyproject.toml
 
-3. **Design appropriate hooks**
+3. **Design appropriate hooks** (7 hook types available)
    - Dependencies (fast, must complete) → `post-create`
    - Tests/linting (must pass) → `pre-commit` or `pre-merge`
-   - Long builds → `post-start`
+   - Long builds, dev servers → `post-start`
+   - Terminal/IDE updates → `post-switch`
+   - Deployment → `post-merge`
+   - Cleanup tasks → `pre-remove`
 
 4. **Validate commands work**
    ```bash
@@ -162,6 +165,8 @@ Common request for workflow automation. Follow discovery process:
 - Set up LLM integration → `reference/user-config.md#llm-setup`
 - Customize worktree paths → `reference/user-config.md#worktree-paths`
 - Custom commit templates → `reference/user-config.md#templates`
+- Configure command defaults → `reference/user-config.md#command-settings`
+- Set up personal hooks → `reference/user-config.md#user-hooks`
 - Troubleshoot LLM issues → `reference/user-config.md#troubleshooting`
 
 ### Project Config Tasks
@@ -169,6 +174,7 @@ Common request for workflow automation. Follow discovery process:
 - Add hook to existing config → `reference/project-config.md#add-hook`
 - Use template variables → `reference/project-config.md#variables`
 - Convert command formats → `reference/project-config.md#formats`
+- Add dev server URL to list → `reference/project-config.md#dev-server-url`
 - Troubleshoot hook execution → `reference/project-config.md#troubleshooting`
 
 ## Key Commands
