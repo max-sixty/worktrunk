@@ -920,10 +920,6 @@ pub enum StepCommand {
         /// Defaults to default branch.
         #[arg(add = crate::completion::branch_value_completer())]
         target: Option<String>,
-
-        /// Allow merge commits
-        #[arg(long)]
-        allow_merge_commits: bool,
     },
 
     /// Rebase onto target

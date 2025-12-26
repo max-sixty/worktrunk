@@ -6,7 +6,6 @@ info:
     - step
     - push
     - main
-    - "--allow-merge-commits"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -32,7 +31,7 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mPushing 3 commits to [1mmain[22m @ [2m2489484[22m (merge commits allowed)[39m
+[36m◎[39m [36mPushing 3 commits to [1mmain[22m @ [2m2489484[22m[39m
 [107m [0m *   [33m2489484[m Merge temp
 [107m [0m [31m|[m[32m/[m  
 [107m [0m [31m|[m * [33me03c938[m Commit 2

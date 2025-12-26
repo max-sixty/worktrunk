@@ -210,7 +210,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
     handle_push(
         Some(&target_branch),
-        false,
         "Merged to",
         Some(MergeOperations {
             committed,

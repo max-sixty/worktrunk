@@ -229,7 +229,7 @@ fn test_push_error_not_fast_forward(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_push_error_with_merge_commits(mut repo: TestRepo) {
+fn test_push_with_merge_commits(mut repo: TestRepo) {
     // Create feature branch with initial commit
     let feature_wt = repo.add_worktree_with_commit("feature", "file1.txt", "content1", "Commit 1");
 
@@ -258,50 +258,11 @@ fn test_push_error_with_merge_commits(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    // Try to push to main (should fail - has merge commits)
+    // Push to main (should succeed - merge commits are allowed)
     snapshot_push(
-        "push_error_with_merge_commits",
+        "push_with_merge_commits",
         &repo,
         &["main"],
-        Some(&feature_wt),
-    );
-}
-
-#[rstest]
-fn test_push_with_merge_commits_allowed(mut repo: TestRepo) {
-    // Create feature branch with initial commit
-    let feature_wt = repo.add_worktree_with_commit("feature", "file1.txt", "content1", "Commit 1");
-
-    // Create another branch for merging
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "-b", "temp"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    repo.commit_in_worktree(&feature_wt, "file2.txt", "content2", "Commit 2");
-
-    // Switch back to feature and merge temp (creating merge commit)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "feature"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["merge", "temp", "--no-ff", "-m", "Merge temp"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    // Push to main with --allow-merge-commits (should succeed with acknowledgment)
-    snapshot_push(
-        "push_with_merge_commits_allowed",
-        &repo,
-        &["main", "--allow-merge-commits"],
         Some(&feature_wt),
     );
 }

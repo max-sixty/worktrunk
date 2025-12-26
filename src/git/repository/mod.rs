@@ -711,13 +711,6 @@ impl Repository {
             .context("Failed to parse commit count")
     }
 
-    /// Check if there are merge commits in the range base..head.
-    pub fn has_merge_commits(&self, base: &str, head: &str) -> anyhow::Result<bool> {
-        let range = format!("{}..{}", base, head);
-        let stdout = self.run_command(&["rev-list", "--merges", &range])?;
-        Ok(!stdout.trim().is_empty())
-    }
-
     /// Get files changed between base and head.
     ///
     /// For renames and copies, both old and new paths are included to ensure

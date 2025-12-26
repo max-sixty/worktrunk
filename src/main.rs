@@ -1107,10 +1107,7 @@ fn main() {
                     }
                     Ok(())
                 }),
-            StepCommand::Push {
-                target,
-                allow_merge_commits,
-            } => handle_push(target.as_deref(), allow_merge_commits, "Pushed to", None),
+            StepCommand::Push { target } => handle_push(target.as_deref(), "Pushed to", None),
             StepCommand::Rebase { target } => {
                 handle_rebase(target.as_deref()).and_then(|result| match result {
                     RebaseResult::Rebased => Ok(()),
