@@ -65,6 +65,12 @@ use super::model::WorkingTreeStatus;
 #[derive(Clone, Default)]
 struct StatusContext {
     has_merge_tree_conflicts: bool,
+    /// Working tree conflict check result (--full only, worktrees only).
+    /// None = use commit check (task didn't run or working tree clean)
+    /// Some(b) = dirty working tree, b is conflict result
+    // TODO: If we need to distinguish "task didn't run" from "clean working tree",
+    // expand to an enum. Currently both cases fall back to commit-based check.
+    has_working_tree_conflicts: Option<bool>,
     user_marker: Option<String>,
     working_tree_status: Option<WorkingTreeStatus>,
     has_conflicts: bool,
@@ -73,9 +79,16 @@ struct StatusContext {
 impl StatusContext {
     fn apply_to(&self, item: &mut ListItem, target: &str) {
         // Main worktree case is handled inside check_integration_state()
+        //
+        // Prefer working tree conflicts (--full) when available.
+        // None means task didn't run or working tree was clean - use commit check.
+        let has_conflicts = self
+            .has_working_tree_conflicts
+            .unwrap_or(self.has_merge_tree_conflicts);
+
         item.compute_status_symbols(
             Some(target),
-            self.has_merge_tree_conflicts,
+            has_conflicts,
             self.user_marker.clone(),
             self.working_tree_status,
             self.has_conflicts,
@@ -142,10 +155,22 @@ pub(super) enum TaskResult {
         working_tree_status: WorkingTreeStatus,
         has_conflicts: bool,
     },
-    /// Potential merge conflicts with main (merge-tree simulation)
+    /// Potential merge conflicts with main (merge-tree simulation on committed HEAD)
     MergeTreeConflicts {
         item_idx: usize,
         has_merge_tree_conflicts: bool,
+    },
+    /// Potential merge conflicts including working tree changes (--full only)
+    ///
+    /// For dirty worktrees, uses `git stash create` to get a tree object that
+    /// includes uncommitted changes, then runs merge-tree against that.
+    /// Returns None if working tree is clean (fall back to MergeTreeConflicts).
+    WorkingTreeConflicts {
+        item_idx: usize,
+        /// None = working tree clean (use MergeTreeConflicts result)
+        /// Some(true) = dirty working tree would conflict
+        /// Some(false) = dirty working tree would not conflict
+        has_working_tree_conflicts: Option<bool>,
     },
     /// Git operation in progress (rebase/merge)
     GitOperation {
@@ -190,6 +215,7 @@ impl TaskResult {
             | TaskResult::BranchDiff { item_idx, .. }
             | TaskResult::WorkingTreeDiff { item_idx, .. }
             | TaskResult::MergeTreeConflicts { item_idx, .. }
+            | TaskResult::WorkingTreeConflicts { item_idx, .. }
             | TaskResult::GitOperation { item_idx, .. }
             | TaskResult::UserMarker { item_idx, .. }
             | TaskResult::Upstream { item_idx, .. }
@@ -335,6 +361,10 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
         TaskKind::MergeTreeConflicts => {
             // Don't show conflict symbol if we couldn't check
             status_contexts[idx].has_merge_tree_conflicts = false;
+        }
+        TaskKind::WorkingTreeConflicts => {
+            // Fall back to commit-based check on failure
+            status_contexts[idx].has_working_tree_conflicts = None;
         }
         TaskKind::GitOperation => {
             // Already defaults to GitOperationState::None in WorktreeData
@@ -520,6 +550,13 @@ fn drain_results(
             } => {
                 // Store for status_symbols computation
                 status_ctx.has_merge_tree_conflicts = has_merge_tree_conflicts;
+            }
+            TaskResult::WorkingTreeConflicts {
+                has_working_tree_conflicts,
+                ..
+            } => {
+                // Store for status_symbols computation (takes precedence over commit check)
+                status_ctx.has_working_tree_conflicts = has_working_tree_conflicts;
             }
             TaskResult::GitOperation { git_operation, .. } => {
                 if let ItemKind::Worktree(data) = &mut item.kind {

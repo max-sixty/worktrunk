@@ -1966,7 +1966,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
-| | `✗` | Would conflict if merged to the default branch |
+| | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
 | | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or target |
@@ -2120,7 +2120,7 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
         #[arg(long)]
         remotes: bool,
 
-        /// Show CI and default-branch merge-base diffstat (`main…±` column)
+        /// Show CI, merge-base diffstat, and working tree conflict check
         #[arg(long)]
         full: bool,
 

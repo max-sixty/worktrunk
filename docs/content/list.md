@@ -122,7 +122,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
-| | `✗` | Would conflict if merged to the default branch |
+| | `✗` | Would conflict if merged to the default branch (with `--full`, includes uncommitted changes) |
 | | `_` | Same commit as the default branch, clean |
 | | `–` | Same commit as the default branch, uncommitted changes |
 | | `⊂` | Content [integrated](@/remove.md#branch-cleanup) into the default branch or target |
@@ -278,7 +278,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Include remote branches
 
       <b><span class=c>--full</span></b>
-          Show CI and default-branch merge-base diffstat (<b>main…±</b> column)
+          Show CI, merge-base diffstat, and working tree conflict check
 
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info

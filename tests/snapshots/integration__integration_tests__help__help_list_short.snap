@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -30,7 +30,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
       [1m[36m--format[0m[36m [0m[36m<FORMAT>[0m  Output format (table, json) [default: table]
       [1m[36m--branches[0m         Include branches without worktrees
       [1m[36m--remotes[0m          Include remote branches
-      [1m[36m--full[0m             Show CI and default-branch merge-base diffstat ([1mmain…±[0m column)
+      [1m[36m--full[0m             Show CI, merge-base diffstat, and working tree conflict check
       [1m[36m--progressive[0m      Show fast info immediately, update with slow info
   [1m[36m-h[0m, [1m[36m--help[0m             Print help (see more with '--help')
 

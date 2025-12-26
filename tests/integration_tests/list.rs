@@ -56,6 +56,12 @@ fn snapshot_list_with_branches_and_remotes(test_name: &str, repo: &TestRepo) {
     );
 }
 
+fn snapshot_list_full(test_name: &str, repo: &TestRepo) {
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.arg("--full");
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
+}
+
 fn snapshot_list_progressive(test_name: &str, repo: &TestRepo) {
     run_snapshot(
         setup_snapshot_settings(repo),
@@ -2493,6 +2499,79 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
         cmd.arg("--full");
         assert_cmd_snapshot!("maximum_status_symbols", cmd);
     });
+}
+
+/// Test that --full detects working tree conflicts (uncommitted changes that would conflict).
+///
+/// This specifically tests the WorkingTreeConflicts task which:
+/// 1. Uses `git stash create` to get a tree object from uncommitted changes
+/// 2. Runs merge-tree against the default branch to detect conflicts
+///
+/// The key distinction from commit-level conflicts:
+/// - Commit-level: HEAD conflicts with main (always checked)
+/// - Working tree: Uncommitted changes conflict with main (only with --full)
+#[rstest]
+fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
+    // Create initial commit with a shared file
+    std::fs::write(repo.root_path().join("shared.txt"), "original content").unwrap();
+    repo.commit("Initial commit");
+
+    // Create feature worktree - at this point feature and main are identical
+    let feature = repo.add_worktree("feature");
+
+    // Advance main with a change to the shared file
+    std::fs::write(repo.root_path().join("shared.txt"), "main's version").unwrap();
+    repo.commit("Main changes shared.txt");
+
+    // Feature's HEAD is still at the original commit - no commit-level conflict
+    // because feature hasn't committed anything that conflicts
+
+    // Now add uncommitted changes to feature that would conflict with main
+    std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
+
+    // Without --full: no conflict symbol (only checks commit-level)
+    snapshot_list("working_tree_conflicts_without_full", &repo);
+
+    // With --full: should show conflict symbol because uncommitted changes conflict
+    snapshot_list_full("working_tree_conflicts_with_full", &repo);
+}
+
+/// Test that clean working trees don't affect conflict detection with --full.
+///
+/// Even with --full, if the working tree is clean, we skip the stash-based check
+/// and just use the commit-level conflict detection.
+#[rstest]
+fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {
+    // Create initial commit with a shared file
+    std::fs::write(repo.root_path().join("shared.txt"), "original content").unwrap();
+    repo.commit("Initial commit");
+
+    // Create feature worktree
+    let feature = repo.add_worktree("feature");
+
+    // Make a conflicting commit on feature (different change to shared.txt)
+    std::fs::write(feature.join("shared.txt"), "feature's committed version").unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["add", "."])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["commit", "-m", "Feature changes shared.txt"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+
+    // Advance main with a different change to the shared file
+    std::fs::write(repo.root_path().join("shared.txt"), "main's version").unwrap();
+    repo.commit("Main changes shared.txt");
+
+    // Feature has a committed conflict, working tree is clean
+    // Both with and without --full should show the conflict symbol
+    snapshot_list("commit_conflicts_without_full", &repo);
+    snapshot_list_full("commit_conflicts_with_full", &repo);
 }
 
 #[rstest]

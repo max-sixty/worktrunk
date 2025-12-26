@@ -168,10 +168,15 @@ impl TaskSpawner {
         &self,
         scope: &'scope std::thread::Scope<'scope, '_>,
         ctx: &TaskContext,
+        skip: &std::collections::HashSet<TaskKind>,
     ) {
         self.spawn::<WorkingTreeDiffTask>(scope, ctx);
         self.spawn::<GitOperationTask>(scope, ctx);
         self.spawn::<UserMarkerTask>(scope, ctx);
+        // Working tree conflict check only with --full
+        if !skip.contains(&TaskKind::WorkingTreeConflicts) {
+            self.spawn::<WorkingTreeConflictsTask>(scope, ctx);
+        }
     }
 
     fn spawn_optional_tasks<'scope>(
@@ -445,6 +450,76 @@ impl Task for MergeTreeConflictsTask {
     }
 }
 
+/// Task 6b (worktree only, --full only): Working tree conflict check
+///
+/// For dirty worktrees, uses `git stash create` to get a tree object that
+/// includes uncommitted changes, then runs merge-tree against that.
+/// Returns None if working tree is clean (caller should fall back to MergeTreeConflicts).
+pub struct WorkingTreeConflictsTask;
+
+impl Task for WorkingTreeConflictsTask {
+    const KIND: TaskKind = TaskKind::WorkingTreeConflicts;
+
+    fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
+        let base = ctx.require_default_branch(Self::KIND)?;
+        let repo = ctx.repo();
+
+        // Quick check if working tree is dirty via git status
+        let status_output = repo
+            .run_command(&["status", "--porcelain"])
+            .map_err(|e| ctx.error(Self::KIND, e))?;
+
+        let is_dirty = !status_output.trim().is_empty();
+
+        if !is_dirty {
+            // Clean working tree - return None to signal "use commit-based check"
+            return Ok(TaskResult::WorkingTreeConflicts {
+                item_idx: ctx.item_idx,
+                has_working_tree_conflicts: None,
+            });
+        }
+
+        // Dirty working tree - create a temporary tree object via stash create
+        // `git stash create` returns a commit SHA without modifying refs
+        //
+        // Note: stash create fails when there are unmerged files (merge conflict in progress).
+        // In that case, fall back to the commit-based check.
+        let stash_result = repo.run_command(&["stash", "create"]);
+
+        let stash_sha = match stash_result {
+            Ok(sha) => sha,
+            Err(_) => {
+                // Stash create failed (likely unmerged files during rebase/merge)
+                // Fall back to commit-based check
+                return Ok(TaskResult::WorkingTreeConflicts {
+                    item_idx: ctx.item_idx,
+                    has_working_tree_conflicts: None,
+                });
+            }
+        };
+
+        let stash_sha = stash_sha.trim();
+
+        // If stash create returns empty, working tree is clean (shouldn't happen but handle it)
+        if stash_sha.is_empty() {
+            return Ok(TaskResult::WorkingTreeConflicts {
+                item_idx: ctx.item_idx,
+                has_working_tree_conflicts: None,
+            });
+        }
+
+        // Run merge-tree with the stash commit
+        let has_conflicts = repo
+            .has_merge_conflicts(base, stash_sha)
+            .map_err(|e| ctx.error(Self::KIND, e))?;
+
+        Ok(TaskResult::WorkingTreeConflicts {
+            item_idx: ctx.item_idx,
+            has_working_tree_conflicts: Some(has_conflicts),
+        })
+    }
+}
+
 /// Task 7 (worktree only): Git operation state detection (rebase/merge)
 pub struct GitOperationTask;
 
@@ -620,7 +695,7 @@ fn collect_progressive(
         // Core tasks (always run)
         spawner.spawn_core_tasks(s, &ctx);
         if include_worktree_tasks {
-            spawner.spawn_worktree_only_tasks(s, &ctx);
+            spawner.spawn_worktree_only_tasks(s, &ctx, skip);
         }
         spawner.spawn_optional_tasks(s, &ctx, skip);
     });

@@ -39,7 +39,7 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
           Include remote branches
 
       [1m[36m--full
-          Show CI and default-branch merge-base diffstat ([1mmain…±[0m column)
+          Show CI, merge-base diffstat, and working tree conflict check
 
       [1m[36m--progressive
           Show fast info immediately, update with slow info
@@ -124,30 +124,30 @@ seconds; use [2mwt config state[0m to view or clear.
 
 The Status column has multiple subcolumns. Within each, only the first matching symbol is shown (listed in priority order):
 
-      Subcolumn     Symbol                        Meaning                         
-   ──────────────── ────── ────────────────────────────────────────────────────── 
-   Working tree (1) +      Staged files                                           
-   Working tree (2) !      Modified files (unstaged)                              
-   Working tree (3) ?      Untracked files                                        
-   Worktree         ✘      Merge conflicts                                        
-                    ⤴      Rebase in progress                                     
-                    ⤵      Merge in progress                                      
-                    /      Branch without worktree                                
-                    ⚑      Worktree path doesn't match branch name                
-                    ⊟      Prunable (directory missing)                           
-                    ⊞      Locked worktree                                        
-   Default branch   ^      Is the default branch                                  
-                    ✗      Would conflict if merged to the default branch         
-                    _      Same commit as the default branch, clean               
-                    –      Same commit as the default branch, uncommitted changes 
-                    ⊂      Content integrated into the default branch or target   
-                    ↕      Diverged from the default branch                       
-                    ↑      Ahead of the default branch                            
-                    ↓      Behind the default branch                              
-   Remote           \|     In sync with remote                                    
-                    ⇅      Diverged from remote                                   
-                    ⇡      Ahead of remote                                        
-                    ⇣      Behind remote                                          
+      Subcolumn     Symbol                                          Meaning                                           
+   ──────────────── ────── ────────────────────────────────────────────────────────────────────────────────────────── 
+   Working tree (1) +      Staged files                                                                               
+   Working tree (2) !      Modified files (unstaged)                                                                  
+   Working tree (3) ?      Untracked files                                                                            
+   Worktree         ✘      Merge conflicts                                                                            
+                    ⤴      Rebase in progress                                                                         
+                    ⤵      Merge in progress                                                                          
+                    /      Branch without worktree                                                                    
+                    ⚑      Worktree path doesn't match branch name                                                    
+                    ⊟      Prunable (directory missing)                                                               
+                    ⊞      Locked worktree                                                                            
+   Default branch   ^      Is the default branch                                                                      
+                    ✗      Would conflict if merged to the default branch (with --full, includes uncommitted changes) 
+                    _      Same commit as the default branch, clean                                                   
+                    –      Same commit as the default branch, uncommitted changes                                     
+                    ⊂      Content integrated into the default branch or target                                       
+                    ↕      Diverged from the default branch                                                           
+                    ↑      Ahead of the default branch                                                                
+                    ↓      Behind the default branch                                                                  
+   Remote           \|     In sync with remote                                                                        
+                    ⇅      Diverged from remote                                                                       
+                    ⇡      Ahead of remote                                                                            
+                    ⇣      Behind remote                                                                              
 
 Rows are dimmed when safe to delete ([2m_[0m same commit with clean working tree or [2m⊂[0m content integrated).
 

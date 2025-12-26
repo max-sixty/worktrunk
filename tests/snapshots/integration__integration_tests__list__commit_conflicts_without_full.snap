@@ -1,0 +1,36 @@
+---
+source: tests/integration_tests/list.rs
+info:
+  program: wt
+  args:
+    - list
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+  [1mBranch[0m   [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m             [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main         [2m^[22m                         .                         [2mf31b5717[0m  [2m1d[0m    [2mMain changes shared.txt
++ feature      [33m✗[39m                 [32m↑1[0m  [2m[31m↓1[0m  ../repo.feature           [2m70300b03[0m  [2m1d[0m    [2mFeature changes shared.txt
+
+[2m○[22m [2mShowing 2 worktrees, 1 ahead
+
+----- stderr -----
