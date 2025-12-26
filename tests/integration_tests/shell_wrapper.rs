@@ -1666,7 +1666,7 @@ approved-commands = ["echo 'background job'"]
     /// To detect if they leak, we use `exec_bash_truly_interactive` which runs bash without
     /// `-c` and writes commands to the PTY, triggering prompts where notifications appear.
     ///
-    /// The shell wrapper suppresses these via two mechanisms (see posix_directives.sh):
+    /// The shell wrapper suppresses these via two mechanisms (see bash.sh/zsh.zsh templates):
     /// - START notifications (`[1] 12345`): stderr redirection around `&`
     /// - DONE notifications (`[1]+ Done`): `set +m` before backgrounding
     #[rstest]
