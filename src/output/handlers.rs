@@ -735,7 +735,9 @@ fn handle_removed_worktree_output(
             outcome,
             BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
         );
-        let branch_display = branch.or(Some(branch_name));
+        // Use branch if provided, otherwise fall back to branch_name (which is always
+        // Some here since we returned early for detached HEAD case on line 565)
+        let branch_display = branch.unwrap_or(branch_name);
 
         // Message structure parallel to background mode:
         // - Branch deleted (integrated/force): "worktree & branch (reason)"
@@ -744,20 +746,12 @@ fn handle_removed_worktree_output(
             let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
             let flag_text = &flag_note.text;
             let flag_after = flag_note.after_green();
-            if let Some(b) = branch_display {
-                cformat!(
-                    "<green>✓ Removed <bold>{b}</> worktree & branch{flag_text}</>{flag_after}"
-                )
-            } else {
-                cformat!("<green>✓ Removed worktree & branch{flag_text}</>{flag_after}")
-            }
+            cformat!(
+                "<green>✓ Removed <bold>{branch_display}</> worktree & branch{flag_text}</>{flag_after}"
+            )
         } else {
             // Branch kept: hint will explain why (integrated+flag, unmerged, or unmerged+flag)
-            if let Some(b) = branch_display {
-                cformat!("<green>✓ Removed <bold>{b}</> worktree</>")
-            } else {
-                cformat!("<green>✓ Removed worktree</>")
-            }
+            cformat!("<green>✓ Removed <bold>{branch_display}</> worktree</>")
         };
         super::print(FormattedMessage::new(msg))?;
 

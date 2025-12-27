@@ -573,6 +573,26 @@ fn test_remove_from_detached_head_in_worktree(mut repo: TestRepo) {
     );
 }
 
+/// Test foreground removal from a detached HEAD state.
+///
+/// Covers the code path where `branch_display` is None (lines 752, 759 in handlers.rs).
+/// The output should be "✓ Removed worktree" without a branch name.
+#[rstest]
+fn test_remove_foreground_detached_head(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-detached-fg");
+
+    // Detach HEAD in the worktree
+    repo.detach_head_in_worktree("feature-detached-fg");
+
+    // Run foreground remove from within the detached worktree
+    snapshot_remove(
+        "remove_foreground_detached_head",
+        &repo,
+        &["--no-background"],
+        Some(&worktree_path),
+    );
+}
+
 /// Test that `wt remove @` works from a detached HEAD state in a worktree.
 ///
 /// This should behave identically to `wt remove` (no args) - path-based removal
