@@ -1950,6 +1950,15 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // when capturing stderr from shell commands due to timing/buffering differences
     settings.add_filter(r"Broken pipe \(os error 32\)", "Error: connection refused");
 
+    // Normalize shell "command not found" errors across platforms
+    // - macOS: "sh: nonexistent-command: command not found"
+    // - Windows Git Bash: "/usr/bin/bash: line 1: nonexistent-command: command not found"
+    // Normalize to a consistent format
+    settings.add_filter(
+        r"(?:/usr/bin/bash: line \d+|sh|bash): ([^:]+): command not found",
+        "sh: $1: command not found",
+    );
+
     // Filter out PowerShell lines on Windows - these appear only on Windows
     // and would cause snapshot mismatches with Unix snapshots
     settings.add_filter(r"(?m)^.*[Pp]owershell.*\n", "");
