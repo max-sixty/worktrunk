@@ -575,9 +575,12 @@ fn test_remove_from_detached_head_in_worktree(mut repo: TestRepo) {
 
 /// Test foreground removal from a detached HEAD state.
 ///
-/// Covers the code path where `branch_display` is None (lines 752, 759 in handlers.rs).
-/// The output should be "✓ Removed worktree" without a branch name.
+/// Covers the foreground detached HEAD code path in handlers.rs.
+/// The output should be "✓ Removed worktree (detached HEAD, no branch to delete)".
+///
+/// Ignored on Windows: subprocess tests stay in the worktree, causing file locking errors.
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_remove_foreground_detached_head(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-detached-fg");
 
