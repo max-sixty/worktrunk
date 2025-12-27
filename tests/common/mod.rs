@@ -1953,9 +1953,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Normalize shell "command not found" errors across platforms
     // - macOS: "sh: nonexistent-command: command not found"
     // - Windows Git Bash: "/usr/bin/bash: line 1: nonexistent-command: command not found"
+    // - Linux (dash): "sh: 1: nonexistent-command: not found"
     // Normalize to a consistent format
     settings.add_filter(
-        r"(?:/usr/bin/bash: line \d+|sh|bash): ([^:]+): command not found",
+        r"(?:/usr/bin/bash: line \d+|sh|bash)(?:: \d+)?: ([^:]+): (?:command )?not found",
         "sh: $1: command not found",
     );
 
