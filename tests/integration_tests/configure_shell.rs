@@ -229,6 +229,43 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir
     );
 }
 
+/// Test `wt config shell install` when fish extension AND completions already exist
+#[rstest]
+fn test_configure_shell_fish_all_already_configured(repo: TestRepo, temp_home: TempDir) {
+    // Create fish conf.d directory with wt.fish (extension exists)
+    let conf_d = temp_home.path().join(".config/fish/conf.d");
+    fs::create_dir_all(&conf_d).unwrap();
+    let fish_config = conf_d.join("wt.fish");
+    fs::write(
+        &fish_config,
+        "if type -q wt; command wt config shell init fish | source; end",
+    )
+    .unwrap();
+
+    // Also create completions file
+    let completions_d = temp_home.path().join(".config/fish/completions");
+    fs::create_dir_all(&completions_d).unwrap();
+    let completions_file = completions_d.join("wt.fish");
+    fs::write(&completions_file, "# existing completions").unwrap();
+
+    let settings = setup_home_snapshot_settings(&temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        cmd.env("SHELL", "/bin/fish");
+        cmd.arg("config")
+            .arg("shell")
+            .arg("install")
+            .arg("fish")
+            .arg("--force")
+            .current_dir(repo.root_path());
+
+        // Both extension and completions already exist
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test `wt config shell install` when no config files exist
 #[rstest]
 fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {

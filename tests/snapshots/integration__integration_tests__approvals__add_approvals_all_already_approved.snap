@@ -1,0 +1,40 @@
+---
+source: tests/integration_tests/approvals.rs
+info:
+  program: wt
+  args:
+    - hook
+    - approvals
+    - add
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SOURCE_DATE_EPOCH: "1735776000"
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: false
+exit_code: 1
+----- stdout -----
+
+----- stderr -----
+[33m▲[39m [33m[1mrepo[22m needs approval to execute [1m1[22m command:[39m
+
+[2m○[22m post-create:
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test'[0m[2m
+[31m✗[39m [31mCannot prompt for approval in non-interactive environment[39m
+
+[2m↳[22m [2mTo skip prompts in CI/CD, add [90m--force[39m; to pre-approve commands, run [90mwt hook approvals add[39m[22m

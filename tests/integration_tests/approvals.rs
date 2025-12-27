@@ -176,3 +176,42 @@ lint = "echo 'third'"
     // Now clear approvals (should show count of 3)
     snapshot_clear_approvals("clear_approvals_multiple_approvals", &repo, &[]);
 }
+
+// ============================================================================
+// add-approvals additional coverage tests
+// ============================================================================
+
+#[rstest]
+fn test_add_approvals_all_already_approved(repo: TestRepo) {
+    let project_id = format!("{}/origin", repo.root_path().display());
+    repo.commit("Initial commit");
+    repo.write_project_config(r#"post-create = "echo 'test'""#);
+    repo.commit("Add config");
+
+    // Manually approve the command
+    let mut config = WorktrunkConfig::default();
+    config
+        .approve_command_to(
+            project_id,
+            "echo 'test'".to_string(),
+            Some(repo.test_config_path()),
+        )
+        .unwrap();
+
+    // Try to add approvals - should show "all already approved"
+    snapshot_add_approvals("add_approvals_all_already_approved", &repo, &[]);
+}
+
+#[rstest]
+fn test_add_approvals_project_config_no_commands(repo: TestRepo) {
+    // Create project config with only non-hook settings
+    repo.write_project_config(
+        r#"# Project config without any hook sections
+worktree-path = "../project.{{ branch }}"
+"#,
+    );
+    repo.commit("Add config without hooks");
+
+    // Try to add approvals - should show "no commands configured"
+    snapshot_add_approvals("add_approvals_no_commands", &repo, &[]);
+}

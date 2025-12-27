@@ -91,3 +91,15 @@ fn test_for_each_detached_branch_variable(mut repo: TestRepo) {
         &["for-each", "--", "echo", "Branch: {{ branch }}"],
     );
 }
+
+#[rstest]
+fn test_for_each_spawn_fails(mut repo: TestRepo) {
+    // Test when command cannot be spawned (binary doesn't exist)
+    repo.add_worktree("feature");
+
+    snapshot_for_each(
+        "for_each_spawn_fails",
+        &repo,
+        &["for-each", "--", "nonexistent-command-12345", "--some-arg"],
+    );
+}

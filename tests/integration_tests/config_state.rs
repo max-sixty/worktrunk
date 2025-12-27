@@ -457,6 +457,29 @@ fn test_state_get_logs_with_files(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_state_get_logs_dir_exists_no_log_files(repo: TestRepo) {
+    // Create wt-logs directory with non-.log files (empty of actual log files)
+    let git_dir = repo.root_path().join(".git");
+    let log_dir = git_dir.join("wt-logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(log_dir.join("README.txt"), "not a log file").unwrap();
+    std::fs::write(log_dir.join(".gitkeep"), "").unwrap();
+
+    let output = wt_state_cmd(&repo, "logs", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    // Should show "(none)" since no .log files exist
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("LOG FILES"),
+        "Expected LOG FILES heading: {stderr}"
+    );
+    assert!(
+        stderr.contains("(none)"),
+        "Expected (none) when log dir exists but has no .log files: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_state_clear_logs_empty(repo: TestRepo) {
     let output = wt_state_cmd(&repo, "logs", "clear", &[]).output().unwrap();
     assert!(output.status.success());
@@ -774,4 +797,131 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
         assert!(log.get("size").is_some());
         assert!(log.get("modified_at").is_some());
     }
+}
+
+// ============================================================================
+// Additional coverage tests for uncovered user messages
+// ============================================================================
+
+#[rstest]
+fn test_state_clear_ci_status_all_with_entries(repo: TestRepo) {
+    // Add file-based CI cache entries (the format used by CachedCiStatus::clear_all)
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#
+        ),
+    );
+    write_ci_cache(
+        &repo,
+        "bugfix",
+        &format!(
+            r#"{{"status":{{"ci_status":"failed","source":"branch","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"def67890"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m CI cache entries[39m");
+}
+
+#[rstest]
+fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
+    // Test singular form "entry" vs "entries"
+    write_ci_cache(
+        &repo,
+        "feature",
+        &format!(
+            r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#
+        ),
+    );
+
+    let output = wt_state_cmd(&repo, "ci-status", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m CI cache entry[39m");
+}
+
+#[rstest]
+fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
+    // Create a feature branch
+    repo.git_command(&["branch", "feature"]).status().unwrap();
+
+    // Add CI cache via git config for the specific branch
+    repo.git_command(&[
+        "config",
+        "worktrunk.state.feature.ci-status",
+        &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
+    ])
+    .status()
+    .unwrap();
+
+    let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared CI cache for [1mfeature[22m[39m");
+}
+
+#[rstest]
+fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
+    // Create a feature branch without any CI cache
+    repo.git_command(&["branch", "feature"]).status().unwrap();
+
+    let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No CI cache for [1mfeature[22m");
+}
+
+#[rstest]
+fn test_state_clear_marker_specific_branch(repo: TestRepo) {
+    // Create a feature branch and set marker
+    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.set_marker("feature", "🔧");
+
+    let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared marker for [1mfeature[22m[39m");
+}
+
+#[rstest]
+fn test_state_clear_marker_specific_branch_not_set(repo: TestRepo) {
+    // Create a feature branch without any marker
+    repo.git_command(&["branch", "feature"]).status().unwrap();
+
+    let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No marker set for [1mfeature[22m");
+}
+
+#[rstest]
+fn test_state_clear_marker_current_branch_not_set(repo: TestRepo) {
+    // Clear marker on current branch (main) when none is set
+    let output = wt_state_cmd(&repo, "marker", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No marker set for [1mmain[22m");
+}
+
+#[rstest]
+fn test_state_clear_marker_all_single(repo: TestRepo) {
+    // Test singular form "marker" vs "markers"
+    repo.set_marker("main", "🚧");
+
+    let output = wt_state_cmd(&repo, "marker", "clear", &["--all"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m marker[39m");
 }

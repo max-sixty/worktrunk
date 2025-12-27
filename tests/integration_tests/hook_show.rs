@@ -169,6 +169,38 @@ fn test_error_with_context_formatting(temp_home: TempDir) {
     });
 }
 
+/// Test `wt hook show` when project config exists but has no hooks
+#[rstest]
+fn test_hook_show_project_config_no_hooks(repo: TestRepo, temp_home: TempDir) {
+    // Create user config without hooks
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config without any hook sections
+    repo.write_project_config(
+        r#"# Project config with no hooks
+worktree-path = "../project.{{ branch }}"
+"#,
+    );
+    repo.commit("Add project config without hooks");
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        cmd.arg("hook").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test `wt hook show` outside git repo
 #[rstest]
 fn test_hook_show_outside_git_repo(temp_home: TempDir) {

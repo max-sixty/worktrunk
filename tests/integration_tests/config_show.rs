@@ -522,3 +522,69 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
         assert_cmd_snapshot!(cmd);
     });
 }
+
+/// Test `wt config show` with empty project config file
+#[rstest]
+fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create fake global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create empty project config file
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
+/// Test `wt config show` with whitespace-only project config file
+#[rstest]
+fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create fake global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create project config file with only whitespace
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(config_dir.join("wt.toml"), "   \n\t\n  ").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.clean_cli_env(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
