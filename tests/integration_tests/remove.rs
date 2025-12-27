@@ -387,14 +387,44 @@ fn test_remove_foreground_unmerged(mut repo: TestRepo) {
 
 #[rstest]
 fn test_remove_no_delete_branch(mut repo: TestRepo) {
-    // Create a worktree
+    // Create a worktree (integrated - same commit as main)
     let _worktree_path = repo.add_worktree("feature-keep");
 
     // Remove worktree but keep the branch using --no-delete-branch flag
+    // Since branch is integrated, the flag has an effect - hint explains this
     snapshot_remove(
         "remove_no_delete_branch",
         &repo,
         &["--no-delete-branch", "feature-keep"],
+        None,
+    );
+}
+
+#[rstest]
+fn test_remove_no_delete_branch_unmerged(mut repo: TestRepo) {
+    // Create a worktree with an unmerged commit
+    let worktree_path = repo.add_worktree("feature-unmerged-keep");
+
+    // Add a commit to the feature branch that's not in main
+    std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
+    repo.git_command(&["add", "feature.txt"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+    repo.git_command(&["commit", "-m", "Add feature"])
+        .current_dir(&worktree_path)
+        .output()
+        .unwrap();
+
+    // Go back to main before removing
+    repo.git_command(&["checkout", "main"]).output().unwrap();
+
+    // Remove worktree with --no-delete-branch flag
+    // Since branch is unmerged, the flag has no effect - no hint shown
+    snapshot_remove(
+        "remove_no_delete_branch_unmerged",
+        &repo,
+        &["--no-delete-branch", "feature-unmerged-keep"],
         None,
     );
 }

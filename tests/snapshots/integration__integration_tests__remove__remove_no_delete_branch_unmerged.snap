@@ -4,8 +4,8 @@ info:
   program: wt
   args:
     - remove
-    - "--no-background"
-    - feature-unmerged-fg
+    - "--no-delete-branch"
+    - feature-unmerged-keep
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -31,6 +31,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRemoving [1mfeature-unmerged-fg[22m worktree...[39m
-[32m✓ Removed [1mfeature-unmerged-fg[22m worktree[39m
-[2m↳[22m [2mBranch unmerged; to delete, run [90mwt remove feature-unmerged-fg -D[39m[22m
+[36m◎ Removing [1mfeature-unmerged-keep[22m worktree in background[39m

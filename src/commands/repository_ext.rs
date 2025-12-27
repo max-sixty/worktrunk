@@ -332,17 +332,22 @@ fn load_project_config_at(repo_root: &Path) -> anyhow::Result<Option<ProjectConf
 /// Compute integration reason for branch deletion.
 ///
 /// Returns `None` if:
-/// - `deletion_mode` is `Keep` or `ForceDelete` (skip integration check)
+/// - `deletion_mode` is `ForceDelete` (skip integration check)
 /// - `branch_name` is `None` (detached HEAD)
 /// - `target_branch` is `None` (no target to check against)
 /// - Branch is not integrated into target (safe deletion not confirmed)
+///
+/// Note: Integration is computed even for `Keep` mode so we can inform the user
+/// if the flag had an effect (branch was integrated) or not (branch was unmerged).
 fn compute_integration_reason(
     main_path: &Path,
     branch_name: Option<&str>,
     target_branch: Option<&str>,
     deletion_mode: BranchDeletionMode,
 ) -> Option<IntegrationReason> {
-    if deletion_mode.should_keep() || deletion_mode.is_force() {
+    // Skip for force delete (we'll delete regardless of integration status)
+    // But compute for keep mode so we can inform user if the flag had no effect
+    if deletion_mode.is_force() {
         return None;
     }
     let (branch, target) = branch_name.zip(target_branch)?;

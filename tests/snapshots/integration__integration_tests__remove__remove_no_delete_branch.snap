@@ -31,4 +31,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎ Removing [1mfeature-keep[22m worktree in background; retaining branch (--no-delete-branch)[39m
+[36m◎ Removing [1mfeature-keep[22m worktree in background[39m
+[2m↳[22m [2mBranch integrated (same commit as [1mmain[22m, [2m_[22m); retained with [90m--no-delete-branch[39m[22m

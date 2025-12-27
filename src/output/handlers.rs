@@ -285,54 +285,6 @@ fn get_flag_note(
     }
 }
 
-/// Format message for remove worktree operation (includes emoji and color for consistency)
-///
-/// Returns a FormattedMessage with green styling for success messages.
-/// The symbol (if present) is placed outside the green so it renders in its canonical dim styling.
-///
-/// `target_branch`: The branch we checked integration against (Some = merge context, None = explicit remove)
-fn format_remove_worktree_message(
-    branch_name: &str,
-    branch: Option<&str>,
-    deletion_mode: BranchDeletionMode,
-    outcome: &BranchDeletionOutcome,
-    target_branch: Option<&str>,
-) -> FormattedMessage {
-    let flag_note = get_flag_note(deletion_mode, outcome, target_branch);
-
-    let branch_display = branch.or(Some(branch_name));
-
-    // Build message parallel to background format: "Removed {branch} worktree & branch{flag_note}"
-    let branch_deleted = matches!(
-        outcome,
-        BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
-    );
-
-    // Determine action suffix based on what happened to the branch
-    let action_suffix = if branch_deleted {
-        "worktree & branch"
-    } else if deletion_mode.should_keep() {
-        // User explicitly kept the branch via --no-delete-branch
-        "worktree"
-    } else if matches!(outcome, BranchDeletionOutcome::NotDeleted) {
-        // Branch retained because it has unmerged changes
-        "worktree; retaining unmerged branch"
-    } else {
-        "worktree"
-    };
-
-    // Symbol must be inside the <green> block to get proper coloring.
-    // flag_after contains integration symbols (like _) that render outside green in dim.
-    let flag_text = &flag_note.text;
-    let flag_after = flag_note.after_green();
-    let msg = if let Some(b) = branch_display {
-        cformat!("<green>✓ Removed <bold>{b}</> {action_suffix}{flag_text}</>{flag_after}")
-    } else {
-        cformat!("<green>✓ Removed {action_suffix}{flag_text}</>{flag_after}")
-    };
-    FormattedMessage::new(msg)
-}
-
 /// Shell integration hint message
 fn shell_integration_hint() -> String {
     cformat!("Run <bright-black>wt config shell install</> to enable automatic cd")
@@ -680,27 +632,42 @@ fn handle_removed_worktree_output(
         // Reason in parentheses: user flags shown explicitly, integration reason for automatic cleanup
         // Note: We use FormattedMessage directly instead of progress_message() to control
         // where cyan styling ends. Symbol must be inside the <cyan> block to get proper coloring.
-        let action = if deletion_mode.should_keep() {
-            cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining branch{flag_text}</>{flag_after}"
-            )
-        } else if should_delete_branch {
+        //
+        // Message structure by case:
+        // - Branch deleted (integrated/force): "worktree & branch in background (reason)"
+        // - Branch kept (any reason): "worktree in background" + hint (if relevant)
+        let branch_was_integrated = pre_computed_integration.is_some();
+
+        let action = if should_delete_branch {
+            // Branch will be deleted (integrated or force-deleted)
             cformat!(
                 "<cyan>◎ Removing <bold>{branch_name}</> worktree & branch in background{flag_text}</>{flag_after}"
             )
         } else {
-            cformat!(
-                "<cyan>◎ Removing <bold>{branch_name}</> worktree in background; retaining unmerged branch</>"
-            )
+            // Branch kept: hint will explain why (integrated+flag, unmerged, or unmerged+flag)
+            cformat!("<cyan>◎ Removing <bold>{branch_name}</> worktree in background</>")
         };
         super::print(FormattedMessage::new(action))?;
 
-        // Show hint for unmerged branches (same as synchronous path)
-        if !deletion_mode.should_keep() && !should_delete_branch {
-            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-            super::print(hint_message(cformat!(
-                "To delete the unmerged branch, run <bright-black>{cmd}</>"
-            )))?;
+        // Show hints for branch status
+        if !should_delete_branch {
+            if deletion_mode.should_keep() && branch_was_integrated {
+                // User kept an integrated branch - show integration info
+                let reason = pre_computed_integration.as_ref().unwrap();
+                let target = effective_target.as_deref().unwrap_or("target");
+                let desc = reason.description();
+                let symbol = reason.symbol();
+                super::print(hint_message(cformat!(
+                    "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
+                )))?;
+            } else if !deletion_mode.should_keep() {
+                // Unmerged, no flag - show how to force delete
+                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+                super::print(hint_message(cformat!(
+                    "Branch unmerged; to delete, run <bright-black>{cmd}</>"
+                )))?;
+            }
+            // else: Unmerged + flag - no hint (flag had no effect)
         }
 
         print_switch_message_if_changed(changed_directory, main_path)?;
@@ -741,7 +708,9 @@ fn handle_removed_worktree_output(
 
         // Delete the branch (unless --no-delete-branch was specified)
         // Only show effective_target in message if we had a meaningful target (not tautological "HEAD" fallback)
-        let (outcome, effective_target, show_hint) = if !deletion_mode.should_keep() {
+        let branch_was_integrated = pre_computed_integration.is_some();
+
+        let (outcome, effective_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
             let deletion_repo = worktrunk::git::Repository::at(main_path);
             let check_target = target_branch.unwrap_or("HEAD");
             let result = delete_branch_if_safe(
@@ -762,21 +731,55 @@ fn handle_removed_worktree_output(
             )
         };
 
-        // Show success message (includes emoji and color)
-        super::print(format_remove_worktree_message(
-            branch_name,
-            branch,
-            deletion_mode,
-            &outcome,
-            effective_target.as_deref(),
-        ))?;
+        let branch_deleted = matches!(
+            outcome,
+            BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
+        );
+        let branch_display = branch.or(Some(branch_name));
 
-        // Show hint for unmerged branches (after success message)
-        if show_hint {
-            let cmd = suggest_command("remove", &[branch_name], &["-D"]);
-            super::print(hint_message(cformat!(
-                "To delete the unmerged branch, run <bright-black>{cmd}</>"
-            )))?;
+        // Message structure parallel to background mode:
+        // - Branch deleted (integrated/force): "worktree & branch (reason)"
+        // - Branch kept (any reason): "worktree" + hint (if relevant)
+        let msg = if branch_deleted {
+            let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
+            let flag_text = &flag_note.text;
+            let flag_after = flag_note.after_green();
+            if let Some(b) = branch_display {
+                cformat!(
+                    "<green>✓ Removed <bold>{b}</> worktree & branch{flag_text}</>{flag_after}"
+                )
+            } else {
+                cformat!("<green>✓ Removed worktree & branch{flag_text}</>{flag_after}")
+            }
+        } else {
+            // Branch kept: hint will explain why (integrated+flag, unmerged, or unmerged+flag)
+            if let Some(b) = branch_display {
+                cformat!("<green>✓ Removed <bold>{b}</> worktree</>")
+            } else {
+                cformat!("<green>✓ Removed worktree</>")
+            }
+        };
+        super::print(FormattedMessage::new(msg))?;
+
+        // Show hints for branch status
+        if !branch_deleted {
+            if deletion_mode.should_keep() && branch_was_integrated {
+                // User kept an integrated branch - show integration info
+                let reason = pre_computed_integration.as_ref().unwrap();
+                let target = effective_target.as_deref().unwrap_or("target");
+                let desc = reason.description();
+                let symbol = reason.symbol();
+                super::print(hint_message(cformat!(
+                    "Branch integrated ({desc} <bold>{target}</>, <dim>{symbol}</>); retained with <bright-black>--no-delete-branch</>"
+                )))?;
+            } else if show_unmerged_hint {
+                // Unmerged, no flag - show how to force delete
+                let cmd = suggest_command("remove", &[branch_name], &["-D"]);
+                super::print(hint_message(cformat!(
+                    "Branch unmerged; to delete, run <bright-black>{cmd}</>"
+                )))?;
+            }
+            // else: Unmerged + flag - no hint (flag had no effect)
         }
 
         print_switch_message_if_changed(changed_directory, main_path)?;
@@ -1170,54 +1173,6 @@ mod tests {
                 reason
             );
         }
-    }
-
-    #[test]
-    fn test_format_remove_worktree_message() {
-        // Removed worktree and branch (integrated)
-        let msg = format_remove_worktree_message(
-            "feature",
-            Some("feature"),
-            BranchDeletionMode::SafeDelete,
-            &BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit),
-            Some("main"),
-        );
-        assert!(msg.as_str().contains("feature"));
-        assert!(msg.as_str().contains("worktree & branch"));
-        assert!(msg.as_str().contains("same commit as"));
-        assert!(msg.as_str().contains("main"));
-
-        // Removed worktree only (--no-delete-branch)
-        let msg = format_remove_worktree_message(
-            "feature",
-            Some("feature"),
-            BranchDeletionMode::Keep,
-            &BranchDeletionOutcome::NotDeleted,
-            None,
-        );
-        assert!(msg.as_str().contains("worktree"));
-        assert!(!msg.as_str().contains("& branch"));
-        assert!(msg.as_str().contains("--no-delete-branch"));
-
-        // Force deleted branch
-        let msg = format_remove_worktree_message(
-            "feature",
-            Some("feature"),
-            BranchDeletionMode::ForceDelete,
-            &BranchDeletionOutcome::ForceDeleted,
-            None,
-        );
-        assert!(msg.as_str().contains("--force-delete"));
-
-        // Unmerged branch retained
-        let msg = format_remove_worktree_message(
-            "feature",
-            Some("feature"),
-            BranchDeletionMode::SafeDelete,
-            &BranchDeletionOutcome::NotDeleted,
-            None,
-        );
-        assert!(msg.as_str().contains("retaining unmerged branch"));
     }
 
     #[test]
