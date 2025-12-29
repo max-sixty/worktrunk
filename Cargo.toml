@@ -67,7 +67,7 @@ anstream = "0.6"
 anstyle = "1.0"
 ansi-str = "0.9"
 color-print = "0.3"
-askama = { version = "0.14", default-features = false, features = ["derive", "std"] }
+askama = { version = "0.15", default-features = false, features = ["derive", "std"] }
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive", "unstable-ext", "wrap_help"] }
 clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
