@@ -503,6 +503,9 @@ abbr --add wsl 'wt switch --execute=claude'
 starship init fish | source
 wt config shell init fish | source
 
+# Disable cursor blinking for VHS recording
+set fish_cursor_default block
+
 # Auto-rename Zellij tabs based on git branch (for demo)
 function __zellij_tab_rename --on-variable PWD
     if set -q ZELLIJ
@@ -767,6 +770,9 @@ set -U fish_greeting ""
 abbr --add wsl 'wt switch --execute=claude --create'
 starship init fish | source
 wt config shell init fish | source
+
+# Disable cursor blinking for VHS recording
+set fish_cursor_default block
 
 # Auto-rename Zellij tabs based on git branch (for demo)
 function __zellij_tab_rename --on-variable PWD
