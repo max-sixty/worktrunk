@@ -23,3 +23,9 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 [[profile.default.overrides]]
 filter = 'test(/integration_tests::ci_status::test_list_full/)'
 threads-required = 4
+
+# The source_flag test runs `cargo run` inside a PTY, which can take longer than
+# 60s when cargo needs to check/compile dependencies on slow CI runners.
+[[profile.default.overrides]]
+filter = 'test(/test_source_flag_forwards_errors/)'
+slow-timeout = { period = "180s", terminate-after = 1 }

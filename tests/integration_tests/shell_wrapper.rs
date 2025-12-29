@@ -1505,14 +1505,13 @@ approved-commands = ["echo 'fish background task'"]
     // when using the --source flag (instead of being hidden with generic
     // wrapper error messages like "Error: cargo build failed").
 
-    // This test runs `cargo run` inside a PTY which can exceed the 60s nextest
-    // timeout when cargo needs to check/compile dependencies. Run with --ignored:
-    //   cargo test --test integration test_source_flag -- --ignored
+    // This test runs `cargo run` inside a PTY which can take longer than the
+    // default 60s timeout when cargo checks/compiles dependencies. Extended
+    // timeout configured in .config/nextest.toml.
     #[rstest]
     #[case("bash")]
     #[case("zsh")]
     #[case("fish")]
-    #[ignore = "cargo run inside PTY can timeout - run with --ignored"]
     fn test_source_flag_forwards_errors(#[case] shell: &str, repo: TestRepo) {
         use std::env;
 
