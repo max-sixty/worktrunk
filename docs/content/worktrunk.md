@@ -3,10 +3,14 @@ title = "Worktrunk"
 weight = 1
 +++
 
-Worktrunk is a CLI for git worktree management, designed for parallel AI agent
-workflows. Git worktrees give each agent an isolated branch and directory;
-Worktrunk wraps them in a clean interface, plus extension points. Scaling agents
-becomes as simple as scaling git branches.
+Worktrunk is a CLI for git worktree management, designed for running AI agents
+in parallel.
+
+Worktrunk's three core commands make worktrees as easy to use as branches.
+Additionally, Worktrunk has lots quality-of-life features to simplify working
+with many parallel changes, including hooks to automate local workflows.
+
+Scaling agents becomes trivial.
 
 Here's a quick demo:
 
@@ -21,16 +25,17 @@ Here's a quick demo:
 ## Context: git worktrees
 
 AI agents like Claude Code and Codex can handle longer tasks without
-supervision, such that it's possible to manage 5-10+ in parallel. Git worktrees
-give each agent its own working directory; no stepping on each other's changes.
+supervision, such that it's possible to manage 5-10+ in parallel. Git's native
+worktree feature give each agent its own working directory, so they don't step
+on each other's changes.
 
-But the git worktree UX is clunky. Even a task as simple as starting a new
+But the git worktree UX is clunky. Even a task as small as starting a new
 worktree requires typing the branch name three times: `git worktree add -b feat
 ../repo.feat`, then `cd ../repo.feat`.
 
-## Worktrunk makes git worktrees simple
+## Worktrunk makes git worktrees as easy as branches
 
-> Start with the core commands; add workflow automation as needed.
+> Start with the core commands
 
 **Core commands:**
 
@@ -71,6 +76,8 @@ git branch -d feat{% end %}</td>
 </table>
 
 **Workflow automation:**
+
+> Expand into the more advanced commands as needed
 
 - **[Lifecycle hooks](@/hook.md)** — run commands on create, pre-merge, post-merge
 - **[LLM commit messages](@/llm-commits.md)** — generate commit messages from diffs via [llm](https://llm.datasette.io/)
