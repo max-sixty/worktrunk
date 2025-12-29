@@ -12,7 +12,7 @@ repos:
   # Commit hash silences mutable ref warning; autoupdate reverts to v1 tag
   # TODO: Update periodically
   - repo: https://github.com/crate-ci/typos
-    rev: 802d5794ff9cf7b15610c47eca99cd1ab757d8d4
+    rev: v1
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347
@@ -27,7 +27,7 @@ repos:
       - id: clippy
         args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
   - repo: https://github.com/lycheeverse/lychee
-    rev: lychee-v0.22.0
+    rev: nightly
     hooks:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
