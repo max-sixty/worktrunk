@@ -114,7 +114,7 @@ rayon-join-macro = "0.1.1"
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"
 nix = { version = "0.30", default-features = false, features = ["process", "signal"] }
-signal-hook = "0.3"
+signal-hook = "0.4"
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.8", features = ["build"] }
