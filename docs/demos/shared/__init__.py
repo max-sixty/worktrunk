@@ -3,6 +3,7 @@
 from .lib import (
     REAL_HOME,
     FIXTURES_DIR,
+    VALIDATION_RS,
     DemoEnv,
     DemoSize,
     SIZE_TWITTER,
@@ -15,6 +16,10 @@ from .lib import (
     commit_dated,
     prepare_base_repo,
     setup_gh_mock,
+    setup_claude_code_config,
+    setup_zellij_config,
+    setup_fish_config,
+    setup_mock_clis,
     prepare_demo_repo,
     # Demo recording infrastructure
     check_dependencies,
@@ -29,6 +34,7 @@ from .themes import THEMES, format_theme_for_vhs
 __all__ = [
     "REAL_HOME",
     "FIXTURES_DIR",
+    "VALIDATION_RS",
     "DemoEnv",
     "DemoSize",
     "SIZE_TWITTER",
@@ -41,6 +47,10 @@ __all__ = [
     "commit_dated",
     "prepare_base_repo",
     "setup_gh_mock",
+    "setup_claude_code_config",
+    "setup_zellij_config",
+    "setup_fish_config",
+    "setup_mock_clis",
     "prepare_demo_repo",
     "THEMES",
     "format_theme_for_vhs",

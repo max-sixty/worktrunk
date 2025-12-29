@@ -9,9 +9,7 @@ Usage:
 """
 
 import argparse
-import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +19,9 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from shared import (
+    VALIDATION_RS,
     DemoEnv, DemoSize, git, prepare_demo_repo,
+    setup_claude_code_config, setup_zellij_config, setup_fish_config,
     check_dependencies, setup_demo_output, record_all_themes,
     SIZE_DOCS, SIZE_TWITTER,
 )
@@ -34,9 +34,6 @@ TAPES_DIR = SCRIPT_DIR / "tapes"
 SIZE_ZELLIJ = DemoSize(width=1200, height=700, fontsize=16)
 SIZE_DEVSERVER = DemoSize(width=1400, height=700, fontsize=24)  # Wider to show URL column
 
-# User's real Zellij plugins directory
-REAL_ZELLIJ_PLUGINS = Path.home() / ".config" / "zellij" / "plugins"
-
 # Custom VHS binary with keystroke overlay
 VHS_KEYSTROKES = os.environ.get(
     "VHS_KEYSTROKES",
@@ -45,13 +42,50 @@ VHS_KEYSTROKES = os.environ.get(
 
 
 # =============================================================================
-# Setup Functions
+# Setup Helpers
 # =============================================================================
-# TODO: If setup functions grow complex, consider pushing target-specific
-# configuration down to the recording function or a separate config file.
+
+def _add_billing_branch(env: DemoEnv):
+    """Add a billing branch at same commit as main (merged state)."""
+    branch = "billing"
+    path = env.work_base / f"acme.{branch}"
+    git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
+    git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
+
+
+def _add_staged_validation(env: DemoEnv):
+    """Add validation.rs with staged changes to hooks branch."""
+    hooks_path = env.work_base / "acme.hooks"
+    if hooks_path.exists():
+        new_file = hooks_path / "src" / "validation.rs"
+        new_file.write_text(VALIDATION_RS)
+        git(["-C", str(hooks_path), "add", "src/validation.rs"])
+
+
+def _write_user_config(env: DemoEnv, approved_commands: list[str], commit_generation: bool = False):
+    """Write worktrunk user config."""
+    config_dir = env.home / ".config" / "worktrunk"
+    project_id = str(env.bare_remote).removesuffix(".git")
+
+    content = ""
+    if commit_generation:
+        content += '''[commit-generation]
+command = "llm"
+args = ["-m", "claude-haiku-4.5"]
+
+'''
+    content += f'[projects."{project_id}"]\n'
+    content += f'approved-commands = {approved_commands!r}\n'
+
+    (config_dir / "config.toml").write_text(content)
+
+
+# =============================================================================
+# Demo Setup Functions
+# =============================================================================
 
 def prepare_docs_core(env: DemoEnv):
-    """Set up repo for docs wt-core demo with hooks, mocks, and billing branch."""
+    """Set up repo for docs wt-core demo with hooks and billing branch."""
     hooks_config = '''[post-start]
 deps = "npm install"
 build = "npm run build"
@@ -62,115 +96,18 @@ db = "docker compose up -d postgres"
 cleanup = "flyctl scale count 0"
 '''
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
-
-    # Mock CLIs for hooks
-    bin_dir = env.home / "bin"
-
-    npm_mock = bin_dir / "npm"
-    npm_mock.write_text("""#!/bin/bash
-if [[ "$1" == "install" ]]; then
-    echo "added 847 packages in 3.2s"
-elif [[ "$1" == "run" && "$2" == "build" ]]; then
-    echo "vite v5.4.2 building for production..."
-    echo "✓ 142 modules transformed"
-    echo "dist/index.js  45.2 kB │ gzip: 14.8 kB"
-elif [[ "$1" == "run" && "$2" == "dev" ]]; then
-    echo ""
-    echo "  VITE v5.4.2  ready in 342 ms"
-    echo ""
-    echo "  ➜  Local:   http://localhost:3000/"
-fi
-""")
-    npm_mock.chmod(0o755)
-
-    docker_mock = bin_dir / "docker"
-    docker_mock.write_text("""#!/bin/bash
-if [[ "$1" == "compose" && "$2" == "up" ]]; then
-    echo "[+] Running 1/1"
-    echo " ✔ Container postgres  Started"
-fi
-""")
-    docker_mock.chmod(0o755)
-
-    flyctl_mock = bin_dir / "flyctl"
-    flyctl_mock.write_text("""#!/bin/bash
-if [[ "$1" == "scale" && "$2" == "count" && "$3" == "0" ]]; then
-    echo "Scaling app to 0 machines"
-fi
-""")
-    flyctl_mock.chmod(0o755)
-
-    # User config with approved commands
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
-approved-commands = ["npm install", "npm run build", "npm run dev", "docker compose up -d postgres", "flyctl scale count 0"]
-''')
-
-    # Add billing branch (at same commit as main = merged)
-    branch = "billing"
-    path = env.work_base / f"acme.{branch}"
-    git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
-    git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
+    _write_user_config(env, [
+        "npm install", "npm run build", "npm run dev",
+        "docker compose up -d postgres", "flyctl scale count 0"
+    ])
+    _add_billing_branch(env)
 
 
 def prepare_docs_merge(env: DemoEnv):
-    """Set up repo for docs wt-merge demo with LLM mock."""
+    """Set up repo for docs wt-merge demo with LLM commit generation."""
     prepare_demo_repo(env, REPO_ROOT)
-
-    # User config with llm commit generation
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-
-[projects."{project_id}"]
-approved-commands = ["cargo nextest run"]
-''')
-
-    # Add uncommitted changes to hooks branch for commit demo
-    hooks_path = env.work_base / "acme.hooks"
-    if hooks_path.exists():
-        new_file = hooks_path / "src" / "validation.rs"
-        new_file.write_text('''//! Input validation utilities.
-
-/// Validates that a number is positive.
-pub fn is_positive(n: i32) -> bool {
-    n > 0
-}
-
-/// Validates that a string is not empty.
-pub fn is_non_empty(s: &str) -> bool {
-    !s.trim().is_empty()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_positive() {
-        assert!(is_positive(1));
-        assert!(!is_positive(0));
-        assert!(!is_positive(-1));
-    }
-}
-''')
-        git(["-C", str(hooks_path), "add", "src/validation.rs"])
-
-    # Mock llm CLI
-    bin_dir = env.home / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    llm_mock = bin_dir / "llm"
-    llm_mock.write_text("""#!/bin/bash
-sleep 0.5
-echo "feat(validation): add input validation utilities"
-echo ""
-echo "Add validation module with is_positive and is_non_empty helpers"
-echo "for validating user input. Includes comprehensive test coverage."
-""")
-    llm_mock.chmod(0o755)
+    _write_user_config(env, ["cargo nextest run"], commit_generation=True)
+    _add_staged_validation(env)
 
 
 def prepare_docs_select(env: DemoEnv):
@@ -187,207 +124,35 @@ dev = "npm run dev"
 cleanup = "flyctl scale count 0"
 '''
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
-
-    # Mock CLIs for hooks
-    bin_dir = env.home / "bin"
-
-    npm_mock = bin_dir / "npm"
-    npm_mock.write_text("""#!/bin/bash
-if [[ "$1" == "run" && "$2" == "dev" ]]; then
-    echo ""
-    echo "  VITE v5.4.2  ready in 342 ms"
-    echo ""
-    echo "  ➜  Local:   http://localhost:3000/"
-    echo "  ➜  Network: http://192.168.1.42:3000/"
-fi
-""")
-    npm_mock.chmod(0o755)
-
-    flyctl_mock = bin_dir / "flyctl"
-    flyctl_mock.write_text("""#!/bin/bash
-if [[ "$1" == "scale" ]]; then
-    echo "Scaling app to 0 machines"
-fi
-""")
-    flyctl_mock.chmod(0o755)
-
-    # User config with approved commands
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
-approved-commands = ["npm run dev", "flyctl scale count 0"]
-''')
-
-    # Add billing branch (at same commit as main = merged)
-    branch = "billing"
-    path = env.work_base / f"acme.{branch}"
-    git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
-    git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
+    _write_user_config(env, ["npm run dev", "flyctl scale count 0"])
+    _add_billing_branch(env)
 
 
 def prepare_twitter_switch(env: DemoEnv):
     """Simplified setup for wt-switch demo - launches real Claude Code UI."""
-    simple_config = '''[post-start]
-deps = "npm install"
-'''
-    prepare_demo_repo(env, REPO_ROOT, hooks_config=simple_config)
+    hooks_config = '[post-start]\ndeps = "npm install"\n'
+    prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
+    _write_user_config(env, ["npm install"])
 
-    bin_dir = env.home / "bin"
-
-    # npm mock
-    npm_mock = bin_dir / "npm"
-    npm_mock.write_text("""#!/bin/bash
-if [[ "$1" == "install" ]]; then
-    echo "added 847 packages in 3.2s"
-fi
-""")
-    npm_mock.chmod(0o755)
-
-    # User config with approved command
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
-approved-commands = ["npm install"]
-''')
-
-    # Configure Claude Code to skip all first-run dialogs
-    main_repo_path = str(env.repo)
-    alpha_worktree_path = str(env.work_base / "acme.alpha")
-    dashboard_worktree_path = str(env.work_base / "acme.dashboard")
-    api_key_suffix = os.environ.get("ANTHROPIC_API_KEY", "")[-20:] if os.environ.get("ANTHROPIC_API_KEY") else ""
-
-    claude_json = env.home / ".claude.json"
-    claude_json.write_text(f'''{{
-  "numStartups": 100,
-  "installMethod": "global",
-  "theme": "light",
-  "firstStartTime": "2025-01-01T00:00:00.000Z",
-  "hasCompletedOnboarding": true,
-  "hasCompletedClaudeInChromeOnboarding": true,
-  "claudeInChromeDefaultEnabled": false,
-  "sonnet45MigrationComplete": true,
-  "opus45MigrationComplete": true,
-  "thinkingMigrationComplete": true,
-  "hasShownOpus45Notice": {{}},
-  "lastReleaseNotesSeen": "99.0.0",
-  "lastOnboardingVersion": "99.0.0",
-  "oauthAccount": {{
-    "displayName": "Demo User",
-    "emailAddress": "demo@example.com"
-  }},
-  "customApiKeyResponses": {{
-    "approved": ["{api_key_suffix}"],
-    "rejected": []
-  }},
-  "officialMarketplaceAutoInstalled": true,
-  "tipsHistory": {{
-    "new-user-warmup": 100,
-    "terminal-setup": 100,
-    "theme-command": 100
-  }},
-  "projects": {{
-    "{main_repo_path}": {{
-      "allowedTools": [],
-      "hasTrustDialogAccepted": true
-    }},
-    "{alpha_worktree_path}": {{
-      "allowedTools": [],
-      "hasTrustDialogAccepted": true
-    }},
-    "{dashboard_worktree_path}": {{
-      "allowedTools": [],
-      "hasTrustDialogAccepted": true
-    }}
-  }}
-}}''')
-
-    # Claude settings.json
-    claude_dir = env.home / ".claude"
-    claude_dir.mkdir(exist_ok=True)
-    settings_json = claude_dir / "settings.json"
-    settings_json.write_text('''{
-  "permissions": {
-    "allow": [],
-    "deny": [],
-    "ask": []
-  },
-  "model": "claude-opus-4-5-20251101",
-  "statusLine": {
-    "type": "command",
-    "command": "wt list statusline --claude-code"
-  }
-}''')
+    # Configure Claude Code for worktrees we'll use
+    setup_claude_code_config(env, [
+        str(env.repo),
+        str(env.work_base / "acme.alpha"),
+        str(env.work_base / "acme.dashboard"),
+    ])
 
 
 def prepare_twitter_commit(env: DemoEnv):
-    """Set up repo for wt-commit demo with LLM mock."""
+    """Set up repo for wt-commit demo with LLM commit generation."""
     prepare_demo_repo(env, REPO_ROOT)
-
-    # User config with llm commit generation
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-
-[projects."{project_id}"]
-approved-commands = ["cargo nextest run"]
-''')
-
-    # Add uncommitted changes to hooks branch for commit demo
-    hooks_path = env.work_base / "acme.hooks"
-    if hooks_path.exists():
-        new_file = hooks_path / "src" / "validation.rs"
-        new_file.write_text('''//! Input validation utilities.
-
-/// Validates that a number is positive.
-pub fn is_positive(n: i32) -> bool {
-    n > 0
-}
-
-/// Validates that a string is not empty.
-pub fn is_non_empty(s: &str) -> bool {
-    !s.trim().is_empty()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_positive() {
-        assert!(is_positive(1));
-        assert!(!is_positive(0));
-        assert!(!is_positive(-1));
-    }
-}
-''')
-        git(["-C", str(hooks_path), "add", "src/validation.rs"])
-
-    # Mock llm CLI
-    bin_dir = env.home / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    llm_mock = bin_dir / "llm"
-    llm_mock.write_text("""#!/bin/bash
-sleep 0.5
-echo "feat(validation): add input validation utilities"
-echo ""
-echo "Add validation module with is_positive and is_non_empty helpers"
-echo "for validating user input. Includes comprehensive test coverage."
-""")
-    llm_mock.chmod(0o755)
+    _write_user_config(env, ["cargo nextest run"], commit_generation=True)
+    _add_staged_validation(env)
 
 
 def prepare_twitter_merge(env: DemoEnv):
     """Set up repo for wt-merge demo with pre-commit hook."""
     prepare_demo_repo(env, REPO_ROOT)
-
-    # User config with approved commands
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
-approved-commands = ["cargo nextest run"]
-''')
+    _write_user_config(env, ["cargo nextest run"])
 
 
 def prepare_twitter_select(env: DemoEnv):
@@ -405,44 +170,8 @@ dev = "npm run dev"
 cleanup = "flyctl scale count 0"
 '''
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
-
-    # Mock CLIs for hooks
-    bin_dir = env.home / "bin"
-
-    npm_mock = bin_dir / "npm"
-    npm_mock.write_text("""#!/bin/bash
-if [[ "$1" == "install" ]]; then
-    echo "added 847 packages in 3.2s"
-elif [[ "$1" == "run" && "$2" == "dev" ]]; then
-    echo ""
-    echo "  VITE v5.4.2  ready in 342 ms"
-    echo ""
-    echo "  ➜  Local:   http://localhost:3000/"
-    echo "  ➜  Network: http://192.168.1.42:3000/"
-fi
-""")
-    npm_mock.chmod(0o755)
-
-    flyctl_mock = bin_dir / "flyctl"
-    flyctl_mock.write_text("""#!/bin/bash
-if [[ "$1" == "scale" ]]; then
-    echo "Scaling app to 0 machines"
-fi
-""")
-    flyctl_mock.chmod(0o755)
-
-    # User config with approved commands
-    config_dir = env.home / ".config" / "worktrunk"
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[projects."{project_id}"]
-approved-commands = ["npm install", "npm run dev", "flyctl scale count 0"]
-''')
-
-    # Add billing branch (at same commit as main = merged)
-    branch = "billing"
-    path = env.work_base / f"acme.{branch}"
-    git(["-C", str(env.repo), "worktree", "add", "-q", "-b", branch, str(path), "main"])
-    git(["-C", str(path), "push", "-u", "origin", branch, "-q"])
+    _write_user_config(env, ["npm install", "npm run dev", "flyctl scale count 0"])
+    _add_billing_branch(env)
 
 
 def prepare_twitter_devserver(env: DemoEnv):
@@ -482,187 +211,21 @@ approved-commands = ["npm run dev -- --port {{{{ branch | hash_port }}}} &"]
 
 def prepare_twitter_zellij(env: DemoEnv):
     """Setup for wt-zellij demo - multiple Claude Code instances in Zellij tabs."""
-    # No hooks for this demo - keep it simple
     prepare_demo_repo(env, REPO_ROOT, hooks_config='')
 
-    bin_dir = env.home / "bin"
-    bin_dir.mkdir(exist_ok=True)
+    # Zellij + Fish configs
+    setup_zellij_config(env)
+    setup_fish_config(env, wsl_create=False)  # No --create, worktrees pre-created
 
-    # User config - no approved commands needed (no hooks)
-    config_dir = env.home / ".config" / "worktrunk"
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    # Fish config - define wsl abbreviation so it works in all Zellij tabs
-    fish_config_dir = env.home / ".config" / "fish"
-    fish_config_dir.mkdir(parents=True, exist_ok=True)
-    fish_config = fish_config_dir / "config.fish"
-    fish_config.write_text('''# Demo fish config
-set -U fish_greeting ""
-# wsl abbreviation: switch to worktree and launch Claude (no --create, worktrees pre-created)
-abbr --add wsl 'wt switch --execute=claude'
-starship init fish | source
-wt config shell init fish | source
-
-# Disable cursor blinking for VHS recording
-set fish_cursor_default block
-
-# Auto-rename Zellij tabs based on git branch (for demo)
-function __zellij_tab_rename --on-variable PWD
-    if set -q ZELLIJ
-        # Get git branch name, fallback to directory basename
-        set -l branch (git rev-parse --abbrev-ref HEAD 2>/dev/null)
-        if test -n "$branch"
-            zellij action rename-tab $branch
-        end
-    end
-end
-''')
-
-    # Zellij config directory
-    zellij_config_dir = env.home / ".config" / "zellij"
-    zellij_config_dir.mkdir(parents=True, exist_ok=True)
-    zellij_plugins_dir = zellij_config_dir / "plugins"
-    zellij_plugins_dir.mkdir(exist_ok=True)
-
-    # Copy Zellij plugins from real HOME
-    if REAL_ZELLIJ_PLUGINS.exists():
-        for plugin in REAL_ZELLIJ_PLUGINS.glob("*.wasm"):
-            shutil.copy(plugin, zellij_plugins_dir / plugin.name)
-
-    # Minimal Zellij config that loads the plugins
-    zellij_config = zellij_config_dir / "config.kdl"
-    zellij_config.write_text(f'''// Demo Zellij config
-default_shell "fish"
-pane_frames false
-show_startup_tips false
-show_release_notes false
-theme "warm-gold"
-
-// Warm gold theme to match the demo aesthetic
-// In light themes: black = light bg (tab bar), white = dark text
-themes {{
-    warm-gold {{
-        fg "#1f2328"
-        bg "#FFFDF8"
-        black "#f5f0e8"
-        red "#d73a49"
-        green "#22863a"
-        yellow "#d29922"
-        blue "#0969da"
-        magenta "#8250df"
-        cyan "#1b7c83"
-        white "#57534e"
-        orange "#d97706"
-    }}
-}}
-
-load_plugins {{
-  "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
-}}
-
-keybinds clear-defaults=true {{
-    normal {{
-        bind "Ctrl Space" {{ SwitchToMode "tmux"; }}
-    }}
-    tmux {{
-        bind "p" {{ SwitchToMode "pane"; }}
-        bind "t" {{ SwitchToMode "tab"; }}
-        bind "q" {{ Quit; }}
-    }}
-    tab {{
-        bind "n" {{ NewTab; SwitchToMode "Normal"; }}
-        bind "h" "Left" {{ GoToPreviousTab; SwitchToMode "Normal"; }}
-        bind "l" "Right" {{ GoToNextTab; SwitchToMode "Normal"; }}
-        bind "1" {{ GoToTab 1; SwitchToMode "Normal"; }}
-        bind "2" {{ GoToTab 2; SwitchToMode "Normal"; }}
-        bind "3" {{ GoToTab 3; SwitchToMode "Normal"; }}
-        bind "4" {{ GoToTab 4; SwitchToMode "Normal"; }}
-    }}
-    shared_except "locked" {{
-        bind "Ctrl t" {{ NewTab; }}
-        bind "Ctrl n" {{ NewPane; }}
-    }}
-    shared_except "normal" {{
-        bind "Ctrl Space" "Ctrl c" {{ SwitchToMode "normal"; }}
-        bind "Esc" {{ SwitchToMode "normal"; }}
-    }}
-}}
-''')
-
-    # Configure Claude Code to skip all first-run dialogs
-    main_repo_path = str(env.repo)
-    api_key_suffix = os.environ.get("ANTHROPIC_API_KEY", "")[-20:] if os.environ.get("ANTHROPIC_API_KEY") else ""
-
-    # Pre-approve all the worktree paths we'll create
+    # Claude Code config with pre-approved tools
     worktree_branches = ["api", "billing", "auth", "metrics"]
-    projects_config = {
-        main_repo_path: {"allowedTools": [], "hasTrustDialogAccepted": True}
-    }
-    for branch in worktree_branches:
-        path = str(env.work_base / f"acme.{branch}")
-        projects_config[path] = {"allowedTools": [], "hasTrustDialogAccepted": True}
+    worktree_paths = [str(env.repo)] + [
+        str(env.work_base / f"acme.{branch}") for branch in worktree_branches
+    ]
+    allowed_tools = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Task", "TodoWrite"]
+    setup_claude_code_config(env, worktree_paths, allowed_tools)
 
-    projects_json = json.dumps(projects_config, indent=4)
-
-    claude_json = env.home / ".claude.json"
-    claude_json.write_text(f'''{{
-  "numStartups": 100,
-  "installMethod": "global",
-  "theme": "light",
-  "firstStartTime": "2025-01-01T00:00:00.000Z",
-  "hasCompletedOnboarding": true,
-  "hasCompletedClaudeInChromeOnboarding": true,
-  "claudeInChromeDefaultEnabled": false,
-  "sonnet45MigrationComplete": true,
-  "opus45MigrationComplete": true,
-  "thinkingMigrationComplete": true,
-  "hasShownOpus45Notice": {{}},
-  "lastReleaseNotesSeen": "99.0.0",
-  "lastOnboardingVersion": "99.0.0",
-  "oauthAccount": {{
-    "displayName": "Demo User",
-    "emailAddress": "demo@example.com"
-  }},
-  "customApiKeyResponses": {{
-    "approved": ["{api_key_suffix}"],
-    "rejected": []
-  }},
-  "officialMarketplaceAutoInstalled": true,
-  "tipsHistory": {{
-    "new-user-warmup": 100,
-    "terminal-setup": 100,
-    "theme-command": 100
-  }},
-  "projects": {projects_json}
-}}''')
-
-    # Claude settings.json - pre-approve common tools to avoid permission prompts
-    claude_dir = env.home / ".claude"
-    claude_dir.mkdir(exist_ok=True)
-    settings_json = claude_dir / "settings.json"
-    settings_json.write_text('''{
-  "permissions": {
-    "allow": [
-      "Bash",
-      "Read",
-      "Write",
-      "Edit",
-      "Glob",
-      "Grep",
-      "Task",
-      "TodoWrite"
-    ],
-    "deny": [],
-    "ask": []
-  },
-  "model": "claude-opus-4-5-20251101",
-  "statusLine": {
-    "type": "command",
-    "command": "wt list statusline --claude-code"
-  }
-}''')
-
-    # Pre-create ALL worktrees before recording to avoid race conditions with Claude
+    # Pre-create ALL worktrees before recording
     demo_env = {**os.environ, "HOME": str(env.home)}
     for branch in worktree_branches:
         subprocess.run(
@@ -673,25 +236,16 @@ keybinds clear-defaults=true {{
         )
 
     # Add uncommitted changes to api worktree for git diff demo
-    api_worktree = env.work_base / "acme.api"
-    api_lib = api_worktree / "src" / "lib.rs"
+    api_lib = env.work_base / "acme.api" / "src" / "lib.rs"
     if api_lib.exists():
         content = api_lib.read_text()
-        new_content = content.replace(
-            'pub fn add(',
-            '// TODO: Add input validation\npub fn add('
-        )
-        new_content += '''
-pub fn validate_input(n: i32) -> bool {
-    n >= 0 && n < 1000
-}
-'''
-        api_lib.write_text(new_content)
+        content = content.replace('pub fn add(', '// TODO: Add input validation\npub fn add(')
+        content += '\npub fn validate_input(n: i32) -> bool {\n    n >= 0 && n < 1000\n}\n'
+        api_lib.write_text(content)
 
 
 def prepare_twitter_zellij_omnibus(env: DemoEnv):
     """Setup for wt-zellij-omnibus demo - comprehensive showcase."""
-    # Hooks config with post-start, pre-merge, and URL template
     hooks_config = '''[post-start]
 dev = "npm run dev -- --port {{ branch | hash_port }} &"
 
@@ -706,24 +260,8 @@ url = "http://localhost:{{ branch | hash_port }}"
     # Enable git colors for non-TTY environments (VHS)
     git(["-C", str(env.repo), "config", "color.ui", "always"])
 
-    bin_dir = env.home / "bin"
-    bin_dir.mkdir(exist_ok=True)
-
-    # npm mock for post-start hooks
-    npm_mock = bin_dir / "npm"
-    npm_mock.write_text("""#!/bin/bash
-if [[ "$1" == "run" && "$2" == "dev" ]]; then
-    echo ""
-    echo "  VITE v5.4.2  ready in 342 ms"
-    echo ""
-    echo "  ➜  Local:   http://localhost:$4/"
-    echo "  ➜  Network: http://192.168.1.42:$4/"
-fi
-""")
-    npm_mock.chmod(0o755)
-
-    # LLM mock for wt step commit
-    llm_mock = bin_dir / "llm"
+    # Override llm mock with different commit message for this demo
+    llm_mock = env.home / "bin" / "llm"
     llm_mock.write_text("""#!/bin/bash
 sleep 0.5
 echo "feat: add user settings module"
@@ -732,204 +270,24 @@ echo "Add placeholder module for user profile settings."
 """)
     llm_mock.chmod(0o755)
 
-    # cargo mock for pre-merge hook (nextest run)
-    cargo_mock = bin_dir / "cargo"
-    cargo_mock.write_text(r"""#!/bin/bash
-if [[ "$1" == "nextest" && "$2" == "run" ]]; then
-    sleep 0.3
-    echo "    Finished \`test\` profile [unoptimized + debuginfo] target(s) in 0.02s"
-    echo "    Starting 2 tests across 1 binary"
-    echo "        PASS [   0.001s] acme::tests::test_add"
-    echo "        PASS [   0.001s] acme::tests::test_add_zeros"
-    echo "------------"
-    echo "     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped"
-fi
-""")
-    cargo_mock.chmod(0o755)
+    # User config with LLM commit generation
+    _write_user_config(
+        env,
+        ["npm run dev -- --port {{ branch | hash_port }} &", "cargo nextest run"],
+        commit_generation=True
+    )
 
-    # User config with LLM commit generation and approved commands
-    config_dir = env.home / ".config" / "worktrunk"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    # Zellij + Fish configs (with --create in wsl abbreviation)
+    setup_zellij_config(env, default_cwd=str(env.repo))
+    setup_fish_config(env, wsl_create=True)
 
-    project_id = str(env.bare_remote).removesuffix(".git")
-    (config_dir / "config.toml").write_text(f'''[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-
-[projects."{project_id}"]
-approved-commands = ["npm run dev -- --port {{{{ branch | hash_port }}}} &", "cargo nextest run"]
-''')
-
-    # Fish config - define wsl abbreviation so it works in all Zellij tabs
-    fish_config_dir = env.home / ".config" / "fish"
-    fish_config_dir.mkdir(parents=True, exist_ok=True)
-    fish_config = fish_config_dir / "config.fish"
-    fish_config.write_text('''# Demo fish config
-set -U fish_greeting ""
-# wsl abbreviation: switch --create with Claude execute
-abbr --add wsl 'wt switch --execute=claude --create'
-starship init fish | source
-wt config shell init fish | source
-
-# Disable cursor blinking for VHS recording
-set fish_cursor_default block
-
-# Auto-rename Zellij tabs based on git branch (for demo)
-function __zellij_tab_rename --on-variable PWD
-    if set -q ZELLIJ
-        # Get git branch name, fallback to directory basename
-        set -l branch (git rev-parse --abbrev-ref HEAD 2>/dev/null)
-        if test -n "$branch"
-            zellij action rename-tab $branch
-        end
-    end
-end
-''')
-
-    # Zellij config directory
-    zellij_config_dir = env.home / ".config" / "zellij"
-    zellij_config_dir.mkdir(parents=True, exist_ok=True)
-    zellij_plugins_dir = zellij_config_dir / "plugins"
-    zellij_plugins_dir.mkdir(exist_ok=True)
-
-    # Copy Zellij plugins from real HOME
-    if REAL_ZELLIJ_PLUGINS.exists():
-        for plugin in REAL_ZELLIJ_PLUGINS.glob("*.wasm"):
-            shutil.copy(plugin, zellij_plugins_dir / plugin.name)
-
-    # Minimal Zellij config that loads the plugins
-    zellij_config = zellij_config_dir / "config.kdl"
-    zellij_config.write_text(f'''// Demo Zellij config
-default_shell "fish"
-default_cwd "{env.repo}"
-pane_frames false
-show_startup_tips false
-show_release_notes false
-theme "warm-gold"
-
-// Warm gold theme to match the demo aesthetic
-themes {{
-    warm-gold {{
-        fg "#1f2328"
-        bg "#FFFDF8"
-        black "#f5f0e8"
-        red "#d73a49"
-        green "#22863a"
-        yellow "#d29922"
-        blue "#0969da"
-        magenta "#8250df"
-        cyan "#1b7c83"
-        white "#57534e"
-        orange "#d97706"
-    }}
-}}
-
-load_plugins {{
-  "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
-}}
-
-keybinds clear-defaults=true {{
-    normal {{
-        bind "Ctrl Space" {{ SwitchToMode "tmux"; }}
-    }}
-    tmux {{
-        bind "p" {{ SwitchToMode "pane"; }}
-        bind "t" {{ SwitchToMode "tab"; }}
-        bind "q" {{ Quit; }}
-    }}
-    tab {{
-        bind "n" {{ NewTab; SwitchToMode "Normal"; }}
-        bind "h" "Left" {{ GoToPreviousTab; SwitchToMode "Normal"; }}
-        bind "l" "Right" {{ GoToNextTab; SwitchToMode "Normal"; }}
-        bind "1" {{ GoToTab 1; SwitchToMode "Normal"; }}
-        bind "2" {{ GoToTab 2; SwitchToMode "Normal"; }}
-        bind "3" {{ GoToTab 3; SwitchToMode "Normal"; }}
-        bind "4" {{ GoToTab 4; SwitchToMode "Normal"; }}
-    }}
-    shared_except "locked" {{
-        bind "Ctrl t" {{ NewTab; }}
-        bind "Ctrl n" {{ NewPane; }}
-    }}
-    shared_except "normal" {{
-        bind "Ctrl Space" "Ctrl c" {{ SwitchToMode "normal"; }}
-        bind "Esc" {{ SwitchToMode "normal"; }}
-    }}
-}}
-''')
-
-    # Configure Claude Code to skip all first-run dialogs
-    main_repo_path = str(env.repo)
-    api_key_suffix = os.environ.get("ANTHROPIC_API_KEY", "")[-20:] if os.environ.get("ANTHROPIC_API_KEY") else ""
-
-    # Pre-approve all the worktree paths we'll create (including 'feature' created during demo)
+    # Claude Code config with pre-approved tools
     worktree_branches = ["api", "auth", "billing", "feature"]
-    projects_config = {
-        main_repo_path: {"allowedTools": [], "hasTrustDialogAccepted": True}
-    }
-    for branch in worktree_branches:
-        path = str(env.work_base / f"acme.{branch}")
-        projects_config[path] = {"allowedTools": [], "hasTrustDialogAccepted": True}
-
-    projects_json = json.dumps(projects_config, indent=4)
-
-    claude_json = env.home / ".claude.json"
-    claude_json.write_text(f'''{{
-  "numStartups": 100,
-  "installMethod": "global",
-  "theme": "light",
-  "firstStartTime": "2025-01-01T00:00:00.000Z",
-  "hasCompletedOnboarding": true,
-  "hasCompletedClaudeInChromeOnboarding": true,
-  "claudeInChromeDefaultEnabled": false,
-  "sonnet45MigrationComplete": true,
-  "opus45MigrationComplete": true,
-  "thinkingMigrationComplete": true,
-  "hasShownOpus45Notice": {{}},
-  "lastReleaseNotesSeen": "99.0.0",
-  "lastOnboardingVersion": "99.0.0",
-  "oauthAccount": {{
-    "displayName": "Demo User",
-    "emailAddress": "demo@example.com"
-  }},
-  "customApiKeyResponses": {{
-    "approved": ["{api_key_suffix}"],
-    "rejected": []
-  }},
-  "officialMarketplaceAutoInstalled": true,
-  "tipsHistory": {{
-    "new-user-warmup": 100,
-    "terminal-setup": 100,
-    "theme-command": 100
-  }},
-  "projects": {projects_json}
-}}''')
-
-    # Claude settings.json - pre-approve common tools to avoid permission prompts
-    claude_dir = env.home / ".claude"
-    claude_dir.mkdir(exist_ok=True)
-    settings_json = claude_dir / "settings.json"
-    settings_json.write_text('''{
-  "permissions": {
-    "allow": [
-      "Bash",
-      "Read",
-      "Write",
-      "Edit",
-      "Glob",
-      "Grep",
-      "Task",
-      "TodoWrite"
-    ],
-    "deny": [],
-    "ask": []
-  },
-  "model": "claude-opus-4-5-20251101",
-  "statusLine": {
-    "type": "command",
-    "command": "wt list statusline --claude-code"
-  },
-  "enableLspRecommendations": false
-}''')
+    worktree_paths = [str(env.repo)] + [
+        str(env.work_base / f"acme.{branch}") for branch in worktree_branches
+    ]
+    allowed_tools = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Task", "TodoWrite"]
+    setup_claude_code_config(env, worktree_paths, allowed_tools)
 
     # Pre-create worktrees (api and auth only - billing created during demo)
     demo_env = {
@@ -939,32 +297,18 @@ keybinds clear-defaults=true {{
     }
 
     def run_wt(args, cwd):
-        """Run wt command with error checking."""
-        result = subprocess.run(
-            ["wt"] + args,
-            cwd=str(cwd),
-            env=demo_env,
-            capture_output=True,
-            text=True
-        )
+        result = subprocess.run(["wt"] + args, cwd=str(cwd), env=demo_env, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"wt {' '.join(args)} failed: {result.stderr}")
-        return result
 
-    # api branch: feature branch (Claude will work on it and we'll merge at end)
     run_wt(["switch", "--create", "api"], env.repo)
-    api_worktree = env.work_base / "acme.api"
-    git(["-C", str(api_worktree), "push", "-u", "origin", "api", "-q"])
+    git(["-C", str(env.work_base / "acme.api"), "push", "-u", "origin", "api", "-q"])
 
-    # auth branch: clean feature branch (will be removed with wt remove)
     run_wt(["switch", "--create", "auth"], env.repo)
-    auth_worktree = env.work_base / "acme.auth"
-    git(["-C", str(auth_worktree), "push", "-u", "origin", "auth", "-q"])
-
-    # billing branch: NOT pre-created - demo shows wsl abbreviation creating it
+    git(["-C", str(env.work_base / "acme.auth"), "push", "-u", "origin", "auth", "-q"])
 
     # Return to main worktree for the demo to start
-    run_wt(["switch", "main"], api_worktree)
+    run_wt(["switch", "main"], env.work_base / "acme.api")
 
 
 # =============================================================================

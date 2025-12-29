@@ -1,5 +1,6 @@
 """Shared infrastructure for demo recording scripts."""
 
+import json
 import os
 import re
 import shutil
@@ -12,6 +13,32 @@ from .themes import THEMES, format_theme_for_vhs
 
 REAL_HOME = Path.home()
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+# Shared content for demos
+VALIDATION_RS = '''//! Input validation utilities.
+
+/// Validates that a number is positive.
+pub fn is_positive(n: i32) -> bool {
+    n > 0
+}
+
+/// Validates that a string is not empty.
+pub fn is_non_empty(s: &str) -> bool {
+    !s.trim().is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_positive() {
+        assert!(is_positive(1));
+        assert!(!is_positive(0));
+        assert!(!is_positive(-1));
+    }
+}
+'''
 
 
 @dataclass
@@ -204,12 +231,286 @@ def setup_gh_mock(env: DemoEnv, fixtures_dir: Path):
     gh_mock.chmod(0o755)
 
 
+def setup_claude_code_config(
+    env: DemoEnv,
+    worktree_paths: list[str],
+    allowed_tools: list[str] = None,
+) -> None:
+    """Set up Claude Code configuration to skip first-run dialogs.
+
+    Args:
+        env: Demo environment
+        worktree_paths: List of worktree paths to pre-approve for trust
+        allowed_tools: List of tools to pre-approve (default: none, Claude will ask)
+    """
+    api_key_suffix = os.environ.get("ANTHROPIC_API_KEY", "")[-20:] if os.environ.get("ANTHROPIC_API_KEY") else ""
+
+    # Build projects config - pre-approve trust for all worktree paths
+    projects_config = {}
+    for path in worktree_paths:
+        projects_config[path] = {"allowedTools": [], "hasTrustDialogAccepted": True}
+
+    claude_json = env.home / ".claude.json"
+    claude_json.write_text(json.dumps({
+        "numStartups": 100,
+        "installMethod": "global",
+        "theme": "light",
+        "firstStartTime": "2025-01-01T00:00:00.000Z",
+        "hasCompletedOnboarding": True,
+        "hasCompletedClaudeInChromeOnboarding": True,
+        "claudeInChromeDefaultEnabled": False,
+        "sonnet45MigrationComplete": True,
+        "opus45MigrationComplete": True,
+        "thinkingMigrationComplete": True,
+        "hasShownOpus45Notice": {},
+        "lastReleaseNotesSeen": "99.0.0",
+        "lastOnboardingVersion": "99.0.0",
+        "oauthAccount": {
+            "displayName": "Demo User",
+            "emailAddress": "demo@example.com"
+        },
+        "customApiKeyResponses": {
+            "approved": [api_key_suffix] if api_key_suffix else [],
+            "rejected": []
+        },
+        "officialMarketplaceAutoInstalled": True,
+        "tipsHistory": {
+            "new-user-warmup": 100,
+            "terminal-setup": 100,
+            "theme-command": 100
+        },
+        "projects": projects_config
+    }, indent=2))
+
+    # Claude settings.json
+    claude_dir = env.home / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings = {
+        "permissions": {
+            "allow": allowed_tools or [],
+            "deny": [],
+            "ask": []
+        },
+        "model": "claude-opus-4-5-20251101",
+        "statusLine": {
+            "type": "command",
+            "command": "wt list statusline --claude-code"
+        }
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
+
+
+def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
+    """Set up Zellij configuration for demo recording.
+
+    Creates config with warm-gold theme, minimal keybinds, and tab-rename plugin.
+    Copies plugins from real HOME if available.
+
+    Args:
+        env: Demo environment
+        default_cwd: Optional default working directory for new panes
+    """
+    real_zellij_plugins = REAL_HOME / ".config" / "zellij" / "plugins"
+
+    zellij_config_dir = env.home / ".config" / "zellij"
+    zellij_config_dir.mkdir(parents=True, exist_ok=True)
+    zellij_plugins_dir = zellij_config_dir / "plugins"
+    zellij_plugins_dir.mkdir(exist_ok=True)
+
+    # Copy Zellij plugins from real HOME
+    if real_zellij_plugins.exists():
+        for plugin in real_zellij_plugins.glob("*.wasm"):
+            shutil.copy(plugin, zellij_plugins_dir / plugin.name)
+
+    default_cwd_line = f'default_cwd "{default_cwd}"' if default_cwd else ""
+
+    zellij_config = zellij_config_dir / "config.kdl"
+    zellij_config.write_text(f'''// Demo Zellij config
+default_shell "fish"
+{default_cwd_line}
+pane_frames false
+show_startup_tips false
+show_release_notes false
+theme "warm-gold"
+
+// Warm gold theme to match the demo aesthetic
+themes {{
+    warm-gold {{
+        fg "#1f2328"
+        bg "#FFFDF8"
+        black "#f5f0e8"
+        red "#d73a49"
+        green "#22863a"
+        yellow "#d29922"
+        blue "#0969da"
+        magenta "#8250df"
+        cyan "#1b7c83"
+        white "#57534e"
+        orange "#d97706"
+    }}
+}}
+
+load_plugins {{
+  "file:{zellij_plugins_dir}/zellij-tab-name.wasm"
+}}
+
+keybinds clear-defaults=true {{
+    normal {{
+        bind "Ctrl Space" {{ SwitchToMode "tmux"; }}
+    }}
+    tmux {{
+        bind "p" {{ SwitchToMode "pane"; }}
+        bind "t" {{ SwitchToMode "tab"; }}
+        bind "q" {{ Quit; }}
+    }}
+    tab {{
+        bind "n" {{ NewTab; SwitchToMode "Normal"; }}
+        bind "h" "Left" {{ GoToPreviousTab; SwitchToMode "Normal"; }}
+        bind "l" "Right" {{ GoToNextTab; SwitchToMode "Normal"; }}
+        bind "1" {{ GoToTab 1; SwitchToMode "Normal"; }}
+        bind "2" {{ GoToTab 2; SwitchToMode "Normal"; }}
+        bind "3" {{ GoToTab 3; SwitchToMode "Normal"; }}
+        bind "4" {{ GoToTab 4; SwitchToMode "Normal"; }}
+    }}
+    shared_except "locked" {{
+        bind "Ctrl t" {{ NewTab; }}
+        bind "Ctrl n" {{ NewPane; }}
+    }}
+    shared_except "normal" {{
+        bind "Ctrl Space" "Ctrl c" {{ SwitchToMode "normal"; }}
+        bind "Esc" {{ SwitchToMode "normal"; }}
+    }}
+}}
+''')
+
+
+def setup_fish_config(env: DemoEnv, wsl_create: bool = False) -> None:
+    """Set up Fish shell configuration for demo recording.
+
+    Creates config with wsl abbreviation, starship, wt shell integration,
+    and Zellij tab auto-rename.
+
+    Args:
+        env: Demo environment
+        wsl_create: If True, wsl abbreviation includes --create flag
+    """
+    fish_config_dir = env.home / ".config" / "fish"
+    fish_config_dir.mkdir(parents=True, exist_ok=True)
+
+    wsl_cmd = "wt switch --execute=claude --create" if wsl_create else "wt switch --execute=claude"
+
+    fish_config = fish_config_dir / "config.fish"
+    fish_config.write_text(f'''# Demo fish config
+set -U fish_greeting ""
+# wsl abbreviation: switch to worktree and launch Claude
+abbr --add wsl '{wsl_cmd}'
+starship init fish | source
+wt config shell init fish | source
+
+# Disable cursor blinking for VHS recording
+set fish_cursor_default block
+
+# Auto-rename Zellij tabs based on git branch (for demo)
+function __zellij_tab_rename --on-variable PWD
+    if set -q ZELLIJ
+        # Get git branch name, fallback to directory basename
+        set -l branch (git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if test -n "$branch"
+            zellij action rename-tab $branch
+        end
+    end
+end
+''')
+
+
+def setup_mock_clis(env: DemoEnv) -> None:
+    """Set up comprehensive mock CLIs for all demo scenarios.
+
+    Creates mocks for: npm, docker, flyctl, llm, cargo.
+    Each mock handles all cases - demos just use the branches they need.
+    """
+    bin_dir = env.home / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    # npm mock - handles install, build, dev (with optional port)
+    npm_mock = bin_dir / "npm"
+    npm_mock.write_text("""#!/bin/bash
+if [[ "$1" == "install" ]]; then
+    echo "added 847 packages in 3.2s"
+elif [[ "$1" == "run" && "$2" == "build" ]]; then
+    echo "vite v5.4.2 building for production..."
+    echo "✓ 142 modules transformed"
+    echo "dist/index.js  45.2 kB │ gzip: 14.8 kB"
+elif [[ "$1" == "run" && "$2" == "dev" ]]; then
+    # Extract port from args if provided (e.g., npm run dev -- --port 3001)
+    port=3000
+    for arg in "$@"; do
+        if [[ "$prev" == "--port" ]]; then
+            port="$arg"
+        fi
+        prev="$arg"
+    done
+    echo ""
+    echo "  VITE v5.4.2  ready in 342 ms"
+    echo ""
+    echo "  ➜  Local:   http://localhost:$port/"
+    echo "  ➜  Network: http://192.168.1.42:$port/"
+fi
+""")
+    npm_mock.chmod(0o755)
+
+    # docker mock - handles compose up
+    docker_mock = bin_dir / "docker"
+    docker_mock.write_text("""#!/bin/bash
+if [[ "$1" == "compose" && "$2" == "up" ]]; then
+    echo "[+] Running 1/1"
+    echo " ✔ Container postgres  Started"
+fi
+""")
+    docker_mock.chmod(0o755)
+
+    # flyctl mock - handles scale
+    flyctl_mock = bin_dir / "flyctl"
+    flyctl_mock.write_text("""#!/bin/bash
+if [[ "$1" == "scale" ]]; then
+    echo "Scaling app to 0 machines"
+fi
+""")
+    flyctl_mock.chmod(0o755)
+
+    # llm mock - simulates LLM commit message generation
+    llm_mock = bin_dir / "llm"
+    llm_mock.write_text("""#!/bin/bash
+sleep 0.5
+echo "feat(validation): add input validation utilities"
+echo ""
+echo "Add validation module with is_positive and is_non_empty helpers"
+echo "for validating user input. Includes comprehensive test coverage."
+""")
+    llm_mock.chmod(0o755)
+
+    # cargo mock - handles nextest run
+    cargo_mock = bin_dir / "cargo"
+    cargo_mock.write_text(r"""#!/bin/bash
+if [[ "$1" == "nextest" && "$2" == "run" ]]; then
+    sleep 0.3
+    echo "    Finished \`test\` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    echo "    Starting 2 tests across 1 binary"
+    echo "        PASS [   0.001s] acme::tests::test_add"
+    echo "        PASS [   0.001s] acme::tests::test_add_zeros"
+    echo "------------"
+    echo "     Summary [   0.002s] 2 tests run: 2 passed, 0 skipped"
+fi
+""")
+    cargo_mock.chmod(0o755)
+
+
 def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     """Set up a full demo repository with varied branches.
 
     Creates a rich repo for great `wt list` output:
     - Git repo with Rust project
-    - Mock gh CLI for CI status (generic version)
+    - Mock CLIs (npm, docker, flyctl, llm, cargo, gh)
     - bat wrapper for syntax highlighting
     - Extra branches without worktrees (docs/readme, spike/search)
     - alpha: large diff, unpushed commits, behind main
@@ -227,6 +528,9 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     """
     # Base setup: git repo, Rust project, bat wrapper, wt binary
     prepare_base_repo(env, repo_root)
+
+    # Set up all mock CLIs - demos use what they need
+    setup_mock_clis(env)
 
     # Project hooks
     if hooks_config is None:
