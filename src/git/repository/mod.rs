@@ -12,7 +12,7 @@ use dunce::canonicalize;
 // Import types and functions from parent module (mod.rs)
 use super::{
     BranchCategory, CompletionBranch, DefaultBranchName, DiffStats, GitError, GitRemoteUrl,
-    LineDiff, Worktree, WorktreeList,
+    LineDiff, Worktree,
 };
 
 /// Result of resolving a worktree name.
@@ -358,7 +358,6 @@ impl Repository {
                 let path = self.worktree_root()?.to_path_buf();
                 let worktrees = self.list_worktrees()?;
                 let branch = worktrees
-                    .worktrees
                     .iter()
                     .find(|wt| wt.path == path)
                     .and_then(|wt| wt.branch.clone());
@@ -1177,7 +1176,6 @@ impl Repository {
         // Get worktree branches
         let worktrees = self.list_worktrees()?;
         let worktree_branches: HashSet<String> = worktrees
-            .worktrees
             .iter()
             .filter_map(|wt| wt.branch.clone())
             .collect();
@@ -1353,12 +1351,29 @@ impl Repository {
 
     /// List all worktrees for this repository.
     ///
-    /// Returns a WorktreeList that automatically filters out bare repositories
-    /// and provides access to the main worktree.
-    pub fn list_worktrees(&self) -> anyhow::Result<WorktreeList> {
+    /// Returns a list of worktrees with bare entries filtered out.
+    ///
+    /// **Ordering:** Git lists the main worktree first. For normal repos, `[0]` is
+    /// the main worktree. For bare repos, the bare entry is filtered out, so `[0]`
+    /// is the first linked worktree (no semantic "main" exists).
+    ///
+    /// Returns an empty vec for bare repos with no linked worktrees.
+    pub fn list_worktrees(&self) -> anyhow::Result<Vec<Worktree>> {
         let stdout = self.run_command(&["worktree", "list", "--porcelain"])?;
         let raw_worktrees = Worktree::parse_porcelain_list(&stdout)?;
-        WorktreeList::from_raw(raw_worktrees)
+        Ok(raw_worktrees.into_iter().filter(|wt| !wt.bare).collect())
+    }
+
+    /// Get the current worktree if we're inside one.
+    ///
+    /// Returns `None` if not in a worktree (e.g., in bare repo directory).
+    pub fn current_worktree(&self) -> anyhow::Result<Option<Worktree>> {
+        let current_path = match self.worktree_root() {
+            Ok(p) => p.to_path_buf(),
+            Err(_) => return Ok(None),
+        };
+        let worktrees = self.list_worktrees()?;
+        Ok(worktrees.into_iter().find(|wt| wt.path == current_path))
     }
 
     /// Find the worktree path for a given branch, if one exists.
@@ -1366,7 +1381,6 @@ impl Repository {
         let worktrees = self.list_worktrees()?;
 
         Ok(worktrees
-            .worktrees
             .iter()
             .find(|wt| wt.branch.as_deref() == Some(branch))
             .map(|wt| wt.path.clone()))
@@ -1385,7 +1399,6 @@ impl Repository {
         let normalized_path = path.normalize();
 
         Ok(worktrees
-            .worktrees
             .iter()
             .find(|wt| wt.path.normalize() == normalized_path)
             .map(|wt| (wt.path.clone(), wt.branch.clone())))
@@ -1398,7 +1411,6 @@ impl Repository {
 
         // Collect branches that have worktrees
         let branches_with_worktrees: std::collections::HashSet<String> = worktrees
-            .worktrees
             .iter()
             .filter_map(|wt| wt.branch.clone())
             .collect();

@@ -154,7 +154,6 @@ pub fn resolve_worktree_arg(
             let path = repo.worktree_root()?.to_path_buf();
             let worktrees = repo.list_worktrees()?;
             let branch = worktrees
-                .worktrees
                 .iter()
                 .find(|wt| wt.path == path)
                 .and_then(|wt| wt.branch.clone());
@@ -633,11 +632,12 @@ pub fn handle_switch(
     // Build git worktree add command
     let mut args = vec!["worktree", "add", worktree_path.to_str().unwrap()];
 
-    // Use the resolved base, or default to default branch if creating without a base
+    // Use the resolved base, or default to default branch if creating without a base.
+    // For bare repos with no branches yet (bootstrap case), allow None to create orphan branch.
     let base_for_creation = if create {
         match resolved_base {
             Some(b) => Some(b),
-            None => Some(repo.resolve_target_branch(None)?),
+            None => repo.resolve_target_branch(None).ok(),
         }
     } else {
         None

@@ -149,3 +149,37 @@ wt switch --create feature-part2 --base=@
 ```
 
 Creates a worktree that builds on the current branch's changes.
+
+## Bare repository layout
+
+An alternative to the default sibling layout (`myproject.feature/`) uses a bare repository with worktrees as subdirectories:
+
+```
+myproject/
+├── .git/       # bare repository
+├── main/       # main branch
+├── feature/    # feature branch
+└── bugfix/     # bugfix branch
+```
+
+Setup:
+
+```bash
+git clone --bare <url> myproject/.git
+cd myproject
+```
+
+Configure worktrunk to create worktrees as subdirectories:
+
+```toml
+# ~/.config/worktrunk/config.toml
+worktree-path = "{{ branch | sanitize }}"
+```
+
+Create the first worktree:
+
+```bash
+wt switch --create main
+```
+
+Now `wt switch --create feature` creates `myproject/feature/`.

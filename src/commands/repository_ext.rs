@@ -16,9 +16,6 @@ pub trait RepositoryCliExt {
     /// Load the project configuration if it exists.
     fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>>;
 
-    /// Load the project configuration, emitting a helpful hint if missing.
-    fn require_project_config(&self) -> anyhow::Result<ProjectConfig>;
-
     /// Warn about untracked files being auto-staged.
     fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
 
@@ -62,17 +59,9 @@ pub trait RepositoryCliExt {
 
 impl RepositoryCliExt for Repository {
     fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
-        let repo_root = self.worktree_root()?;
-        load_project_config_at(repo_root)
-    }
-
-    fn require_project_config(&self) -> anyhow::Result<ProjectConfig> {
-        let repo_root = self.worktree_root()?;
-        let config_path = repo_root.join(".config").join("wt.toml");
-
-        match load_project_config_at(repo_root)? {
-            Some(cfg) => Ok(cfg),
-            None => Err(GitError::ProjectConfigNotFound { config_path }.into()),
+        match self.worktree_root() {
+            Ok(root) => ProjectConfig::load(root).context("Failed to load project config"),
+            Err(_) => Ok(None), // Not in a worktree, no project config
         }
     }
 
@@ -137,7 +126,7 @@ impl RepositoryCliExt for Repository {
 
         let (main_path, changed_directory) = if removing_current {
             let worktrees = self.list_worktrees()?;
-            (worktrees.main().path.clone(), true)
+            (worktrees[0].path.clone(), true)
         } else {
             (current_worktree, false)
         };
@@ -182,24 +171,16 @@ impl RepositoryCliExt for Repository {
             return Err(GitError::CannotRemoveMainWorktree.into());
         }
 
-        // Get current worktree path
+        // Get current worktree path and branch
         let current_path = self.worktree_root()?.to_path_buf();
-
-        // Find this worktree in the list to get its metadata
-        let worktrees = self.list_worktrees()?;
-        let current_wt = worktrees
-            .worktrees
-            .iter()
-            .find(|wt| wt.path == current_path);
-
-        // Get branch name if available (None for detached HEAD)
-        let branch_name = current_wt.and_then(|wt| wt.branch.clone());
+        let branch_name = self.current_branch()?.map(str::to_string);
 
         // Ensure the working tree is clean
         self.ensure_clean_working_tree("remove worktree", branch_name.as_deref())?;
 
         // Get main worktree path (we're removing current, so we'll cd to main)
-        let main_path = worktrees.main().path.clone();
+        let worktrees = self.list_worktrees()?;
+        let main_path = worktrees[0].path.clone();
 
         // Resolve default branch for integration reason display
         // Skip if removing the default branch itself (avoids tautological "main (ancestor of main)")
@@ -329,10 +310,6 @@ impl RepositoryCliExt for Repository {
 
         Ok(merge_commits.is_empty())
     }
-}
-
-fn load_project_config_at(repo_root: &Path) -> anyhow::Result<Option<ProjectConfig>> {
-    ProjectConfig::load(repo_root).context("Failed to load project config")
 }
 
 /// Compute integration reason for branch deletion.

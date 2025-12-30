@@ -3,7 +3,7 @@ use color_print::cformat;
 use std::fmt::Write as _;
 use worktrunk::HookType;
 use worktrunk::config::{CommandConfig, ProjectConfig, WorktrunkConfig};
-use worktrunk::git::Repository;
+use worktrunk::git::{GitError, Repository};
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, format_bash_with_gutter, format_heading, format_with_gutter,
@@ -559,8 +559,11 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let project_id = repo.project_identifier()?;
     let config = WorktrunkConfig::load().context("Failed to load config")?;
 
-    // Load project config (show helpful error if missing)
-    let project_config = repo.require_project_config()?;
+    // Load project config (error if missing - this command requires it)
+    let config_path = repo.worktree_root()?.join(".config").join("wt.toml");
+    let project_config = repo
+        .load_project_config()?
+        .ok_or(GitError::ProjectConfigNotFound { config_path })?;
 
     // Collect all commands from the project config
     let all_hooks = [

@@ -594,3 +594,129 @@ fn test_bare_repo_background_logs_location() {
         "Log should NOT be in worktree's .git directory"
     );
 }
+
+#[test]
+fn test_bare_repo_slashed_branch_with_sanitize() {
+    // Test that slashed branch names work with bare repos and the sanitize filter
+    // This matches the documented workflow in tips-patterns.md
+    let test = BareRepoTest::new();
+
+    // Override config to use sanitize filter (matches documented config)
+    fs::write(
+        test.config_path(),
+        "worktree-path = \"{{ branch | sanitize }}\"\n",
+    )
+    .unwrap();
+
+    // Create main worktree
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in_worktree(&main_worktree, "Initial commit");
+
+    // Create feature branch with slash using wt switch
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature/auth"])
+        .current_dir(&main_worktree);
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Verify worktree was created with sanitized name (feature-auth, not feature/auth)
+    let expected_path = test.bare_repo_path().join("feature-auth");
+    assert!(
+        expected_path.exists(),
+        "Expected worktree at {:?} (sanitized from feature/auth)",
+        expected_path
+    );
+
+    // Verify slashed path was NOT created
+    let wrong_path = test.bare_repo_path().join("feature/auth");
+    assert!(
+        !wrong_path.exists(),
+        "Should not create nested directory for slashed branch"
+    );
+
+    // Verify git branch name is preserved (not sanitized)
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "-C",
+        expected_path.to_str().unwrap(),
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+    ]);
+    test.configure_wt_cmd(&mut cmd);
+    let branch_output = cmd.output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&branch_output.stdout).trim(),
+        "feature/auth",
+        "Git branch name should be preserved as feature/auth"
+    );
+}
+
+#[test]
+fn test_bare_repo_bootstrap_first_worktree() {
+    // Test that we can create the first worktree in a bare repo using wt switch --create
+    // without needing to manually run `git worktree add` first.
+    // This tests that load_project_config() returns None for bare repos without worktrees,
+    // allowing the bootstrap workflow to proceed.
+    let test = BareRepoTest::new();
+
+    // Unlike other tests, we do NOT create any worktrees first.
+    // We run wt switch --create directly on the bare repo.
+
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch --create main from bare repo with no worktrees failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Verify the worktree was created inside the bare repo
+    // Template: {{ branch }} -> repo/main
+    let expected_path = test.bare_repo_path().join("main");
+    assert!(
+        expected_path.exists(),
+        "Expected first worktree at {:?}",
+        expected_path
+    );
+
+    // Verify git worktree list shows the new worktree
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "-C",
+        test.bare_repo_path().to_str().unwrap(),
+        "worktree",
+        "list",
+    ]);
+    test.configure_wt_cmd(&mut cmd);
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should show 2 entries: bare repo + main worktree
+    assert_eq!(
+        stdout.lines().count(),
+        2,
+        "Should have bare repo + 1 worktree"
+    );
+    assert!(stdout.contains("main"), "Should list main worktree");
+}

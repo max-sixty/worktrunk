@@ -222,7 +222,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Destination: prefer the target branch's worktree; fall back to main when absent
     let destination_path = target_worktree_path
         .clone()
-        .unwrap_or_else(|| worktrees.main().path.clone());
+        .unwrap_or_else(|| worktrees[0].path.clone());
 
     // Finish worktree unless --no-remove was specified
     if remove_effective {

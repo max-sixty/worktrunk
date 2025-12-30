@@ -662,7 +662,7 @@ pub fn collect(
 
     // Phase 1: Get worktree list (required for everything else)
     let worktrees = repo.list_worktrees().context("Failed to list worktrees")?;
-    if worktrees.worktrees.is_empty() {
+    if worktrees.is_empty() {
         return Ok(None);
     }
 
@@ -670,7 +670,7 @@ pub fn collect(
     // This avoids a git command - we just compare canonicalized paths.
     let repo_path_canonical = canonicalize(repo.base_path()).ok();
     let current_worktree_path = repo_path_canonical.as_ref().and_then(|repo_path| {
-        worktrees.worktrees.iter().find_map(|wt| {
+        worktrees.iter().find_map(|wt| {
             canonicalize(&wt.path)
                 .ok()
                 .filter(|wt_path| repo_path.starts_with(wt_path))
@@ -688,7 +688,7 @@ pub fn collect(
         || repo.is_bare().unwrap_or(false),
         || {
             if show_branches {
-                get_branches_without_worktrees(repo, &worktrees.worktrees)
+                get_branches_without_worktrees(repo, &worktrees)
             } else {
                 Ok(Vec::new())
             }
@@ -707,18 +707,16 @@ pub fn collect(
 
     // Main worktree is the worktree on the default branch (if exists), else first worktree
     let main_worktree = worktrees
-        .worktrees
         .iter()
         .find(|wt| wt.branch.as_deref() == Some(default_branch.as_str()))
         .cloned()
-        .unwrap_or_else(|| worktrees.main().clone());
+        .unwrap_or_else(|| worktrees[0].clone());
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)
 
     // Phase 3: Batch fetch timestamps (needs all SHAs from worktrees + branches)
     let all_shas: Vec<&str> = worktrees
-        .worktrees
         .iter()
         .map(|wt| wt.head.as_str())
         .chain(
@@ -732,7 +730,7 @@ pub fn collect(
 
     // Sort worktrees: current first, main second, then by timestamp descending
     let sorted_worktrees = sort_worktrees_with_cache(
-        worktrees.worktrees.clone(),
+        worktrees.clone(),
         &main_worktree,
         current_worktree_path.as_ref(),
         &timestamps,

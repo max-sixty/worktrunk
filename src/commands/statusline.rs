@@ -210,10 +210,7 @@ pub fn run(claude_code: bool) -> Result<()> {
 fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
     // Get current worktree info
     let worktrees = repo.list_worktrees()?;
-    let current_worktree = worktrees
-        .worktrees
-        .iter()
-        .find(|wt| cwd.starts_with(&wt.path));
+    let current_worktree = worktrees.iter().find(|wt| cwd.starts_with(&wt.path));
 
     let Some(wt) = current_worktree else {
         // Not in a worktree - just show branch name
@@ -236,10 +233,9 @@ fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
 
     // Determine if this is the main worktree
     let main_worktree = worktrees
-        .worktrees
         .iter()
         .find(|w| w.branch.as_deref() == Some(default_branch.as_str()))
-        .unwrap_or_else(|| worktrees.main());
+        .unwrap_or(&worktrees[0]);
     let is_main = wt.path == main_worktree.path;
 
     // Build item with identity fields

@@ -50,7 +50,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let config = WorktrunkConfig::load()?;
 
     let mut failed: Vec<String> = Vec::new();
-    let total = worktrees.worktrees.len();
+    let total = worktrees.len();
 
     // Join args into a template string (will be expanded per-worktree)
     let command_template = args.join(" ");
@@ -58,7 +58,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     // Get repo root for context
     let repo_root = repo.worktree_base()?;
 
-    for wt in &worktrees.worktrees {
+    for wt in &worktrees {
         let display_name = worktree_display_name(wt, &repo, &config);
         output::print(progress_message(format!("Running in {display_name}...")))?;
 
