@@ -42,7 +42,7 @@ pub fn approve_command_batch(
     commands: &[HookCommand],
     project_id: &str,
     config: &WorktrunkConfig,
-    force: bool,
+    yes: bool,
     commands_already_filtered: bool,
 ) -> anyhow::Result<bool> {
     let needs_approval: Vec<&HookCommand> = commands
@@ -57,7 +57,7 @@ pub fn approve_command_batch(
         return Ok(true);
     }
 
-    let approved = if force {
+    let approved = if yes {
         true
     } else {
         prompt_for_batch_approval(&needs_approval, project_id)?
@@ -67,8 +67,8 @@ pub fn approve_command_batch(
         return Ok(false);
     }
 
-    // Only save approvals when interactively approved, not when using --force
-    if !force {
+    // Only save approvals when interactively approved, not when using --yes
+    if !yes {
         let mut fresh_config = WorktrunkConfig::load().context("Failed to reload config")?;
 
         let project_entry = fresh_config
@@ -170,7 +170,7 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
 /// # Example
 ///
 /// ```ignore
-/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, force);
+/// let ctx = CommandContext::new(&repo, &config, &branch, &worktree_path, &repo_root, yes);
 /// let approved = approve_hooks(&ctx, &[HookType::PostCreate, HookType::PostStart])?;
 /// ```
 pub fn approve_hooks(
@@ -207,5 +207,5 @@ pub fn approve_hooks_filtered(
     }
 
     let project_id = ctx.repo.project_identifier()?;
-    approve_command_batch(&commands, project_id, ctx.config, ctx.force, false)
+    approve_command_batch(&commands, project_id, ctx.config, ctx.yes, false)
 }

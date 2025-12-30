@@ -24,7 +24,7 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
         cmd.arg("config")
             .arg("shell")
             .arg("install")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -68,7 +68,7 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("install")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -112,7 +112,7 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("install")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -145,7 +145,7 @@ fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("install")
             .arg("fish")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -198,7 +198,7 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir
             .arg("shell")
             .arg("install")
             .arg("fish")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         // Fish completions are inline in the init script, so when extension exists,
@@ -258,7 +258,7 @@ fn test_configure_shell_fish_all_already_configured(repo: TestRepo, temp_home: T
             .arg("shell")
             .arg("install")
             .arg("fish")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         // Both extension and completions already exist
@@ -278,7 +278,7 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
         cmd.arg("config")
             .arg("shell")
             .arg("install")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -315,7 +315,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
         cmd.arg("config")
             .arg("shell")
             .arg("install")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -375,7 +375,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
         cmd.arg("config")
             .arg("shell")
             .arg("install")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -431,7 +431,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
         cmd.arg("config")
             .arg("shell")
             .arg("uninstall")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -488,7 +488,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
         cmd.arg("config")
             .arg("shell")
             .arg("uninstall")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -538,7 +538,7 @@ fn test_uninstall_shell_not_found(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("uninstall")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -575,7 +575,7 @@ fn test_uninstall_shell_fish(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("uninstall")
             .arg("fish")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -616,7 +616,7 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("install")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         let output = cmd.output().expect("Failed to execute command");
@@ -637,7 +637,7 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
             .arg("shell")
             .arg("uninstall")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         let output = cmd.output().expect("Failed to execute command");
@@ -675,7 +675,7 @@ fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: 
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        cmd.args(["config", "shell", "install", "zsh", "--force"]);
+        cmd.args(["config", "shell", "install", "zsh", "--yes"]);
         cmd.current_dir(repo.root_path());
         let output = cmd.output().expect("Failed to execute command");
         assert!(output.status.success(), "Install should succeed");
@@ -693,7 +693,7 @@ fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: 
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        cmd.args(["config", "shell", "uninstall", "zsh", "--force"]);
+        cmd.args(["config", "shell", "uninstall", "zsh", "--yes"]);
         cmd.current_dir(repo.root_path());
         let output = cmd.output().expect("Failed to execute command");
         assert!(output.status.success(), "Uninstall should succeed");
@@ -711,7 +711,7 @@ fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: 
         repo.clean_cli_env(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        cmd.args(["config", "shell", "install", "zsh", "--force"]);
+        cmd.args(["config", "shell", "install", "zsh", "--yes"]);
         cmd.current_dir(repo.root_path());
         let output = cmd.output().expect("Failed to execute command");
         assert!(output.status.success(), "Re-install should succeed");
@@ -753,7 +753,7 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_ho
             .arg("shell")
             .arg("install")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd, @"
@@ -789,7 +789,7 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
         cmd.arg("config")
             .arg("shell")
             .arg("install")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - user is a bash user, not zsh
@@ -827,7 +827,7 @@ fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo, temp_home: T
             .arg("shell")
             .arg("install")
             .arg("fish") // Specifically installing fish, not zsh
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - we're installing fish, not zsh
@@ -866,7 +866,7 @@ fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo, temp_
             .arg("shell")
             .arg("install")
             .arg("zsh")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - zsh is AlreadyExists, not newly added
@@ -900,7 +900,7 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
         cmd.arg("config")
             .arg("shell")
             .arg("install")
-            .arg("--force")
+            .arg("--yes")
             .current_dir(repo.root_path());
 
         // Should NOT show compinit warning - can't determine user's shell

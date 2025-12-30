@@ -92,11 +92,14 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--no-verify</span></b>
           Skip hooks
 
-  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
-          Force removal
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
+          Skip approval prompts
 
-          Skip approval prompts, and remove worktrees even if they contain
-          untracked files (like build artifacts).
+  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
+          Force worktree removal
+
+          Remove worktrees even if they contain untracked files (like build
+          artifacts). Without this flag, removal fails if untracked files exist.
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)

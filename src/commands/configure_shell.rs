@@ -140,14 +140,14 @@ pub fn handle_configure_shell(
         });
     }
 
-    // Show what will be done and ask for confirmation (unless --force flag is used)
+    // Show what will be done and ask for confirmation (unless --yes flag is used)
     if !skip_confirmation
         && !prompt_for_confirmation(&preview.configured, &completion_preview, &cmd)?
     {
         return Err("Cancelled by user".to_string());
     }
 
-    // User confirmed (or --force flag was used), now actually apply the changes
+    // User confirmed (or --yes flag was used), now actually apply the changes
     let result = scan_shell_configs(shell_filter, false, &cmd)?;
     let completion_results = process_shell_completions(&shells, false, &cmd)?;
 
@@ -671,14 +671,14 @@ pub fn handle_unconfigure_shell(
         return Ok(preview);
     }
 
-    // Show what will be done and ask for confirmation (unless --force flag is used)
+    // Show what will be done and ask for confirmation (unless --yes flag is used)
     if !skip_confirmation
         && !prompt_for_uninstall_confirmation(&preview.results, &preview.completion_results)?
     {
         return Err("Cancelled by user".to_string());
     }
 
-    // User confirmed (or --force flag was used), now actually apply the changes
+    // User confirmed (or --yes flag was used), now actually apply the changes
     scan_for_uninstall(shell_filter, false, cmd)
 }
 

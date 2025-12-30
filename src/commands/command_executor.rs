@@ -20,7 +20,7 @@ pub struct CommandContext<'a> {
     pub branch: Option<&'a str>,
     pub worktree_path: &'a Path,
     pub repo_root: &'a Path,
-    pub force: bool,
+    pub yes: bool,
 }
 
 impl<'a> CommandContext<'a> {
@@ -30,7 +30,7 @@ impl<'a> CommandContext<'a> {
         branch: Option<&'a str>,
         worktree_path: &'a Path,
         repo_root: &'a Path,
-        force: bool,
+        yes: bool,
     ) -> Self {
         Self {
             repo,
@@ -38,7 +38,7 @@ impl<'a> CommandContext<'a> {
             branch,
             worktree_path,
             repo_root,
-            force,
+            yes,
         }
     }
 

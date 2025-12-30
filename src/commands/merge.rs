@@ -20,7 +20,7 @@ pub struct MergeOptions<'a> {
     pub rebase: bool,
     pub remove: bool,
     pub verify: bool,
-    pub force: bool,
+    pub yes: bool,
     pub stage_mode: super::commit::StageMode,
 }
 
@@ -93,7 +93,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         rebase,
         remove,
         verify,
-        force,
+        yes,
         stage_mode,
     } = opts;
 
@@ -136,7 +136,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     .collect()?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
-    let approved = approve_command_batch(&all_commands, &project_id, config, force, false)?;
+    let approved = approve_command_batch(&all_commands, &project_id, config, yes, false)?;
 
     // If commands were declined, skip hooks but continue with merge
     // Shadow verify to gate all subsequent hook execution on approval
@@ -152,7 +152,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         if squash_enabled {
             false // Squash path handles staging and committing
         } else {
-            let ctx = env.context(force);
+            let ctx = env.context(yes);
             let mut options = CommitOptions::new(&ctx);
             options.target_branch = Some(&target_branch);
             options.no_verify = !verify;
@@ -172,7 +172,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         matches!(
             super::standalone::handle_squash(
                 Some(&target_branch),
-                force,
+                yes,
                 !verify, // skip_pre_commit when !verify
                 stage_mode
             )?,
@@ -203,7 +203,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Run pre-merge checks unless --no-verify was specified
     // Do this after commit/squash/rebase to validate the final state that will be pushed
     if verify {
-        let ctx = env.context(force);
+        let ctx = env.context(yes);
         let project_config = repo.load_project_config()?.unwrap_or_default();
         run_pre_merge_commands(&project_config, &ctx, &target_branch, None)?;
     }
@@ -246,9 +246,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some(target_branch.clone()),
             integration_reason,
-            // After a successful merge, force removal since any untracked files
-            // (build artifacts) are no longer needed
-            force_worktree: true,
+            // Don't force removal - if worktree has untracked files added after
+            // commit, removal will fail and user can run `wt remove --force`
+            force_worktree: false,
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (MergeCommandCollector)
@@ -278,7 +278,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             Some(&current_branch),
             &destination_path,
             &destination_repo_root,
-            force,
+            yes,
         );
         execute_post_merge_commands(&ctx, &target_branch, None)?;
     }

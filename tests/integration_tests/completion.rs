@@ -931,7 +931,7 @@ fn test_complete_merge_with_flags(repo: TestRepo) {
     // Test: wt merge --no-remove --force <cursor>
     // Should complete branches for positional (boolean flags don't consume arguments)
     let output = repo
-        .completion_cmd(&["wt", "merge", "--no-remove", "--force", ""])
+        .completion_cmd(&["wt", "merge", "--no-remove", "--yes", ""])
         .output()
         .unwrap();
 

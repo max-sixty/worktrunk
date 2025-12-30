@@ -864,7 +864,7 @@ mod tests {
                 "test-exec",
                 "--execute",
                 "echo executed",
-                "--force",
+                "--yes",
             ],
         );
 
@@ -905,7 +905,7 @@ mod tests {
                 "test-exit-code",
                 "--execute",
                 "exit 42",
-                "--force",
+                "--yes",
             ],
         );
 
@@ -1027,7 +1027,7 @@ approved-commands = [
 
         // Run merge from the feature worktree
         let output =
-            exec_through_wrapper_from(shell, &repo, "merge", &["main", "--force"], &feature_wt);
+            exec_through_wrapper_from(shell, &repo, "merge", &["main", "--yes"], &feature_wt);
 
         assert_eq!(output.exit_code, 0, "{}: Merge should succeed", shell);
         output.assert_no_directive_leaks();
@@ -1087,7 +1087,7 @@ approved-commands = [
 
         // Run merge from the feature worktree
         let output =
-            exec_through_wrapper_from(shell, &repo, "merge", &["main", "--force"], &feature_wt);
+            exec_through_wrapper_from(shell, &repo, "merge", &["main", "--yes"], &feature_wt);
 
         output.assert_no_directive_leaks();
 
@@ -1161,7 +1161,7 @@ approved-commands = [
 
         // Run merge from the feature worktree
         let output =
-            exec_through_wrapper_from(shell, &repo, "merge", &["main", "--force"], &feature_wt);
+            exec_through_wrapper_from(shell, &repo, "merge", &["main", "--yes"], &feature_wt);
 
         assert_eq!(output.exit_code, 0, "{}: Merge should succeed", shell);
         output.assert_no_directive_leaks();
@@ -1233,7 +1233,7 @@ approved-commands = ["echo 'test command executed'"]
                 "test-exec",
                 "--execute",
                 "echo executed",
-                "--force",
+                "--yes",
             ],
         );
 
@@ -1457,7 +1457,7 @@ approved-commands = ["echo 'fish background task'"]
                 "fish-multiline",
                 "--execute",
                 multiline_cmd,
-                "--force",
+                "--yes",
             ],
         );
 
@@ -2337,7 +2337,7 @@ command = "{}"
             "bash",
             &repo,
             "merge",
-            &["main", "--force"],
+            &["main", "--yes"],
             &feature_wt,
             &[],
             &[("PATH", &path_with_bin)],
@@ -2428,7 +2428,7 @@ fi
             "bash",
             &repo,
             "switch",
-            &["--create", "feature-x", "--force"],
+            &["--create", "feature-x", "--yes"],
             repo.root_path(),
             &[],
             &[("PATH", &path_with_bin)],

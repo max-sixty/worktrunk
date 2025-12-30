@@ -15,8 +15,8 @@ Hooks normally run automatically during `wt switch --create`, `wt merge`, and `w
 Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```bash
-wt hook pre-merge           # Run pre-merge hooks
-wt hook pre-merge --force   # Skip approval prompts (for CI)
+wt hook pre-merge         # Run pre-merge hooks
+wt hook pre-merge --yes   # Skip approval prompts (for CI)
 ```
 
 ## Hook types
@@ -210,7 +210,7 @@ Project commands require approval on first run:
 
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
-- Use `--force` to bypass prompts (useful for CI/automation)
+- Use `--yes` to bypass prompts (useful for CI/automation)
 - Use `--no-verify` to skip hooks
 
 Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
@@ -429,7 +429,7 @@ This prevents untrusted projects from running arbitrary commands.
 - Project ID changes (repository moves)
 
 **Bypassing prompts:**
-- `--force` flag on individual commands (e.g., `wt merge --force`)
+- `--yes` flag on individual commands (e.g., `wt merge --yes`)
 - Useful for CI/automation where prompts aren't possible
 
 ### Examples

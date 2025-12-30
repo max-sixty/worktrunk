@@ -230,7 +230,7 @@ wt config shell install zsh
 ```
 
 Shows proposed changes and waits for confirmation before modifying any files.
-Use --force to skip confirmation."#)]
+Use --yes to skip confirmation."#)]
     Install {
         /// Shell to install (default: all)
         #[arg(value_enum)]
@@ -238,7 +238,7 @@ Use --force to skip confirmation."#)]
 
         /// Skip confirmation prompt
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
 
         /// Command name for shell integration (defaults to binary name)
         ///
@@ -264,7 +264,7 @@ wt config shell uninstall zsh
 
 Skip confirmation prompt:
 ```console
-wt config shell uninstall --force
+wt config shell uninstall --yes
 ```
 
 ## Version tolerance
@@ -279,7 +279,7 @@ Detects various forms of the integration pattern regardless of:
 
         /// Skip confirmation prompt
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Show output theme samples
@@ -866,7 +866,7 @@ pub enum StepCommand {
     Commit {
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
 
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
@@ -895,7 +895,7 @@ pub enum StepCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
 
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
@@ -1019,7 +1019,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Run post-start hooks
@@ -1032,7 +1032,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Run post-switch hooks
@@ -1045,7 +1045,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Run pre-commit hooks
@@ -1056,7 +1056,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Run pre-merge hooks
@@ -1067,7 +1067,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Run post-merge hooks
@@ -1078,7 +1078,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Run pre-remove hooks
@@ -1089,7 +1089,7 @@ pub enum HookCommand {
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
     },
 
     /// Manage command approvals
@@ -1108,7 +1108,7 @@ This prevents untrusted projects from running arbitrary commands.
 - Project ID changes (repository moves)
 
 **Bypassing prompts:**
-- `--force` flag on individual commands (e.g., `wt merge --force`)
+- `--yes` flag on individual commands (e.g., `wt merge --yes`)
 - Useful for CI/automation where prompts aren't possible
 
 ## Examples
@@ -1457,8 +1457,8 @@ Hooks normally run automatically during `wt switch --create`, `wt merge`, and `w
 Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```console
-wt hook pre-merge           # Run pre-merge hooks
-wt hook pre-merge --force   # Skip approval prompts (for CI)
+wt hook pre-merge         # Run pre-merge hooks
+wt hook pre-merge --yes   # Skip approval prompts (for CI)
 ```
 
 ## Hook types
@@ -1652,7 +1652,7 @@ Project commands require approval on first run:
 
 - Approvals are saved to user config (`~/.config/worktrunk/config.toml`)
 - If a command changes, new approval is required
-- Use `--force` to bypass prompts (useful for CI/automation)
+- Use `--yes` to bypass prompts (useful for CI/automation)
 - Use `--no-verify` to skip hooks
 
 Manage approvals with `wt hook approvals add` and `wt hook approvals clear`.
@@ -2234,8 +2234,8 @@ wt switch --create fix --base=@  # Branch from current HEAD
         execute_args: Vec<String>,
 
         /// Skip approval prompts
-        #[arg(short = 'f', long)]
-        force: bool,
+        #[arg(short, long)]
+        yes: bool,
 
         /// Remove stale paths at target
         #[arg(long)]
@@ -2330,11 +2330,15 @@ Removal runs in the background by default (returns immediately). Logs are writte
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
-        /// Force removal
+        /// Skip approval prompts
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Force worktree removal
         ///
-        /// Skip approval prompts, and remove worktrees even if they contain
-        /// untracked files (like build artifacts).
-        #[arg(short = 'f', long)]
+        /// Remove worktrees even if they contain untracked files (like build
+        /// artifacts). Without this flag, removal fails if untracked files exist.
+        #[arg(short, long)]
         force: bool,
     },
 
@@ -2460,7 +2464,7 @@ lint = "cargo clippy"
 
         /// Skip approval prompts
         #[arg(short, long)]
-        force: bool,
+        yes: bool,
 
         /// What to stage before committing [default: all]
         #[arg(long)]

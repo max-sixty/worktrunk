@@ -8,7 +8,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -56,7 +56,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
           Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature --
           'implement login'[0m works.
 
-  [1m[36m-f[0m, [1m[36m--force
+  [1m[36m-y[0m, [1m[36m--yes
           Skip approval prompts
 
       [1m[36m--clobber

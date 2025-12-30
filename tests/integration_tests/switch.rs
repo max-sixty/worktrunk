@@ -372,7 +372,7 @@ fn test_switch_no_config_commands_with_force(repo: TestRepo) {
     snapshot_switch(
         "switch_no_hooks_with_force",
         &repo,
-        &["--create", "force-no-hooks", "--force", "--no-verify"],
+        &["--create", "force-no-hooks", "--yes", "--no-verify"],
     );
 }
 // Branch inference and special branch tests

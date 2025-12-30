@@ -82,7 +82,7 @@ Use consistent punctuation and structure for related messages:
 ```rust
 // Action; qualifier (flag)
 "Removing feature worktree in background; retaining branch (--no-delete-branch)"
-"Commands approved; not saved (--force)"
+"Commands approved; not saved (--yes)"
 ```
 
 **Ampersand for conjunctions:** Use `&` for combined actions:
@@ -179,7 +179,7 @@ each type.
 | Hint ↳                        | Info ○                                |
 | ----------------------------- | ------------------------------------- |
 | "Run `wt merge` to continue"  | "Already up to date with main"        |
-| "Use `--force` to override"   | "Skipping hooks (--no-verify)"        |
+| "Use `--yes` to override"     | "Skipping hooks (--no-verify)"        |
 | "Branch can be deleted"       | "Worktree preserved (main worktree)"  |
 
 **Command suggestions in hints:** Use "To X, run Y" pattern. End with the

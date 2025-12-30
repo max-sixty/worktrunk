@@ -49,7 +49,7 @@ assert!(!marker_file.exists(), "Command should NOT have run");
 
 ## Testing with --execute Commands
 
-Use `--force` to skip interactive prompts in tests. Don't pipe input to stdin.
+Use `--yes` to skip interactive prompts in tests. Don't pipe input to stdin.
 
 ## README Examples and Snapshot Testing
 

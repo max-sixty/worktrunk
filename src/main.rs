@@ -709,10 +709,10 @@ fn main() {
                         let cmd = cmd.unwrap_or_else(binary_name);
                         handle_init(shell, cmd).map_err(|e| anyhow::anyhow!("{}", e))
                     }
-                    ConfigShellCommand::Install { shell, force, cmd } => {
+                    ConfigShellCommand::Install { shell, yes, cmd } => {
                         // Auto-write to shell config files and completions
                         let cmd = cmd.unwrap_or_else(binary_name);
-                        handle_configure_shell(shell, force, cmd)
+                        handle_configure_shell(shell, yes, cmd)
                         .map_err(|e| anyhow::anyhow!("{}", e))
                         .and_then(|scan_result| {
 
@@ -855,9 +855,9 @@ fn main() {
                             Ok(())
                         })
                     }
-                    ConfigShellCommand::Uninstall { shell, force } => {
+                    ConfigShellCommand::Uninstall { shell, yes } => {
                         let explicit_shell = shell.is_some();
-                        handle_unconfigure_shell(shell, force, &binary_name())
+                        handle_unconfigure_shell(shell, yes, &binary_name())
                             .map_err(|e| anyhow::anyhow!("{}", e))
                             .and_then(|scan_result| {
                                 let shell_count = scan_result.results.len();
@@ -1041,7 +1041,7 @@ fn main() {
         },
         Commands::Step { action } => match action {
             StepCommand::Commit {
-                force,
+                yes,
                 verify,
                 stage,
                 show_prompt,
@@ -1051,11 +1051,11 @@ fn main() {
                     let stage_final = stage
                         .or_else(|| config.commit.and_then(|c| c.stage))
                         .unwrap_or_default();
-                    step_commit(force, !verify, stage_final, show_prompt)
+                    step_commit(yes, !verify, stage_final, show_prompt)
                 }),
             StepCommand::Squash {
                 target,
-                force,
+                yes,
                 verify,
                 stage,
                 show_prompt,
@@ -1080,7 +1080,7 @@ fn main() {
                         use commands::command_approval::approve_hooks;
                         use commands::context::CommandEnv;
                         let env = CommandEnv::for_action("squash")?;
-                        let ctx = env.context(force);
+                        let ctx = env.context(yes);
                         let approved = approve_hooks(&ctx, &[HookType::PreCommit])?;
                         if !approved {
                             crate::output::print(info_message(
@@ -1092,7 +1092,7 @@ fn main() {
                         false
                     };
 
-                    match handle_squash(target.as_deref(), force, !verify, stage_final)? {
+                    match handle_squash(target.as_deref(), yes, !verify, stage_final)? {
                         SquashResult::Squashed | SquashResult::NoNetChanges => {}
                         SquashResult::NoCommitsAhead(branch) => {
                             crate::output::print(info_message(format!(
@@ -1126,26 +1126,26 @@ fn main() {
                 hook_type,
                 expanded,
             } => handle_hook_show(hook_type.as_deref(), expanded),
-            HookCommand::PostCreate { name, force } => {
-                run_hook(HookType::PostCreate, force, name.as_deref())
+            HookCommand::PostCreate { name, yes } => {
+                run_hook(HookType::PostCreate, yes, name.as_deref())
             }
-            HookCommand::PostStart { name, force } => {
-                run_hook(HookType::PostStart, force, name.as_deref())
+            HookCommand::PostStart { name, yes } => {
+                run_hook(HookType::PostStart, yes, name.as_deref())
             }
-            HookCommand::PostSwitch { name, force } => {
-                run_hook(HookType::PostSwitch, force, name.as_deref())
+            HookCommand::PostSwitch { name, yes } => {
+                run_hook(HookType::PostSwitch, yes, name.as_deref())
             }
-            HookCommand::PreCommit { name, force } => {
-                run_hook(HookType::PreCommit, force, name.as_deref())
+            HookCommand::PreCommit { name, yes } => {
+                run_hook(HookType::PreCommit, yes, name.as_deref())
             }
-            HookCommand::PreMerge { name, force } => {
-                run_hook(HookType::PreMerge, force, name.as_deref())
+            HookCommand::PreMerge { name, yes } => {
+                run_hook(HookType::PreMerge, yes, name.as_deref())
             }
-            HookCommand::PostMerge { name, force } => {
-                run_hook(HookType::PostMerge, force, name.as_deref())
+            HookCommand::PostMerge { name, yes } => {
+                run_hook(HookType::PostMerge, yes, name.as_deref())
             }
-            HookCommand::PreRemove { name, force } => {
-                run_hook(HookType::PreRemove, force, name.as_deref())
+            HookCommand::PreRemove { name, yes } => {
+                run_hook(HookType::PreRemove, yes, name.as_deref())
             }
             HookCommand::Approvals { action } => match action {
                 ApprovalsCommand::Add { all } => add_approvals(all),
@@ -1215,7 +1215,7 @@ fn main() {
             base,
             execute,
             execute_args,
-            force,
+            yes,
             clobber,
             verify,
         } => WorktrunkConfig::load()
@@ -1235,7 +1235,7 @@ fn main() {
                         Some(&branch),
                         &worktree_path,
                         &repo_root,
-                        force,
+                        yes,
                     );
                     // Approve different hooks based on whether we're creating or switching
                     if create {
@@ -1272,7 +1272,7 @@ fn main() {
                     &branch,
                     create,
                     base.as_deref(),
-                    force,
+                    yes,
                     clobber,
                     skip_hooks,
                     &config,
@@ -1293,7 +1293,7 @@ fn main() {
                         Some(branch_info.branch()),
                         result.path(),
                         &repo_root,
-                        force,
+                        yes,
                     );
 
                     // Post-switch runs first (immediate "I'm here" signal)
@@ -1329,6 +1329,7 @@ fn main() {
             force_delete,
             background,
             verify,
+            yes,
             force,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
@@ -1362,7 +1363,7 @@ fn main() {
                         current_branch,
                         &worktree_path,
                         &repo_root,
-                        force,
+                        yes,
                     );
                     let approved =
                         approve_hooks(&ctx, &[HookType::PreRemove, HookType::PostSwitch])?;
@@ -1505,7 +1506,7 @@ fn main() {
             no_remove,
             verify,
             no_verify,
-            force,
+            yes,
             stage,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
@@ -1546,7 +1547,7 @@ fn main() {
                     rebase: rebase_final,
                     remove: remove_final,
                     verify: verify_final,
-                    force,
+                    yes,
                     stage_mode: stage_final,
                 })
             }),

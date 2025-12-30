@@ -34,7 +34,7 @@ Commands from project hooks require approval on first run. Approved commands are
 
 <!-- END AUTO-GENERATED -->
 
-Use `--force` to bypass prompts (useful for CI/automation).
+Use `--yes` to bypass prompts (useful for CI/automation).
 
 ## How does Worktrunk compare to alternatives?
 

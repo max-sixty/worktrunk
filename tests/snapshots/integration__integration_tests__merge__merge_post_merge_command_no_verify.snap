@@ -5,7 +5,7 @@ info:
   args:
     - merge
     - main
-    - "--force"
+    - "--yes"
     - "--no-verify"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"

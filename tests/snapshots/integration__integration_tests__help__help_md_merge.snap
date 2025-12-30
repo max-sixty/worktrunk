@@ -44,7 +44,7 @@ Options:
       --no-verify
           Skip hooks
 
-  -f, --force
+  -y, --yes
           Skip approval prompts
 
       --stage <STAGE>

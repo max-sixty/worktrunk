@@ -268,7 +268,7 @@ check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
     snapshot_merge(
         "user_pre_merge_executes",
         &repo,
-        &["main", "--force", "--no-remove"],
+        &["main", "--yes", "--no-remove"],
         Some(&feature_wt),
     );
 
@@ -296,7 +296,7 @@ check = "exit 1"
     snapshot_merge(
         "user_pre_merge_failure",
         &repo,
-        &["main", "--force", "--no-remove"],
+        &["main", "--yes", "--no-remove"],
         Some(&feature_wt),
     );
 }
@@ -319,7 +319,7 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
     snapshot_merge(
         "user_pre_merge_skipped_no_verify",
         &repo,
-        &["main", "--force", "--no-remove", "--no-verify"],
+        &["main", "--yes", "--no-remove", "--no-verify"],
         Some(&feature_wt),
     );
 
@@ -358,7 +358,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     // Spawn wt in its own process group (so SIGINT to that group doesn't kill the test)
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
-    cmd.args(["hook", "pre-merge", "--force"]);
+    cmd.args(["hook", "pre-merge", "--yes"]);
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
     cmd.process_group(0); // wt becomes leader of its own process group
@@ -419,7 +419,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     // Spawn wt in its own process group (so SIGTERM to that group doesn't kill the test)
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
-    cmd.args(["hook", "pre-merge", "--force"]);
+    cmd.args(["hook", "pre-merge", "--yes"]);
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
     cmd.process_group(0); // wt becomes leader of its own process group
@@ -479,7 +479,7 @@ notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
     snapshot_merge(
         "user_post_merge_executes",
         &repo,
-        &["main", "--force", "--no-remove"],
+        &["main", "--yes", "--no-remove"],
         Some(&feature_wt),
     );
 
@@ -624,7 +624,7 @@ lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
     snapshot_merge(
         "user_pre_commit_executes",
         &repo,
-        &["main", "--force", "--no-remove"],
+        &["main", "--yes", "--no-remove"],
         Some(&feature_wt),
     );
 
@@ -654,7 +654,7 @@ lint = "exit 1"
     snapshot_merge(
         "user_pre_commit_failure",
         &repo,
-        &["main", "--force", "--no-remove"],
+        &["main", "--yes", "--no-remove"],
         Some(&feature_wt),
     );
 }
@@ -755,7 +755,7 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--force"]);
+    cmd.args(["hook", "post-create", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(
@@ -779,7 +779,7 @@ fn test_standalone_hook_post_start(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-start", "--force"]);
+    cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt hook post-start should succeed");
@@ -800,7 +800,7 @@ fn test_standalone_hook_pre_commit(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "pre-commit", "--force"]);
+    cmd.args(["hook", "pre-commit", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt hook pre-commit should succeed");
@@ -819,7 +819,7 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
     cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
-    cmd.args(["hook", "post-create", "--force"]);
+    cmd.args(["hook", "post-create", "--yes"]);
 
     let output = cmd.output().unwrap();
     assert!(

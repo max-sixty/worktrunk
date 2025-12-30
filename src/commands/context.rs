@@ -74,14 +74,14 @@ impl CommandEnv {
     }
 
     /// Build a `CommandContext` tied to this environment.
-    pub fn context(&self, force: bool) -> CommandContext<'_> {
+    pub fn context(&self, yes: bool) -> CommandContext<'_> {
         CommandContext::new(
             &self.repo,
             &self.config,
             self.branch.as_deref(),
             &self.worktree_path,
             &self.repo_root,
-            force,
+            yes,
         )
     }
 

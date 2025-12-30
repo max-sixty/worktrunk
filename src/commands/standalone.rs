@@ -26,13 +26,13 @@ use super::repository_ext::RepositoryCliExt;
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
 ///
 /// Works in detached HEAD state - `{{ branch }}` template variable will be "HEAD".
-pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> anyhow::Result<()> {
+pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> anyhow::Result<()> {
     use super::command_approval::approve_hooks_filtered;
 
     // Derive context from current environment (branch-optional for CI compatibility)
     let env = CommandEnv::for_action_branchless()?;
     let repo = &env.repo;
-    let ctx = env.context(force);
+    let ctx = env.context(yes);
 
     // Load project config (optional - user hooks can run without project config)
     let project_config = repo.load_project_config()?;
@@ -161,7 +161,7 @@ pub fn run_hook(hook_type: HookType, force: bool, name_filter: Option<&str>) -> 
 
 /// Handle `wt step commit` command
 pub fn step_commit(
-    force: bool,
+    yes: bool,
     no_verify: bool,
     stage_mode: super::commit::StageMode,
     show_prompt: bool,
@@ -177,7 +177,7 @@ pub fn step_commit(
     }
 
     let env = CommandEnv::for_action("commit")?;
-    let ctx = env.context(force);
+    let ctx = env.context(yes);
 
     // "Approve at the Gate": approve pre-commit hooks upfront (unless --no-verify)
     // Shadow no_verify: if user declines approval, skip hooks but continue commit
@@ -225,7 +225,7 @@ pub enum SquashResult {
 /// * `stage_mode` - What to stage before committing (All or Tracked; None not supported for squash)
 pub fn handle_squash(
     target: Option<&str>,
-    force: bool,
+    yes: bool,
     skip_pre_commit: bool,
     stage_mode: super::commit::StageMode,
 ) -> anyhow::Result<SquashResult> {
@@ -235,7 +235,7 @@ pub fn handle_squash(
     let repo = &env.repo;
     // Squash requires being on a branch (can't squash in detached HEAD)
     let current_branch = env.require_branch("squash")?.to_string();
-    let ctx = env.context(force);
+    let ctx = env.context(yes);
     let generator = CommitGenerator::new(&env.config.commit_generation);
 
     // Get target branch (default to default branch if not provided)
@@ -594,7 +594,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
         commands
     };
 
-    // Call the approval prompt (force=false to require interactive approval and save)
+    // Call the approval prompt (yes=false to require interactive approval and save)
     // When show_all=true, we've already included all commands in commands_to_approve
     // When show_all=false, we've already filtered to unapproved commands
     // So we pass skip_approval_filter=true to prevent double-filtering

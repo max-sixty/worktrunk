@@ -603,7 +603,7 @@ fn test_merge_pre_merge_command_success(mut repo: TestRepo) {
     snapshot_merge(
         "merge_pre_merge_command_success",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -625,7 +625,7 @@ fn test_merge_pre_merge_command_failure(mut repo: TestRepo) {
     snapshot_merge(
         "merge_pre_merge_command_failure",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -678,7 +678,7 @@ test = "exit 0"
     snapshot_merge(
         "merge_pre_merge_command_named",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -704,7 +704,7 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
     snapshot_merge(
         "merge_post_merge_command_success",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 
@@ -743,7 +743,7 @@ fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
     snapshot_merge(
         "merge_post_merge_command_no_verify",
         &repo,
-        &["main", "--force", "--no-verify"],
+        &["main", "--yes", "--no-verify"],
         Some(&feature_wt),
     );
 
@@ -772,7 +772,7 @@ fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     snapshot_merge(
         "merge_post_merge_command_failure",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -802,7 +802,7 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
     snapshot_merge(
         "merge_post_merge_command_named",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 
@@ -844,7 +844,7 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     snapshot_merge(
         "merge_post_merge_runs_with_nothing_to_merge",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 
@@ -875,7 +875,7 @@ fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     snapshot_merge(
         "merge_post_merge_runs_from_main_branch",
         &repo,
-        &["--force"],
+        &["--yes"],
         None, // cwd = repo root = main branch
     );
 
@@ -911,7 +911,7 @@ fn test_merge_pre_commit_command_success(mut repo: TestRepo) {
     snapshot_merge(
         "merge_pre_commit_command_success",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -936,7 +936,7 @@ fn test_merge_pre_commit_command_failure(mut repo: TestRepo) {
     snapshot_merge(
         "merge_pre_commit_command_failure",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -964,7 +964,7 @@ fn test_merge_pre_squash_command_success(mut repo: TestRepo) {
     snapshot_merge(
         "merge_pre_squash_command_success",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -986,7 +986,7 @@ fn test_merge_pre_squash_command_failure(mut repo: TestRepo) {
     snapshot_merge(
         "merge_pre_squash_command_failure",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
     );
 }
@@ -1283,7 +1283,7 @@ command = "{}"
     snapshot_merge_with_env(
         "readme_example_complex",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
         &[("PATH", &path_with_bin)],
     );
@@ -1367,8 +1367,7 @@ fi
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {
-        let mut cmd =
-            make_snapshot_cmd(&repo, "switch", &["--create", "feature-x", "--force"], None);
+        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-x", "--yes"], None);
         cmd.env("PATH", &path_with_bin);
         assert_cmd_snapshot!("readme_example_hooks_post_create", cmd);
     });
@@ -1622,7 +1621,7 @@ command = "{}"
     snapshot_merge_with_env(
         "readme_example_hooks_pre_merge",
         &repo,
-        &["main", "--force"],
+        &["main", "--yes"],
         Some(&feature_wt),
         &[("PATH", &path_with_bin)],
     );

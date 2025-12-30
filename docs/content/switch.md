@@ -106,7 +106,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
           Arguments after <b>--</b> are passed to the command, so <b>wsc feature --</b>
           &#39;implement login&#39; works.
 
-  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
+  <b><span class=c>-y</span></b>, <b><span class=c>--yes</span></b>
           Skip approval prompts
 
       <b><span class=c>--clobber</span></b>

@@ -228,7 +228,7 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
     snapshot_switch(
         "post_create_default_branch_template",
         &repo,
-        &["--create", "feature", "--force"],
+        &["--create", "feature", "--yes"],
     );
 
     // Verify template expansion actually worked
@@ -271,7 +271,7 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
     snapshot_switch(
         "post_create_git_variables_template",
         &repo,
-        &["--create", "feature", "--force"],
+        &["--create", "feature", "--yes"],
     );
 
     // Verify template expansion actually worked
@@ -337,7 +337,7 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
     snapshot_switch(
         "post_create_upstream_template",
         &repo,
-        &["--create", "feature", "--force"],
+        &["--create", "feature", "--yes"],
     );
 
     // Verify template expansion actually worked

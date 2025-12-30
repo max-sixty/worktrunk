@@ -31,6 +31,16 @@ Example of escalating instead of suppressing:
 fn parse_config() { ... }
 ```
 
+## Data Safety
+
+Never risk data loss without explicit user consent. Err on the side of failing safely.
+
+- **Prefer failure over silent data loss** — If an operation might destroy untracked files, uncommitted changes, or user data, fail with an error rather than proceeding
+- **Explicit consent for destructive operations** — Operations that force-remove data (like `--force` on remove) require the user to explicitly request that behavior
+- **Time-of-check vs time-of-use** — If there's a gap between checking safety and performing an operation, be conservative. Example: `wt merge` verifies the worktree is clean before rebasing, but files could be added before cleanup — don't force-remove during cleanup
+
+A failed command that preserves data is always better than a "successful" command that silently destroys work.
+
 ## Terminology
 
 Use consistent terminology in documentation, help text, and code comments:

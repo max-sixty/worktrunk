@@ -9,7 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -56,7 +56,7 @@ This prevents untrusted projects from running arbitrary commands.
 - Project ID changes (repository moves)
 
 [1mBypassing prompts:
-- [2m--force[0m flag on individual commands (e.g., [2mwt merge --force[0m)
+- [2m--yes[0m flag on individual commands (e.g., [2mwt merge --yes[0m)
 - Useful for CI/automation where prompts aren't possible
 
 [32mExamples
