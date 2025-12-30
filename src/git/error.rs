@@ -1050,7 +1050,7 @@ mod tests {
         let err = GitError::NotInteractive;
         let display = err.to_string();
         assert!(display.contains("non-interactive"));
-        assert!(display.contains("--force"));
+        assert!(display.contains("--yes"));
     }
 
     #[test]
