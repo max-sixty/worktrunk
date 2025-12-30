@@ -154,12 +154,13 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
     - Additional mock CLIs
     - Approved commands in user config
     """
-    # Clean previous
+    # Clean previous (exist_ok=True handles cases where rmtree silently fails,
+    # e.g., stale processes holding files open)
     shutil.rmtree(env.root, ignore_errors=True)
 
-    env.root.mkdir(parents=True)
-    env.work_base.mkdir(parents=True)
-    env.repo.mkdir(parents=True)
+    env.root.mkdir(parents=True, exist_ok=True)
+    env.work_base.mkdir(parents=True, exist_ok=True)
+    env.repo.mkdir(parents=True, exist_ok=True)
 
     # Init bare remote
     run(["git", "init", "--bare", "-q", str(env.bare_remote)])

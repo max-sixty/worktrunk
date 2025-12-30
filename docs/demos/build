@@ -219,6 +219,15 @@ url = "http://localhost:{{ branch | hash_port }}"
 '''
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
 
+    # Clean up branches that might exist from previous runs (billing, feature created during demo)
+    origin = env.home / "origin.git"
+    for branch in ["billing", "feature"]:
+        # Delete from origin if exists (ignore errors if not)
+        subprocess.run(
+            ["git", "-C", str(origin), "branch", "-D", branch],
+            capture_output=True
+        )
+
     # Enable git colors for non-TTY environments (VHS)
     git(["-C", str(env.repo), "config", "color.ui", "always"])
 

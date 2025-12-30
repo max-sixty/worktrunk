@@ -43,7 +43,7 @@ Announcing Worktrunk! A git worktree manager, designed for running AI agents in 
 
 A few points on why I'm so excited about the project, and why I hope it becomes broadly adopted 🧵
 
-[wt-demo.gif]
+[wt-core.gif](../../../assets/wt-core.gif)
 
 <!-- NOTE: Considered Zellij demo here but it's too complex for tweet 1's hook role.
      Placed omnibus demo at tweet 13 instead (before CTA). -->
@@ -78,7 +78,7 @@ In contrast to the git command, the Worktrunk command to create a new worktree i
 
 𝚠𝚝 𝚜𝚠𝚒𝚝𝚌𝚑 --𝚌𝚛𝚎𝚊𝚝𝚎 𝚊𝚙𝚒
 
-[wt-switch.gif — creating and switching between worktrees]
+[wt-switch.gif](../../../assets/wt-switch.gif)
 
 **6/** (105 chars)
 Worktrunk's other core commands:
@@ -86,7 +86,7 @@ Worktrunk's other core commands:
 𝚠𝚝 𝚕𝚒𝚜𝚝: see all worktrees with status
 𝚠𝚝 𝚛𝚎𝚖𝚘𝚟𝚎: delete a worktree
 
-[wt-list-remove.gif — list then remove]
+[wt-list-remove.gif](../../../assets/wt-list-remove.gif)
 
 <!-- ============ PHASE 4: FEATURES ============ -->
 <!-- Goal: List additional capabilities, one per tweet, snappy -->
@@ -96,7 +96,7 @@ Beyond core commands, Worktrunk has quality-of-life features to simplify working
 
 Hooks: Post-start hooks run after creating a worktree: install deps, copy caches, start dev servers, etc. And there's a hook for every stage of a worktree lifecycle.
 
-[wt-hooks.gif — switch --create showing multiple post-start hooks running]
+[wt-hooks.gif](../../../assets/wt-hooks.gif)
 
 <!-- TODO: Consider cutting or merging tweets 8-9. Reviewers noted:
      - "50ms" is too technical / doesn't connect to AI workflows
@@ -108,32 +108,32 @@ Hooks: Post-start hooks run after creating a worktree: install deps, copy caches
 
 𝚠𝚝 𝚕𝚒𝚜𝚝 --𝚏𝚞𝚕𝚕: CI status as clickable dots. Green/blue/red. Clicking opens the PR.
 
-[wt-list.gif — showing progressive rendering]
+[wt-list.gif](../../../assets/wt-list.gif)
 
 **9/** (45 chars)
 𝚠𝚝 𝚜𝚎𝚕𝚎𝚌𝚝: fuzzy picker across all branches.
 
-[wt-select.gif]
+[wt-select-short.gif](../../../assets/wt-select-short.gif)
 
 **10/** (99 chars)
 LLM Commits: When running 𝚠𝚝 𝚜𝚝𝚎𝚙 𝚌𝚘𝚖𝚖𝚒𝚝 or 𝚠𝚝 𝚖𝚎𝚛𝚐𝚎, worktrunk can have an LLM write the commit message, with a customizable template.
 
-[wt-commit.gif — git diff then wt step commit]
+[wt-commit.gif](../../../assets/wt-commit.gif)
 
 **11/** (78 chars)
 𝚠𝚝 𝚖𝚎𝚛𝚐𝚎: squash, rebase, merge, remove worktree, delete branch, in one command.
 
-[wt-merge.gif]
+[wt-merge.gif](../../../assets/wt-merge.gif)
 
 **12/** (83 chars)
 @claudeai status line integration. See branch, diff stats, CI status at a glance.
 
-[screenshot of Claude Code with worktrunk statusline]
+[wt-statusline.gif](../../../assets/wt-statusline.gif)
 
 **13/** (168 chars)
 Putting it all together: parallel Claude Code agents in Zellij tabs, each in its own worktree. The full lifecycle: 𝚠𝚝 𝚜𝚠𝚒𝚝𝚌𝚑, 𝚠𝚝 𝚕𝚒𝚜𝚝, 𝚠𝚝 𝚜𝚎𝚕𝚎𝚌𝚝, 𝚠𝚝 𝚖𝚎𝚛𝚐𝚎.
 
-[wt-zellij-omnibus.gif]
+[wt-zellij-omnibus.gif](../../../assets/wt-zellij-omnibus.gif)
 
 <!-- ============ PHASE 5: CTA ============ -->
 <!-- Goal: Install instructions, docs, invite feedback, star -->

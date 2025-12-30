@@ -78,6 +78,10 @@ Type "y"
 Sleep 1s
 Show
 Sleep 500ms
+# Clear any leftover characters from the permission dialog
+Type "clear"
+Enter
+Sleep 500ms
 
 # ==== TAB 1: Overview and simple navigation ====
 # Start with wt list to see all worktrees

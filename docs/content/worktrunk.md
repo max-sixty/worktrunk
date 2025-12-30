@@ -84,7 +84,13 @@ git branch -d feat{% end %}</td>
 
 Here's a demo with some of the more advanced features:
 
-![Worktrunk omnibus demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/wt-zellij-omnibus.gif)
+<figure class="demo">
+<picture>
+  <source srcset="/assets/wt-zellij-omnibus-dark.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/wt-zellij-omnibus.gif" alt="Worktrunk omnibus demo: multiple Claude agents in Zellij tabs with hooks, LLM commits, and merge workflow" width="1600" height="900">
+</picture>
+<figcaption>Multiple Claude agents in parallel with hooks, LLM commits, and merge</figcaption>
+</figure>
 
 ## Install
 

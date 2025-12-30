@@ -47,22 +47,16 @@ Sleep 500ms
 Show
 Sleep 500ms
 
-# Show what the statusline command outputs
-Type "wt list statusline"
-Enter
-Sleep 2s
-
-# Switch to an existing worktree
+# Switch to alpha worktree first (has uncommitted changes for diff stats)
 Type "wt switch alpha"
 Enter
 Sleep 1.5s
 
-# Show statusline again (now in alpha worktree)
-Type "wt list statusline"
-Enter
-Sleep 2s
-
-# Open Claude Code to show statusline integration
+# Launch Claude Code to show statusline integration
+# Tweet 12 is about seeing branch, diff stats, CI status at a glance in Claude's UI
+# Statusline will show: ~/w/acme.alpha  alpha  +N  ●  | Opus 4.5
+# Pre-enter pause for big UI takeover
+Sleep 1s
 Type "claude"
 Enter
-Sleep 4s
+Sleep 8s
