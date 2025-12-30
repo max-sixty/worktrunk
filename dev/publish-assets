@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ASSETS_REPO="$REPO_ROOT/../worktrunk-assets"
-DEMOS_DIR="$REPO_ROOT/docs/demos/out"
+DEMOS_DIR="$REPO_ROOT/docs/static/assets"
 
 # Clone assets repo if needed
 if [[ ! -d "$ASSETS_REPO/.git" ]]; then
@@ -27,7 +27,7 @@ if ! git pull --ff-only; then
     exit 1
 fi
 
-# Copy all GIFs from demos/out
+# Copy all GIFs
 echo "Copying assets..."
 copied=()
 for src in "$DEMOS_DIR"/*.gif; do

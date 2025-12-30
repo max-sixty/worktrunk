@@ -257,11 +257,11 @@ This enables precise matching of the outer region.
 
 ## Demo GIF workflow
 
-Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid bloating git history.
+Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid bloating git history. Both build and fetch output to `docs/static/assets/` (gitignored), so local builds override fetched assets.
 
 **For local development:**
 ```bash
-./dev/fetch-assets      # Download to docs/static/assets/ (gitignored)
+./dev/fetch-assets      # Download published assets
 ```
 
 **To regenerate demos** (required after CLI output changes):

@@ -6,9 +6,10 @@
 docs/demos/
   build            # Unified build script
   tapes/           # All VHS tape files (templated)
-  out/             # Output GIFs (gitignored)
   shared/          # Python library, themes, fixtures
   vhs-keystrokes/  # Custom VHS binary (gitignored, built on demand)
+
+docs/static/assets/  # Output GIFs (gitignored, shared with fetch-assets)
 ```
 
 Tape files use template variables (`{{FONTSIZE}}`, `{{WIDTH}}`, `{{HEIGHT}}`) so the same tape produces different sizes for docs vs Twitter.
@@ -42,13 +43,15 @@ After building, publish to the assets repo:
 ./dev/publish-assets
 ```
 
-This copies `docs/demos/out/*.gif` to the `worktrunk-assets` repo (sibling directory), commits, and pushes. The script clones the repo via `gh` if missing.
+This copies `docs/static/assets/*.gif` to the `worktrunk-assets` repo (sibling directory), commits, and pushes. The script clones the repo via `gh` if missing.
 
-For local preview, fetch published assets:
+To fetch published assets (without rebuilding):
 
 ```bash
-./dev/fetch-assets   # Downloads to docs/static/assets/ (gitignored)
+./dev/fetch-assets
 ```
+
+Both build and fetch output to the same location (`docs/static/assets/`), so local builds override fetched assets.
 
 ## vhs-keystrokes setup (REQUIRED for wt-select demos)
 
@@ -69,6 +72,46 @@ cd vhs-keystrokes && go build -o vhs-keystrokes .
 ```
 
 The binary is gitignored. Build scripts skip wt-select GIF recording if missing—**always build vhs-keystrokes first** when regenerating demos.
+
+### Keystroke timing calibration
+
+The keystroke overlay timing is controlled by `keystrokeDelayMS` in `ffmpeg.go`:
+
+```go
+keystrokeDelayMS  = 500.0   // Delay to sync with terminal rendering
+```
+
+**How this was calibrated:**
+1. The overlay must appear synchronized with when the terminal responds to the keystroke
+2. Initial value (600ms) showed keystrokes appearing ~240ms LATE (after terminal changed)
+3. Frame-by-frame GIF analysis (25fps = 40ms/frame) revealed the exact offset
+4. Reduced to 500ms achieves perfect sync—keystroke and terminal change on same frame
+
+**To recalibrate if needed:**
+```bash
+# Extract frames from GIF
+ffmpeg -i demo.gif -vsync 0 /tmp/gif-frames/frame_%04d.png
+
+# Compare frames to find when terminal changes vs when keystroke appears
+# Adjust keystrokeDelayMS: increase if keystroke appears too early, decrease if too late
+```
+
+## wt-select demo goals
+
+The wt-select demo showcases **realistic variety in all columns**:
+
+| Column | Demonstration |
+|--------|---------------|
+| CI | Hollow ○ (branch CI) vs filled ● (PR CI) vs none |
+| HEAD± | Large staged diff (+54), small unstaged (+8), none |
+| Status | Staged changes (+), unstaged (!), ahead/behind (↕) |
+| main↕ | Some branches ahead-only, some ahead-and-behind |
+| main…± | Meaningful merge-base diffstats (small to 300+ lines) |
+
+Branch setup (from shared infrastructure):
+- **alpha** — Large working tree changes, unpushed commits, PR CI
+- **beta** — Staged changes, behind main, branch CI
+- **hooks** — Staged+unstaged changes, no remote
 
 ## Light/dark theme variants
 
@@ -138,11 +181,24 @@ Key fields in `.claude.json` for suppressing notifications:
 - `numStartups: 100` - makes Claude think it's been run many times
 - `hasCompletedOnboarding: true` - skips onboarding
 
+## Viewing GIF results
+
+**Do NOT use `open` on the GIF** — that's for the user to do manually.
+
+Inline viewing options:
+```bash
+# Quick Look (macOS)
+qlmanage -p docs/static/assets/wt-select.gif
+
+# iTerm2 inline images
+imgcat docs/static/assets/wt-select.gif
+```
+
 ## Extracting frames from a GIF for inspection
 
 ```bash
 mkdir -p /tmp/frames
-magick docs/demos/out/wt-switch.gif -coalesce /tmp/frames/frame_%03d.png
+magick docs/static/assets/wt-switch.gif -coalesce /tmp/frames/frame_%03d.png
 
 # View a specific frame
 open /tmp/frames/frame_200.png

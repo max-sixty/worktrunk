@@ -27,7 +27,7 @@ from shared import (
 )
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
-OUT_DIR = SCRIPT_DIR / "out"
+OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
 TAPES_DIR = SCRIPT_DIR / "tapes"
 
 # Sizes
