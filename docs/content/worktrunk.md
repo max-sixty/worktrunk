@@ -82,6 +82,10 @@ git branch -d feat{% end %}</td>
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
 - ...and **[lots more](#next-steps)**
 
+Here's a demo with some of the more advanced features:
+
+![Worktrunk omnibus demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/wt-zellij-omnibus.gif)
+
 ## Install
 
 **Homebrew (macOS & Linux):**

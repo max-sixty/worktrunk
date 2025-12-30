@@ -31,7 +31,7 @@ Regenerate a single demo:
 
 | Target | Demos |
 |--------|-------|
-| docs | wt-core, wt-merge, wt-select |
+| docs | wt-core, wt-merge, wt-select, wt-zellij-omnibus |
 | twitter | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-select-short, wt-core, wt-zellij, wt-zellij-omnibus |
 
 ## vhs-keystrokes setup (REQUIRED for wt-select demos)

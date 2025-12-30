@@ -70,4 +70,6 @@ exclude_path = [
     "docs/content/select.md",
     "docs/content/why-worktrunk.md",
     "docs/content/worktrunk.md",
+    # README references assets that may not be published yet
+    "README.md",
 ]

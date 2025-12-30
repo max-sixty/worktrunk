@@ -409,6 +409,9 @@ wt config shell init fish | source
 
 # Disable cursor blinking for VHS recording
 set fish_cursor_default block
+# Send escape sequences to disable cursor blink
+printf '\\e[?12l'  # Disable cursor blink mode
+printf '\\e[2 q'   # Set steady block cursor (non-blinking)
 
 # Auto-rename Zellij tabs based on git branch (for demo)
 function __zellij_tab_rename --on-variable PWD

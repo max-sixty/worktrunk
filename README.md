@@ -88,6 +88,10 @@ git branch -d feat</pre></td>
 - **[Merge workflow](https://worktrunk.dev/merge/)** — squash, rebase, merge, clean up in one command
 - ...and **[lots more](#next-steps)**
 
+Here's a demo with some of the more advanced features:
+
+![Worktrunk omnibus demo](https://cdn.jsdelivr.net/gh/max-sixty/worktrunk-assets@main/demos/wt-zellij-omnibus.gif)
+
 <!-- END AUTO-GENERATED -->
 
 <!-- ⚠️ AUTO-GENERATED from docs/content/worktrunk.md#install..further-reading — edit source to update -->

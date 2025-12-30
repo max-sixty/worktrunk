@@ -418,6 +418,16 @@ fn build_remove_command(worktree_path: &std::path::Path, branch_to_delete: Optio
     let worktree_path_str = worktree_path.to_string_lossy();
     let worktree_escaped = escape(worktree_path_str.as_ref().into());
 
+    // TODO: This delay is a timing-based workaround, not a principled fix.
+    // The race: after wt exits, the shell wrapper reads the directive file and
+    // runs `cd`. But fish (and other shells) may call getcwd() before the cd
+    // completes (e.g., for prompt updates), and if the background removal has
+    // already deleted the directory, we get "shell-init: error retrieving current
+    // directory". A 1s delay is very conservative (shell cd takes ~1-5ms), but
+    // deterministic solutions (shell-spawned background, marker file sync) add
+    // significant complexity for marginal benefit.
+    let delay = "sleep 1";
+
     // Stop fsmonitor daemon first (best effort - ignore errors)
     // This prevents zombie daemons from accumulating when using builtin fsmonitor
     let stop_fsmonitor = format!(
@@ -429,14 +439,14 @@ fn build_remove_command(worktree_path: &std::path::Path, branch_to_delete: Optio
         Some(branch_name) => {
             let branch_escaped = escape(branch_name.into());
             format!(
-                "{} && git worktree remove {} && git branch -D {}",
-                stop_fsmonitor, worktree_escaped, branch_escaped
+                "{} && {} && git worktree remove {} && git branch -D {}",
+                delay, stop_fsmonitor, worktree_escaped, branch_escaped
             )
         }
         None => {
             format!(
-                "{} && git worktree remove {}",
-                stop_fsmonitor, worktree_escaped
+                "{} && {} && git worktree remove {}",
+                delay, stop_fsmonitor, worktree_escaped
             )
         }
     }

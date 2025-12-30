@@ -284,6 +284,7 @@ DOCS_DEMOS = [
     ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs", None),
     ("wt-merge.tape", "wt-merge", prepare_with_llm_commit, "vhs", None),
     ("wt-select.tape", "wt-select", prepare_basic, "vhs-keystrokes", None),
+    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs", None),
 ]
 
 TWITTER_DEMOS = [
@@ -364,9 +365,7 @@ Examples:
         return
 
     # Check dependencies
-    deps = ["wt", "vhs", "starship"]
-    if args.target == "twitter":
-        deps.append("zellij")
+    deps = ["wt", "vhs", "starship", "zellij"]
     check_dependencies(deps)
 
     starship_config = setup_demo_output(OUT_DIR)
