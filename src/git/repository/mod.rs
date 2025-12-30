@@ -1425,13 +1425,22 @@ impl Repository {
     }
 
     /// Remove a worktree at the specified path.
-    pub fn remove_worktree(&self, path: &std::path::Path) -> anyhow::Result<()> {
+    ///
+    /// When `force` is true, passes `--force` to `git worktree remove`,
+    /// allowing removal even when the worktree contains untracked files
+    /// (like build artifacts such as `.vite/` or `node_modules/`).
+    pub fn remove_worktree(&self, path: &std::path::Path, force: bool) -> anyhow::Result<()> {
         let path_str = path.to_str().ok_or_else(|| {
             anyhow::Error::from(GitError::Other {
                 message: format!("Worktree path contains invalid UTF-8: {}", path.display()),
             })
         })?;
-        self.run_command(&["worktree", "remove", path_str])?;
+        let mut args = vec!["worktree", "remove"];
+        if force {
+            args.push("--force");
+        }
+        args.push(path_str);
+        self.run_command(&args)?;
         Ok(())
     }
 

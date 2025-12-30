@@ -2330,8 +2330,11 @@ Removal runs in the background by default (returns immediately). Logs are writte
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]
         verify: bool,
 
-        /// Skip approval prompts
-        #[arg(long)]
+        /// Force removal
+        ///
+        /// Skip approval prompts, and remove worktrees even if they contain
+        /// untracked files (like build artifacts).
+        #[arg(short = 'f', long)]
         force: bool,
     },
 

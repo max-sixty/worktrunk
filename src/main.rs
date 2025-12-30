@@ -1380,8 +1380,9 @@ fn main() {
                 if worktrees.is_empty() {
                     // No worktrees specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
-                    let result = handle_remove_current(!delete_branch, force_delete, background)
-                        .context("Failed to remove worktree")?;
+                    let result =
+                        handle_remove_current(!delete_branch, force_delete, force, background)
+                            .context("Failed to remove worktree")?;
                     // Approval was handled at the gate
                     // Post-switch hooks are spawned internally by handle_remove_output
                     handle_remove_output(&result, background, verify)
@@ -1430,6 +1431,7 @@ fn main() {
                                 branch_name,
                                 !delete_branch,
                                 force_delete,
+                                force,
                                 background,
                             ) {
                                 Ok(result) => {
@@ -1442,7 +1444,7 @@ fn main() {
                             }
                         } else {
                             // Non-current worktree is detached - remove by path (no branch to delete)
-                            match handle_remove_by_path(path, None, background) {
+                            match handle_remove_by_path(path, None, force, background) {
                                 Ok(result) => {
                                     handle_remove_output(&result, background, verify)?;
                                 }
@@ -1456,7 +1458,8 @@ fn main() {
 
                     // Handle branch-only cases (no worktree)
                     for branch in &branch_only {
-                        match handle_remove(branch, !delete_branch, force_delete, background) {
+                        match handle_remove(branch, !delete_branch, force_delete, force, background)
+                        {
                             Ok(result) => {
                                 handle_remove_output(&result, background, verify)?;
                             }
@@ -1470,7 +1473,8 @@ fn main() {
                     // Remove current worktree last (if it was in the list)
                     // Post-switch hooks are spawned internally by handle_remove_output
                     if let Some((_path, _branch)) = current {
-                        match handle_remove_current(!delete_branch, force_delete, background) {
+                        match handle_remove_current(!delete_branch, force_delete, force, background)
+                        {
                             Ok(result) => {
                                 handle_remove_output(&result, background, verify)?;
                             }

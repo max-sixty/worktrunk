@@ -412,7 +412,14 @@ pub fn execute_user_command(command: &str) -> anyhow::Result<()> {
 /// `branch_to_delete` is the branch to delete after removing the worktree.
 /// Pass `None` for detached HEAD or when branch should be retained.
 /// This decision is computed upfront (checking if branch is merged) before spawning the background process.
-fn build_remove_command(worktree_path: &std::path::Path, branch_to_delete: Option<&str>) -> String {
+///
+/// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
+/// even when the worktree contains untracked files (like build artifacts).
+fn build_remove_command(
+    worktree_path: &std::path::Path,
+    branch_to_delete: Option<&str>,
+    force_worktree: bool,
+) -> String {
     use shell_escape::escape;
 
     let worktree_path_str = worktree_path.to_string_lossy();
@@ -435,18 +442,20 @@ fn build_remove_command(worktree_path: &std::path::Path, branch_to_delete: Optio
         worktree_escaped
     );
 
+    let force_flag = if force_worktree { " --force" } else { "" };
+
     match branch_to_delete {
         Some(branch_name) => {
             let branch_escaped = escape(branch_name.into());
             format!(
-                "{} && {} && git worktree remove {} && git branch -D {}",
-                delay, stop_fsmonitor, worktree_escaped, branch_escaped
+                "{} && {} && git worktree remove{} {} && git branch -D {}",
+                delay, stop_fsmonitor, force_flag, worktree_escaped, branch_escaped
             )
         }
         None => {
             format!(
-                "{} && {} && git worktree remove {}",
-                delay, stop_fsmonitor, worktree_escaped
+                "{} && {} && git worktree remove{} {}",
+                delay, stop_fsmonitor, force_flag, worktree_escaped
             )
         }
     }
@@ -469,6 +478,7 @@ pub fn handle_remove_output(
             deletion_mode,
             target_branch,
             integration_reason,
+            force_worktree,
         } => handle_removed_worktree_output(
             main_path,
             worktree_path,
@@ -477,6 +487,7 @@ pub fn handle_remove_output(
             *deletion_mode,
             target_branch.as_deref(),
             *integration_reason,
+            *force_worktree,
             background,
             verify,
         ),
@@ -570,6 +581,7 @@ fn handle_removed_worktree_output(
     deletion_mode: BranchDeletionMode,
     target_branch: Option<&str>,
     pre_computed_integration: Option<IntegrationReason>,
+    force_worktree: bool,
     background: bool,
     verify: bool,
 ) -> anyhow::Result<()> {
@@ -604,7 +616,7 @@ fn handle_removed_worktree_output(
             super::print(progress_message(
                 "Removing worktree in background (detached HEAD, no branch to delete)",
             ))?;
-            let remove_command = build_remove_command(worktree_path, None);
+            let remove_command = build_remove_command(worktree_path, None, force_worktree);
             spawn_detached(
                 &repo,
                 main_path,
@@ -616,7 +628,7 @@ fn handle_removed_worktree_output(
         } else {
             let target_repo = worktrunk::git::Repository::at(worktree_path);
             let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
-            if let Err(err) = repo.remove_worktree(worktree_path) {
+            if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
                 return Err(GitError::WorktreeRemovalFailed {
                     branch: path_dir_name(worktree_path).to_string(),
                     path: worktree_path.to_path_buf(),
@@ -710,8 +722,11 @@ fn handle_removed_worktree_output(
         print_switch_message_if_changed(changed_directory, main_path)?;
 
         // Build command with the decision we already made
-        let remove_command =
-            build_remove_command(worktree_path, should_delete_branch.then_some(branch_name));
+        let remove_command = build_remove_command(
+            worktree_path,
+            should_delete_branch.then_some(branch_name),
+            force_worktree,
+        );
 
         // Spawn the removal in background - runs from main_path (where we cd'd to)
         spawn_detached(
@@ -735,7 +750,7 @@ fn handle_removed_worktree_output(
         let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
 
         // Track whether branch was actually deleted (will be computed based on deletion attempt)
-        if let Err(err) = repo.remove_worktree(worktree_path) {
+        if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
             return Err(GitError::WorktreeRemovalFailed {
                 branch: branch_name.into(),
                 path: worktree_path.to_path_buf(),
@@ -1214,21 +1229,32 @@ mod tests {
     fn test_build_remove_command() {
         let path = PathBuf::from("/tmp/test-worktree");
 
-        // Without branch deletion
-        let cmd = build_remove_command(&path, None);
+        // Without branch deletion, without force
+        let cmd = build_remove_command(&path, None, false);
         assert!(cmd.contains("git worktree remove"));
         assert!(cmd.contains("/tmp/test-worktree"));
         assert!(!cmd.contains("branch -D"));
+        assert!(!cmd.contains("--force"));
 
-        // With branch deletion
-        let cmd = build_remove_command(&path, Some("feature-branch"));
+        // With branch deletion, without force
+        let cmd = build_remove_command(&path, Some("feature-branch"), false);
         assert!(cmd.contains("git worktree remove"));
         assert!(cmd.contains("git branch -D"));
         assert!(cmd.contains("feature-branch"));
+        assert!(!cmd.contains("--force"));
+
+        // With force flag
+        let cmd = build_remove_command(&path, None, true);
+        assert!(cmd.contains("git worktree remove --force"));
+
+        // With branch deletion and force
+        let cmd = build_remove_command(&path, Some("feature-branch"), true);
+        assert!(cmd.contains("git worktree remove --force"));
+        assert!(cmd.contains("git branch -D"));
 
         // Shell escaping for special characters
         let special_path = PathBuf::from("/tmp/test worktree");
-        let cmd = build_remove_command(&special_path, Some("feature/branch"));
+        let cmd = build_remove_command(&special_path, Some("feature/branch"), false);
         assert!(cmd.contains("worktree remove"));
     }
 

@@ -27,6 +27,7 @@ pub trait RepositoryCliExt {
         &self,
         branch_name: &str,
         deletion_mode: BranchDeletionMode,
+        force_worktree: bool,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Remove the current worktree (handles detached HEAD state).
@@ -38,6 +39,7 @@ pub trait RepositoryCliExt {
     fn remove_current_worktree(
         &self,
         deletion_mode: BranchDeletionMode,
+        force_worktree: bool,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -86,6 +88,7 @@ impl RepositoryCliExt for Repository {
         &self,
         branch_name: &str,
         deletion_mode: BranchDeletionMode,
+        force_worktree: bool,
     ) -> anyhow::Result<RemoveResult> {
         let worktree_path = match self.worktree_for_branch(branch_name)? {
             Some(path) => path,
@@ -165,12 +168,14 @@ impl RepositoryCliExt for Repository {
             deletion_mode,
             target_branch,
             integration_reason,
+            force_worktree,
         })
     }
 
     fn remove_current_worktree(
         &self,
         deletion_mode: BranchDeletionMode,
+        force_worktree: bool,
     ) -> anyhow::Result<RemoveResult> {
         // Cannot remove the main working tree (only linked worktrees can be removed)
         if !self.is_in_worktree()? {
@@ -220,6 +225,7 @@ impl RepositoryCliExt for Repository {
             deletion_mode,
             target_branch,
             integration_reason,
+            force_worktree,
         })
     }
 

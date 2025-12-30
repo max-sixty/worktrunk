@@ -246,6 +246,9 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some(target_branch.clone()),
             integration_reason,
+            // After a successful merge, force removal since any untracked files
+            // (build artifacts) are no longer needed
+            force_worktree: true,
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (MergeCommandCollector)

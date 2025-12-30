@@ -39,8 +39,10 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[WORKTREES]...
       [1m[36m--no-verify
           Skip hooks
 
-      [1m[36m--force
-          Skip approval prompts
+  [1m[36m-f[0m, [1m[36m--force
+          Force removal
+          
+          Skip approval prompts, and remove worktrees even if they contain untracked files (like build artifacts).
 
   [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')

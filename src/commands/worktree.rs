@@ -452,6 +452,8 @@ pub enum RemoveResult {
         /// in background mode (background git operations can hold locks that cause
         /// subsequent integration checks to fail).
         integration_reason: Option<worktrunk::git::IntegrationReason>,
+        /// Force git worktree removal even with untracked files.
+        force_worktree: bool,
     },
     /// Branch exists but has no worktree - attempt branch deletion only
     BranchOnly {
@@ -742,6 +744,7 @@ pub fn handle_remove(
     worktree_name: &str,
     no_delete_branch: bool,
     force_delete: bool,
+    force_worktree: bool,
     background: bool,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
@@ -756,6 +759,7 @@ pub fn handle_remove(
     repo.remove_worktree_by_name(
         worktree_name,
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
+        force_worktree,
     )
 }
 
@@ -766,6 +770,7 @@ pub fn handle_remove(
 pub fn handle_remove_current(
     no_delete_branch: bool,
     force_delete: bool,
+    force_worktree: bool,
     background: bool,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
@@ -775,10 +780,10 @@ pub fn handle_remove_current(
         crate::output::print(progress_message("Removing current worktree..."))?;
     }
 
-    repo.remove_current_worktree(BranchDeletionMode::from_flags(
-        no_delete_branch,
-        force_delete,
-    ))
+    repo.remove_current_worktree(
+        BranchDeletionMode::from_flags(no_delete_branch, force_delete),
+        force_worktree,
+    )
 }
 
 /// Handle removing a worktree by path (for detached non-current worktrees).
@@ -790,6 +795,7 @@ pub fn handle_remove_current(
 pub fn handle_remove_by_path(
     path: &std::path::Path,
     branch: Option<String>,
+    force_worktree: bool,
     background: bool,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
@@ -821,6 +827,7 @@ pub fn handle_remove_by_path(
         deletion_mode: BranchDeletionMode::Keep, // Can't delete branch for detached worktree
         target_branch: None,
         integration_reason: None, // Not applicable for detached worktrees
+        force_worktree,
     })
 }
 
@@ -1233,6 +1240,7 @@ mod tests {
             deletion_mode: BranchDeletionMode::SafeDelete,
             target_branch: Some("main".to_string()),
             integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
+            force_worktree: false,
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -1243,6 +1251,7 @@ mod tests {
                 deletion_mode,
                 target_branch,
                 integration_reason,
+                force_worktree,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -1252,6 +1261,7 @@ mod tests {
                 assert!(!deletion_mode.is_force());
                 assert_eq!(target_branch.as_deref(), Some("main"));
                 assert!(integration_reason.is_some());
+                assert!(!force_worktree);
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
@@ -1286,15 +1296,18 @@ mod tests {
             deletion_mode: BranchDeletionMode::ForceDelete,
             target_branch: None,
             integration_reason: None, // Force delete skips integration check
+            force_worktree: true,
         };
         match result {
             RemoveResult::RemovedWorktree {
                 branch_name,
                 deletion_mode,
+                force_worktree,
                 ..
             } => {
                 assert!(branch_name.is_none());
                 assert!(deletion_mode.is_force());
+                assert!(force_worktree);
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }

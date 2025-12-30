@@ -92,8 +92,11 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--no-verify</span></b>
           Skip hooks
 
-      <b><span class=c>--force</span></b>
-          Skip approval prompts
+  <b><span class=c>-f</span></b>, <b><span class=c>--force</span></b>
+          Force removal
+
+          Skip approval prompts, and remove worktrees even if they contain
+          untracked files (like build artifacts).
 
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
