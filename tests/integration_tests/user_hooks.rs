@@ -833,3 +833,196 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
         "Error should mention no hook configured, got: {stderr}"
     );
 }
+
+// ============================================================================
+// Concurrent Hook Execution Tests (post-start, post-switch)
+// ============================================================================
+
+/// Test that a single failing concurrent hook reports the failure
+#[rstest]
+fn test_concurrent_hook_single_failure(repo: TestRepo) {
+    // Write project config with a failing post-start hook
+    repo.write_project_config(r#"post-start = "exit 1""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-start should fail when hook exits with error"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("exit status: 1"),
+        "Error should mention exit status, got: {stderr}"
+    );
+}
+
+/// Test that multiple failing concurrent hooks report all failures
+#[rstest]
+fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
+    // Write project config with multiple named failing hooks (table format)
+    repo.write_project_config(
+        r#"[post-start]
+first = "exit 1"
+second = "exit 2"
+"#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-start should fail when hooks exit with error"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should report multiple failures
+    assert!(
+        stderr.contains("2 commands failed"),
+        "Error should mention 2 commands failed, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("first") && stderr.contains("second"),
+        "Error should list both failed command names, got: {stderr}"
+    );
+}
+
+/// Test that user and project post-start hooks both run concurrently
+#[rstest]
+fn test_concurrent_hook_user_and_project(repo: TestRepo) {
+    // Write user config with post-start hook (using table format for named hook)
+    repo.write_test_config(
+        r#"[post-start]
+user = "echo 'USER_HOOK' > user_hook_ran.txt"
+"#,
+    );
+
+    // Write project config with post-start hook
+    repo.write_project_config(r#"post-start = "echo 'PROJECT_HOOK' > project_hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-start should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Both hooks should have run
+    let user_marker = repo.root_path().join("user_hook_ran.txt");
+    let project_marker = repo.root_path().join("project_hook_ran.txt");
+
+    assert!(user_marker.exists(), "user post-start hook should have run");
+    assert!(
+        project_marker.exists(),
+        "project post-start hook should have run"
+    );
+
+    let user_content = fs::read_to_string(&user_marker).unwrap();
+    let project_content = fs::read_to_string(&project_marker).unwrap();
+    assert!(user_content.contains("USER_HOOK"));
+    assert!(project_content.contains("PROJECT_HOOK"));
+}
+
+/// Test that post-switch hooks also run concurrently
+#[rstest]
+fn test_concurrent_hook_post_switch(repo: TestRepo) {
+    // Write project config with post-switch hook
+    repo.write_project_config(r#"post-switch = "echo 'POST_SWITCH' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-switch", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-switch should succeed"
+    );
+
+    // Hook should have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "post-switch hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("POST_SWITCH"));
+}
+
+/// Test that concurrent hooks work with name filter
+#[rstest]
+fn test_concurrent_hook_with_name_filter(repo: TestRepo) {
+    // Write project config with multiple named hooks
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo 'FIRST' > first.txt"
+second = "echo 'SECOND' > second.txt"
+"#,
+    );
+
+    // Run only the "first" hook by name
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "first"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-start --name first should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Only the first hook should have run
+    let first_marker = repo.root_path().join("first.txt");
+    let second_marker = repo.root_path().join("second.txt");
+
+    assert!(first_marker.exists(), "first hook should have run");
+    assert!(!second_marker.exists(), "second hook should NOT have run");
+}
+
+/// Test that concurrent hooks with invalid name filter return error
+#[rstest]
+fn test_concurrent_hook_invalid_name_filter(repo: TestRepo) {
+    // Write project config with named hooks
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo 'FIRST'"
+"#,
+    );
+
+    // Try to run a non-existent hook by name
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "nonexistent"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-start --name nonexistent should fail"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nonexistent") && stderr.contains("No command named"),
+        "Error should mention command not found, got: {stderr}"
+    );
+    // Should list available commands
+    assert!(
+        stderr.contains("project:first"),
+        "Error should list available commands, got: {stderr}"
+    );
+}

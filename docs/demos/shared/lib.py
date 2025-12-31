@@ -84,27 +84,34 @@ def git(args, cwd=None, env=None):
     run(["git"] + args, cwd=cwd, env=env)
 
 
-def render_tape(template_path: Path, output_path: Path, replacements: dict) -> bool:
-    """Render a VHS tape template with variable substitutions.
+def render_tape(template_path: Path, replacements: dict, repo_root: Path) -> str | None:
+    """Render a VHS tape template with Source inlining and variable substitutions.
 
     Args:
         template_path: Path to the .tape template file
-        output_path: Path to write the rendered .tape file
         replacements: Dict of {{VAR}} -> value replacements
+        repo_root: Root of the repository (for resolving Source paths)
 
     Returns:
-        True if successful, False if template doesn't exist
+        Rendered tape content, or None if template doesn't exist
     """
     if not template_path.exists():
         print(f"Warning: {template_path} not found, skipping VHS recording")
-        return False
+        return None
 
-    template = template_path.read_text()
-    rendered = template
+    rendered = template_path.read_text()
+
+    # Inline Source directives (VHS doesn't support them, we handle it)
+    def inline_source(match):
+        source_path = repo_root / match.group(1).strip().strip('"')
+        return source_path.read_text()
+
+    rendered = re.sub(r'^Source\s+(.+)$', inline_source, rendered, flags=re.MULTILINE)
+
+    # Apply template variable replacements
     for key, value in replacements.items():
         rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
-    output_path.write_text(rendered)
-    return True
+    return rendered
 
 
 def record_vhs(tape_path: Path, vhs_binary: str = "vhs"):
@@ -713,23 +720,21 @@ def record_text(
     demo_env: DemoEnv,
     tape_path: Path,
     output_txt: Path,
-    replacements: dict = None,
+    replacements: dict,
+    repo_root: Path,
     vhs_binary: str = "vhs",
 ) -> None:
     """Record text output by rendering tape via VHS.
 
     Uses VHS with .txt output to capture authentic shell session including
-    real prompts and command output. The output contains frame-by-frame
-    terminal snapshots separated by 80-char lines of dashes.
-
-    Note: VHS text output is fixed at 80 characters wide regardless of
-    Set Width. Content wider than 80 chars will be truncated.
+    real prompts and command output.
 
     Args:
         demo_env: Demo environment
         tape_path: Path to VHS tape file
         output_txt: Path to write text output
-        replacements: Template variable replacements (e.g., {{DEMO_REPO}} -> path)
+        replacements: Template variable replacements
+        repo_root: Root of the repository (for resolving Source paths)
         vhs_binary: VHS binary to use
 
     Raises:
@@ -740,60 +745,29 @@ def record_text(
     if is_interactive_tape(tape_path):
         raise ValueError(f"Cannot record text for interactive tape: {tape_path}")
 
-    # Create a text-output tape by modifying the template
-    tape_content = tape_path.read_text()
+    # Render tape with variable substitution
+    rendered = render_tape(tape_path, replacements, repo_root)
+    if not rendered:
+        raise RuntimeError(f"Failed to render tape: {tape_path}")
 
-    # Apply template replacements first
-    if replacements:
-        for key, value in replacements.items():
-            tape_content = tape_content.replace(f"{{{{{key}}}}}", str(value))
-
-    # Replace Output directive to use .txt (must be absolute path)
+    # Modify for text output
     temp_txt = (demo_env.out_dir / ".text-output.txt").resolve()
-    tape_content = re.sub(
-        r'^Output\s+"[^"]+"',
-        f'Output "{temp_txt}"',
-        tape_content,
-        flags=re.MULTILINE,
-    )
-
-    # VHS text output requires minimum 120x120 dimensions
-    tape_content = re.sub(
-        r'^Set Width .*$',
-        'Set Width 120',
-        tape_content,
-        flags=re.MULTILINE,
-    )
-    tape_content = re.sub(
-        r'^Set Height .*$',
-        'Set Height 120',
-        tape_content,
-        flags=re.MULTILINE,
-    )
-    # Remove visual settings not meaningful for text output
-    # Padding especially breaks text capture (reduces effective terminal width)
+    rendered = re.sub(r'^Output\s+"[^"]+"', f'Output "{temp_txt}"', rendered, flags=re.MULTILINE)
+    rendered = re.sub(r'^Set Width .*$', 'Set Width 120', rendered, flags=re.MULTILINE)
+    rendered = re.sub(r'^Set Height .*$', 'Set Height 120', rendered, flags=re.MULTILINE)
     for setting in ["FontSize", "Theme", "Padding"]:
-        tape_content = re.sub(
-            rf'^Set {setting} .*$\n?',
-            '',
-            tape_content,
-            flags=re.MULTILINE,
-        )
+        rendered = re.sub(rf'^Set {setting} .*$\n?', '', rendered, flags=re.MULTILINE)
 
-    # Write rendered tape (resolve for consistent VHS execution)
+    # Write and run
     tape_rendered = (demo_env.out_dir / ".text-rendered.tape").resolve()
-    tape_rendered.write_text(tape_content)
-
-    # Run VHS (let CalledProcessError propagate)
+    tape_rendered.write_text(rendered)
     try:
         run([vhs_binary, str(tape_rendered)], check=True)
     finally:
         tape_rendered.unlink(missing_ok=True)
 
-    # Copy output to final location
     if not temp_txt.exists():
         raise RuntimeError(f"VHS succeeded but output file not created: {temp_txt}")
-
     shutil.copy(temp_txt, output_txt)
     temp_txt.unlink()
 
@@ -812,12 +786,17 @@ SIZE_DOCS = DemoSize(width=1600, height=900, fontsize=24)    # More content for 
 
 
 def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
-    """Build base template variable replacements for tape rendering.
+    """Build template variable replacements for tape rendering.
 
     Used by both GIF recording and text recording to ensure consistency.
     All paths are resolved to absolute paths for VHS compatibility.
+
+    Tapes use Source directives for shared content:
+    - Source shared-setup.tape: VHS Set directives (at top, before Output)
+    - Source shared-commands.tape: Env vars and shell setup (after Require)
     """
     starship_config = (demo_env.out_dir / "starship.toml").resolve()
+
     return {
         "DEMO_REPO": demo_env.repo.resolve(),
         "DEMO_HOME": demo_env.home.resolve(),
@@ -863,9 +842,11 @@ def record_all_themes(
             "FONTSIZE": size.fontsize,
         }
 
-        if not render_tape(tape_template, tape_rendered, replacements):
+        rendered = render_tape(tape_template, replacements, repo_root)
+        if not rendered:
             continue
 
+        tape_rendered.write_text(rendered)
         print(f"\nRecording {theme_name} GIF...")
         record_vhs(tape_rendered, vhs_binary)
         tape_rendered.unlink(missing_ok=True)

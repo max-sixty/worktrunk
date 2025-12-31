@@ -29,11 +29,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p docs/static/assets
-          for file in $(gh api repos/max-sixty/worktrunk-assets/contents/demos --jq '.[].name'); do
-            curl -fsSL -o "docs/static/assets/$file" \
-              "https://raw.githubusercontent.com/max-sixty/worktrunk-assets/main/demos/$file"
-          done
+          # Clone just the demos directory from worktrunk-assets
+          gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1 --filter=blob:none --sparse
+          cd /tmp/worktrunk-assets
+          git sparse-checkout set demos
+          # Copy assets to docs/static/assets
+          mkdir -p $GITHUB_WORKSPACE/docs/static/assets
+          cp -r demos/* $GITHUB_WORKSPACE/docs/static/assets/
 
       - name: 🕷️ Build docs
         run: zola build
