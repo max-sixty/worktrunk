@@ -34,6 +34,7 @@ exclude = [
     # Sites with reliability issues in CI
     "stackoverflow\\.com",
     "npmjs\\.com",
+    "incident\\.io",
 
     # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",
