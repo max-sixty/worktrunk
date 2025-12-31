@@ -1,6 +1,7 @@
 use crate::common::{
-    BareRepoTest, TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo,
-    repo_with_remote, setup_snapshot_settings, setup_temp_snapshot_settings, wt_command,
+    BareRepoTest, TestRepo, TestRepoBase, configure_directive_file, directive_file,
+    make_snapshot_cmd, repo, repo_with_remote, setup_snapshot_settings,
+    setup_temp_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -791,7 +792,7 @@ fn test_remove_default_branch_no_tautology() {
 
     // Create worktrees for main and feature branches
     let main_worktree = test.create_worktree("main", "main");
-    test.commit_in_worktree(&main_worktree, "Initial commit on main");
+    test.commit_in(&main_worktree, "Initial commit on main");
     let feature_worktree = test.create_worktree("feature", "feature");
 
     // Remove main worktree by name from feature worktree (foreground for snapshot)

@@ -612,6 +612,28 @@ pub trait TestRepoBase {
         let output = self.git_command(dir).args(args).output().unwrap();
         check_git_status(&output, &args.join(" "));
     }
+
+    /// Create a commit in the specified directory.
+    ///
+    /// Creates or overwrites `file.txt` with the message content, stages it, and commits.
+    fn commit_in(&self, dir: &Path, message: &str) {
+        std::fs::write(dir.join("file.txt"), message).unwrap();
+        self.run_git_in(dir, &["add", "file.txt"]);
+
+        let output = self
+            .git_command(dir)
+            .args(["commit", "-m", message])
+            .output()
+            .unwrap();
+
+        if !output.status.success() {
+            panic!(
+                "Failed to commit:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 }
 
 /// Create a temporary file for directive output.
@@ -1842,31 +1864,6 @@ impl BareRepoTest {
         }
 
         canonicalize(&worktree_path).unwrap()
-    }
-
-    /// Create a commit in the specified worktree.
-    pub fn commit_in_worktree(&self, worktree_path: &Path, message: &str) {
-        // Create a file
-        let file_path = worktree_path.join("file.txt");
-        std::fs::write(&file_path, message).unwrap();
-
-        // Add file
-        self.run_git_in(worktree_path, &["add", "file.txt"]);
-
-        // Commit
-        let output = self
-            .git_command(worktree_path)
-            .args(["commit", "-m", message])
-            .output()
-            .unwrap();
-
-        if !output.status.success() {
-            panic!(
-                "Failed to commit:\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
     }
 
     /// Configure a wt command with test environment.
