@@ -90,6 +90,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &[],
                 HookFailureStrategy::FailFast,
                 name_filter,
+                None,
             )
         }
         HookType::PostStart => {
@@ -106,6 +107,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 hook_type,
                 &[],
                 name_filter,
+                None,
             )?;
             check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
             spawn_hook_commands_background(&ctx, commands, hook_type)
@@ -124,6 +126,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 hook_type,
                 &[],
                 name_filter,
+                None,
             )?;
             check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
             spawn_hook_commands_background(&ctx, commands, hook_type)
@@ -149,6 +152,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &extra_vars,
                 HookFailureStrategy::FailFast,
                 name_filter,
+                None,
             )
         }
         HookType::PreMerge => {
@@ -160,7 +164,8 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
         }
         HookType::PostMerge => {
             // Use current branch as target (matches approval prompt for wt hook)
-            execute_post_merge_commands(&ctx, ctx.branch_or_head(), name_filter)
+            // No display_path - user is already in the directory where hooks run
+            execute_post_merge_commands(&ctx, ctx.branch_or_head(), name_filter, None)
         }
         HookType::PreRemove => execute_pre_remove_commands(&ctx, name_filter),
     }
@@ -291,6 +296,7 @@ pub fn handle_squash(
             HookType::PreCommit,
             &extra_vars,
             HookFailureStrategy::FailFast,
+            None,
             None,
         )
         .map_err(worktrunk::git::add_hook_skip_hint)?;

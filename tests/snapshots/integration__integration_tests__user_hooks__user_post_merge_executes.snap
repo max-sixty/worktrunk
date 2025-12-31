@@ -38,5 +38,5 @@ exit_code: 0
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
 [2m○[22m Worktree preserved (--no-remove)
-[36m◎[39m [36mRunning post-merge [1muser:notify[22m:[39m
+[36m◎[39m [36mRunning post-merge [1muser:notify[22m @ [1m_REPO_[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'USER_POST_MERGE_RAN'[0m[2m [0m[2m[36m>[0m[2m user_postmerge.txt

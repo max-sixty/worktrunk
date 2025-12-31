@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use worktrunk::HookType;
 use worktrunk::config::ProjectConfig;
 use worktrunk::git::Repository;
@@ -280,7 +282,15 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             &destination_repo_root,
             yes,
         );
-        execute_post_merge_commands(&ctx, &target_branch, None)?;
+        // Show path when user's shell stays in a different directory than where hooks run.
+        // This happens only with --no-remove on a feature branch (not in_main, not on_target).
+        // When in_main or on_target, user is already in the destination directory.
+        let display_path = if !remove_effective && !in_main && !on_target {
+            Some(destination_path.as_path())
+        } else {
+            None
+        };
+        execute_post_merge_commands(&ctx, &target_branch, None, display_path)?;
     }
 
     Ok(())
@@ -316,18 +326,23 @@ pub fn run_pre_merge_commands(
         &[("target", target_branch)],
         HookFailureStrategy::FailFast,
         name_filter,
+        None, // No path display - running in expected directory
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }
 
-/// Execute post-merge commands sequentially in the main worktree (blocking)
+/// Execute post-merge commands sequentially in the target worktree (blocking)
 ///
 /// Runs user hooks first, then project hooks.
 /// Approval is handled at the gate (command entry point).
+///
+/// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
+/// the worktree is preserved and the user's shell remains in a different directory.
 pub fn execute_post_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
     name_filter: Option<&str>,
+    display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     // Load project config from the main worktree path
     let project_config = ctx.repo.load_project_config()?;
@@ -342,6 +357,7 @@ pub fn execute_post_merge_commands(
         &[("target", target_branch)],
         HookFailureStrategy::Warn,
         name_filter,
+        display_path,
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }
@@ -367,6 +383,7 @@ pub fn execute_pre_remove_commands(
         &[],
         HookFailureStrategy::FailFast,
         name_filter,
+        None, // No path display - running in expected directory
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }
