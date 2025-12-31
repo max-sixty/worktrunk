@@ -110,8 +110,8 @@ changes become a separate commit and individual commits are preserved.
 the worktree is preserved.
 7. [1mPost-merge hooks[0m — Project commands run after cleanup. Failures are logged but don't abort.
 
-Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless you pass
-[2m--no-rebase[0m. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
+Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is
+passed. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 
 [32mLocal CI
 

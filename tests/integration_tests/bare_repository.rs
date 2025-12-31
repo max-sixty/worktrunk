@@ -189,18 +189,15 @@ fn test_bare_repo_list_shows_no_bare_entry() {
     let main_worktree = test.create_worktree("main", "main");
     test.commit_in_worktree(&main_worktree, "Initial commit");
 
-    // Run wt list and verify bare repo is NOT shown
-    let mut cmd = wt_command();
-    test.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(&main_worktree);
+    // Run wt list and verify bare repo is NOT shown (only main worktree appears)
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(&main_worktree);
 
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Should only show the main worktree, not the bare repo (table output is on stdout)
-    assert!(stdout.contains("main"));
-    assert!(!stdout.contains(".git"));
-    assert!(!stdout.contains("bare"));
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 #[test]
@@ -337,16 +334,14 @@ fn test_bare_repo_identifies_primary_correctly() {
     let _feature2 = test.create_worktree("feature2", "feature2");
 
     // Run wt list to see which is marked as primary
-    let mut cmd = wt_command();
-    test.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(&main_worktree);
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(&main_worktree);
 
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // First non-bare worktree (main) should be primary (table output is on stdout)
-    // The exact formatting may vary, but main should be listed
-    assert!(stdout.contains("main"));
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 #[test]
@@ -435,25 +430,15 @@ fn test_bare_repo_commands_from_bare_directory() {
     test.commit_in_worktree(&main_worktree, "Initial commit");
 
     // Run wt list from the bare repo directory itself (not from a worktree)
-    let mut cmd = wt_command();
-    test.configure_wt_cmd(&mut cmd);
-    cmd.arg("list").current_dir(test.bare_repo_path());
+    // Should list the worktree even when run from bare repo, not showing bare repo itself
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(test.bare_repo_path());
 
-    let output = cmd.output().unwrap();
-
-    if !output.status.success() {
-        panic!(
-            "wt list from bare repo failed:\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Should list the worktree even when run from bare repo (table output is on stdout)
-    assert!(stdout.contains("main"), "Should show main worktree");
-    assert!(!stdout.contains("bare"), "Should not show bare repo itself");
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 /// Test that merge workflow works correctly with bare repositories.

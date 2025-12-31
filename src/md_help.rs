@@ -172,6 +172,19 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
 }
 
 /// Strip markdown links, keeping only the link text: `[text](url)` -> `text`
+///
+/// Limitation: Links in clap help text may be broken across lines by clap's wrapping
+/// before this function runs. The simple fix (setting `cmd.term_width(0)` to disable
+/// clap's wrapping) doesn't work because clap provides proper indentation for option
+/// description continuation lines — our `wrap_styled_text` would lose this alignment.
+///
+/// To support arbitrary markdown links in `--help`, we'd need to split help output at
+/// `find_after_help_start()`, keep clap's wrapped Options section, get raw after_long_help
+/// via `cmd.get_after_long_help()`, process it ourselves, then combine. This requires
+/// restructuring since `cmd` is consumed by `try_get_matches_from_mut`.
+///
+/// Current workaround: Use plain URLs in cli.rs (terminals auto-link `https://...`),
+/// transform to markdown links for web docs in `colorize_ci_status_for_html()`.
 fn strip_markdown_links(line: &str) -> String {
     let mut result = String::new();
     let mut chars = line.chars().peekable();

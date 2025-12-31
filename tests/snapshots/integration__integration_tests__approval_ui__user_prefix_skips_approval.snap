@@ -1,10 +1,11 @@
 ---
-source: tests/integration_tests/switch.rs
+source: tests/integration_tests/approval_ui.rs
 info:
   program: wt
   args:
-    - switch
-    - feature
+    - hook
+    - pre-merge
+    - "user:test"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -23,14 +24,13 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
-success: false
-exit_code: 1
+success: true
+exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot switch to [1mfeature[22m — there's a detached worktree at the expected path [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mTo switch the worktree at [1m_REPO_.feature[22m to branch [1mfeature[22m:[22m
-[107m [0m [2m[0m[2m[34mcd[0m[2m _REPO_.feature [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch feature
+[36m◎[39m [36mRunning pre-merge [1muser:test[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'user test'[0m[2m
+[0muser test

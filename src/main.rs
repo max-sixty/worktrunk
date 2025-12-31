@@ -375,6 +375,8 @@ fn handle_help_page(args: &[String]) {
 /// Transforms plain text like "`●` green" into colored HTML spans for web rendering.
 /// This is the web-docs counterpart to md_help::colorize_status_symbols() which
 /// produces ANSI codes for terminal output.
+///
+/// Also converts plain URL references to markdown links for web docs.
 fn colorize_ci_status_for_html(text: &str) -> String {
     text
         // CI status colors (in table cells)
@@ -384,6 +386,13 @@ fn colorize_ci_status_for_html(text: &str) -> String {
         .replace("`●` yellow", "<span style='color:#a60'>●</span> yellow")
         .replace("`⚠` yellow", "<span style='color:#a60'>⚠</span> yellow")
         .replace("`●` gray", "<span style='color:#888'>●</span> gray")
+        // Convert plain URL references to markdown links for web docs
+        // CLI shows: "Open an issue at https://github.com/max-sixty/worktrunk."
+        // Web shows: "[Open an issue](https://github.com/max-sixty/worktrunk/issues)."
+        .replace(
+            "Open an issue at https://github.com/max-sixty/worktrunk.",
+            "[Open an issue](https://github.com/max-sixty/worktrunk/issues).",
+        )
 }
 
 /// Increase markdown heading levels by one (## -> ###, ### -> ####, etc.)

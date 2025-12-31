@@ -9,7 +9,7 @@ info:
   env:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
-    GIT_CONFIG_GLOBAL: ""
+    GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
@@ -112,7 +112,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m
   [2m# Approved Commands
   [2m# Commands approved for project hooks in this repo
-  [2m# Auto-populated when you approve hooks (prompt on first run) or run: wt hook approvals add
+  [2m# Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
   [2m[projects."github.com/user/repo"]
   [2mapproved-commands = ["npm install"]
   [2m

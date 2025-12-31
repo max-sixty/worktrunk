@@ -1354,23 +1354,8 @@ approved-commands = ["echo 'background task'"]
 
         assert_eq!(output.exit_code, 0, "Command should succeed");
 
-        // Critical assertion: progress messages should appear to users
-        // This is the test that catches the bug where progress() was incorrectly suppressed
-        assert!(
-            output.combined.contains("Running project post-start"),
-            "Progress message 'Running project post-start' missing from output. \
-         Output:\n{}",
-            output.combined
-        );
-
-        // The background command itself should be shown via gutter formatting
-        assert!(
-            output.combined.contains("background task"),
-            "Background command content missing from output"
-        );
-
-        // Normalize paths in output for snapshot testing
-        // Snapshot the full output
+        // Snapshot verifies progress messages appear to users
+        // (catches the bug where progress() was incorrectly suppressed)
         assert_snapshot!(output.normalized());
     }
 
@@ -1419,20 +1404,7 @@ approved-commands = ["echo 'fish background task'"]
 
         assert_eq!(output.exit_code, 0, "Command should succeed");
 
-        // Critical: progress messages should appear to users through Fish wrapper
-        assert!(
-            output.combined.contains("Running project post-start"),
-            "Progress message 'Running project post-start' missing from Fish wrapper output. \
-         Output:\n{}",
-            output.combined
-        );
-
-        // The background command itself should be shown via gutter formatting
-        assert!(
-            output.combined.contains("fish background task"),
-            "Background command content missing from output"
-        );
-
+        // Snapshot verifies progress messages appear to users through Fish wrapper
         assert_snapshot!(output.normalized());
     }
 

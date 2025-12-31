@@ -355,7 +355,7 @@ pub fn handle_switch_output(
             {
                 // Shell wrapper is configured but user ran binary directly
                 super::print(warning_message(cformat!(
-                    "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — restart your shell to activate"
+                    "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — restart the shell to activate"
                 )))?;
                 if let Some(warning) = path_mismatch_warning {
                     super::print(warning)?;

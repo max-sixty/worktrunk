@@ -1461,9 +1461,16 @@ Hooks normally run automatically during `wt switch --create`, `wt merge`, and `w
 Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```console
-wt hook pre-merge         # Run pre-merge hooks
-wt hook pre-merge --yes   # Skip approval prompts (for CI)
+wt hook pre-merge              # Run all pre-merge hooks
+wt hook pre-merge test         # Run hooks named "test" from both sources
+wt hook pre-merge user:        # Run all user hooks
+wt hook pre-merge project:     # Run all project hooks
+wt hook pre-merge user:test    # Run only user's "test" hook
+wt hook pre-merge project:test # Run only project's "test" hook
+wt hook pre-merge --yes        # Skip approval prompts (for CI)
 ```
+
+The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
 ## Hook types
 
@@ -1622,7 +1629,7 @@ The `sanitize` filter makes branch names safe for filesystem paths. The `hash_po
 dev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
 ```
 
-You can hash any string, including concatenations:
+Hash any string, including concatenations:
 
 ```toml
 # Unique port per repo+branch combination
@@ -1685,7 +1692,7 @@ User hooks support the same hook types and template variables as project hooks.
 | Approval | Required | Not required |
 | Execution order | After user hooks | Before project hooks |
 
-Skip hooks with `--no-verify`.
+Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 **Use cases:**
 - Personal notifications or logging
@@ -1875,7 +1882,7 @@ Branches without worktrees are included — selecting one creates a worktree. (`
 ## See also
 
 - [wt list](@/list.md) — Static table view with all worktree metadata
-- [wt switch](@/switch.md) — Direct switching when you know the target branch
+- [wt switch](@/switch.md) — Direct switching to a known target branch
 "#
     )]
     Select,
@@ -2096,6 +2103,8 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
 ### ci.status values
 
 `"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
+
+Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
 ## See also
 
@@ -2404,7 +2413,7 @@ wt merge --no-commit
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
 
-Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless you pass `--no-rebase`. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 
 ## Local CI
 

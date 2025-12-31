@@ -472,6 +472,102 @@ fn test_step_hook_name_filter_on_unnamed_command(repo: TestRepo) {
     });
 }
 
+/// Helper for step hook snapshot tests with extra args and approval prompt
+fn snapshot_run_hook_with_args(test_name: &str, repo: &TestRepo, args: &[&str], approve: bool) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "hook", args, None);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().unwrap();
+
+        // Write approval response
+        {
+            let stdin = child.stdin.as_mut().unwrap();
+            let response = if approve { b"y\n" } else { b"n\n" };
+            stdin.write_all(response).unwrap();
+        }
+
+        let output = child.wait_with_output().unwrap();
+
+        // Use insta snapshot for combined output
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!(
+            "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
+            output.status.code().unwrap_or(-1),
+            stdout,
+            stderr
+        );
+
+        insta::assert_snapshot!(test_name, combined);
+    });
+}
+
+/// Test that `project:` prefix filter still requires approval (security fix test)
+///
+/// This verifies the fix for the approval bypass vulnerability where `project:name`
+/// filter syntax was not correctly parsed by the approval gate, allowing project
+/// hooks to run without approval.
+#[rstest]
+fn test_project_prefix_requires_approval(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo 'Running project test'"
+"#,
+    );
+    repo.commit("Add pre-merge hook");
+
+    // Running with project: prefix should still require approval
+    // Decline to verify the prompt appears
+    snapshot_run_hook_with_args(
+        "project_prefix_requires_approval",
+        &repo,
+        &["pre-merge", "project:test"],
+        false,
+    );
+}
+
+/// Test that `project:` (all project hooks) requires approval
+#[rstest]
+fn test_project_prefix_all_requires_approval(repo: TestRepo) {
+    repo.write_project_config(
+        r#"[pre-merge]
+test = "echo 'Running project test'"
+lint = "echo 'Running project lint'"
+"#,
+    );
+    repo.commit("Add pre-merge hooks");
+
+    // Running with project: (no name) should require approval for all project hooks
+    snapshot_run_hook_with_args(
+        "project_prefix_all_requires_approval",
+        &repo,
+        &["pre-merge", "project:"],
+        false,
+    );
+}
+
+/// Test that `user:` prefix skips approval (user hooks don't need it)
+#[rstest]
+fn test_user_prefix_skips_approval(repo: TestRepo) {
+    // Set up user config with a hook
+    repo.write_test_config(
+        r#"[pre-merge]
+test = "echo 'user test'"
+"#,
+    );
+
+    // Running with user: prefix should not prompt for approval
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "user:test"], None);
+        assert_cmd_snapshot!("user_prefix_skips_approval", cmd);
+    });
+}
+
 /// Test running all hooks (no name filter) still works
 #[rstest]
 fn test_step_hook_run_all_commands(repo: TestRepo) {

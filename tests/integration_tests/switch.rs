@@ -563,10 +563,10 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
 /// Test switching to default branch when main worktree is on a different branch
 ///
 /// When the main worktree (repo root) has been switched to a feature branch via
-/// `git checkout feature`, `wt switch main` should show the path-occupied error
-/// with helpful commands to switch it back.
+/// `git checkout feature`, `wt switch main` should error with a helpful message
+/// explaining how to get there. This matches GitHub issue #327.
 #[rstest]
-fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
+fn test_switch_main_worktree_on_different_branch(repo: TestRepo) {
     use std::process::Command;
 
     // Switch the main worktree to a different branch
@@ -577,11 +577,40 @@ fn test_switch_error_main_worktree_on_different_branch(repo: TestRepo) {
         .output()
         .unwrap();
 
-    // Now try to switch to main - should error because main worktree is on feature
+    // Now try to switch to main - should error since main worktree is on different branch
     snapshot_switch_with_directive_file(
-        "switch_error_main_worktree_on_different_branch",
+        "switch_main_worktree_on_different_branch",
         &repo,
         &["main"],
+    );
+}
+
+/// Test switching to default branch FROM a feature worktree when main worktree is on different branch
+///
+/// This reproduces GitHub issue #327: user is in a feature worktree, main worktree has been
+/// switched to a different branch, and user runs `wt switch <default-branch>`.
+#[rstest]
+fn test_switch_default_branch_from_feature_worktree(mut repo: TestRepo) {
+    use std::process::Command;
+
+    // Create a feature worktree to work from
+    let feature_a_path = repo.add_worktree("feature-a");
+
+    // Switch main worktree to a different branch (simulates user running git checkout there)
+    let mut cmd = Command::new("git");
+    repo.configure_git_cmd(&mut cmd);
+    cmd.args(["checkout", "-b", "feature-rpa"])
+        .current_dir(repo.root_path())
+        .output()
+        .unwrap();
+
+    // From feature-a worktree, try to switch to main (default branch)
+    // This should error because main worktree is now on feature-rpa
+    snapshot_switch_from_dir(
+        "switch_default_branch_from_feature_worktree",
+        &repo,
+        &["main"],
+        &feature_a_path,
     );
 }
 

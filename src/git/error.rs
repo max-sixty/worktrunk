@@ -235,23 +235,25 @@ impl std::fmt::Display for GitError {
                 occupant,
             } => {
                 let path_display = format_path_for_display(path);
-                let error_detail = if let Some(occupant_branch) = occupant {
+                let reason = if let Some(occupant_branch) = occupant {
                     cformat!(
-                        "existing worktree at <bold>{path_display}</> on <bold>{occupant_branch}</>"
+                        "there's a worktree at the expected path <bold>{path_display}</> on branch <bold>{occupant_branch}</>"
                     )
                 } else {
-                    cformat!("existing worktree at <bold>{path_display}</>, detached")
+                    cformat!(
+                        "there's a detached worktree at the expected path <bold>{path_display}</>"
+                    )
                 };
                 // Hint leads into the command in the gutter block
-                let hint = hint_message("To switch the worktree to this branch:");
+                let hint = hint_message(cformat!(
+                    "To switch the worktree at <bold>{path_display}</> to branch <bold>{branch}</>:"
+                ));
                 let path_escaped = escape(Cow::Borrowed(path_display.as_ref()));
                 let command = format!("cd {path_escaped} && git switch {branch}");
                 write!(
                     f,
                     "{}\n{}\n{}",
-                    error_message(cformat!(
-                        "Cannot create worktree for <bold>{branch}</>: {error_detail}"
-                    )),
+                    error_message(cformat!("Cannot switch to <bold>{branch}</> — {reason}")),
                     hint,
                     format_bash_with_gutter(&command)
                 )
@@ -911,9 +913,13 @@ mod tests {
             occupant: Some("main".into()),
         };
         let display = err.to_string();
+        assert!(display.contains("Cannot switch to"));
         assert!(display.contains("feature"));
+        assert!(display.contains("there's a worktree at the expected path"));
+        assert!(display.contains("on branch"));
         assert!(display.contains("main"));
-        assert!(display.contains("existing worktree"));
+        assert!(display.contains("To switch the worktree at"));
+        assert!(display.contains("to branch"));
 
         // Without occupant (detached)
         let err = GitError::WorktreePathOccupied {
@@ -922,7 +928,7 @@ mod tests {
             occupant: None,
         };
         let display = err.to_string();
-        assert!(display.contains("detached"));
+        assert!(display.contains("detached worktree"));
     }
 
     #[test]

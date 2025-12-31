@@ -353,7 +353,7 @@ verify = true          # Run project hooks
 
 # Approved Commands
 # Commands approved for project hooks in this repo
-# Auto-populated when you approve hooks (prompt on first run) or run: wt hook approvals add
+# Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
 [projects."github.com/user/repo"]
 approved-commands = ["npm install"]
 

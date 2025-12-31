@@ -12,7 +12,7 @@ Worktrunk executes commands in three contexts:
 
 1. **Project hooks** (`.config/wt.toml`) — Automation for worktree lifecycle
 2. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
-3. **--execute flag** — Commands you provide explicitly
+3. **--execute flag** — Explicitly provided commands
 
 Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
 
@@ -159,7 +159,7 @@ $ cargo test --test integration --features shell-integration-tests
 ## How can I contribute?
 
 - Star the repo
-- Try it out and [open an issue](https://github.com/max-sixty/worktrunk/issues) with feedback
+- Try it out and [open an issue](https://github.com/max-sixty/worktrunk/issues) with feedback — even small annoyances
 - What worktree friction does Worktrunk not yet solve? [Tell us](https://github.com/max-sixty/worktrunk/issues)
 - Send to a friend
 - Post about it on [X](https://twitter.com/intent/tweet?text=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management&url=https%3A%2F%2Fworktrunk.dev), [Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fworktrunk.dev&title=Worktrunk%20%E2%80%94%20CLI%20for%20git%20worktree%20management), or [LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fworktrunk.dev)

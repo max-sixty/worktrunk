@@ -17,3 +17,5 @@ install-updater = false
 allow-dirty = ["ci"]
 # Enable git-wt binary in release builds (opt-in for cargo install)
 features = ["git-wt"]
+# Custom success message prompting shell integration
+install-success-msg = "Run 'wt config shell install' for shell integration."

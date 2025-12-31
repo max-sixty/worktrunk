@@ -17,6 +17,7 @@
 //! This ensures approval happens exactly once at the command entry point,
 //! eliminating the need to thread `auto_trust` through execution layers.
 
+use super::hooks::{HookSource, ParsedFilter};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
 use crate::output;
@@ -185,11 +186,28 @@ pub fn approve_hooks(
 /// When `name_filter` is provided, only commands matching that name are shown
 /// in the approval prompt. This is used by `wt hook <type> --name <name>` to
 /// approve only the targeted hook rather than all hooks of that type.
+///
+/// Supports filter syntax:
+/// - `"foo"` — approves commands named "foo" from project config
+/// - `"project:foo"` — approves commands named "foo" from project config
+/// - `"project:"` — approves all commands from project config
+/// - `"user:"` or `"user:foo"` — skips approval (user hooks don't need approval)
 pub fn approve_hooks_filtered(
     ctx: &super::command_executor::CommandContext<'_>,
     hook_types: &[HookType],
     name_filter: Option<&str>,
 ) -> anyhow::Result<bool> {
+    // Parse filter to understand source and name separately
+    // Uses the same ParsedFilter as hooks.rs for consistent behavior
+    let parsed = name_filter.map(ParsedFilter::parse);
+
+    // If filter explicitly targets user hooks only, skip project approval entirely
+    if let Some(ref f) = parsed
+        && f.source == Some(HookSource::User)
+    {
+        return Ok(true);
+    }
+
     let project_config = match ctx.repo.load_project_config()? {
         Some(cfg) => cfg,
         None => return Ok(true), // No project config = no commands to approve
@@ -198,8 +216,12 @@ pub fn approve_hooks_filtered(
     let mut commands = collect_commands_for_hooks(&project_config, hook_types);
 
     // Apply name filter before approval to only prompt for targeted commands
-    if let Some(name) = name_filter {
-        commands.retain(|cmd| cmd.command.name.as_deref() == Some(name));
+    // Use the parsed name (not raw filter) for matching
+    // Empty name (e.g., "project:") means match all project commands - no filtering
+    if let Some(ref f) = parsed
+        && !f.name.is_empty()
+    {
+        commands.retain(|cmd| cmd.command.name.as_deref() == Some(f.name));
     }
 
     if commands.is_empty() {
