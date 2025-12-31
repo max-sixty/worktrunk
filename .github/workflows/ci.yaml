@@ -24,6 +24,8 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: lychee
+        # Pin to 0.20.x - 0.22.0 has a regression with exclude patterns for root-relative paths
+        version: ^0.20
 
     - name: 🔍 Pre-commit hooks
       uses: pre-commit/action@v3.0.1
@@ -89,6 +91,8 @@ jobs:
       uses: baptiste0928/cargo-install@v3
       with:
         crate: lychee
+        # Pin to 0.20.x - 0.22.0 has a regression with exclude patterns for root-relative paths
+        version: ^0.20
 
     - name: Install wt
       uses: baptiste0928/cargo-install@v3
