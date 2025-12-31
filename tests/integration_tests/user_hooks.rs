@@ -7,8 +7,8 @@
 //! - Skipped together with project hooks via --no-verify
 
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings, wait_for_file,
-    wait_for_file_content,
+    TestRepo, make_snapshot_cmd, repo, resolve_git_common_dir, setup_snapshot_settings,
+    wait_for_file, wait_for_file_content, wait_for_file_count,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -784,9 +784,9 @@ fn test_standalone_hook_post_start(repo: TestRepo) {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "wt hook post-start should succeed");
 
-    // Hook should have run
+    // Hook spawns in background - wait for marker file
     let marker = repo.root_path().join("hook_ran.txt");
-    assert!(marker.exists(), "post-start hook should have run");
+    wait_for_file_content(&marker, Duration::from_secs(5));
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_START"));
 }
@@ -835,14 +835,14 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 }
 
 // ============================================================================
-// Concurrent Hook Execution Tests (post-start, post-switch)
+// Background Hook Execution Tests (post-start, post-switch)
 // ============================================================================
 
-/// Test that a single failing concurrent hook reports the failure
+/// Test that a single failing background hook logs its output
 #[rstest]
 fn test_concurrent_hook_single_failure(repo: TestRepo) {
-    // Write project config with a failing post-start hook
-    repo.write_project_config(r#"post-start = "exit 1""#);
+    // Write project config with a hook that writes output before failing
+    repo.write_project_config(r#"post-start = "echo HOOK_OUTPUT_MARKER; exit 1""#);
 
     let mut cmd = crate::common::wt_command();
     cmd.current_dir(repo.root_path());
@@ -850,26 +850,42 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
     cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
+    // Background spawning always succeeds (spawn succeeded, failure is logged)
     assert!(
-        !output.status.success(),
-        "wt hook post-start should fail when hook exits with error"
+        output.status.success(),
+        "wt hook post-start should succeed (spawns in background)"
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Wait for log file to be created and contain output
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
+    wait_for_file_count(&log_dir, "log", 1, Duration::from_secs(5));
+
+    // Find and read the log file
+    let log_file = fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+        .expect("Should have a log file");
+
+    // Wait for content to be written (command runs async)
+    wait_for_file_content(&log_file.path(), Duration::from_secs(5));
+    let log_content = fs::read_to_string(log_file.path()).unwrap();
+
+    // Verify the hook actually ran and wrote output (not just that file was created)
     assert!(
-        stderr.contains("exit status: 1"),
-        "Error should mention exit status, got: {stderr}"
+        log_content.contains("HOOK_OUTPUT_MARKER"),
+        "Log should contain hook output, got: {log_content}"
     );
 }
 
-/// Test that multiple failing concurrent hooks report all failures
+/// Test that multiple background hooks each get their own log file with correct content
 #[rstest]
 fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
-    // Write project config with multiple named failing hooks (table format)
+    // Write project config with multiple named hooks (table format)
     repo.write_project_config(
         r#"[post-start]
-first = "exit 1"
-second = "exit 2"
+first = "echo FIRST_OUTPUT"
+second = "echo SECOND_OUTPUT"
 "#,
     );
 
@@ -879,24 +895,55 @@ second = "exit 2"
     cmd.args(["hook", "post-start", "--yes"]);
 
     let output = cmd.output().unwrap();
+    // Background spawning always succeeds (spawn succeeded)
     assert!(
-        !output.status.success(),
-        "wt hook post-start should fail when hooks exit with error"
+        output.status.success(),
+        "wt hook post-start should succeed (spawns in background)"
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    // Should report multiple failures
-    assert!(
-        stderr.contains("2 commands failed"),
-        "Error should mention 2 commands failed, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("first") && stderr.contains("second"),
-        "Error should list both failed command names, got: {stderr}"
-    );
+    // Wait for both log files to be created
+    let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
+    wait_for_file_count(&log_dir, "log", 2, Duration::from_secs(5));
+
+    // Collect log files and their contents
+    let log_files: Vec<_> = fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+        .collect();
+    assert_eq!(log_files.len(), 2, "Should have 2 log files");
+
+    // Wait for content in both log files
+    for log_file in &log_files {
+        wait_for_file_content(&log_file.path(), Duration::from_secs(5));
+    }
+
+    // Collect all log contents
+    let mut found_first = false;
+    let mut found_second = false;
+    for log_file in &log_files {
+        let name = log_file.file_name().to_string_lossy().to_string();
+        let content = fs::read_to_string(log_file.path()).unwrap();
+        if name.contains("first") {
+            assert!(
+                content.contains("FIRST_OUTPUT"),
+                "first log should contain FIRST_OUTPUT, got: {content}"
+            );
+            found_first = true;
+        }
+        if name.contains("second") {
+            assert!(
+                content.contains("SECOND_OUTPUT"),
+                "second log should contain SECOND_OUTPUT, got: {content}"
+            );
+            found_second = true;
+        }
+    }
+    assert!(found_first, "Should have log for 'first' hook");
+    assert!(found_second, "Should have log for 'second' hook");
 }
 
-/// Test that user and project post-start hooks both run concurrently
+/// Test that user and project post-start hooks both run in background
 #[rstest]
 fn test_concurrent_hook_user_and_project(repo: TestRepo) {
     // Write user config with post-start hook (using table format for named hook)
@@ -921,15 +968,12 @@ user = "echo 'USER_HOOK' > user_hook_ran.txt"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Both hooks should have run
+    // Both hooks spawn in background - wait for marker files
     let user_marker = repo.root_path().join("user_hook_ran.txt");
     let project_marker = repo.root_path().join("project_hook_ran.txt");
 
-    assert!(user_marker.exists(), "user post-start hook should have run");
-    assert!(
-        project_marker.exists(),
-        "project post-start hook should have run"
-    );
+    wait_for_file_content(&user_marker, Duration::from_secs(5));
+    wait_for_file_content(&project_marker, Duration::from_secs(5));
 
     let user_content = fs::read_to_string(&user_marker).unwrap();
     let project_content = fs::read_to_string(&project_marker).unwrap();
@@ -937,7 +981,7 @@ user = "echo 'USER_HOOK' > user_hook_ran.txt"
     assert!(project_content.contains("PROJECT_HOOK"));
 }
 
-/// Test that post-switch hooks also run concurrently
+/// Test that post-switch hooks also run in background
 #[rstest]
 fn test_concurrent_hook_post_switch(repo: TestRepo) {
     // Write project config with post-switch hook
@@ -954,14 +998,14 @@ fn test_concurrent_hook_post_switch(repo: TestRepo) {
         "wt hook post-switch should succeed"
     );
 
-    // Hook should have run
+    // Hook spawns in background - wait for marker file
     let marker = repo.root_path().join("hook_ran.txt");
-    assert!(marker.exists(), "post-switch hook should have run");
+    wait_for_file_content(&marker, Duration::from_secs(5));
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("POST_SWITCH"));
 }
 
-/// Test that concurrent hooks work with name filter
+/// Test that background hooks work with name filter
 #[rstest]
 fn test_concurrent_hook_with_name_filter(repo: TestRepo) {
     // Write project config with multiple named hooks
@@ -985,11 +1029,14 @@ second = "echo 'SECOND' > second.txt"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Only the first hook should have run
+    // First hook spawns in background - wait for marker file
     let first_marker = repo.root_path().join("first.txt");
     let second_marker = repo.root_path().join("second.txt");
 
-    assert!(first_marker.exists(), "first hook should have run");
+    wait_for_file_content(&first_marker, Duration::from_secs(5));
+
+    // Fixed sleep for absence check - second hook should NOT have run
+    thread::sleep(SLEEP_FOR_ABSENCE_CHECK);
     assert!(!second_marker.exists(), "second hook should NOT have run");
 }
 

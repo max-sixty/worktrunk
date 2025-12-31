@@ -215,17 +215,9 @@ pub fn spawn_hook_commands_background(
     Ok(())
 }
 
-/// A single hook command failure (for concurrent execution).
-#[derive(Debug, Clone)]
-struct HookFailure {
-    name: Option<String>,
-    error: String,
-    exit_code: Option<i32>,
-}
-
 /// Check if a name filter was provided but no commands matched.
 /// Returns an error listing available command names if so.
-fn check_name_filter_matched(
+pub(crate) fn check_name_filter_matched(
     name_filter: Option<&str>,
     total_commands_run: usize,
     user_config: Option<&CommandConfig>,
@@ -357,140 +349,6 @@ pub fn run_hook_with_filter(
             command_name,
             error,
             exit_code: Some(exit_code),
-        }
-        .into());
-    }
-
-    Ok(())
-}
-
-/// Run user and project hooks concurrently (for hook types that normally run in background).
-///
-/// All commands from both sources run in parallel together. Collects all failures and returns
-/// a combined error at the end. Handles name filtering and returns an error if a name
-/// filter was provided but no matching command found.
-pub fn run_hook_concurrent_with_filter(
-    ctx: &CommandContext,
-    user_config: Option<&CommandConfig>,
-    project_config: Option<&CommandConfig>,
-    hook_type: HookType,
-    extra_vars: &[(&str, &str)],
-    name_filter: Option<&str>,
-) -> anyhow::Result<()> {
-    use rayon::prelude::*;
-    use std::process::Stdio;
-    use worktrunk::shell_exec::ShellConfig;
-
-    let commands = prepare_hook_commands(
-        ctx,
-        user_config,
-        project_config,
-        hook_type,
-        extra_vars,
-        name_filter,
-    )?;
-
-    check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
-
-    if commands.is_empty() {
-        return Ok(());
-    }
-
-    // Announce all commands upfront
-    for cmd in &commands {
-        cmd.announce()?;
-    }
-    crate::output::flush()?;
-
-    // Reset ANSI codes to prevent color bleeding from our output into command output
-    use std::io::Write;
-    use worktrunk::styling::{eprint, stderr};
-    eprint!("{}", anstyle::Reset);
-    stderr().flush().ok();
-
-    // Run commands concurrently using Rayon's thread pool.
-    //
-    // Note: Unlike sequential execution (execute_streaming), we don't use process_group(0)
-    // or sophisticated signal forwarding here. Children inherit the foreground process group,
-    // so Ctrl+C sends SIGINT to all of them together. This simpler behavior is acceptable for
-    // "best effort" concurrent hooks - if the user interrupts, everything stops.
-    let shell = ShellConfig::get();
-    let worktree_path = ctx.worktree_path;
-
-    let all_failures: Vec<HookFailure> = commands
-        .par_iter()
-        .filter_map(|cmd| {
-            use std::io::Write;
-
-            let prepared = &cmd.prepared;
-            let mut child_cmd = shell.command(&prepared.expanded);
-            child_cmd
-                .current_dir(worktree_path)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::from(std::io::stderr()))
-                .stderr(Stdio::inherit())
-                .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
-
-            let mut child = match child_cmd.spawn() {
-                Ok(child) => child,
-                Err(e) => {
-                    return Some(HookFailure {
-                        name: prepared.name.clone(),
-                        error: e.to_string(),
-                        exit_code: None,
-                    });
-                }
-            };
-
-            // Pipe context JSON to stdin (same as sequential execution)
-            if let Some(mut stdin) = child.stdin.take() {
-                // Ignore write errors - command may not read stdin
-                let _ = stdin.write_all(prepared.context_json.as_bytes());
-            }
-
-            match child.wait() {
-                Ok(status) if status.success() => None,
-                Ok(status) => Some(HookFailure {
-                    name: prepared.name.clone(),
-                    error: format!("exit status: {}", status.code().unwrap_or(-1)),
-                    exit_code: status.code(),
-                }),
-                Err(e) => Some(HookFailure {
-                    name: prepared.name.clone(),
-                    error: e.to_string(),
-                    exit_code: None,
-                }),
-            }
-        })
-        .collect();
-
-    // Report all failures at the end
-    if !all_failures.is_empty() {
-        let first = &all_failures[0];
-        // For single failure, use command_name field (no duplication in error).
-        // For multiple failures, list all names in the error message.
-        let (command_name, error_msg) = if all_failures.len() == 1 {
-            (first.name.clone(), first.error.clone())
-        } else {
-            let names: Vec<_> = all_failures
-                .iter()
-                .map(|f| f.name.as_deref().unwrap_or("(unnamed)"))
-                .collect();
-            (
-                None, // Multiple failures - no single command to blame
-                format!(
-                    "{} commands failed: {}",
-                    all_failures.len(),
-                    names.join(", ")
-                ),
-            )
-        };
-
-        return Err(WorktrunkError::HookCommandFailed {
-            hook_type,
-            command_name,
-            error: error_msg,
-            exit_code: first.exit_code,
         }
         .into());
     }
