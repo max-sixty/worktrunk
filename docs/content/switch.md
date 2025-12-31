@@ -10,6 +10,13 @@ group = "Commands"
 
 Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
+<figure class="demo">
+<picture>
+  <source srcset="/assets/docs/dark/wt-switch.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/docs/light/wt-switch.gif" alt="wt switch demo" width="1600" height="900">
+</picture>
+</figure>
+
 Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
 
 ## Examples

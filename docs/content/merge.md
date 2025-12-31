@@ -8,14 +8,14 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit cli.rs to update -->
 
+Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
+
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-merge.gif" media="(prefers-color-scheme: dark)">
   <img src="/assets/docs/light/wt-merge.gif" alt="wt merge demo" width="1600" height="900">
 </picture>
 </figure>
-
-Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
 
 ## Examples
 

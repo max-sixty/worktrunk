@@ -37,7 +37,7 @@ Regenerate a single demo:
 
 | Target | Demos |
 |--------|-------|
-| docs | wt-core, wt-merge, wt-select, wt-zellij-omnibus |
+| docs | wt-core, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-select, wt-zellij-omnibus |
 | social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-select-short, wt-core, wt-zellij-omnibus |
 
 ## Publishing demos
