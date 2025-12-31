@@ -4,7 +4,6 @@ use crate::common::{
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use std::process::Command;
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_push(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
@@ -82,13 +81,7 @@ fn test_push_with_dirty_target(mut repo: TestRepo) {
     let main_contents = std::fs::read_to_string(repo.root_path().join("conflict.txt")).unwrap();
     assert_eq!(main_contents, "old content");
 
-    let mut git_cmd = Command::new("git");
-    repo.configure_git_cmd(&mut git_cmd);
-    let stash_list = git_cmd
-        .args(["stash", "list"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -116,13 +109,7 @@ fn test_push_dirty_target_autostash(mut repo: TestRepo) {
     assert_eq!(notes, "temporary notes");
 
     // Autostash should clean up after itself
-    let mut git_cmd = Command::new("git");
-    repo.configure_git_cmd(&mut git_cmd);
-    let stash_list = git_cmd
-        .args(["stash", "list"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -156,19 +143,11 @@ fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     std::fs::write(repo.root_path().join("file.txt"), "modified in target").unwrap();
 
     // In feature worktree, rename file.txt to renamed.txt and commit
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["mv", "file.txt", "renamed.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Rename file.txt to renamed.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["mv", "file.txt", "renamed.txt"]);
+    repo.run_git_in(
+        &feature_wt,
+        &["commit", "-m", "Rename file.txt to renamed.txt"],
+    );
 
     // Try to push from feature to main (should fail due to conflicting changes)
     // The renamed file.txt (now renamed.txt) conflicts with uncommitted file.txt changes
@@ -183,13 +162,7 @@ fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
     let main_contents = std::fs::read_to_string(repo.root_path().join("file.txt")).unwrap();
     assert_eq!(main_contents, "modified in target");
 
-    let mut git_cmd = Command::new("git");
-    repo.configure_git_cmd(&mut git_cmd);
-    let stash_list = git_cmd
-        .args(["stash", "list"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    let stash_list = repo.git_command().args(["stash", "list"]).output().unwrap();
     assert!(
         String::from_utf8_lossy(&stash_list.stdout)
             .trim()
@@ -235,29 +208,16 @@ fn test_push_with_merge_commits(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree_with_commit("feature", "file1.txt", "content1", "Commit 1");
 
     // Create another branch for merging
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "-b", "temp"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["checkout", "-b", "temp"]);
 
     repo.commit_in_worktree(&feature_wt, "file2.txt", "content2", "Commit 2");
 
     // Switch back to feature and merge temp (creating merge commit)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "feature"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["merge", "temp", "--no-ff", "-m", "Merge temp"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["checkout", "feature"]);
+    repo.run_git_in(
+        &feature_wt,
+        &["merge", "temp", "--no-ff", "-m", "Merge temp"],
+    );
 
     // Push to main (should succeed - merge commits are allowed)
     snapshot_push(

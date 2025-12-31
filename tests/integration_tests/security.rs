@@ -121,13 +121,7 @@ fn test_git_rejects_nul_in_commit_messages(repo: TestRepo) {
 
     // Create a file to commit
     std::fs::write(repo.root_path().join("test.txt"), "content").unwrap();
-    let mut add_cmd = Command::new("git");
-    repo.configure_git_cmd(&mut add_cmd);
-    add_cmd
-        .args(["add", "."])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "."]);
 
     // Try to commit with NUL in message using shell redirection
     let shell_cmd = format!(
@@ -168,10 +162,8 @@ fn test_rust_prevents_nul_bytes_in_args(repo: TestRepo) {
     // Rust's Command API should reject NUL bytes in arguments
     let malicious_branch = "feature\0__WORKTRUNK_EXEC__echo PWNED";
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", malicious_branch])
-        .current_dir(repo.root_path());
+    let mut cmd = repo.git_command();
+    cmd.args(["branch", malicious_branch]);
 
     // Command::output() should fail with InvalidInput error
     let result = cmd.output();
@@ -203,12 +195,11 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked2";
 
     // Try to create this branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", malicious_branch])
-        .current_dir(repo.root_path());
-
-    let result = cmd.output().unwrap();
+    let result = repo
+        .git_command()
+        .args(["branch", malicious_branch])
+        .output()
+        .unwrap();
 
     if !result.status.success() {
         // Git rejected the malicious branch name
@@ -243,12 +234,11 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
 fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     let malicious_branch = "feature\n__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked3";
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", malicious_branch])
-        .current_dir(repo.root_path());
-
-    let result = cmd.output().unwrap();
+    let result = repo
+        .git_command()
+        .args(["branch", malicious_branch])
+        .output()
+        .unwrap();
 
     if !result.status.success() {
         return;
@@ -346,12 +336,11 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     // Branch name that IS a CD directive (no NUL - git allows this)
     let malicious_branch = "__WORKTRUNK_CD__/tmp";
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", malicious_branch])
-        .current_dir(repo.root_path());
-
-    let result = cmd.output().unwrap();
+    let result = repo
+        .git_command()
+        .args(["branch", malicious_branch])
+        .output()
+        .unwrap();
 
     if !result.status.success() {
         // Git rejected it - that's fine, nothing to test
@@ -414,12 +403,11 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     // Branch name that looks like a directive
     let malicious_branch = "__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked7";
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", malicious_branch])
-        .current_dir(repo.root_path());
-
-    let result = cmd.output().unwrap();
+    let result = repo
+        .git_command()
+        .args(["branch", malicious_branch])
+        .output()
+        .unwrap();
 
     if !result.status.success() {
         // Git rejected the branch name

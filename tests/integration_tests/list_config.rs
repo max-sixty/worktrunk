@@ -39,12 +39,7 @@ full = true
 #[rstest]
 fn test_list_config_branches_enabled(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Create user config with list.branches = true
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -74,12 +69,7 @@ branches = true
 #[rstest]
 fn test_list_config_cli_override(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Create user config with list.branches = false (default)
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -112,12 +102,7 @@ branches = false
 #[rstest]
 fn test_list_config_full_and_branches(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Create user config with both full and branches enabled
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -148,12 +133,7 @@ branches = true
 #[rstest]
 fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Create minimal user config without list settings
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -292,12 +272,7 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
 #[rstest]
 fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Create project config with URL template
     repo.write_project_config(

@@ -35,12 +35,7 @@ fn test_status_column_width_consistency(mut repo: TestRepo) {
     std::fs::write(wt1.join("new.txt"), "new").unwrap(); // Just untracked (?)
     std::fs::write(wt2.join("new1.txt"), "new").unwrap(); // Multiple: ?, !, +
     std::fs::write(wt2.join("file.txt"), "modified").unwrap();
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file.txt"])
-        .current_dir(&wt2)
-        .output()
-        .unwrap();
+    repo.run_git_in(&wt2, &["add", "file.txt"]);
 
     let settings = setup_snapshot_settings(&repo);
     settings.bind(|| {

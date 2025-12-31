@@ -149,17 +149,18 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
         )
         .unwrap();
 
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.env("GIT_AUTHOR_DATE", time);
-        cmd.env("GIT_COMMITTER_DATE", time);
-        cmd.args(["add", "."]).current_dir(path).output().unwrap();
+        repo.git_command()
+            .env("GIT_AUTHOR_DATE", time)
+            .env("GIT_COMMITTER_DATE", time)
+            .args(["add", "."])
+            .current_dir(path)
+            .output()
+            .unwrap();
 
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.env("GIT_AUTHOR_DATE", time);
-        cmd.env("GIT_COMMITTER_DATE", time);
-        cmd.args(["commit", "-m", &format!("Commit at {}", time_short)])
+        repo.git_command()
+            .env("GIT_AUTHOR_DATE", time)
+            .env("GIT_COMMITTER_DATE", time)
+            .args(["commit", "-m", &format!("Commit at {}", time_short)])
             .current_dir(path)
             .output()
             .unwrap();
@@ -354,26 +355,14 @@ fn test_list_json_tree_matches_main_after_merge(mut repo: TestRepo) {
 
     // Make the same commit on main (so trees will match after merge)
     std::fs::write(repo.root_path().join("feature.txt"), "feature content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Same content on main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Same content on main"]);
 
     // Merge main into feature (creates merge commit, but tree matches main)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["merge", "main", "-m", "Merge main into feature"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
+    repo.run_git_in(
+        &feature_path,
+        &["merge", "main", "-m", "Merge main into feature"],
+    );
 
     // Now feature-merged is ahead of main (has merge commit) but tree content matches main
     // JSON output should show branch_op_state: "TreesMatch" with ahead > 0
@@ -421,12 +410,7 @@ fn test_list_with_remotes_flag(#[from(repo_with_remote)] repo: TestRepo) {
     repo.push_branch("remote-feature-2");
 
     // Delete the local branches - now they only exist as origin/remote-feature-*
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "-D", "remote-feature-1", "remote-feature-2"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "-D", "remote-feature-1", "remote-feature-2"]);
 
     // Should show:
     // - main worktree (primary)
@@ -447,12 +431,7 @@ fn test_list_with_remotes_and_branches(#[from(repo_with_remote)] repo: TestRepo)
     repo.create_branch("remote-only-2");
     repo.push_branch("remote-only-1");
     repo.push_branch("remote-only-2");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "-D", "remote-only-1", "remote-only-2"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "-D", "remote-only-1", "remote-only-2"]);
 
     // Should show:
     // - main worktree
@@ -468,22 +447,15 @@ fn test_list_with_remotes_filters_tracked_worktrees(#[from(repo_with_remote)] mu
     // Create a worktree and push with tracking
     repo.add_worktree("feature-with-worktree");
     let feature_path = repo.worktree_path("feature-with-worktree");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "feature-with-worktree"])
-        .current_dir(feature_path)
-        .output()
-        .unwrap();
+    repo.run_git_in(
+        feature_path,
+        &["push", "-u", "origin", "feature-with-worktree"],
+    );
 
     // Create a branch, push it, delete it locally (remote-only)
     repo.create_branch("remote-only");
     repo.push_branch("remote-only");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "-D", "remote-only"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "-D", "remote-only"]);
 
     // Should show:
     // - main worktree
@@ -497,22 +469,12 @@ fn test_list_with_remotes_filters_tracked_worktrees(#[from(repo_with_remote)] mu
 fn test_list_with_remotes_filters_tracked_branches(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a local branch (no worktree) and push with tracking
     repo.create_branch("tracked-branch");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "tracked-branch"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["push", "-u", "origin", "tracked-branch"]);
 
     // Create a branch, push it, then delete locally (remote-only)
     repo.create_branch("remote-only");
     repo.push_branch("remote-only");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "-D", "remote-only"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "-D", "remote-only"]);
 
     // Should show:
     // - main worktree
@@ -532,27 +494,12 @@ fn test_list_json_with_display_fields(mut repo: TestRepo) {
     // Make commits in the feature worktree
     let feature_path = repo.worktree_path("feature-ahead");
     std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(feature_path)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Feature commit 1"])
-        .current_dir(feature_path)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "--allow-empty", "-m", "Feature commit 2"])
-        .current_dir(feature_path)
-        .output()
-        .unwrap();
+    repo.run_git_in(feature_path, &["add", "."]);
+    repo.run_git_in(feature_path, &["commit", "-m", "Feature commit 1"]);
+    repo.run_git_in(
+        feature_path,
+        &["commit", "--allow-empty", "-m", "Feature commit 2"],
+    );
 
     // Add uncommitted changes to show working_diff_display
     std::fs::write(feature_path.join("uncommitted.txt"), "uncommitted").unwrap();
@@ -585,121 +532,41 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
 
     // Scenario 1: Branch in sync with remote (should show ↑0 ↓0)
     let in_sync_wt = repo.add_worktree("in-sync");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "in-sync"])
-        .current_dir(&in_sync_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&in_sync_wt, &["push", "-u", "origin", "in-sync"]);
 
     // Scenario 2: Branch ahead of remote (should show ↑2)
     let ahead_wt = repo.add_worktree("ahead");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "ahead"])
-        .current_dir(&ahead_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&ahead_wt, &["push", "-u", "origin", "ahead"]);
 
     // Make 2 commits ahead
     std::fs::write(ahead_wt.join("ahead1.txt"), "ahead 1").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&ahead_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Ahead commit 1"])
-        .current_dir(&ahead_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&ahead_wt, &["add", "."]);
+    repo.run_git_in(&ahead_wt, &["commit", "-m", "Ahead commit 1"]);
 
     std::fs::write(ahead_wt.join("ahead2.txt"), "ahead 2").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&ahead_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Ahead commit 2"])
-        .current_dir(&ahead_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&ahead_wt, &["add", "."]);
+    repo.run_git_in(&ahead_wt, &["commit", "-m", "Ahead commit 2"]);
 
     // Scenario 3: Branch behind remote (should show ↓1)
     let behind_wt = repo.add_worktree("behind");
     std::fs::write(behind_wt.join("behind.txt"), "behind").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&behind_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Behind commit"])
-        .current_dir(&behind_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "behind"])
-        .current_dir(&behind_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&behind_wt, &["add", "."]);
+    repo.run_git_in(&behind_wt, &["commit", "-m", "Behind commit"]);
+    repo.run_git_in(&behind_wt, &["push", "-u", "origin", "behind"]);
     // Reset local to one commit behind
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["reset", "--hard", "HEAD~1"])
-        .current_dir(&behind_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&behind_wt, &["reset", "--hard", "HEAD~1"]);
 
     // Scenario 4: Branch both ahead and behind (should show ↑1 ↓1)
     let diverged_wt = repo.add_worktree("diverged");
     std::fs::write(diverged_wt.join("diverged.txt"), "diverged").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Diverged remote commit"])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "diverged"])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&diverged_wt, &["add", "."]);
+    repo.run_git_in(&diverged_wt, &["commit", "-m", "Diverged remote commit"]);
+    repo.run_git_in(&diverged_wt, &["push", "-u", "origin", "diverged"]);
     // Reset and make different commit
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["reset", "--hard", "HEAD~1"])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&diverged_wt, &["reset", "--hard", "HEAD~1"]);
     std::fs::write(diverged_wt.join("different.txt"), "different").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Diverged local commit"])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&diverged_wt, &["add", "."]);
+    repo.run_git_in(&diverged_wt, &["commit", "-m", "Diverged local commit"]);
 
     // Scenario 5: Branch without upstream (should show blank)
     let no_upstream_wt = repo.add_worktree("no-upstream");
@@ -707,12 +574,7 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     // Run git status to ensure the worktree is fully initialized on Windows.
     // Without this, Windows CI may show 55y (Unix epoch) because the worktree
     // isn't ready when wt list tries to read commit timestamps.
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["status", "--porcelain"])
-        .current_dir(&no_upstream_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&no_upstream_wt, &["status", "--porcelain"]);
 
     // Run list --branches --full to show all columns including Remote
     let settings = setup_snapshot_settings(&repo);
@@ -815,25 +677,14 @@ fn test_list_json_with_git_operation(mut repo: TestRepo) {
         "main line 1\nmain line 2\n",
     )
     .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Main conflicting changes"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Main conflicting changes"]);
 
     // Start rebase which will create conflicts and git operation state
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let rebase_output = cmd
-        .args(["rebase", "main"])
+    let rebase_output = repo
+        .git_command()
         .current_dir(&feature)
+        .args(["rebase", "main"])
         .output()
         .unwrap();
 
@@ -852,12 +703,7 @@ fn test_list_branch_only_with_status(repo: TestRepo) {
     // Test that branch-only entries (no worktree) can display branch-keyed status
 
     // Create a branch-only entry (no worktree)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "branch-only"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "branch-only"]);
 
     // Set branch-keyed status for the branch-only entry
     repo.set_marker("branch-only", "🌿");
@@ -952,15 +798,15 @@ pub mod handlers {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "api.rs"], repo.root_path());
+    repo.run_git(&["add", "api.rs"]);
     repo.commit_staged_with_age("Initial API implementation", DAY, repo.root_path());
     repo.setup_remote("main");
 
     // Make main behind its remote: push a teammate's commit, then reset local
     // Story: A teammate pushed a hotfix while we were working on features
     repo.commit_with_age("Fix production timeout issue", 2 * HOUR);
-    run_git(repo, &["push", "origin", "main"], repo.root_path());
-    run_git(repo, &["reset", "--hard", "HEAD~1"], repo.root_path());
+    repo.run_git(&["push", "origin", "main"]);
+    repo.run_git(&["reset", "--hard", "HEAD~1"]);
 
     // === Create fix-auth worktree ===
     // Story: Security audit found the token validation was too weak.
@@ -1005,7 +851,7 @@ pub mod handlers {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "api.rs"], &fix_auth);
+    repo.run_git_in(&fix_auth, &["add", "api.rs"]);
     repo.commit_staged_with_age("Harden token validation", 6 * HOUR, &fix_auth);
 
     // Second commit: Add secure token storage
@@ -1054,11 +900,11 @@ pub mod handlers {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "api.rs"], &fix_auth);
+    repo.run_git_in(&fix_auth, &["add", "api.rs"]);
     repo.commit_staged_with_age("Add secure token storage", 5 * HOUR, &fix_auth);
 
     // Push fix-auth and sync with remote
-    run_git(repo, &["push", "-u", "origin", "fix-auth"], &fix_auth);
+    repo.run_git_in(&fix_auth, &["push", "-u", "origin", "fix-auth"]);
 
     // === Create feature-api worktree ===
     // Story: Major API refactoring - replacing the legacy handlers with a proper
@@ -1187,9 +1033,9 @@ pub enum Method { Get, Post, Put, Delete }
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "api.rs", "routes.rs"], &feature_api);
+    repo.run_git_in(&feature_api, &["add", "api.rs", "routes.rs"]);
     repo.commit_staged_with_age("Refactor API to REST modules", 4 * HOUR, &feature_api);
-    run_git(repo, &["push", "-u", "origin", "feature-api"], &feature_api);
+    repo.run_git_in(&feature_api, &["push", "-u", "origin", "feature-api"]);
 
     // More commits (ahead of remote - unpushed local work)
     std::fs::write(
@@ -1304,7 +1150,7 @@ pub enum AuthError { MissingToken, InvalidToken }
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "middleware.rs"], &feature_api);
+    repo.run_git_in(&feature_api, &["add", "middleware.rs"]);
     repo.commit_staged_with_age("Add request middleware", 3 * HOUR, &feature_api);
 
     std::fs::write(
@@ -1319,7 +1165,7 @@ pub fn validate(body: &[u8], headers: &Headers) -> Result<(), Error> {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "validation.rs"], &feature_api);
+    repo.run_git_in(&feature_api, &["add", "validation.rs"]);
     repo.commit_staged_with_age("Add request validation", 2 * HOUR, &feature_api);
 
     std::fs::write(
@@ -1340,7 +1186,7 @@ mod tests {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "tests.rs"], &feature_api);
+    repo.run_git_in(&feature_api, &["add", "tests.rs"]);
     repo.commit_staged_with_age("Add API tests", 30 * MINUTE, &feature_api);
 
     // Staged changes: new files + refactor existing (creates mixed +/- for HEAD±)
@@ -1417,10 +1263,9 @@ fn validate_headers(h: &Headers) -> Result<(), ValidationError> {
 "#,
     )
     .unwrap();
-    run_git(
-        repo,
-        &["add", "cache.rs", "rate_limit.rs", "validation.rs"],
+    repo.run_git_in(
         &feature_api,
+        &["add", "cache.rs", "rate_limit.rs", "validation.rs"],
     );
 
     // === Create branches without worktrees ===
@@ -1430,11 +1275,7 @@ fn validate_headers(h: &Headers) -> Result<(), ValidationError> {
     // Narrative: Someone explored GraphQL as an alternative to REST, got pretty far with
     // schema design and resolvers, but the team decided to stick with REST for now.
     let exp_wt = repo.root_path().parent().unwrap().join("temp-exp");
-    run_git(
-        repo,
-        &["worktree", "add", "-b", "exp", exp_wt.to_str().unwrap()],
-        repo.root_path(),
-    );
+    repo.run_git(&["worktree", "add", "-b", "exp", exp_wt.to_str().unwrap()]);
 
     std::fs::write(
         exp_wt.join("graphql.rs"),
@@ -1506,7 +1347,7 @@ pub struct PageInfo {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "graphql.rs"], &exp_wt);
+    repo.run_git_in(&exp_wt, &["add", "graphql.rs"]);
     repo.commit_staged_with_age("Explore GraphQL schema design", 2 * DAY, &exp_wt);
 
     std::fs::write(
@@ -1586,15 +1427,11 @@ impl SubscriptionRoot {
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "resolvers.rs"], &exp_wt);
+    repo.run_git_in(&exp_wt, &["add", "resolvers.rs"]);
     repo.commit_staged_with_age("Add GraphQL resolvers scaffold", 2 * DAY, &exp_wt);
 
     // Remove the worktree but keep the branch
-    run_git(
-        repo,
-        &["worktree", "remove", exp_wt.to_str().unwrap()],
-        repo.root_path(),
-    );
+    repo.run_git(&["worktree", "remove", exp_wt.to_str().unwrap()]);
 
     // Create 'wip' branch with commits (work-in-progress docs)
     // Narrative: Someone started API docs last week. Main has since advanced
@@ -1602,9 +1439,9 @@ impl SubscriptionRoot {
 
     // Save current main commit, then add a commit to main (simulating fix-auth merge)
     let wip_base = {
-        let output = std::process::Command::new("git")
+        let output = repo
+            .git_command()
             .args(["rev-parse", "HEAD"])
-            .current_dir(repo.root_path())
             .output()
             .unwrap();
         String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -1615,18 +1452,14 @@ impl SubscriptionRoot {
 
     // Create wip from the earlier commit (before main advanced)
     let wip_wt = repo.root_path().parent().unwrap().join("temp-wip");
-    run_git(
-        repo,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            "wip",
-            wip_wt.to_str().unwrap(),
-            &wip_base,
-        ],
-        repo.root_path(),
-    );
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "wip",
+        wip_wt.to_str().unwrap(),
+        &wip_base,
+    ]);
 
     std::fs::write(
         wip_wt.join("API.md"),
@@ -1666,15 +1499,11 @@ TODO: Add request/response examples for each endpoint
 "#,
     )
     .unwrap();
-    run_git(repo, &["add", "API.md"], &wip_wt);
+    repo.run_git_in(&wip_wt, &["add", "API.md"]);
     repo.commit_staged_with_age("Start API documentation", 3 * DAY, &wip_wt);
 
     // Remove the worktree but keep the branch
-    run_git(
-        repo,
-        &["worktree", "remove", wip_wt.to_str().unwrap()],
-        repo.root_path(),
-    );
+    repo.run_git(&["worktree", "remove", wip_wt.to_str().unwrap()]);
 
     // === Mock CI status ===
     // CI requires --full flag, but we mock it so examples show realistic output
@@ -1687,21 +1516,12 @@ TODO: Add request/response examples for each endpoint
     feature_api
 }
 
-/// Helper to run git commands
-fn run_git(repo: &TestRepo, args: &[&str], cwd: &std::path::Path) {
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(args).current_dir(cwd).output().unwrap();
-}
-
 /// Mock CI status by writing to file-based cache
 fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_stale: bool) {
     // Get HEAD commit for the branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
+    let output = repo
+        .git_command()
         .args(["rev-parse", branch])
-        .current_dir(repo.root_path())
         .output()
         .unwrap();
     let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1720,11 +1540,9 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
     );
 
     // Get git common dir for cache location
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
+    let output = repo
+        .git_command()
         .args(["rev-parse", "--git-common-dir"])
-        .current_dir(repo.root_path())
         .output()
         .unwrap();
     let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1882,31 +1700,14 @@ fn test_list_task_dag_with_upstream(mut repo: TestRepo) {
 
     // Branch in sync
     let in_sync = repo.add_worktree("in-sync");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "in-sync"])
-        .current_dir(&in_sync)
-        .output()
-        .unwrap();
+    repo.run_git_in(&in_sync, &["push", "-u", "origin", "in-sync"]);
 
     // Branch ahead
     let ahead = repo.add_worktree("ahead");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "-u", "origin", "ahead"])
-        .current_dir(&ahead)
-        .output()
-        .unwrap();
+    repo.run_git_in(&ahead, &["push", "-u", "origin", "ahead"]);
     std::fs::write(ahead.join("ahead.txt"), "ahead").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."]).current_dir(&ahead).output().unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Ahead commit"])
-        .current_dir(&ahead)
-        .output()
-        .unwrap();
+    repo.run_git_in(&ahead, &["add", "."]);
+    repo.run_git_in(&ahead, &["commit", "-m", "Ahead commit"]);
 
     snapshot_list_progressive_full("task_dag_with_upstream", &repo);
 }
@@ -2041,18 +1842,8 @@ fn test_list_large_diffs_alignment(mut repo: TestRepo) {
     std::fs::write(large_wt.join("large.txt"), &large_content).unwrap();
 
     // Commit it
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&large_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add 100 lines"])
-        .current_dir(&large_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&large_wt, &["add", "."]);
+    repo.run_git_in(&large_wt, &["commit", "-m", "Add 100 lines"]);
 
     // Add large uncommitted changes (both added and deleted lines)
     // Add a new file with many lines
@@ -2091,18 +1882,8 @@ fn test_list_large_diffs_alignment(mut repo: TestRepo) {
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(diverged_wt.join("test.txt"), &diverged_content).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Diverged commit"])
-        .current_dir(&diverged_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&diverged_wt, &["add", "."]);
+    repo.run_git_in(&diverged_wt, &["commit", "-m", "Diverged commit"]);
 
     // Add uncommitted changes
     let modified_diverged = (1..=40)
@@ -2130,19 +1911,8 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
         .join("\n");
     std::fs::write(wli_seq.join("main.txt"), &initial_content).unwrap();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&wli_seq)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Initial content"])
-        .current_dir(&wli_seq)
-        .output()
-        .unwrap();
+    repo.run_git_in(&wli_seq, &["add", "."]);
+    repo.run_git_in(&wli_seq, &["commit", "-m", "Initial content"]);
 
     // Modify to create desired diff: remove ~111 lines, add different content
     let modified_content = (1..=89)
@@ -2166,18 +1936,8 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
 
     // Commit to make it ahead
     std::fs::write(pr_link.join("pr.txt"), "pr content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&pr_link)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "PR commit"])
-        .current_dir(&pr_link)
-        .output()
-        .unwrap();
+    repo.run_git_in(&pr_link, &["add", "."]);
+    repo.run_git_in(&pr_link, &["commit", "-m", "PR commit"]);
 
     // Set same emoji type
     repo.set_marker("pr-link", "🤖");
@@ -2185,18 +1945,8 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
     // Create "main-symbol" with different emoji
     let main_sym = repo.add_worktree("main-symbol");
     std::fs::write(main_sym.join("sym.txt"), "symbol").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&main_sym)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Symbol commit"])
-        .current_dir(&main_sym)
-        .output()
-        .unwrap();
+    repo.run_git_in(&main_sym, &["add", "."]);
+    repo.run_git_in(&main_sym, &["commit", "-m", "Symbol commit"]);
 
     repo.set_marker("main-symbol", "💬");
 
@@ -2217,19 +1967,8 @@ fn test_list_maximum_working_tree_symbols(mut repo: TestRepo) {
     std::fs::write(feature.join("file-c.txt"), "original c").unwrap();
     std::fs::write(feature.join("file-d.txt"), "original d").unwrap();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add files"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "."]);
+    repo.run_git_in(&feature, &["commit", "-m", "Add files"]);
 
     // 1. Create untracked file (?)
     std::fs::write(feature.join("untracked.txt"), "new file").unwrap();
@@ -2239,28 +1978,13 @@ fn test_list_maximum_working_tree_symbols(mut repo: TestRepo) {
 
     // 3. Stage some changes (+)
     std::fs::write(feature.join("file-b.txt"), "staged changes").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file-b.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "file-b.txt"]);
 
     // 4. Rename a file and stage it (»)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["mv", "file-c.txt", "renamed-c.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["mv", "file-c.txt", "renamed-c.txt"]);
 
     // 5. Delete a file in index (✘)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["rm", "file-d.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["rm", "file-d.txt"]);
 
     // Result should show: ?!+»✘
     snapshot_list("maximum_working_tree_symbols", &repo);
@@ -2291,18 +2015,8 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
     )
     .unwrap();
     std::fs::write(feature.join("feature.txt"), "feature-specific content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Feature changes"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "."]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature changes"]);
 
     // Main makes conflicting changes
     std::fs::write(
@@ -2311,23 +2025,12 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
     )
     .unwrap();
     std::fs::write(repo.root_path().join("main-only.txt"), "main content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Main conflicting changes"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Main conflicting changes"]);
 
     // Start rebase which will create conflicts and git operation state
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let rebase_output = cmd
+    let rebase_output = repo
+        .git_command()
         .args(["rebase", "main"])
         .current_dir(&feature)
         .output()
@@ -2348,20 +2051,10 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
 
     // 3. Staged file (+) - stage the conflict resolution
     std::fs::write(feature.join("new-staged.txt"), "staged during rebase").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "new-staged.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "new-staged.txt"]);
 
     // Lock the worktree (⊠)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "lock", feature.to_str().unwrap()])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["worktree", "lock", feature.to_str().unwrap()]);
 
     // Set user marker emoji (🤖)
     repo.set_marker("feature", "🤖");
@@ -2396,18 +2089,8 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     // Make feature diverge from main (ahead) with conflicting change
     std::fs::write(feature.join("shared.txt"), "feature version").unwrap();
     std::fs::write(feature.join("feature.txt"), "feature content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Feature work"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "."]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature work"]);
 
     // Create a real bare remote so upstream exists, but keep all graph crafting local for determinism
     repo.setup_remote("main");
@@ -2480,18 +2163,8 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     // Make main advance with conflicting change (so feature is behind with conflicts)
     std::fs::write(repo.root_path().join("shared.txt"), "main version").unwrap();
     std::fs::write(repo.root_path().join("main2.txt"), "more main").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Main advances"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "."]);
+    repo.run_git(&["commit", "-m", "Main advances"]);
 
     // Add all 5 working tree symbol types (without rebase, so we keep divergence)
     // 1. Untracked (?)
@@ -2502,36 +2175,16 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 
     // 3. Staged (+)
     std::fs::write(feature.join("new-staged.txt"), "staged content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "new-staged.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "new-staged.txt"]);
 
     // 4. Renamed (»)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["mv", "file-c.txt", "renamed-c.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["mv", "file-c.txt", "renamed-c.txt"]);
 
     // 5. Deleted (✘)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["rm", "file-d.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["rm", "file-d.txt"]);
 
     // Lock the worktree (⊠)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "lock", feature.to_str().unwrap()])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["worktree", "lock", feature.to_str().unwrap()]);
 
     // Set user marker emoji (🤖)
     repo.set_marker("feature", "🤖");
@@ -2595,18 +2248,8 @@ fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {
 
     // Make a conflicting commit on feature (different change to shared.txt)
     std::fs::write(feature.join("shared.txt"), "feature's committed version").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Feature changes shared.txt"])
-        .current_dir(&feature)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature, &["add", "."]);
+    repo.run_git_in(&feature, &["commit", "-m", "Feature changes shared.txt"]);
 
     // Advance main with a different change to the shared file
     std::fs::write(repo.root_path().join("shared.txt"), "main's version").unwrap();

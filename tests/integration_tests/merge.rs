@@ -7,7 +7,6 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
@@ -108,19 +107,8 @@ fn test_merge_not_fast_forward(mut repo: TestRepo) {
     // Add commit to main (repo root)
     std::fs::write(repo.root_path().join("main.txt"), "main content").unwrap();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add main file"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main.txt"]);
+    repo.run_git(&["commit", "-m", "Add main file"]);
 
     // Create a feature worktree branching from before the main commit
     let feature_wt = repo.add_feature();
@@ -140,66 +128,37 @@ fn test_merge_not_fast_forward(mut repo: TestRepo) {
 #[rstest]
 fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
     // Get the initial commit SHA to create feature branch from there
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let initial_sha = cmd
-        .args(["rev-parse", "HEAD"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let initial_sha = String::from_utf8_lossy(&initial_sha.stdout)
-        .trim()
-        .to_string();
+    let initial_sha = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
 
     // Add commit to main (this advances main beyond the initial commit)
     std::fs::write(repo.root_path().join("main.txt"), "main content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add main file"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main.txt"]);
+    repo.run_git(&["commit", "-m", "Add main file"]);
 
     // Create feature worktree from the INITIAL commit (before main advanced)
     let feature_path = repo.root_path().parent().unwrap().join("feature");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
+    repo.run_git(&[
         "worktree",
         "add",
         "-b",
         "feature",
         feature_path.to_str().unwrap(),
         &initial_sha,
-    ])
-    .current_dir(repo.root_path())
-    .output()
-    .unwrap();
+    ]);
 
     // Add a commit on feature branch
     std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "feature.txt"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add feature file"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_path, &["add", "feature.txt"]);
+    repo.run_git_in(&feature_path, &["commit", "-m", "Add feature file"]);
 
     // Try to merge with --no-commit --no-remove (skips rebase, so push fails with not-fast-forward)
     // Main has "Add main file" commit that feature doesn't have as ancestor
@@ -215,75 +174,44 @@ fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
 fn test_merge_rebase_conflict(repo: TestRepo) {
     // Create a shared file
     std::fs::write(repo.root_path().join("shared.txt"), "initial content\n").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "shared.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
+    repo.run_git(&["add", "shared.txt"]);
     repo.commit("Add shared file");
 
     // Modify shared.txt in main branch (from the base commit)
     std::fs::write(repo.root_path().join("shared.txt"), "main version\n").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "shared.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update shared.txt in main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "shared.txt"]);
+    repo.run_git(&["commit", "-m", "Update shared.txt in main"]);
 
     // Create a feature worktree branching from before the main commit
     // We need to create it from the original commit, not current main
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
-        .args(["rev-parse", "HEAD~1"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let base_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let base_commit = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD~1"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
 
     let feature_wt = repo.root_path().parent().unwrap().join("repo.feature");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
+    repo.run_git(&[
         "worktree",
         "add",
         feature_wt.to_str().unwrap(),
         "-b",
         "feature",
         &base_commit,
-    ])
-    .current_dir(repo.root_path())
-    .output()
-    .unwrap();
+    ]);
 
     // Modify the same file with conflicting content
     std::fs::write(feature_wt.join("shared.txt"), "feature version\n").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "shared.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update shared.txt in feature"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "shared.txt"]);
+    repo.run_git_in(
+        &feature_wt,
+        &["commit", "-m", "Update shared.txt in feature"],
+    );
 
     // Try to merge - should fail with rebase conflict
     snapshot_merge("merge_rebase_conflict", &repo, &["main"], Some(&feature_wt));
@@ -1009,19 +937,8 @@ pub fn refresh(refresh_token: &str) -> String {
 "#;
     std::fs::write(feature_wt.join("auth.rs"), auth_rs).unwrap();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "auth.rs"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Implement JWT validation"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "auth.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Implement JWT validation"]);
 
     // Snapshot the merge command
     snapshot_merge("readme_example_simple", &repo, &["main"], Some(&feature_wt));
@@ -1123,19 +1040,8 @@ EOF
     fs::write(config_dir.join("wt.toml"), config_content).unwrap();
 
     // Commit the config and mock cargo
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", ".config/wt.toml", ".bin"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add project automation config"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", ".config/wt.toml", ".bin"]);
+    repo.run_git(&["commit", "-m", "Add project automation config"]);
 
     // Create a feature worktree and make multiple commits
     let feature_wt = repo.add_worktree("feature-auth");
@@ -1151,18 +1057,8 @@ pub fn needs_rotation(issued_at: u64, ttl: u64, now: u64) -> bool {
 }
 "#;
     std::fs::write(feature_wt.join("auth.rs"), commit_one).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "auth.rs"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add token refresh logic"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "auth.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add token refresh logic"]);
 
     // Second commit: JWT validation
     let commit_two = r#"// JWT validation
@@ -1175,18 +1071,8 @@ pub fn decode_claims(token: &str) -> Option<&str> {
 }
 "#;
     std::fs::write(feature_wt.join("jwt.rs"), commit_two).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "jwt.rs"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Implement JWT validation"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "jwt.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Implement JWT validation"]);
 
     // Third commit: tests
     let commit_three = r#"// Tests
@@ -1208,18 +1094,8 @@ mod tests {
 }
 "#;
     std::fs::write(feature_wt.join("auth_test.rs"), commit_three).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "auth_test.rs"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add authentication tests"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "auth_test.rs"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
 
     // Configure LLM in worktrunk config for deterministic, high-quality commit messages
     let llm_path = bin_dir.join("llm");
@@ -1311,19 +1187,8 @@ fi
     fs::write(config_dir.join("wt.toml"), config_content).unwrap();
 
     // Commit the config
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", ".config/wt.toml", ".bin"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add project hooks"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", ".config/wt.toml", ".bin"]);
+    repo.run_git(&["commit", "-m", "Add project hooks"]);
 
     // Set PATH to include mock commands and run switch --create with --yes
     let path_with_bin = format!(
@@ -1435,19 +1300,8 @@ fi
     fs::write(config_dir.join("wt.toml"), config_content).unwrap();
 
     // Commit the config
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", ".config/wt.toml", ".bin"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add pre-merge hooks"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", ".config/wt.toml", ".bin"]);
+    repo.run_git(&["commit", "-m", "Add pre-merge hooks"]);
 
     // Create a feature worktree and make multiple commits
     let feature_wt = repo.add_worktree("feature-auth");
@@ -1474,18 +1328,8 @@ def login(username: str, password: str) -> Optional[Dict]:
     return {'token': token, 'expires_in': 3600}
 "#;
     std::fs::write(feature_wt.join("api/auth.py"), auth_py_v1).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "api/auth.py"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add login endpoint"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "api/auth.py"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add login endpoint"]);
 
     // Second commit - add tests
     fs::create_dir_all(feature_wt.join("tests")).unwrap();
@@ -1505,18 +1349,8 @@ def test_token_validation():
     assert login('valid_user', 'valid_pass')['expires_in'] == 3600
 "#;
     std::fs::write(feature_wt.join("tests/test_auth.py"), test_auth_py).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "tests/test_auth.py"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add authentication tests"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "tests/test_auth.py"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
 
     // Third commit - add refresh endpoint
     let auth_py_v2 = r#"# Authentication API endpoints
@@ -1552,18 +1386,8 @@ def refresh_token(token: str) -> Optional[Dict]:
         return None
 "#;
     std::fs::write(feature_wt.join("api/auth.py"), auth_py_v2).unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "api/auth.py"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add validation"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "api/auth.py"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add validation"]);
 
     // Configure LLM in worktrunk config
     let llm_path = bin_dir.join("llm");
@@ -1718,20 +1542,8 @@ fn test_merge_rebase_fast_forward(mut repo: TestRepo) {
 
     // Advance main with a new commit (in the primary worktree which is on main)
     fs::write(repo.root_path().join("main-update.txt"), "main content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main-update.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
 
     // Merge - should fast-forward (no commits to replay)
     snapshot_merge(
@@ -1757,20 +1569,8 @@ fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
 
     // Advance main with a new commit (in the primary worktree which is on main)
     fs::write(repo.root_path().join("main-update.txt"), "main content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main-update.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
 
     // Merge - should show rebasing progress (has commits to replay)
     snapshot_merge(
@@ -1810,20 +1610,8 @@ fn test_merge_no_rebase_when_not_rebased(mut repo: TestRepo) {
 
     // Advance main with a new commit (makes feature branch diverge)
     fs::write(repo.root_path().join("main-update.txt"), "main content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main-update.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
 
     // --no-rebase should fail because feature is not rebased onto main
     snapshot_merge(
@@ -1862,37 +1650,21 @@ fn test_merge_primary_on_different_branch(mut repo: TestRepo) {
 fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
     // Make main and develop diverge - modify file.txt on main
     fs::write(repo.root_path().join("file.txt"), "main version").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update file on main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "file.txt"]);
+    repo.run_git(&["commit", "-m", "Update file on main"]);
 
     // Create a develop branch from the previous commit (before the main update)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
-        .args(["rev-parse", "HEAD~1"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let base_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "-c", "develop", &base_commit])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    let base_commit = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD~1"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["switch", "-c", "develop", &base_commit]);
 
     // Modify file.txt in develop (uncommitted) to a different value
     // This will conflict when trying to switch to main
@@ -1932,36 +1704,20 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     // after the merge/push but before worktree removal and branch deletion.
     // Since feature is already checked out in feature_wt, we'll add the commit directly there.
     fs::write(feature_wt.join("extra.txt"), "race condition commit").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "extra.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add extra file (race condition)"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "extra.txt"]);
+    repo.run_git_in(
+        &feature_wt,
+        &["commit", "-m", "Add extra file (race condition)"],
+    );
 
     // Now simulate what wt merge would do: remove the worktree
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "remove", feature_wt.to_str().unwrap()])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["worktree", "remove", feature_wt.to_str().unwrap()]);
 
     // Try to delete the branch with -d (safe delete)
     // This should FAIL because the branch has the race condition commit not in main
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
+    let output = repo
+        .git_command()
         .args(["branch", "-d", "feature"])
-        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -1980,11 +1736,9 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     );
 
     // Verify the branch still exists (wasn't deleted)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
+    let output = repo
+        .git_command()
         .args(["branch", "--list", "feature"])
-        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -1998,67 +1752,35 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
 #[rstest]
 fn test_merge_to_non_default_target(repo: TestRepo) {
     // Switch back to main and add a commit there
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
+    repo.run_git(&["switch", "main"]);
     std::fs::write(repo.root_path().join("main-file.txt"), "main content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main-file.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add main-specific file"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main-file.txt"]);
+    repo.run_git(&["commit", "-m", "Add main-specific file"]);
 
     // Create a staging branch from BEFORE the main commit
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
-        .args(["rev-parse", "HEAD~1"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let base_commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "-c", "staging", &base_commit])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    let base_commit = String::from_utf8_lossy(
+        &repo
+            .git_command()
+            .args(["rev-parse", "HEAD~1"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    repo.run_git(&["switch", "-c", "staging", &base_commit]);
 
     // Add a commit to staging to make it different from main
     std::fs::write(repo.root_path().join("staging-file.txt"), "staging content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "staging-file.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add staging-specific file"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "staging-file.txt"]);
+    repo.run_git(&["commit", "-m", "Add staging-specific file"]);
+
+    // Switch back to main before creating the staging worktree
+    repo.run_git(&["switch", "main"]);
 
     // Create a worktree for staging
     let staging_wt = repo.root_path().parent().unwrap().join("repo.staging-wt");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "add", staging_wt.to_str().unwrap(), "staging"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["worktree", "add", staging_wt.to_str().unwrap(), "staging"]);
 
     // Create a feature worktree from the base commit (before both main and staging diverged)
     let feature_wt = repo
@@ -2066,35 +1788,18 @@ fn test_merge_to_non_default_target(repo: TestRepo) {
         .parent()
         .unwrap()
         .join("repo.feature-for-staging");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
+    repo.run_git(&[
         "worktree",
         "add",
         feature_wt.to_str().unwrap(),
         "-b",
         "feature-for-staging",
         &base_commit,
-    ])
-    .current_dir(repo.root_path())
-    .output()
-    .unwrap();
+    ]);
 
     std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "feature.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add feature for staging"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "feature.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add feature for staging"]);
 
     // Merge to staging explicitly (NOT to main)
     // This should rebase onto staging (which has staging-file.txt)
@@ -2116,33 +1821,13 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
 
     // First commit
     std::fs::write(feature_wt.join("file1.txt"), "content 1").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file1.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 1"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "file1.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 1"]);
 
     // Second commit
     std::fs::write(feature_wt.join("file2.txt"), "content 2").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file2.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 2"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "file2.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 2"]);
 
     // Add uncommitted tracked changes that will be included in the squash
     std::fs::write(feature_wt.join("file1.txt"), "updated content 1").unwrap();
@@ -2162,11 +1847,9 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
 
     // Verify that a backup was created in the reflog
     // Note: The worktree has been removed by the merge, so we check from the repo root
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
+    let output = repo
+        .git_command()
         .args(["reflog", "show", "refs/wt-backup/feature"])
-        .current_dir(repo.root_path())
         .output()
         .unwrap();
 
@@ -2193,12 +1876,7 @@ fn test_merge_does_not_permanently_set_receive_deny_current_branch(
     let (repo, feature_wt) = merge_scenario;
 
     // Explicitly set config to "refuse" - this would block pushes to checked-out branches
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "receive.denyCurrentBranch", "refuse"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["config", "receive.denyCurrentBranch", "refuse"]);
 
     // Perform merge - should succeed despite "refuse" setting because we use --receive-pack
     let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
@@ -2213,11 +1891,9 @@ fn test_merge_does_not_permanently_set_receive_deny_current_branch(
     );
 
     // Check config after merge - should still be "refuse" (not permanently changed)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let after = cmd
+    let after = repo
+        .git_command()
         .args(["config", "receive.denyCurrentBranch"])
-        .current_dir(repo.root_path())
         .output()
         .unwrap();
     let after_value = String::from_utf8_lossy(&after.stdout).trim().to_string();
@@ -2285,32 +1961,12 @@ fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
 
     // Commit the config as part of first commit to avoid untracked file warnings
     fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", ".config", "file1.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to add files");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 1"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to commit");
+    repo.run_git_in(&feature_wt, &["add", ".config", "file1.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 1"]);
 
     fs::write(feature_wt.join("file2.txt"), "content 2").expect("Failed to write file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file2.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to add file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 2"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to commit");
+    repo.run_git_in(&feature_wt, &["add", "file2.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 2"]);
 
     snapshot_step_squash_with_env(
         "step_squash_no_verify",
@@ -2332,32 +1988,12 @@ fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
     fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file1.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to add file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 1"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to commit");
+    repo.run_git_in(&feature_wt, &["add", "file1.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 1"]);
 
     fs::write(feature_wt.join("file2.txt"), "content 2").expect("Failed to write file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file2.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to add file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 2"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to commit");
+    repo.run_git_in(&feature_wt, &["add", "file2.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 2"]);
 
     // Add uncommitted tracked changes
     fs::write(feature_wt.join("file1.txt"), "updated content").expect("Failed to write file");
@@ -2392,32 +2028,12 @@ fn test_step_squash_with_both_flags(mut repo: TestRepo) {
 
     // Commit the config as part of first commit to avoid untracked file warnings
     fs::write(feature_wt.join("file1.txt"), "content 1").expect("Failed to write file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", ".config", "file1.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to add files");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 1"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to commit");
+    repo.run_git_in(&feature_wt, &["add", ".config", "file1.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 1"]);
 
     fs::write(feature_wt.join("file2.txt"), "content 2").expect("Failed to write file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file2.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to add file");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 2"])
-        .current_dir(&feature_wt)
-        .output()
-        .expect("Failed to commit");
+    repo.run_git_in(&feature_wt, &["add", "file2.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 2"]);
 
     fs::write(feature_wt.join("file1.txt"), "updated content").expect("Failed to write file");
 
@@ -2698,27 +2314,14 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
 
     // Advance main with a new commit
     fs::write(repo.root_path().join("main-update.txt"), "main content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "main-update.txt"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Update main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["add", "main-update.txt"]);
+    repo.run_git(&["commit", "-m", "Update main"]);
 
     // Merge main INTO the feature branch (creating a merge commit)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
-        .args(["merge", "main", "-m", "Merge main into feature"])
+    let output = repo
+        .git_command()
         .current_dir(&feature_wt)
+        .args(["merge", "main", "-m", "Merge main into feature"])
         .output()
         .unwrap();
     assert!(

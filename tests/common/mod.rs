@@ -588,7 +588,8 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
 
 /// Shared interface for test repository fixtures.
 ///
-/// Provides `configure_git_cmd()` and `git_command()` with consistent environment isolation.
+/// Provides `configure_git_cmd()`, `git_command()`, and `run_git_in()` with consistent
+/// environment isolation.
 pub trait TestRepoBase {
     /// Path to the git config file for this test.
     fn git_config_path(&self) -> &Path;
@@ -604,6 +605,12 @@ pub trait TestRepoBase {
         cmd.current_dir(dir);
         self.configure_git_cmd(&mut cmd);
         cmd
+    }
+
+    /// Run a git command in a specific directory, panicking on failure.
+    fn run_git_in(&self, dir: &Path, args: &[&str]) {
+        let output = self.git_command(dir).args(args).output().unwrap();
+        check_git_status(&output, &args.join(" "));
     }
 }
 
@@ -1140,15 +1147,10 @@ impl TestRepo {
         self.git_command().args(["add", "."]).output().unwrap();
 
         // Create commit with custom timestamp
-        let mut cmd = Command::new("git");
-        cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
-        cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
-        cmd.env("GIT_AUTHOR_DATE", &timestamp);
-        cmd.env("GIT_COMMITTER_DATE", &timestamp);
-        cmd.env("LC_ALL", "C");
-        cmd.env("LANG", "C");
-        cmd.args(["commit", "-m", message])
-            .current_dir(&self.root)
+        self.git_command()
+            .env("GIT_AUTHOR_DATE", &timestamp)
+            .env("GIT_COMMITTER_DATE", &timestamp)
+            .args(["commit", "-m", message])
             .output()
             .unwrap();
     }
@@ -1169,14 +1171,10 @@ impl TestRepo {
         let commit_time = TEST_EPOCH as i64 - age_seconds;
         let timestamp = unix_to_iso8601(commit_time);
 
-        let mut cmd = Command::new("git");
-        cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
-        cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
-        cmd.env("GIT_AUTHOR_DATE", &timestamp);
-        cmd.env("GIT_COMMITTER_DATE", &timestamp);
-        cmd.env("LC_ALL", "C");
-        cmd.env("LANG", "C");
-        cmd.args(["commit", "-m", message])
+        self.git_command()
+            .env("GIT_AUTHOR_DATE", &timestamp)
+            .env("GIT_COMMITTER_DATE", &timestamp)
+            .args(["commit", "-m", message])
             .current_dir(dir)
             .output()
             .unwrap();
@@ -1388,14 +1386,12 @@ impl TestRepo {
 
     /// Check if origin/HEAD is set
     pub fn has_origin_head(&self) -> bool {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        let output = cmd
+        self.git_command()
             .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
-            .current_dir(&self.root)
             .output()
-            .unwrap();
-        output.status.success()
+            .unwrap()
+            .status
+            .success()
     }
 
     /// Switch the primary worktree to a different branch

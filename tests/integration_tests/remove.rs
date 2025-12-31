@@ -57,12 +57,7 @@ fn test_remove_already_on_default(repo: TestRepo) {
 #[rstest]
 fn test_remove_switch_to_default(repo: TestRepo) {
     // Create and switch to a feature branch in the main repo
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "-c", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["switch", "-c", "feature"]);
 
     snapshot_remove("remove_switch_to_default", &repo, &[], None);
 }
@@ -212,29 +207,10 @@ fn test_remove_multiple_nonexistent_force(repo: TestRepo) {
 #[rstest]
 fn test_remove_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
     // Create a remote-only branch by pushing a branch then deleting it locally
-    Command::new("git")
-        .args(["branch", "remote-feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["push", "origin", "remote-feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "-D", "remote-feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["fetch", "origin"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "remote-feature"]);
+    repo.run_git(&["push", "origin", "remote-feature"]);
+    repo.run_git(&["branch", "-D", "remote-feature"]);
+    repo.run_git(&["fetch", "origin"]);
 
     // Try to remove a branch that only exists on remote - should get helpful error
     snapshot_remove(
@@ -783,12 +759,7 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     );
 
     // Part 5: Create a feature branch IN the main worktree, verify STILL cannot remove
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "-c", "feature-in-main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["switch", "-c", "feature-in-main"]);
 
     snapshot_remove(
         "remove_main_vs_linked__main_on_feature_fails",
@@ -799,12 +770,7 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
 
     // Part 6: Verify main worktree CANNOT be removed by name from a linked worktree
     // Switch back to main branch in main worktree, then create a new linked worktree
-    let mut cmd = std::process::Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["switch", "main"]);
 
     let linked_for_test = repo.add_worktree("test-from-linked");
     snapshot_remove(

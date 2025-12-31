@@ -2152,19 +2152,8 @@ fi
         fs::write(config_dir.join("wt.toml"), config_content).unwrap();
 
         // Commit the config
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["add", ".config/wt.toml", ".bin"])
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap();
-
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", "Add pre-merge hooks"])
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap();
+        repo.run_git(&["add", ".config/wt.toml", ".bin"]);
+        repo.run_git(&["commit", "-m", "Add pre-merge hooks"]);
 
         // Create a feature worktree and make multiple commits
         let feature_wt = repo.add_worktree("feature-auth");
@@ -2191,18 +2180,8 @@ def login(username: str, password: str) -> Optional[Dict]:
     return {'token': token, 'expires_in': 3600}
 "#;
         std::fs::write(feature_wt.join("api/auth.py"), auth_py_v1).unwrap();
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["add", "api/auth.py"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", "Add login endpoint"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
+        repo.run_git_in(&feature_wt, &["add", "api/auth.py"]);
+        repo.run_git_in(&feature_wt, &["commit", "-m", "Add login endpoint"]);
 
         // Second commit - add tests
         fs::create_dir_all(feature_wt.join("tests")).unwrap();
@@ -2222,18 +2201,8 @@ def test_token_validation():
     assert login('valid_user', 'valid_pass')['expires_in'] == 3600
 "#;
         std::fs::write(feature_wt.join("tests/test_auth.py"), test_auth_py).unwrap();
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["add", "tests/test_auth.py"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", "Add authentication tests"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
+        repo.run_git_in(&feature_wt, &["add", "tests/test_auth.py"]);
+        repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
 
         // Third commit - add refresh endpoint
         let auth_py_v2 = r#"# Authentication API endpoints
@@ -2269,18 +2238,8 @@ def refresh_token(token: str) -> Optional[Dict]:
         return None
 "#;
         std::fs::write(feature_wt.join("api/auth.py"), auth_py_v2).unwrap();
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["add", "api/auth.py"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", "Add validation"])
-            .current_dir(&feature_wt)
-            .output()
-            .unwrap();
+        repo.run_git_in(&feature_wt, &["add", "api/auth.py"]);
+        repo.run_git_in(&feature_wt, &["commit", "-m", "Add validation"]);
 
         // Configure LLM in worktrunk config
         let llm_path = bin_dir.join("llm");
@@ -2371,19 +2330,8 @@ fi
         fs::write(config_dir.join("wt.toml"), config_content).unwrap();
 
         // Commit the config
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["add", ".config/wt.toml", ".bin"])
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap();
-
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", "Add project hooks"])
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap();
+        repo.run_git(&["add", ".config/wt.toml", ".bin"]);
+        repo.run_git(&["commit", "-m", "Add project hooks"]);
 
         // Set PATH with mock binaries and run switch --create
         let path_with_bin = format!(

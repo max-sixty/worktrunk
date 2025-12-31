@@ -66,30 +66,12 @@ fn test_switch_create_existing_branch_error(mut repo: TestRepo) {
 
 #[rstest]
 fn test_switch_create_with_remote_branch_only(#[from(repo_with_remote)] repo: TestRepo) {
-    use std::process::Command;
-
     // Create a branch on the remote only (no local branch)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "remote-feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["push", "origin", "remote-feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "remote-feature"]);
+    repo.run_git(&["push", "origin", "remote-feature"]);
 
     // Delete the local branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "-D", "remote-feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "-D", "remote-feature"]);
 
     // Now we have origin/remote-feature but no local remote-feature
     // This should succeed with --create (previously would fail)
@@ -413,15 +395,8 @@ fn test_switch_previous_branch_no_history(repo: TestRepo) {
 
 #[rstest]
 fn test_switch_main_branch(repo: TestRepo) {
-    use std::process::Command;
-
     // Create a feature branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature-a"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature-a"]);
 
     // Switch to feature-a first
     snapshot_switch("switch_main_branch_to_feature", &repo, &["feature-a"]);
@@ -457,22 +432,15 @@ fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
 /// Test switching to a worktree at an unexpected path shows a hint
 #[rstest]
 fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
-    use std::process::Command;
-
     // Create a worktree at a non-standard path (sibling to repo, not following template)
     let wrong_path = repo.root_path().parent().unwrap().join("wrong-path");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
+    repo.run_git(&[
         "worktree",
         "add",
         wrong_path.to_str().unwrap(),
         "-b",
         "feature",
-    ])
-    .current_dir(repo.root_path())
-    .output()
-    .unwrap();
+    ]);
 
     // Switch to feature - should show hint about path mismatch
     snapshot_switch_with_directive_file("switch_path_mismatch_shows_hint", &repo, &["feature"]);
@@ -486,30 +454,18 @@ fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
 /// branch currently occupies the path.
 #[rstest]
 fn test_switch_error_path_occupied_different_branch(repo: TestRepo) {
-    use std::process::Command;
-
     // Create a worktree for "feature" branch at expected path
     let feature_path = repo.root_path().parent().unwrap().join("repo.feature");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
+    repo.run_git(&[
         "worktree",
         "add",
         feature_path.to_str().unwrap(),
         "-b",
         "feature",
-    ])
-    .current_dir(repo.root_path())
-    .output()
-    .unwrap();
+    ]);
 
     // Switch that worktree to a different branch "bugfix"
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["switch", "-c", "bugfix"])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_path, &["switch", "-c", "bugfix"]);
 
     // Switch to feature - should error since path is occupied by bugfix worktree
     snapshot_switch_with_directive_file(
@@ -522,39 +478,26 @@ fn test_switch_error_path_occupied_different_branch(repo: TestRepo) {
 /// Test that switching to a branch errors when path is occupied by detached HEAD worktree
 #[rstest]
 fn test_switch_error_path_occupied_detached(repo: TestRepo) {
-    use std::process::Command;
-
     // Create a worktree for "feature" branch at expected path
     let feature_path = repo.root_path().parent().unwrap().join("repo.feature");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args([
+    repo.run_git(&[
         "worktree",
         "add",
         feature_path.to_str().unwrap(),
         "-b",
         "feature",
-    ])
-    .current_dir(repo.root_path())
-    .output()
-    .unwrap();
+    ]);
 
     // Get the HEAD commit and detach
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    let output = cmd
+    let output = repo
+        .git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
     let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "--detach", &commit])
-        .current_dir(&feature_path)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_path, &["checkout", "--detach", &commit]);
 
     // Switch to feature - should error since path is occupied by detached worktree
     snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
@@ -567,15 +510,8 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
 /// explaining how to get there. This matches GitHub issue #327.
 #[rstest]
 fn test_switch_main_worktree_on_different_branch(repo: TestRepo) {
-    use std::process::Command;
-
     // Switch the main worktree to a different branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "-b", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["checkout", "-b", "feature"]);
 
     // Now try to switch to main - should error since main worktree is on different branch
     snapshot_switch_with_directive_file(
@@ -591,18 +527,11 @@ fn test_switch_main_worktree_on_different_branch(repo: TestRepo) {
 /// switched to a different branch, and user runs `wt switch <default-branch>`.
 #[rstest]
 fn test_switch_default_branch_from_feature_worktree(mut repo: TestRepo) {
-    use std::process::Command;
-
     // Create a feature worktree to work from
     let feature_a_path = repo.add_worktree("feature-a");
 
     // Switch main worktree to a different branch (simulates user running git checkout there)
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["checkout", "-b", "feature-rpa"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["checkout", "-b", "feature-rpa"]);
 
     // From feature-a worktree, try to switch to main (default branch)
     // This should error because main worktree is now on feature-rpa
@@ -650,16 +579,9 @@ fn test_switch_internal_execute_with_output_before_exit(repo: TestRepo) {
 /// when recording new history, not any previously stored value.
 #[rstest]
 fn test_switch_previous_with_stale_history(repo: TestRepo) {
-    use std::process::Command;
-
     // Create branches with worktrees
     for branch in ["branch-a", "branch-b", "branch-c"] {
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["branch", branch])
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap();
+        repo.run_git(&["branch", branch]);
     }
 
     // Switch to branch-a, then branch-b to establish history
@@ -669,12 +591,7 @@ fn test_switch_previous_with_stale_history(repo: TestRepo) {
     // Now manually set history to simulate user changing worktrees without wt switch.
     // History stores just the previous branch (branch-a from the earlier switches).
     // If user manually cd'd to branch-c's worktree, history would still say branch-a.
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["config", "worktrunk.history", "branch-a"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["config", "worktrunk.history", "branch-a"]);
 
     // Run wt switch - from branch-b's worktree.
     // Should go to branch-a (what history says), and record actual current branch as new previous.
@@ -691,15 +608,8 @@ fn test_switch_previous_with_stale_history(repo: TestRepo) {
 /// changes the working directory before the next command runs.
 #[rstest]
 fn test_switch_ping_pong_realistic(repo: TestRepo) {
-    use std::process::Command;
-
     // Create feature-a branch
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["branch", "feature-a"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature-a"]);
 
     // Step 1: From main worktree, switch to feature-a (creates worktree)
     // History: current=feature-a, previous=main

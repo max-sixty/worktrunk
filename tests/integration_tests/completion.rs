@@ -1,7 +1,6 @@
 use crate::common::{TestRepo, repo, wt_command, wt_completion_command};
 use insta::Settings;
 use rstest::rstest;
-use std::process::Command;
 
 fn only_option_suggestions(stdout: &str) -> bool {
     stdout
@@ -35,17 +34,8 @@ fn test_complete_switch_shows_branches(repo: TestRepo) {
     repo.commit("initial");
 
     // Create some branches using git
-    Command::new("git")
-        .args(["branch", "feature/new"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "hotfix/bug"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature/new"]);
+    repo.run_git(&["branch", "hotfix/bug"]);
 
     // Test completion for switch command
     let mut settings = Settings::clone_current();
@@ -68,11 +58,7 @@ fn test_complete_switch_shows_all_branches_including_worktrees(mut repo: TestRep
     repo.add_worktree("feature/new");
 
     // Create another branch without worktree
-    Command::new("git")
-        .args(["branch", "hotfix/bug"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "hotfix/bug"]);
 
     // Test completion - should show branches WITH worktrees and WITHOUT worktrees
     let mut settings = Settings::clone_current();
@@ -95,11 +81,7 @@ fn test_complete_push_shows_all_branches(mut repo: TestRepo) {
     repo.add_worktree("feature/new");
 
     // Create another branch without worktree
-    Command::new("git")
-        .args(["branch", "hotfix/bug"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "hotfix/bug"]);
 
     // Test completion for step push (should show ALL branches, including those with worktrees)
     let mut settings = Settings::clone_current();
@@ -126,17 +108,8 @@ fn test_complete_base_flag_all_formats(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches
-    Command::new("git")
-        .args(["branch", "develop"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "feature/existing"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "develop"]);
+    repo.run_git(&["branch", "feature/existing"]);
 
     // Test all base flag formats: --base, -b, --base=, -b=
     // For space-separated (--base ""), cursor is on empty arg after flag
@@ -320,23 +293,9 @@ fn test_complete_with_partial_prefix(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches with common prefix
-    Command::new("git")
-        .args(["branch", "feature/one"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "feature/two"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "hotfix/bug"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature/one"]);
+    repo.run_git(&["branch", "feature/two"]);
+    repo.run_git(&["branch", "hotfix/bug"]);
 
     // Complete with partial prefix - shell does prefix filtering, we return all branches
     let mut settings = Settings::clone_current();
@@ -377,53 +336,28 @@ fn test_complete_excludes_remote_branches(repo: TestRepo) {
     repo.commit("initial");
 
     // Create local branches
-    Command::new("git")
-        .args(["branch", "feature/local"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature/local"]);
 
     // Set up a fake remote
-    Command::new("git")
-        .args(["remote", "add", "origin", "https://example.com/repo.git"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["remote", "add", "origin", "https://example.com/repo.git"]);
 
     // Create a remote-tracking branch by fetching from a local "remote"
     // First, create a bare repo to act as remote
     let remote_dir = repo.root_path().parent().unwrap().join("remote.git");
-    Command::new("git")
+    repo.git_command()
         .args(["init", "--bare", remote_dir.to_str().unwrap()])
         .output()
         .unwrap();
 
     // Update remote URL to point to our bare repo
-    Command::new("git")
-        .args(["remote", "set-url", "origin", remote_dir.to_str().unwrap()])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["remote", "set-url", "origin", remote_dir.to_str().unwrap()]);
 
     // Push to create remote branches
-    Command::new("git")
-        .args(["push", "origin", "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["push", "origin", "feature/local:feature/remote"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["push", "origin", "main"]);
+    repo.run_git(&["push", "origin", "feature/local:feature/remote"]);
 
     // Fetch to create remote-tracking branches
-    Command::new("git")
-        .args(["fetch", "origin"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["fetch", "origin"]);
 
     // Test completion
     let output = repo.completion_cmd(&["wt", "switch", ""]).output().unwrap();
@@ -457,11 +391,7 @@ fn test_complete_merge_shows_branches(mut repo: TestRepo) {
     repo.add_worktree("feature/new");
 
     // Create another branch without worktree
-    Command::new("git")
-        .args(["branch", "hotfix/bug"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "hotfix/bug"]);
 
     // Test completion for merge (should show ALL branches, including those with worktrees)
     let output = repo.completion_cmd(&["wt", "merge", ""]).output().unwrap();
@@ -488,11 +418,7 @@ fn test_complete_with_special_characters_in_branch_names(repo: TestRepo) {
     ];
 
     for branch in &branch_names {
-        Command::new("git")
-            .args(["branch", branch])
-            .current_dir(repo.root_path())
-            .output()
-            .unwrap();
+        repo.run_git(&["branch", branch]);
     }
 
     // Test completion
@@ -517,17 +443,8 @@ fn test_complete_stops_after_branch_provided(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches
-    Command::new("git")
-        .args(["branch", "feature/one"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "feature/two"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature/one"]);
+    repo.run_git(&["branch", "feature/two"]);
 
     // Test that switch stops completing after branch is provided
     let mut settings = Settings::clone_current();
@@ -582,11 +499,7 @@ fn test_complete_stops_after_branch_provided(repo: TestRepo) {
 fn test_complete_switch_with_create_flag_no_completion(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "feature/existing"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature/existing"]);
 
     // Test with --create flag (long form)
     let mut settings = Settings::clone_current();
@@ -626,11 +539,7 @@ fn test_complete_switch_base_flag_after_branch(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches
-    Command::new("git")
-        .args(["branch", "develop"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "develop"]);
 
     // Test completion for --base even after --create and branch name
     let output = repo
@@ -653,11 +562,7 @@ fn test_complete_remove_excludes_remote_only_branches(mut repo: TestRepo) {
     repo.add_worktree("feature/new");
 
     // Create another local branch without worktree
-    Command::new("git")
-        .args(["branch", "hotfix/bug"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "hotfix/bug"]);
 
     // Test completion for remove (should show local branches, exclude remote-only)
     let output = repo.completion_cmd(&["wt", "remove", ""]).output().unwrap();
@@ -812,11 +717,7 @@ fn test_complete_list_format_flag(repo: TestRepo) {
 fn test_complete_switch_execute_all_formats(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Test all execute flag formats: --execute with space, --execute=, -xvalue
     // All should complete branches after the execute value is provided
@@ -850,11 +751,7 @@ fn test_complete_switch_execute_all_formats(repo: TestRepo) {
 fn test_complete_switch_with_double_dash_terminator(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Test: wt switch -- <cursor>
     // After --, everything is positional, should complete branches
@@ -874,11 +771,7 @@ fn test_complete_switch_with_double_dash_terminator(repo: TestRepo) {
 fn test_complete_switch_positional_already_provided(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "existing"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "existing"]);
 
     // Test: wt switch existing <cursor>
     // Positional already provided, should NOT complete branches
@@ -899,11 +792,7 @@ fn test_complete_switch_positional_already_provided(repo: TestRepo) {
 fn test_complete_switch_completing_execute_value(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "develop"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "develop"]);
 
     // Test: wt switch --execute <cursor>
     // Currently typing the value for --execute, should NOT complete branches
@@ -922,11 +811,7 @@ fn test_complete_switch_completing_execute_value(repo: TestRepo) {
 fn test_complete_merge_with_flags(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "hotfix"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "hotfix"]);
 
     // Test: wt merge --no-remove --yes <cursor>
     // Should complete branches for positional (boolean flags don't consume arguments)
@@ -947,17 +832,8 @@ fn test_complete_switch_base_after_execute_equals(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches
-    Command::new("git")
-        .args(["branch", "develop"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "production"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "develop"]);
+    repo.run_git(&["branch", "production"]);
 
     // Test: wt switch --create --execute=claude --base <cursor>
     // This is the reported failing case - should complete branches for --base
@@ -989,11 +865,7 @@ fn test_complete_switch_base_after_execute_equals(repo: TestRepo) {
 fn test_complete_switch_flexible_argument_ordering(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "develop"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "develop"]);
 
     // Test that .last(true) allows positional before flags
     // wt switch feature --base <cursor>
@@ -1048,11 +920,7 @@ fn test_complete_remove_flexible_argument_ordering(mut repo: TestRepo) {
 fn test_complete_filters_options_when_positionals_exist(repo: TestRepo) {
     repo.commit("initial");
 
-    Command::new("git")
-        .args(["branch", "feature"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature"]);
 
     // Test: wt switch <cursor>
     // Should show branches but NOT options like --config, --verbose, -C
@@ -1110,17 +978,8 @@ fn test_complete_switch_option_prefix_shows_options_not_branches(repo: TestRepo)
     repo.commit("initial");
 
     // Create branches that happen to contain "-c" in the name
-    Command::new("git")
-        .args(["branch", "fish-switch-complete"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
-    Command::new("git")
-        .args(["branch", "zsh-bash-complete"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "fish-switch-complete"]);
+    repo.run_git(&["branch", "zsh-bash-complete"]);
 
     // Test: wt switch --c<cursor>
     // Should show options starting with --c (like --create), NOT branches containing "-c"
@@ -1153,11 +1012,7 @@ fn test_complete_switch_single_dash_shows_options_not_branches(repo: TestRepo) {
     repo.commit("initial");
 
     // Create a branch that contains "-" in the name
-    Command::new("git")
-        .args(["branch", "feature-branch"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
+    repo.run_git(&["branch", "feature-branch"]);
 
     // Test: wt switch -<cursor>
     // Should show short options, NOT branches containing "-"
