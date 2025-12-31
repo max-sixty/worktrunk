@@ -407,7 +407,16 @@ pub fn run_hook_concurrent_with_filter(
     eprint!("{}", anstyle::Reset);
     stderr().flush().ok();
 
-    // Spawn all commands in parallel together
+    // Spawn all commands in parallel together.
+    //
+    // Note: Unlike sequential execution (execute_streaming), we don't use process_group(0)
+    // or sophisticated signal forwarding here. Children inherit the foreground process group,
+    // so Ctrl+C sends SIGINT to all of them together. This simpler behavior is acceptable for
+    // "best effort" concurrent hooks - if the user interrupts, everything stops.
+    //
+    // Adding proper signal forwarding would require either spawning all children from the main
+    // thread (not worker threads) or sharing child PIDs across threads with a coordinating
+    // signal handler. The complexity isn't warranted for this use case.
     let shell = ShellConfig::get();
     let worktree_path = pipeline.ctx.worktree_path.to_path_buf();
 
@@ -418,18 +427,33 @@ pub fn run_hook_concurrent_with_filter(
             let worktree_path = worktree_path.clone();
 
             thread::spawn(move || {
+                use std::io::Write;
+
                 let mut cmd = shell.command(&prepared.expanded);
                 cmd.current_dir(&worktree_path)
-                    .stdin(Stdio::null())
+                    .stdin(Stdio::piped())
                     .stdout(Stdio::from(std::io::stderr()))
                     .stderr(Stdio::inherit())
                     .env_remove(worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR);
 
-                // Provide context via env var (concurrent execution can't easily pipe to stdin
-                // for multiple processes simultaneously)
-                cmd.env("WT_HOOK_CONTEXT", &prepared.context_json);
+                let mut child = match cmd.spawn() {
+                    Ok(child) => child,
+                    Err(e) => {
+                        return Some(HookFailure {
+                            name: prepared.name.clone(),
+                            error: e.to_string(),
+                            exit_code: None,
+                        });
+                    }
+                };
 
-                match cmd.status() {
+                // Pipe context JSON to stdin (same as sequential execution)
+                if let Some(mut stdin) = child.stdin.take() {
+                    // Ignore write errors - command may not read stdin
+                    let _ = stdin.write_all(prepared.context_json.as_bytes());
+                }
+
+                match child.wait() {
                     Ok(status) if status.success() => None,
                     Ok(status) => Some(HookFailure {
                         name: prepared.name.clone(),
