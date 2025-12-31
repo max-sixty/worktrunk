@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.2
+
+### Improved
+
+- **Concurrent hook execution**: `wt hook post-start` and `wt hook post-switch` now run all commands concurrently (matching their normal background behavior) instead of sequentially with fail-fast. Multiple failures are collected and reported together.
+
+### Documentation
+
+- **Nested bare repo layout**: Added worktree-path template example for nested bare repo layout (`project/.git` pattern). Uses relative paths like `../{{ branch | sanitize }}` to create worktrees as siblings to the .git directory.
+
 ## 0.8.1
 
 ### Improved
