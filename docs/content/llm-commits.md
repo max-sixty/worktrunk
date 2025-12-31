@@ -185,8 +185,8 @@ args = ["-m", "claude:claude-haiku-4.5"]
 command = "./scripts/generate-commit.sh"
 ```
 
+See [llm documentation](https://llm.datasette.io/) and [aichat](https://github.com/sigoden/aichat).
+
 ## Fallback behavior
 
 When no LLM is configured, worktrunk generates deterministic messages based on changed filenames (e.g., "Changes to auth.rs & config.rs").
-
-Resources: [llm documentation](https://llm.datasette.io/) | [aichat](https://github.com/sigoden/aichat)

@@ -1,4 +1,7 @@
-# Environment variables and shell setup - Source after Require
+# Common requirements and environment - Source after Output
+Require wt
+Require git
+
 Env GIT_TERMINAL_PROMPT "0"
 Env DEMO_REPO "{{DEMO_REPO}}"
 Env RUSTUP_HOME "{{REAL_HOME}}/.rustup"

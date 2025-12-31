@@ -253,9 +253,11 @@ def setup_claude_code_config(
     api_key_suffix = os.environ.get("ANTHROPIC_API_KEY", "")[-20:] if os.environ.get("ANTHROPIC_API_KEY") else ""
 
     # Build projects config - pre-approve trust for all worktree paths
+    # Use resolved paths to handle macOS symlinks (/var -> /private/var)
     projects_config = {}
     for path in worktree_paths:
-        projects_config[path] = {"allowedTools": [], "hasTrustDialogAccepted": True}
+        resolved_path = str(Path(path).resolve())
+        projects_config[resolved_path] = {"allowedTools": [], "hasTrustDialogAccepted": True}
 
     claude_json = env.home / ".claude.json"
     claude_json.write_text(json.dumps({

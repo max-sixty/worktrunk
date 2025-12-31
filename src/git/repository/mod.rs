@@ -1018,6 +1018,46 @@ impl Repository {
         Ok(upstreams)
     }
 
+    /// List remote branches that aren't tracked by any local branch.
+    ///
+    /// Returns (branch_name, commit_sha) pairs for remote branches that have no
+    /// corresponding local tracking branch.
+    pub fn list_untracked_remote_branches(&self) -> anyhow::Result<Vec<(String, String)>> {
+        let all_remote_branches = self.list_remote_branches()?;
+        let tracked_upstreams = self.list_tracked_upstreams()?;
+
+        let remote_branches: Vec<_> = all_remote_branches
+            .into_iter()
+            .filter(|(remote_branch_name, _)| !tracked_upstreams.contains(remote_branch_name))
+            .collect();
+
+        Ok(remote_branches)
+    }
+
+    /// Get recent commit subjects for style reference.
+    ///
+    /// Returns up to `count` commit subjects (first line of message), excluding merges.
+    /// If `start_ref` is provided, gets commits starting from that ref.
+    /// Returns `None` if no commits are found or the command fails.
+    pub fn recent_commit_subjects(
+        &self,
+        start_ref: Option<&str>,
+        count: usize,
+    ) -> Option<Vec<String>> {
+        let count_str = count.to_string();
+        let mut args = vec!["log", "--pretty=format:%s", "-n", &count_str, "--no-merges"];
+        if let Some(ref_name) = start_ref {
+            args.push(ref_name);
+        }
+        self.run_command(&args).ok().and_then(|output| {
+            if output.trim().is_empty() {
+                None
+            } else {
+                Some(output.lines().map(String::from).collect())
+            }
+        })
+    }
+
     /// Get line diff statistics for working tree changes (unstaged + staged).
     pub fn working_tree_diff_stats(&self) -> anyhow::Result<LineDiff> {
         // Limit concurrent diff operations to reduce mmap thrash on pack files

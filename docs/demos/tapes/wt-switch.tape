@@ -2,9 +2,6 @@ Source docs/demos/tapes/shared-setup.tape
 
 Output "{{OUTPUT_GIF}}"
 
-Require wt
-Require git
-
 Source docs/demos/tapes/shared-commands.tape
 
 Env ANTHROPIC_API_KEY "{{ANTHROPIC_API_KEY}}"

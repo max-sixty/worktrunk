@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 from pathlib import Path
 
 # Add docs/demos/ to path for shared library
@@ -121,22 +122,12 @@ cleanup = "{cleanup_cmd}"
     _add_billing_branch(env)
 
 
-def prepare_with_hooks_deps(env: DemoEnv):
-    """Standard hooks demo with deps (for pickling compatibility)."""
-    prepare_with_hooks(env, include_deps=True)
-
-
-def prepare_with_llm_commit(env: DemoEnv):
-    """LLM commit generation demo with staged changes."""
+def prepare_merge_demo(env: DemoEnv, commit_generation: bool = True, staged_changes: bool = True):
+    """Merge demo setup. Use commit_generation=False for social (no LLM in GIF)."""
     prepare_demo_repo(env, REPO_ROOT)
-    _write_user_config(env, ["cargo nextest run"], commit_generation=True)
-    _add_staged_validation(env)
-
-
-def prepare_merge_only(env: DemoEnv):
-    """Merge demo without LLM commit generation."""
-    prepare_demo_repo(env, REPO_ROOT)
-    _write_user_config(env, ["cargo nextest run"])
+    _write_user_config(env, ["cargo nextest run"], commit_generation=commit_generation)
+    if staged_changes:
+        _add_staged_validation(env)
 
 
 def prepare_switch(env: DemoEnv):
@@ -268,9 +259,9 @@ DOCS_DEMOS = [
     ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
     ("wt-switch.tape", "wt-switch", prepare_switch, "vhs"),
     ("wt-list.tape", "wt-list", prepare_with_hooks, "vhs"),
-    ("wt-commit.tape", "wt-commit", prepare_with_llm_commit, "vhs"),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo, "vhs"),
     ("wt-statusline.tape", "wt-statusline", prepare_switch, "vhs"),
-    ("wt-merge.tape", "wt-merge", prepare_with_llm_commit, "vhs"),
+    ("wt-merge.tape", "wt-merge", prepare_merge_demo, "vhs"),
     ("wt-select.tape", "wt-select", prepare_basic, "vhs-keystrokes"),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),
 ]
@@ -280,10 +271,10 @@ SOCIAL_DEMOS = [
     ("wt-statusline.tape", "wt-statusline", prepare_switch, "vhs"),
     ("wt-list.tape", "wt-list", prepare_with_hooks, "vhs"),
     ("wt-list-remove.tape", "wt-list-remove", prepare_with_hooks, "vhs"),
-    ("wt-hooks.tape", "wt-hooks", prepare_with_hooks_deps, "vhs"),
+    ("wt-hooks.tape", "wt-hooks", partial(prepare_with_hooks, include_deps=True), "vhs"),
     ("wt-devserver.tape", "wt-devserver", prepare_devserver, "vhs"),
-    ("wt-commit.tape", "wt-commit", prepare_with_llm_commit, "vhs"),
-    ("wt-merge.tape", "wt-merge", prepare_merge_only, "vhs"),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo, "vhs"),
+    ("wt-merge.tape", "wt-merge", partial(prepare_merge_demo, commit_generation=False, staged_changes=False), "vhs"),
     ("wt-select-short.tape", "wt-select-short", prepare_basic, "vhs-keystrokes"),
     ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),

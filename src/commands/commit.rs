@@ -8,7 +8,7 @@ use worktrunk::styling::{
 };
 
 use super::command_executor::CommandContext;
-use super::hooks::{HookFailureStrategy, HookPipeline, HookSource};
+use super::hooks::HookFailureStrategy;
 use super::repository_ext::RepositoryCliExt;
 
 // Re-export StageMode from config for use by CLI
@@ -160,33 +160,25 @@ impl CommitOptions<'_> {
         }
 
         if !self.no_verify {
-            let pipeline = HookPipeline::new(*self.ctx);
             let extra_vars: Vec<(&str, &str)> = self
                 .target_branch
                 .into_iter()
                 .map(|target| ("target", target))
                 .collect();
 
-            // Run user pre-commit hooks first (no approval required)
-            if let Some(user_config) = &self.ctx.config.hooks.pre_commit {
-                pipeline
-                    .run_sequential(
-                        user_config,
-                        HookType::PreCommit,
-                        HookSource::User,
-                        &extra_vars,
-                        HookFailureStrategy::FailFast,
-                        None,
-                    )
-                    .map_err(worktrunk::git::add_hook_skip_hint)?;
-            }
-
-            // Then run project pre-commit hooks (require approval)
-            if let Some(ref config) = project_config {
-                pipeline
-                    .run_pre_commit(config, self.target_branch, None)
-                    .map_err(worktrunk::git::add_hook_skip_hint)?;
-            }
+            // Run pre-commit hooks (user first, then project)
+            super::hooks::run_hook_with_filter(
+                self.ctx,
+                self.ctx.config.hooks.pre_commit.as_ref(),
+                project_config
+                    .as_ref()
+                    .and_then(|c| c.hooks.pre_commit.as_ref()),
+                HookType::PreCommit,
+                &extra_vars,
+                HookFailureStrategy::FailFast,
+                None,
+            )
+            .map_err(worktrunk::git::add_hook_skip_hint)?;
         }
 
         if self.warn_about_untracked && self.stage_mode == StageMode::All {

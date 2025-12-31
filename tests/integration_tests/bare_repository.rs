@@ -1,11 +1,11 @@
 use crate::common::{
-    TestRepo, canonicalize, configure_directive_file, directive_file, repo,
+    TestRepo, canonicalize, configure_directive_file, configure_git_cmd, directive_file, repo,
     setup_temp_snapshot_settings, wait_for_file, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -661,6 +661,258 @@ fn test_bare_repo_slashed_branch_with_sanitize() {
         "feature/auth",
         "Git branch name should be preserved as feature/auth"
     );
+}
+
+/// Helper to create a nested bare repository test setup (project/.git pattern)
+///
+/// This tests the pattern from GitHub issue #313 where users clone with:
+/// `git clone --bare <url> project/.git`
+struct NestedBareRepoTest {
+    temp_dir: tempfile::TempDir,
+    /// Path to the parent directory (project/)
+    project_path: PathBuf,
+    /// Path to the bare repo (project/.git/)
+    bare_repo_path: PathBuf,
+    test_config_path: PathBuf,
+    git_config_path: PathBuf,
+}
+
+impl NestedBareRepoTest {
+    fn new() -> Self {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        // Create project directory
+        let project_path = temp_dir.path().join("project");
+        fs::create_dir(&project_path).unwrap();
+
+        // Bare repo inside project directory as .git
+        let bare_repo_path = project_path.join(".git");
+        let test_config_path = temp_dir.path().join("test-config.toml");
+        let git_config_path = temp_dir.path().join("test-gitconfig");
+
+        // Write git config with user settings (like TestRepo)
+        fs::write(
+            &git_config_path,
+            "[user]\n\tname = Test User\n\temail = test@example.com\n\
+             [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+             [init]\n\tdefaultBranch = main\n",
+        )
+        .unwrap();
+
+        let mut test = Self {
+            temp_dir,
+            project_path,
+            bare_repo_path,
+            test_config_path,
+            git_config_path,
+        };
+
+        // Create bare repository at project/.git
+        let mut cmd = Command::new("git");
+        cmd.args(["init", "--bare", "--initial-branch", "main"])
+            .arg(&test.bare_repo_path);
+        configure_git_cmd(&mut cmd, &test.git_config_path);
+        let output = cmd.output().unwrap();
+
+        if !output.status.success() {
+            panic!(
+                "Failed to init nested bare repo:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Canonicalize paths
+        test.project_path = canonicalize(&test.project_path).unwrap();
+        test.bare_repo_path = canonicalize(&test.bare_repo_path).unwrap();
+
+        // Write config with template for worktrees as siblings to .git
+        // For nested bare repos (project/.git), we use "../{{ branch }}" to create
+        // worktrees at project/main, project/feature (siblings to .git)
+        fs::write(
+            &test.test_config_path,
+            "worktree-path = \"../{{ branch }}\"\n",
+        )
+        .unwrap();
+
+        test
+    }
+
+    fn project_path(&self) -> &PathBuf {
+        &self.project_path
+    }
+
+    fn bare_repo_path(&self) -> &PathBuf {
+        &self.bare_repo_path
+    }
+
+    fn temp_path(&self) -> &std::path::Path {
+        self.temp_dir.path()
+    }
+
+    /// Configure a wt command with test environment
+    fn configure_wt_cmd(&self, cmd: &mut Command) {
+        configure_git_cmd(cmd, &self.git_config_path);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+    }
+
+    /// Get a git command configured for this test environment
+    fn git_command(&self, dir: &Path) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(dir);
+        configure_git_cmd(&mut cmd, &self.git_config_path);
+        cmd
+    }
+
+    /// Create a commit in a worktree
+    fn commit(&self, worktree: &Path, message: &str) {
+        fs::write(worktree.join("file.txt"), message).unwrap();
+        self.git_command(worktree)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        self.git_command(worktree)
+            .args(["commit", "-m", message])
+            .output()
+            .unwrap();
+    }
+}
+
+/// Test that nested bare repos (project/.git pattern) create worktrees in project/
+/// instead of project/.git/ (GitHub issue #313)
+#[test]
+fn test_nested_bare_repo_worktree_path() {
+    let test = NestedBareRepoTest::new();
+
+    // Create first worktree using wt switch --create
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main"])
+        .current_dir(test.bare_repo_path());
+
+    let output = cmd.output().unwrap();
+
+    if !output.status.success() {
+        panic!(
+            "wt switch --create main failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // CRITICAL: Worktree should be at project/main, NOT project/.git/main
+    let expected_path = test.project_path().join("main");
+    let wrong_path = test.bare_repo_path().join("main");
+
+    assert!(
+        expected_path.exists(),
+        "Expected worktree at {:?} (sibling to .git)",
+        expected_path
+    );
+    assert!(
+        !wrong_path.exists(),
+        "Worktree should NOT be inside .git directory at {:?}",
+        wrong_path
+    );
+}
+
+/// Test that nested bare repos work with the full workflow (create, list, remove)
+#[test]
+fn test_nested_bare_repo_full_workflow() {
+    let test = NestedBareRepoTest::new();
+
+    // Create main worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main"])
+        .current_dir(test.bare_repo_path());
+    cmd.output().unwrap();
+
+    let main_worktree = test.project_path().join("main");
+    assert!(main_worktree.exists(), "Main worktree should exist");
+    test.commit(&main_worktree, "Initial");
+
+    // Create feature worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(&main_worktree);
+    cmd.output().unwrap();
+
+    // Feature worktree should be at project/feature
+    let feature_worktree = test.project_path().join("feature");
+    assert!(
+        feature_worktree.exists(),
+        "Feature worktree should be at project/feature"
+    );
+
+    // List should show both worktrees
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    cmd.arg("list").current_dir(&main_worktree);
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("main"), "Should list main worktree");
+    assert!(stdout.contains("feature"), "Should list feature worktree");
+
+    // Remove feature worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["remove", "feature", "--no-background"])
+        .current_dir(&main_worktree);
+    cmd.output().unwrap();
+
+    assert!(
+        !feature_worktree.exists(),
+        "Feature worktree should be removed"
+    );
+    assert!(main_worktree.exists(), "Main worktree should still exist");
+}
+
+/// Test snapshot for nested bare repo list output
+#[test]
+fn test_nested_bare_repo_list_snapshot() {
+    let test = NestedBareRepoTest::new();
+
+    // Create main worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "main"])
+        .current_dir(test.bare_repo_path());
+    cmd.output().unwrap();
+
+    let main_worktree = test.project_path().join("main");
+    test.commit(&main_worktree, "Initial");
+
+    // Create feature worktree
+    let (directive_path, _guard) = directive_file();
+    let mut cmd = wt_command();
+    test.configure_wt_cmd(&mut cmd);
+    configure_directive_file(&mut cmd, &directive_path);
+    cmd.args(["switch", "--create", "feature"])
+        .current_dir(&main_worktree);
+    cmd.output().unwrap();
+
+    // Take snapshot of list output
+    let settings = setup_temp_snapshot_settings(test.temp_path());
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        test.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(&main_worktree);
+        assert_cmd_snapshot!(cmd);
+    });
 }
 
 #[test]

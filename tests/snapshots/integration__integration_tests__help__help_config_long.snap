@@ -95,6 +95,10 @@ Controls where new worktrees are created. The template is relative to the reposi
   [2m# Namespaced (useful when multiple repos share a parent directory)
   [2m# Creates: ~/code/worktrees/myproject/feature-login
   [2mworktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+  [2m
+  [2m# Nested bare repo (git clone --bare <url> project/.git)
+  [2m# Creates: ~/code/project/feature-login (sibling to .git)
+  [2mworktree-path = "../{{ branch | sanitize }}"
 
 [1mCommand settings
 

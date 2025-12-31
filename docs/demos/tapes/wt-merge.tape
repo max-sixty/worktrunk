@@ -2,9 +2,6 @@ Source docs/demos/tapes/shared-setup.tape
 
 Output "{{OUTPUT_GIF}}"
 
-Require wt
-Require git
-
 Source docs/demos/tapes/shared-commands.tape
 
 Env NEXTEST_STATUS_LEVEL "none"

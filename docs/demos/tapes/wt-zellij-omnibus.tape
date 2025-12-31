@@ -29,8 +29,6 @@ Output "{{OUTPUT_GIF}}"
 # - wt remove (cleanup)
 # - Multi-agent Claude Code in parallel tabs
 
-Require wt
-Require git
 Require zellij
 
 Source docs/demos/tapes/shared-commands.tape

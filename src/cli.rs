@@ -1217,6 +1217,10 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
 worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+
+# Nested bare repo (git clone --bare <url> project/.git)
+# Creates: ~/code/project/feature-login (sibling to .git)
+worktree-path = "../{{ branch | sanitize }}"
 ```
 
 ### Command settings

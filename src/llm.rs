@@ -192,24 +192,6 @@ fn format_command_display(command: &str, args: &[String]) -> String {
     }
 }
 
-/// Get recent commit subjects for style reference.
-///
-/// If `start_ref` is provided, gets commits starting from that ref (exclusive).
-/// Otherwise gets commits from HEAD.
-fn get_recent_commits(repo: &Repository, start_ref: Option<&str>) -> Option<Vec<String>> {
-    let mut args = vec!["log", "--pretty=format:%s", "-n", "5", "--no-merges"];
-    if let Some(ref_name) = start_ref {
-        args.push(ref_name);
-    }
-    repo.run_command(&args).ok().and_then(|output| {
-        if output.trim().is_empty() {
-            None
-        } else {
-            Some(output.lines().map(String::from).collect())
-        }
-    })
-}
-
 /// Default template for commit message prompts
 ///
 /// Synced to dev/config.example.toml by `cargo test readme_sync`
@@ -523,7 +505,7 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
         .and_then(|n| n.to_str())
         .unwrap_or("repo");
 
-    let recent_commits = get_recent_commits(&repo, None);
+    let recent_commits = repo.recent_commit_subjects(None, 5);
 
     let context = TemplateContext {
         git_diff: &prepared.diff,
@@ -611,7 +593,7 @@ pub fn build_squash_prompt(
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
-    let recent_commits = get_recent_commits(&repo, Some(merge_base));
+    let recent_commits = repo.recent_commit_subjects(Some(merge_base), 5);
     let context = TemplateContext {
         git_diff: &prepared.diff,
         git_diff_stat: &prepared.stat,

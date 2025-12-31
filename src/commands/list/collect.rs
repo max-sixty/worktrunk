@@ -626,22 +626,6 @@ fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str
         .collect()
 }
 
-/// Get remote branches that aren't tracked by any local branch.
-///
-/// Returns (branch_name, commit_sha) pairs for remote branches.
-/// Filters out branches that are set as upstream for any local branch.
-fn get_remote_branches(repo: &Repository) -> anyhow::Result<Vec<(String, String)>> {
-    let all_remote_branches = repo.list_remote_branches()?;
-    let tracked_upstreams = repo.list_tracked_upstreams()?;
-
-    let remote_branches: Vec<_> = all_remote_branches
-        .into_iter()
-        .filter(|(remote_branch_name, _)| !tracked_upstreams.contains(remote_branch_name))
-        .collect();
-
-    Ok(remote_branches)
-}
-
 /// Collect worktree data with optional progressive rendering.
 ///
 /// When `show_progress` is true, renders a skeleton immediately and updates as data arrives.
@@ -695,7 +679,7 @@ pub fn collect(
         },
         || {
             if show_remotes {
-                get_remote_branches(repo)
+                repo.list_untracked_remote_branches()
             } else {
                 Ok(Vec::new())
             }
