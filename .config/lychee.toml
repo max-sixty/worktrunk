@@ -66,8 +66,12 @@ exclude_path = [
     ".claude-plugin/skills/worktrunk/reference/README.md",
     # Files with root-relative asset paths that lychee can't resolve
     # (assets are fetched at deploy time from worktrunk-assets repo)
+    "docs/content/claude-code.md",
+    "docs/content/list.md",
+    "docs/content/llm-commits.md",
     "docs/content/merge.md",
     "docs/content/select.md",
+    "docs/content/switch.md",
     "docs/content/why-worktrunk.md",
     "docs/content/worktrunk.md",
     # README references assets that may not be published yet
