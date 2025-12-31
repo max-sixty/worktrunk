@@ -1735,6 +1735,162 @@ impl TestRepoBase for TestRepo {
     }
 }
 
+/// Helper to create a bare repository test setup.
+///
+/// Bare repositories are useful for testing scenarios where you need worktrees
+/// for the default branch (which isn't possible with normal repos since the
+/// main worktree already has it checked out).
+pub struct BareRepoTest {
+    temp_dir: tempfile::TempDir,
+    bare_repo_path: PathBuf,
+    test_config_path: PathBuf,
+    git_config_path: PathBuf,
+}
+
+impl BareRepoTest {
+    /// Create a new bare repository test setup.
+    ///
+    /// The bare repo is created at `temp_dir/repo` with worktrees configured
+    /// to be created as subdirectories (e.g., `repo/main`, `repo/feature`).
+    pub fn new() -> Self {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        // Bare repo without .git suffix - worktrees go inside as subdirectories
+        let bare_repo_path = temp_dir.path().join("repo");
+        let test_config_path = temp_dir.path().join("test-config.toml");
+        let git_config_path = temp_dir.path().join("test-gitconfig");
+
+        // Write git config with user settings
+        std::fs::write(
+            &git_config_path,
+            "[user]\n\tname = Test User\n\temail = test@example.com\n\
+             [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+             [init]\n\tdefaultBranch = main\n",
+        )
+        .unwrap();
+
+        let mut test = Self {
+            temp_dir,
+            bare_repo_path,
+            test_config_path,
+            git_config_path,
+        };
+
+        // Create bare repository
+        let mut cmd = Command::new("git");
+        cmd.args(["init", "--bare", "--initial-branch", "main"])
+            .arg(&test.bare_repo_path);
+        test.configure_git_cmd(&mut cmd);
+        let output = cmd.output().unwrap();
+
+        if !output.status.success() {
+            panic!(
+                "Failed to init bare repo:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Canonicalize path (using dunce to avoid \\?\ prefix on Windows)
+        test.bare_repo_path = canonicalize(&test.bare_repo_path).unwrap();
+
+        // Write config with template for worktrees inside bare repo
+        // Template {{ branch }} creates worktrees as subdirectories: repo/main, repo/feature
+        std::fs::write(&test.test_config_path, "worktree-path = \"{{ branch }}\"\n").unwrap();
+
+        test
+    }
+
+    /// Get the path to the bare repository.
+    pub fn bare_repo_path(&self) -> &Path {
+        &self.bare_repo_path
+    }
+
+    /// Get the path to the test config file.
+    pub fn config_path(&self) -> &Path {
+        &self.test_config_path
+    }
+
+    /// Get the temp directory path.
+    pub fn temp_path(&self) -> &Path {
+        self.temp_dir.path()
+    }
+
+    /// Create a worktree from the bare repository.
+    ///
+    /// Worktrees are created inside the bare repo directory: repo/main, repo/feature
+    pub fn create_worktree(&self, branch: &str, worktree_name: &str) -> PathBuf {
+        let worktree_path = self.bare_repo_path.join(worktree_name);
+
+        let output = self
+            .git_command(&self.bare_repo_path)
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worktree_path.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        if !output.status.success() {
+            panic!(
+                "Failed to create worktree:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        canonicalize(&worktree_path).unwrap()
+    }
+
+    /// Create a commit in the specified worktree.
+    pub fn commit_in_worktree(&self, worktree_path: &Path, message: &str) {
+        // Create a file
+        let file_path = worktree_path.join("file.txt");
+        std::fs::write(&file_path, message).unwrap();
+
+        // Add file
+        self.run_git_in(worktree_path, &["add", "file.txt"]);
+
+        // Commit
+        let output = self
+            .git_command(worktree_path)
+            .args(["commit", "-m", message])
+            .output()
+            .unwrap();
+
+        if !output.status.success() {
+            panic!(
+                "Failed to commit:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    /// Configure a wt command with test environment.
+    pub fn configure_wt_cmd(&self, cmd: &mut Command) {
+        self.configure_git_cmd(cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+    }
+
+    /// Create a pre-configured wt command.
+    pub fn wt_command(&self) -> Command {
+        let mut cmd = wt_command();
+        self.configure_wt_cmd(&mut cmd);
+        cmd
+    }
+}
+
+impl TestRepoBase for BareRepoTest {
+    fn git_config_path(&self) -> &Path {
+        &self.git_config_path
+    }
+}
+
 /// Add standard env var redactions to insta settings
 ///
 /// These redact volatile metadata captured by insta-cmd in the `info` block.

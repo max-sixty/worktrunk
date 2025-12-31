@@ -1,13 +1,10 @@
 use crate::common::{
-    TestRepo, canonicalize, configure_directive_file, directive_file, make_snapshot_cmd, repo,
+    BareRepoTest, TestRepo, configure_directive_file, directive_file, make_snapshot_cmd, repo,
     repo_with_remote, setup_snapshot_settings, setup_temp_snapshot_settings, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
-use tempfile::TempDir;
 
 /// Helper to create snapshot with normalized paths
 fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
@@ -790,107 +787,20 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
 /// branch in a normal repo (the main worktree already has it checked out).
 #[test]
 fn test_remove_default_branch_no_tautology() {
-    // Create bare repository
-    let temp_dir = TempDir::new().unwrap();
-    let bare_repo_path = temp_dir.path().join("repo.git");
-    let test_config_path = temp_dir.path().join("test-config.toml");
+    let test = BareRepoTest::new();
 
-    let output = Command::new("git")
-        .args(["init", "--bare", "--initial-branch", "main"])
-        .current_dir(temp_dir.path())
-        .arg(&bare_repo_path)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "Failed to init bare repo");
-
-    let bare_repo_path: PathBuf = canonicalize(&bare_repo_path).unwrap();
-
-    // Create worktree for main branch
-    let main_worktree = temp_dir.path().join("repo.main");
-    let output = Command::new("git")
-        .args([
-            "-C",
-            bare_repo_path.to_str().unwrap(),
-            "worktree",
-            "add",
-            "-b",
-            "main",
-            main_worktree.to_str().unwrap(),
-        ])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "Failed to create main worktree");
-
-    let main_worktree = canonicalize(&main_worktree).unwrap();
-
-    // Create initial commit in main worktree
-    std::fs::write(main_worktree.join("file.txt"), "initial").unwrap();
-    let output = Command::new("git")
-        .args(["add", "file.txt"])
-        .current_dir(&main_worktree)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let output = Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(&main_worktree)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-
-    // Create a second worktree (feature) so we have somewhere to run remove from
-    let feature_worktree = temp_dir.path().join("repo.feature");
-    let output = Command::new("git")
-        .args([
-            "-C",
-            bare_repo_path.to_str().unwrap(),
-            "worktree",
-            "add",
-            "-b",
-            "feature",
-            feature_worktree.to_str().unwrap(),
-        ])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "Failed to create feature worktree");
-
-    let feature_worktree = canonicalize(&feature_worktree).unwrap();
+    // Create worktrees for main and feature branches
+    let main_worktree = test.create_worktree("main", "main");
+    test.commit_in_worktree(&main_worktree, "Initial commit on main");
+    let feature_worktree = test.create_worktree("feature", "feature");
 
     // Remove main worktree by name from feature worktree (foreground for snapshot)
     // Should NOT show "(ancestor of main)" - that would be tautological
-    let settings = setup_temp_snapshot_settings(temp_dir.path());
+    let settings = setup_temp_snapshot_settings(test.temp_path());
     settings.bind(|| {
-        let mut cmd = wt_command();
+        let mut cmd = test.wt_command();
         cmd.args(["remove", "--no-background", "main"])
-            .current_dir(&feature_worktree)
-            .env("WORKTRUNK_CONFIG_PATH", test_config_path.to_str().unwrap())
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
-            .env("GIT_EDITOR", "")
-            .env("LANG", "C")
-            .env("LC_ALL", "C");
+            .current_dir(&feature_worktree);
 
         assert_cmd_snapshot!("remove_default_branch_no_tautology", cmd);
     });

@@ -7,15 +7,17 @@ info:
     - "--no-background"
     - main
   env:
-    CLICOLOR_FORCE: "1"
+    CLICOLOR_FORCE: ""
     COLUMNS: "150"
     GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
     LANG: C
     LC_ALL: C
+    NO_COLOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
@@ -25,5 +27,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRemoving [1mmain[22m worktree...[39m
-[32m✓ Removed [1mmain[22m worktree & branch[39m
+◎ Removing main worktree...
+✓ Removed main worktree & branch
