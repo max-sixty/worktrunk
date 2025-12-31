@@ -47,8 +47,8 @@ pub enum GitError {
     },
     UncommittedChanges {
         action: Option<String>,
-        /// Branch or worktree identifier (for multi-worktree operations)
-        worktree: Option<String>,
+        /// Branch name (for multi-worktree operations)
+        branch: Option<String>,
     },
     BranchAlreadyExists {
         branch: String,
@@ -156,16 +156,16 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::UncommittedChanges { action, worktree } => {
-                let message = match (action, worktree) {
-                    (Some(action), Some(wt)) => {
-                        cformat!("Cannot {action}: <bold>{wt}</> has uncommitted changes")
+            GitError::UncommittedChanges { action, branch } => {
+                let message = match (action, branch) {
+                    (Some(action), Some(b)) => {
+                        cformat!("Cannot {action}: <bold>{b}</> has uncommitted changes")
                     }
                     (Some(action), None) => {
                         cformat!("Cannot {action}: working tree has uncommitted changes")
                     }
-                    (None, Some(wt)) => {
-                        cformat!("<bold>{wt}</> has uncommitted changes")
+                    (None, Some(b)) => {
+                        cformat!("<bold>{b}</> has uncommitted changes")
                     }
                     (None, None) => cformat!("Working tree has uncommitted changes"),
                 };
@@ -672,7 +672,7 @@ mod tests {
     fn snapshot_uncommitted_with_worktree_display() {
         let err = GitError::UncommittedChanges {
             action: Some("merge".into()),
-            worktree: Some("wt".into()),
+            branch: Some("wt".into()),
         };
         assert_snapshot!(err.to_string(), @"
         [31m✗[39m [31mCannot merge: [1mwt[22m has uncommitted changes[39m
@@ -1138,16 +1138,16 @@ mod tests {
         // Action only
         let err = GitError::UncommittedChanges {
             action: Some("push".into()),
-            worktree: None,
+            branch: None,
         };
         let display = err.to_string();
         assert!(display.contains("Cannot push"));
         assert!(display.contains("working tree"));
 
-        // Worktree only
+        // Branch only
         let err = GitError::UncommittedChanges {
             action: None,
-            worktree: Some("feature".into()),
+            branch: Some("feature".into()),
         };
         let display = err.to_string();
         assert!(display.contains("feature"));
@@ -1156,7 +1156,7 @@ mod tests {
         // Neither
         let err = GitError::UncommittedChanges {
             action: None,
-            worktree: None,
+            branch: None,
         };
         let display = err.to_string();
         assert!(display.contains("Working tree"));

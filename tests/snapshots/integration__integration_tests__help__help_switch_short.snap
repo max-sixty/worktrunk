@@ -23,7 +23,7 @@ wt switch - Switch to a worktree
 Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--[0m [36m<EXECUTE_ARGS>...[0m[1m[36m]
 
 [1m[32mArguments:
-  [36m<BRANCH>[0m           Branch or worktree name
+  [36m<BRANCH>[0m           Branch name
   [36m[EXECUTE_ARGS]...[0m  Additional arguments for --execute command (after --)
 
 [1m[32mOptions:

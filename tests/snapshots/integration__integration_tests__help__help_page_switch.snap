@@ -20,6 +20,8 @@ exit_code: 0
 
 Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
+Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
+
 ## Examples
 
 ```bash
@@ -81,7 +83,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
 
 [1m[32mArguments:[0m
   [36m<BRANCH>[0m
-          Branch or worktree name[0m
+          Branch name[0m
           [0m
           Shortcuts: '^' (default branch), '-' (previous), '@' (current)[0m
 

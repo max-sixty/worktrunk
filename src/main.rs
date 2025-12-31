@@ -1324,7 +1324,7 @@ fn main() {
                 Ok(())
             }),
         Commands::Remove {
-            worktrees,
+            branches,
             delete_branch,
             force_delete,
             background,
@@ -1378,8 +1378,8 @@ fn main() {
                     false
                 };
 
-                if worktrees.is_empty() {
-                    // No worktrees specified, remove current worktree
+                if branches.is_empty() {
+                    // No branches specified, remove current worktree
                     // Uses path-based removal to handle detached HEAD state
                     let result =
                         handle_remove_current(!delete_branch, force_delete, force, background)
@@ -1393,17 +1393,17 @@ fn main() {
                     // to avoid deleting the directory we're currently in
                     let current_worktree = repo.worktree_root().ok().map(Path::to_path_buf);
 
-                    // Partition worktrees into current, others, and branch-only.
+                    // Partition branches into current worktree, others, and branch-only.
                     // Track all errors (resolution + removal) so we can report them and continue.
                     let mut others = Vec::new();
                     let mut branch_only = Vec::new();
                     let mut current: Option<(PathBuf, Option<String>)> = None;
                     let mut all_errors: Vec<anyhow::Error> = Vec::new();
 
-                    for worktree_name in &worktrees {
+                    for branch_name in &branches {
                         match resolve_worktree_arg(
                             &repo,
-                            worktree_name,
+                            branch_name,
                             &config,
                             ResolutionContext::Remove,
                         ) {

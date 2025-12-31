@@ -20,11 +20,11 @@ exit_code: 0
 ----- stderr -----
 wt remove - Remove worktree and branch
 
-Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[WORKTREES]...
+Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
 
 [1m[32mArguments:
-  [36m[WORKTREES]...
-          Worktree or branch [default: current]
+  [36m[BRANCHES]...
+          Branch name [default: current]
 
 [1m[32mOptions:
       [1m[36m--no-delete-branch

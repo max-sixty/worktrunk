@@ -2137,6 +2137,8 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
     #[command(
         after_long_help = r#"Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
+Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
+
 ## Examples
 
 ```console
@@ -2191,7 +2193,7 @@ wt switch --create fix --base=@  # Branch from current HEAD
 "#
     )]
     Switch {
-        /// Branch or worktree name
+        /// Branch name
         ///
         /// Shortcuts: '^' (default branch), '-' (previous), '@' (current)
         #[arg(add = crate::completion::worktree_branch_completer())]
@@ -2310,9 +2312,9 @@ Removal runs in the background by default (returns immediately). Logs are writte
 "#
     )]
     Remove {
-        /// Worktree or branch [default: current]
+        /// Branch name [default: current]
         #[arg(add = crate::completion::local_branches_completer())]
-        worktrees: Vec<String>,
+        branches: Vec<String>,
 
         /// Keep branch after removal
         #[arg(long = "no-delete-branch", action = clap::ArgAction::SetFalse, default_value_t = true)]
