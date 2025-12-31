@@ -2104,6 +2104,8 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
 
 `"passed"` `"running"` `"failed"` `"conflicts"` `"no-ci"` `"error"`
 
+Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
+
 ## See also
 
 - [wt select](@/select.md) — Interactive worktree picker with live preview

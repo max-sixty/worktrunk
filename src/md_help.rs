@@ -172,6 +172,12 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
 }
 
 /// Strip markdown links, keeping only the link text: `[text](url)` -> `text`
+///
+/// Limitation: Links in clap help text may be broken across lines by clap's wrapping
+/// before this function runs. To support arbitrary markdown links in `--help`:
+/// TODO: Set `cmd.term_width(0)` to disable clap's wrapping, then let
+/// `render_markdown_in_help_with_width` handle all wrapping after stripping links.
+/// This would allow `[text](url)` syntax in cli.rs to work for both terminal and web.
 fn strip_markdown_links(line: &str) -> String {
     let mut result = String::new();
     let mut chars = line.chars().peekable();

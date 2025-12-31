@@ -285,6 +285,9 @@ When [2mmain_state == "integrated"[0m: [2m"ancestor"[0m [2m"trees_match"
 
 [2m"passed"[0m [2m"running"[0m [2m"failed"[0m [2m"conflicts"[0m [2m"no-ci"[0m [2m"error"
 
+Missing a field that would be generally useful? Open an issue at
+https://github.com/max-sixty/worktrunk.
+
 [32mSee also
 
 - wt select — Interactive worktree picker with live preview
