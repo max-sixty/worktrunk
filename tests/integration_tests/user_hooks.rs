@@ -960,3 +960,69 @@ fn test_concurrent_hook_post_switch(repo: TestRepo) {
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("POST_SWITCH"));
 }
+
+/// Test that concurrent hooks work with name filter
+#[rstest]
+fn test_concurrent_hook_with_name_filter(repo: TestRepo) {
+    // Write project config with multiple named hooks
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo 'FIRST' > first.txt"
+second = "echo 'SECOND' > second.txt"
+"#,
+    );
+
+    // Run only the "first" hook by name
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "first"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-start --name first should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Only the first hook should have run
+    let first_marker = repo.root_path().join("first.txt");
+    let second_marker = repo.root_path().join("second.txt");
+
+    assert!(first_marker.exists(), "first hook should have run");
+    assert!(!second_marker.exists(), "second hook should NOT have run");
+}
+
+/// Test that concurrent hooks with invalid name filter return error
+#[rstest]
+fn test_concurrent_hook_invalid_name_filter(repo: TestRepo) {
+    // Write project config with named hooks
+    repo.write_project_config(
+        r#"[post-start]
+first = "echo 'FIRST'"
+"#,
+    );
+
+    // Try to run a non-existent hook by name
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "nonexistent"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "wt hook post-start --name nonexistent should fail"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nonexistent") && stderr.contains("No command named"),
+        "Error should mention command not found, got: {stderr}"
+    );
+    // Should list available commands
+    assert!(
+        stderr.contains("project:first"),
+        "Error should list available commands, got: {stderr}"
+    );
+}
