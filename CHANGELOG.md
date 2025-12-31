@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.3
+
+### Improved
+
+- **Hook execution path**: Shows the execution path when post-merge hooks run in a different directory than where the user invoked the command (e.g., with `--no-remove`).
+- **TTY check for `wt select`**: Now fails gracefully when run in a non-interactive terminal instead of hanging.
+- **Background hooks**: `post-start` and `post-switch` hooks spawn in background via stdin piping, matching their normal behavior during `wt switch`.
+- **Occupied path error message**: When a worktree path is occupied by a different branch, the error now explains the situation clearly and suggests `git switch`.
+- **Shell integration hint**: Shows a hint to restart the shell when shell integration is configured but not active.
+- **Message style**: Removed 2nd person pronouns ("you/your") from user-facing messages following CLI guidelines.
+
+### Fixed
+
+- **`wt hook post-start` blocking**: Fixed bug where `wt hook post-start` ran in foreground blocking the command, instead of spawning in background like during normal `wt switch --create`.
+- **Approval bypass with `project:` prefix**: Fixed security issue where using `project:` filter prefix (e.g., `wt hook pre-merge project:`) bypassed the approval check, allowing unapproved project commands to run.
+
+### Documentation
+
+- **License file**: Added combined MIT and Apache-2.0 license file.
+- **Demo GIFs**: Added demo GIFs to command pages on the documentation site.
+- **Install instructions**: Simplified to single-line commands.
+
+### Internal
+
+- **Pre-commit hooks**: Updated to immutable tags.
+- **Lychee exclusions**: Cleaned up link checker configuration.
+
 ## 0.8.2
 
 ### Improved

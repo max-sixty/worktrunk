@@ -34,13 +34,13 @@ exclude = [
     # Sites with reliability issues in CI
     "stackoverflow\\.com",
     "npmjs\\.com",
+    "incident\\.io",
 
-    # Package registries (frequently return 429 or block CI)
+    # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",
     "docs\\.rs",
     "img\\.shields\\.io",
-
-    # Sites already excluded in markdown-link-check
+    "codecov\\.io",
     "opensource\\.org",
     "llm\\.datasette\\.io",
 
@@ -55,13 +55,4 @@ exclude = [
     # Local dev server URLs (not running during CI)
     "127\\.0\\.0\\.1",
     "localhost",
-
-    # TODO: Remove after first deployment - new page from hooks.md → hook.md consolidation
-    "https://worktrunk\\.dev/hook/",
-]
-
-
-# Exclude source files from link checking
-exclude_path = [
-    ".claude-plugin/skills/worktrunk/reference/README.md",
 ]
