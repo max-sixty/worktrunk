@@ -8,6 +8,8 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    GIT_FETCH_ARGS: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
 ---
