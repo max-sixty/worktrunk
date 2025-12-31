@@ -1884,6 +1884,8 @@ Branches without worktrees are included — selecting one creates a worktree. (`
     #[command(
         after_long_help = r#"Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
+<!-- demo: wt-list.gif 1600x900 -->
+
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
 ## Examples
@@ -2141,6 +2143,8 @@ When `main_state == "integrated"`: `"ancestor"` `"trees_match"` `"no_added_chang
     #[command(
         after_long_help = r#"Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
+<!-- demo: wt-switch.gif 1600x900 -->
+
 Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
 
 ## Examples
@@ -2351,9 +2355,10 @@ Removal runs in the background by default (returns immediately). Logs are writte
     /// Merge worktree into target branch
     ///
     /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
-    #[command(after_long_help = r#"<!-- demo: wt-merge.gif 1600x900 -->
+    #[command(
+        after_long_help = r#"Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
 
-Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
+<!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples
 
@@ -2420,7 +2425,8 @@ lint = "cargo clippy"
 - [wt step](@/step.md) — Run individual merge steps (commit, squash, rebase, push)
 - [wt remove](@/remove.md) — Remove worktrees without merging
 - [wt switch](@/switch.md) — Navigate to other worktrees
-"#)]
+"#
+    )]
     Merge {
         /// Target branch
         ///

@@ -13,7 +13,7 @@ Show all worktrees with their status. The table includes uncommitted changes, di
 <figure class="demo">
 <picture>
   <source srcset="/assets/docs/dark/wt-list.gif" media="(prefers-color-scheme: dark)">
-  <img src="/assets/docs/light/wt-list.gif" alt="wt list demo showing progressive rendering" width="1600" height="900">
+  <img src="/assets/docs/light/wt-list.gif" alt="wt list demo" width="1600" height="900">
 </picture>
 </figure>
 
