@@ -15,9 +15,16 @@ Hooks normally run automatically during `wt switch --create`, `wt merge`, and `w
 Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ```bash
-wt hook pre-merge         # Run pre-merge hooks
-wt hook pre-merge --yes   # Skip approval prompts (for CI)
+wt hook pre-merge              # Run all pre-merge hooks
+wt hook pre-merge test         # Run hooks named "test" from both sources
+wt hook pre-merge user:        # Run all user hooks
+wt hook pre-merge project:     # Run all project hooks
+wt hook pre-merge user:test    # Run only user's "test" hook
+wt hook pre-merge project:test # Run only project's "test" hook
+wt hook pre-merge --yes        # Skip approval prompts (for CI)
 ```
+
+The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
 ## Hook types
 
@@ -239,7 +246,7 @@ User hooks support the same hook types and template variables as project hooks.
 | Approval | Required | Not required |
 | Execution order | After user hooks | Before project hooks |
 
-Skip hooks with `--no-verify`.
+Skip hooks with `--no-verify`. To run a specific hook when user and project both define the same name, use `user:name` or `project:name` syntax.
 
 **Use cases:**
 - Personal notifications or logging
