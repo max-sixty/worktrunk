@@ -618,6 +618,28 @@ pub fn configure_cli_command(cmd: &mut Command) {
     }
 }
 
+/// Configure a git command with isolated environment for testing.
+///
+/// Sets environment variables for:
+/// - Isolated git config (using provided path or /dev/null)
+/// - Deterministic commit timestamps
+/// - Consistent locale settings
+/// - No terminal prompts
+///
+/// # Arguments
+/// * `cmd` - The git Command to configure
+/// * `git_config_path` - Path to git config file (use `/dev/null` or `NULL_DEVICE` for none)
+pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
+    cmd.env("GIT_CONFIG_GLOBAL", git_config_path);
+    cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
+    cmd.env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z");
+    cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
+    cmd.env("LC_ALL", "C");
+    cmd.env("LANG", "C");
+    cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+}
+
 /// Create a temporary file for directive output.
 ///
 /// The shell wrapper sets WORKTRUNK_DIRECTIVE_FILE to a temp file before running wt.
@@ -863,16 +885,7 @@ impl TestRepo {
     /// This sets environment variables only for the specific command,
     /// ensuring thread-safety and test isolation.
     pub fn configure_git_cmd(&self, cmd: &mut Command) {
-        // Use test git config file with advice settings disabled
-        cmd.env("GIT_CONFIG_GLOBAL", &self.git_config_path);
-        cmd.env("GIT_CONFIG_SYSTEM", NULL_DEVICE);
-        cmd.env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z");
-        cmd.env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
-        cmd.env("LC_ALL", "C");
-        cmd.env("LANG", "C");
-        cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
-        // Prevent git from prompting for credentials when running under a TTY
-        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        configure_git_cmd(cmd, &self.git_config_path);
     }
 
     /// Get standard test environment variables as a vector

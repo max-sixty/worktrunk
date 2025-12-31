@@ -204,31 +204,9 @@ pub fn compute_worktree_path(
     branch: &str,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<PathBuf> {
-    let repo_root = repo.worktree_base()?;
-
-    // Default branch lives at repo root (main worktree), not a templated path.
-    // Exception: bare repos have no main worktree, so all branches use templated paths.
-    if !repo.is_bare()? && repo.default_branch().is_ok_and(|default| branch == default) {
-        return Ok(repo_root);
-    }
-
-    let repo_name = repo_root
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("Repository path has no filename: {}", repo_root.display()))?
-        .to_str()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Repository path contains invalid UTF-8: {}",
-                repo_root.display()
-            )
-        })?;
-
-    let relative_path = config
-        .format_path(repo_name, branch)
-        .map_err(|e| anyhow::anyhow!("Failed to format worktree path: {e}"))?;
-
-    // Normalize to resolve ".." from relative paths like "../repo.branch"
-    Ok(repo_root.join(relative_path).normalize())
+    let default_branch = repo.default_branch().unwrap_or_default();
+    let is_bare = repo.is_bare()?;
+    compute_worktree_path_with(repo, branch, config, &default_branch, is_bare)
 }
 
 /// Check if a worktree is at its expected path based on config template.
@@ -246,7 +224,7 @@ fn is_worktree_at_expected_path(
     config: &WorktrunkConfig,
 ) -> bool {
     // Compute default_branch and is_bare once, then delegate to the optimized variant
-    let default_branch = repo.default_branch().unwrap_or_else(|_| String::new());
+    let default_branch = repo.default_branch().unwrap_or_default();
     let is_bare = repo.is_bare().unwrap_or(false);
     is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare)
 }
