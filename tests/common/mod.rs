@@ -640,6 +640,27 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
+/// Shared interface for test repository fixtures.
+///
+/// Provides `configure_git_cmd()` and `git_command()` with consistent environment isolation.
+pub trait TestRepoBase {
+    /// Path to the git config file for this test.
+    fn git_config_path(&self) -> &Path;
+
+    /// Configure a git command with isolated environment.
+    fn configure_git_cmd(&self, cmd: &mut Command) {
+        configure_git_cmd(cmd, self.git_config_path());
+    }
+
+    /// Create a git command for the given directory.
+    fn git_command(&self, dir: &Path) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(dir);
+        self.configure_git_cmd(&mut cmd);
+        cmd
+    }
+}
+
 /// Create a temporary file for directive output.
 ///
 /// The shell wrapper sets WORKTRUNK_DIRECTIVE_FILE to a temp file before running wt.
@@ -1798,6 +1819,12 @@ exit 1
             .args(["config", &config_key, &json_value])
             .output()
             .unwrap();
+    }
+}
+
+impl TestRepoBase for TestRepo {
+    fn git_config_path(&self) -> &Path {
+        &self.git_config_path
     }
 }
 

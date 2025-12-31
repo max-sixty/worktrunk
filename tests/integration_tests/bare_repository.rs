@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, canonicalize, configure_directive_file, configure_git_cmd, directive_file, repo,
+    TestRepo, TestRepoBase, canonicalize, configure_directive_file, directive_file, repo,
     setup_temp_snapshot_settings, wait_for_file, wt_command,
 };
 use insta_cmd::assert_cmd_snapshot;
@@ -14,6 +14,7 @@ struct BareRepoTest {
     temp_dir: tempfile::TempDir,
     bare_repo_path: PathBuf,
     test_config_path: PathBuf,
+    git_config_path: PathBuf,
 }
 
 impl BareRepoTest {
@@ -22,22 +23,30 @@ impl BareRepoTest {
         // Bare repo without .git suffix - worktrees go inside as subdirectories
         let bare_repo_path = temp_dir.path().join("repo");
         let test_config_path = temp_dir.path().join("test-config.toml");
+        let git_config_path = temp_dir.path().join("test-gitconfig");
+
+        // Write git config with user settings
+        fs::write(
+            &git_config_path,
+            "[user]\n\tname = Test User\n\temail = test@example.com\n\
+             [advice]\n\tmergeConflict = false\n\tresolveConflict = false\n\
+             [init]\n\tdefaultBranch = main\n",
+        )
+        .unwrap();
 
         let mut test = Self {
             temp_dir,
             bare_repo_path,
             test_config_path,
+            git_config_path,
         };
 
         // Create bare repository
-        let output = Command::new("git")
-            .args(["init", "--bare", "--initial-branch", "main"])
-            .current_dir(test.temp_dir.path())
-            .arg(&test.bare_repo_path)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .unwrap();
+        let mut cmd = Command::new("git");
+        cmd.args(["init", "--bare", "--initial-branch", "main"])
+            .arg(&test.bare_repo_path);
+        test.configure_git_cmd(&mut cmd);
+        let output = cmd.output().unwrap();
 
         if !output.status.success() {
             panic!(
@@ -61,10 +70,6 @@ impl BareRepoTest {
         &self.bare_repo_path
     }
 
-    fn temp_path(&self) -> &std::path::Path {
-        self.temp_dir.path()
-    }
-
     fn config_path(&self) -> &PathBuf {
         &self.test_config_path
     }
@@ -74,22 +79,17 @@ impl BareRepoTest {
     fn create_worktree(&self, branch: &str, worktree_name: &str) -> PathBuf {
         let worktree_path = self.bare_repo_path.join(worktree_name);
 
-        let mut cmd = Command::new("git");
-        cmd.args([
-            "-C",
-            self.bare_repo_path.to_str().unwrap(),
-            "worktree",
-            "add",
-            "-b",
-            branch,
-            worktree_path.to_str().unwrap(),
-        ])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-        .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z");
-
-        let output = cmd.output().unwrap();
+        let output = self
+            .git_command(&self.bare_repo_path)
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worktree_path.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
 
         if !output.status.success() {
             panic!(
@@ -103,17 +103,15 @@ impl BareRepoTest {
     }
 
     /// Create a commit in the specified worktree
-    fn commit_in_worktree(&self, worktree_path: &PathBuf, message: &str) {
+    fn commit_in_worktree(&self, worktree_path: &Path, message: &str) {
         // Create a file
         let file_path = worktree_path.join("file.txt");
         fs::write(&file_path, message).unwrap();
 
         // Add file
-        let output = Command::new("git")
+        let output = self
+            .git_command(worktree_path)
             .args(["add", "file.txt"])
-            .current_dir(worktree_path)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .output()
             .unwrap();
 
@@ -126,17 +124,9 @@ impl BareRepoTest {
         }
 
         // Commit
-        let output = Command::new("git")
+        let output = self
+            .git_command(worktree_path)
             .args(["commit", "-m", message])
-            .current_dir(worktree_path)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_AUTHOR_NAME", "Test User")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z")
-            .env("GIT_COMMITTER_NAME", "Test User")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z")
             .output()
             .unwrap();
 
@@ -149,19 +139,22 @@ impl BareRepoTest {
         }
     }
 
+    fn temp_path(&self) -> &Path {
+        self.temp_dir.path()
+    }
+
     /// Configure a wt command with test environment
     fn configure_wt_cmd(&self, cmd: &mut Command) {
-        cmd.env(
-            "WORKTRUNK_CONFIG_PATH",
-            self.test_config_path.to_str().unwrap(),
-        )
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("SOURCE_DATE_EPOCH", "1735776000")
-        .env("LC_ALL", "C")
-        .env("LANG", "C")
-        .env_remove("NO_COLOR")
-        .env_remove("CLICOLOR_FORCE");
+        self.configure_git_cmd(cmd);
+        cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR_FORCE");
+    }
+}
+
+impl TestRepoBase for BareRepoTest {
+    fn git_config_path(&self) -> &Path {
+        &self.git_config_path
     }
 }
 
@@ -247,17 +240,11 @@ fn test_bare_repo_switch_creates_worktree() {
     );
 
     // Verify git worktree list shows both worktrees (but not bare repo)
-    let mut cmd = Command::new("git");
-    cmd.args([
-        "-C",
-        test.bare_repo_path().to_str().unwrap(),
-        "worktree",
-        "list",
-    ])
-    .env("GIT_CONFIG_GLOBAL", "/dev/null")
-    .env("GIT_CONFIG_SYSTEM", "/dev/null");
-
-    let output = cmd.output().unwrap();
+    let output = test
+        .git_command(test.bare_repo_path())
+        .args(["worktree", "list"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should show 3 entries: bare repo + 2 worktrees
@@ -538,9 +525,9 @@ fn test_bare_repo_merge_workflow() {
     assert!(main_worktree.exists(), "Main worktree should still exist");
 
     // Check that feature branch commit is now in main
-    let log_output = Command::new("git")
-        .args(["-C", main_worktree.to_str().unwrap(), "log", "--oneline"])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+    let log_output = test
+        .git_command(&main_worktree)
+        .args(["log", "--oneline"])
         .output()
         .unwrap();
 
@@ -646,16 +633,11 @@ fn test_bare_repo_slashed_branch_with_sanitize() {
     );
 
     // Verify git branch name is preserved (not sanitized)
-    let mut cmd = Command::new("git");
-    cmd.args([
-        "-C",
-        expected_path.to_str().unwrap(),
-        "rev-parse",
-        "--abbrev-ref",
-        "HEAD",
-    ]);
-    test.configure_wt_cmd(&mut cmd);
-    let branch_output = cmd.output().unwrap();
+    let branch_output = test
+        .git_command(&expected_path)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&branch_output.stdout).trim(),
         "feature/auth",
@@ -710,7 +692,7 @@ impl NestedBareRepoTest {
         let mut cmd = Command::new("git");
         cmd.args(["init", "--bare", "--initial-branch", "main"])
             .arg(&test.bare_repo_path);
-        configure_git_cmd(&mut cmd, &test.git_config_path);
+        test.configure_git_cmd(&mut cmd);
         let output = cmd.output().unwrap();
 
         if !output.status.success() {
@@ -745,24 +727,16 @@ impl NestedBareRepoTest {
         &self.bare_repo_path
     }
 
-    fn temp_path(&self) -> &std::path::Path {
+    fn temp_path(&self) -> &Path {
         self.temp_dir.path()
     }
 
     /// Configure a wt command with test environment
     fn configure_wt_cmd(&self, cmd: &mut Command) {
-        configure_git_cmd(cmd, &self.git_config_path);
+        self.configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path)
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
-    }
-
-    /// Get a git command configured for this test environment
-    fn git_command(&self, dir: &Path) -> Command {
-        let mut cmd = Command::new("git");
-        cmd.current_dir(dir);
-        configure_git_cmd(&mut cmd, &self.git_config_path);
-        cmd
     }
 
     /// Create a commit in a worktree
@@ -776,6 +750,12 @@ impl NestedBareRepoTest {
             .args(["commit", "-m", message])
             .output()
             .unwrap();
+    }
+}
+
+impl TestRepoBase for NestedBareRepoTest {
+    fn git_config_path(&self) -> &Path {
+        &self.git_config_path
     }
 }
 
@@ -953,15 +933,11 @@ fn test_bare_repo_bootstrap_first_worktree() {
     );
 
     // Verify git worktree list shows the new worktree
-    let mut cmd = Command::new("git");
-    cmd.args([
-        "-C",
-        test.bare_repo_path().to_str().unwrap(),
-        "worktree",
-        "list",
-    ]);
-    test.configure_wt_cmd(&mut cmd);
-    let output = cmd.output().unwrap();
+    let output = test
+        .git_command(test.bare_repo_path())
+        .args(["worktree", "list"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should show 2 entries: bare repo + main worktree
