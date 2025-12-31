@@ -89,7 +89,8 @@ branch: Option<String>,
 
 **Available completers:**
 - `branch_value_completer()` - Completes with branch names
-- `worktree_branch_completer()` - Completes with worktree paths and branch names
+- `worktree_branch_completer()` - Completes with branch names, suppresses when --create flag present
+- `local_branches_completer()` - Completes with local branch names, excludes remote-only
 
 **Pattern:** All branch arguments should use `branch_value_completer()` for consistency with commands like `wt merge`, `wt switch --base`, `wt rebase`.
 

@@ -145,7 +145,8 @@ pub fn branch_value_completer() -> ArgValueCompleter {
     })
 }
 
-/// Branch completion for positional arguments that represent worktrees (switch).
+/// Branch completion for positional arguments (switch, select).
+/// Suppresses completions when --create flag is present.
 pub fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: true,

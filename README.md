@@ -39,6 +39,9 @@ worktree requires typing the branch name three times: `git worktree add -b feat
 
 ## Worktrunk makes git worktrees as easy as branches
 
+Each worktree has exactly one branch, so Worktrunk uses branch names to address
+worktrees. The path is derived automatically.
+
 > Start with the core commands
 
 **Core commands:**

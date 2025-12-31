@@ -10,6 +10,8 @@ group = "Commands"
 
 Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
 
+Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
+
 ## Examples
 
 ```bash
@@ -71,7 +73,7 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
 
 <b><span class=g>Arguments:</span></b>
   <span class=c>&lt;BRANCH&gt;</span>
-          Branch or worktree name
+          Branch name
 
           Shortcuts: &#39;^&#39; (default branch), &#39;-&#39; (previous), &#39;@&#39; (current)
 

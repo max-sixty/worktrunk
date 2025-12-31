@@ -63,6 +63,8 @@ Type "starship init fish | source"
 Enter
 Type "wt config shell init fish | source"
 Enter
+Type "source ~/.config/fish/completions/wt.fish"
+Enter
 # Pre-install marketplace plugin before recording
 Type "claude plugin marketplace add anthropics/claude-plugins-official"
 Enter
@@ -89,8 +91,19 @@ Type "wt list"
 Enter
 Sleep 3s
 
-# Simple switch - navigate to existing worktree
-Type "wt switch api"
+# Simple switch with Tab completion - navigate to existing worktree
+# NOTE: Maintainer marked Tab cycling as excellent in wt-core demo
+# - "wt switch a" + Tab → shows api/auth/alpha menu (400ms to review)
+# - Tab → selects api (300ms to see selection)
+# - Enter → accepts selection (dismisses pager)
+# - 50ms then Enter again → executes command
+Type "wt switch a"
+Tab
+Sleep 400ms
+Tab
+Sleep 300ms
+Enter
+Sleep 50ms
 Enter
 Sleep 1.5s
 

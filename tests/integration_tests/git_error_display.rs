@@ -99,20 +99,20 @@ fn display_detached_head_no_action() {
 fn display_uncommitted_changes() {
     let err = GitError::UncommittedChanges {
         action: Some("remove worktree".into()),
-        worktree: None,
+        branch: None,
     };
 
     assert_snapshot!("uncommitted_changes", err.to_string());
 }
 
 #[test]
-fn display_uncommitted_changes_with_worktree() {
+fn display_uncommitted_changes_with_branch() {
     let err = GitError::UncommittedChanges {
         action: Some("remove worktree".into()),
-        worktree: Some("feature-branch".into()),
+        branch: Some("feature-branch".into()),
     };
 
-    assert_snapshot!("uncommitted_changes_with_worktree", err.to_string());
+    assert_snapshot!("uncommitted_changes_with_branch", err.to_string());
 }
 
 #[test]

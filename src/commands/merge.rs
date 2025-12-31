@@ -107,7 +107,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if !commit && repo.is_dirty()? {
         return Err(worktrunk::git::GitError::UncommittedChanges {
             action: Some("merge with --no-commit".into()),
-            worktree: Some(current_branch.clone()),
+            branch: Some(current_branch.clone()),
         }
         .into());
     }

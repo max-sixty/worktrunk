@@ -34,6 +34,8 @@ Type "starship init fish | source"
 Enter
 Type "wt config shell init fish | source"
 Enter
+Type "source ~/.config/fish/completions/wt.fish"
+Enter
 Type "cd $DEMO_REPO"
 Enter
 Type "clear"
@@ -47,8 +49,19 @@ Type "wt list"
 Enter
 Sleep 2s
 
-# Remove a merged worktree - clean and simple
-Type "wt remove billing"
+# Remove a merged worktree using Tab completion
+# NOTE: Maintainer marked Tab cycling as excellent in wt-core demo
+# - "wt remove b" + Tab → shows billing/beta menu (400ms to review)
+# - Tab → selects billing (300ms to see selection)
+# - Enter → accepts selection (dismisses pager)
+# - 50ms then Enter again → executes command
+Type "wt remove b"
+Tab
+Sleep 400ms
+Tab
+Sleep 300ms
+Enter
+Sleep 50ms
 Enter
 Sleep 2s
 
