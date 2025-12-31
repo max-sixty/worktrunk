@@ -2,7 +2,6 @@
 # https://insta.rs/docs/settings/
 
 test:
-  # Use nextest as the test runner
-  runner: "nextest"
-  # Fall back to cargo-test if nextest is not available
+  # Prefer nextest if available, fall back to cargo-test otherwise
+  runner: "auto"
   test_runner_fallback: true
