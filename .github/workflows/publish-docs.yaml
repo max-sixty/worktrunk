@@ -29,13 +29,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Clone just the demos directory from worktrunk-assets
-          gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1 --filter=blob:none --sparse
-          cd /tmp/worktrunk-assets
-          git sparse-checkout set demos
-          # Copy assets to docs/static/assets
-          mkdir -p $GITHUB_WORKSPACE/docs/static/assets
-          cp -r demos/* $GITHUB_WORKSPACE/docs/static/assets/
+          gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
+          cp -r /tmp/worktrunk-assets/demos/* docs/static/assets/
 
       - name: 🕷️ Build docs
         run: zola build
