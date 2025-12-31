@@ -123,10 +123,7 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
 #[rstest]
 fn test_state_clear_default_branch_empty(repo: TestRepo) {
     // Set up remote but don't set default branch cache
-    repo.git_command()
-        .args(["remote", "add", "origin", "https://example.com/repo.git"])
-        .output()
-        .unwrap();
+    repo.run_git(&["remote", "add", "origin", "https://example.com/repo.git"]);
 
     let output = wt_state_cmd(&repo, "default-branch", "clear", &[])
         .output()

@@ -1,5 +1,5 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, repo_with_remote, resolve_git_common_dir,
+    TestRepo, make_snapshot_cmd, repo, repo_with_remote, resolve_git_common_dir, set_temp_home_env,
     setup_snapshot_settings, wait_for_file, wait_for_file_content, wait_for_file_count,
     wait_for_file_lines, wait_for_valid_json,
 };
@@ -27,9 +27,7 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
         let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
-        cmd.env("HOME", temp_home.path());
-        // Windows: the `home` crate uses USERPROFILE for home_dir()
-        cmd.env("USERPROFILE", temp_home.path());
+        set_temp_home_env(&mut cmd, temp_home.path());
         assert_cmd_snapshot!(test_name, cmd);
     });
 }
@@ -382,15 +380,12 @@ approved-commands = ["cat > context.json"]
 
     // Create worktree - this should pipe JSON to the hook's stdin
     let temp_home = TempDir::new().unwrap();
-    let output = wt_command()
-        .args(["switch", "--create", "feature-json"])
+    let mut cmd = wt_command();
+    cmd.args(["switch", "--create", "feature-json"])
         .current_dir(repo.root_path())
-        .env("HOME", temp_home.path())
-        // Windows: the `home` crate uses USERPROFILE for home_dir()
-        .env("USERPROFILE", temp_home.path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
-        .output()
-        .expect("failed to run wt switch");
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().expect("failed to run wt switch");
 
     assert!(
         output.status.success(),
@@ -487,15 +482,12 @@ approved-commands = ["./scripts/setup.py"]
 
     // Create worktree
     let temp_home = TempDir::new().unwrap();
-    let output = wt_command()
-        .args(["switch", "--create", "feature-script"])
+    let mut cmd = wt_command();
+    cmd.args(["switch", "--create", "feature-script"])
         .current_dir(repo.root_path())
-        .env("HOME", temp_home.path())
-        // Windows: the `home` crate uses USERPROFILE for home_dir()
-        .env("USERPROFILE", temp_home.path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
-        .output()
-        .expect("failed to run wt switch");
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().expect("failed to run wt switch");
 
     assert!(
         output.status.success(),
@@ -560,15 +552,12 @@ approved-commands = ["cat > context.json"]
 
     // Create worktree
     let temp_home = TempDir::new().unwrap();
-    let output = wt_command()
-        .args(["switch", "--create", "bg-json"])
+    let mut cmd = wt_command();
+    cmd.args(["switch", "--create", "bg-json"])
         .current_dir(repo.root_path())
-        .env("HOME", temp_home.path())
-        // Windows: the `home` crate uses USERPROFILE for home_dir()
-        .env("USERPROFILE", temp_home.path())
-        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path())
-        .output()
-        .expect("failed to run wt switch");
+        .env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    set_temp_home_env(&mut cmd, temp_home.path());
+    let output = cmd.output().expect("failed to run wt switch");
 
     assert!(
         output.status.success(),

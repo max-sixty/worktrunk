@@ -14,35 +14,25 @@
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use std::process::Command;
 
 /// Get the HEAD commit SHA for a branch
 fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
-    let output = repo
-        .git_command()
-        .args(["rev-parse", branch])
-        .output()
-        .expect("Failed to get commit SHA");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    repo.git_output(&["rev-parse", branch])
 }
 
 /// Test CI status detection with GitHub PR showing passed checks
 #[rstest]
 fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -75,19 +65,15 @@ fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -120,19 +106,15 @@ fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -165,19 +147,15 @@ fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -210,19 +188,15 @@ fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -255,19 +229,15 @@ fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -300,19 +270,15 @@ fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it (so has_upstream is true)
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so workflow run isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -341,19 +307,15 @@ fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so workflow run isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -382,35 +344,21 @@ fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_stale_pr(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Make additional commit locally (not pushed)
     let worktree_path = repo.worktrees.get("feature").unwrap();
     std::fs::write(worktree_path.join("new_file.txt"), "new content").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "."])
-        .current_dir(worktree_path)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Local commit"])
-        .current_dir(worktree_path)
-        .output()
-        .unwrap();
+    repo.stage_all(worktree_path);
+    repo.run_git_in(worktree_path, &["commit", "-m", "Local commit"]);
 
     // Setup mock gh with PR data - use fake SHA to simulate stale PR
     // (PR was created before the local commit, so PR HEAD differs from local HEAD)
@@ -438,19 +386,15 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -485,19 +429,15 @@ fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/test-owner/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");
@@ -528,19 +468,15 @@ fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     // Add GitHub remote with specific owner
-    repo.git_command()
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/my-org/test-repo.git",
-        ])
-        .output()
-        .unwrap();
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/my-org/test-repo.git",
+    ]);
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
-    repo.push_branch("feature");
 
     // Get actual commit SHA so PR isn't marked as stale
     let head_sha = get_branch_sha(&repo, "feature");

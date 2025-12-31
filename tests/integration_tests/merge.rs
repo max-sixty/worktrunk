@@ -225,9 +225,6 @@ fn test_merge_rebase_conflict(repo: TestRepo) {
 
     repo.commit("Add shared file");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
-
     // Modify shared.txt in main branch (from the base commit)
     std::fs::write(repo.root_path().join("shared.txt"), "main version\n").unwrap();
 
@@ -595,8 +592,6 @@ fn test_merge_pre_merge_command_success(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes to skip approval prompts
@@ -617,8 +612,6 @@ fn test_merge_pre_merge_command_failure(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes - pre-merge command should fail and block merge
@@ -639,8 +632,6 @@ fn test_merge_pre_merge_command_no_hooks(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --no-verify - should skip pre-merge commands and succeed
@@ -670,8 +661,6 @@ test = "exit 0"
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes - all pre-merge commands should pass
@@ -696,8 +685,6 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes
@@ -735,8 +722,6 @@ fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --no-verify - hook should be skipped entirely
@@ -764,8 +749,6 @@ fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes - post-merge command should fail but merge should complete
@@ -794,8 +777,6 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes
@@ -835,7 +816,6 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     repo.commit("Add config");
 
     // Create a worktree for main (destination for post-merge commands)
-    repo.add_main_worktree();
 
     // Create a feature worktree with NO commits (already up-to-date with main)
     let feature_wt = repo.add_worktree("feature");
@@ -900,9 +880,6 @@ fn test_merge_pre_commit_command_success(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
-
     // Create a feature worktree and make a change
     let feature_wt = repo.add_worktree("feature");
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
@@ -924,9 +901,6 @@ fn test_merge_pre_commit_command_failure(mut repo: TestRepo) {
     fs::write(config_dir.join("wt.toml"), r#"pre-commit = "exit 1""#).unwrap();
 
     repo.commit("Add config");
-
-    // Create a worktree for main
-    repo.add_main_worktree();
 
     // Create a feature worktree and make a change
     let feature_wt = repo.add_worktree("feature");
@@ -954,9 +928,6 @@ fn test_merge_pre_squash_command_success(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
-
     // Create a feature worktree and make commits
     let feature_wt = repo.add_feature();
 
@@ -978,8 +949,6 @@ fn test_merge_pre_squash_command_failure(mut repo: TestRepo) {
 
     repo.commit("Add config");
 
-    // Create a worktree for main
-    repo.add_main_worktree();
     let feature_wt = repo.add_feature();
 
     // Merge with --yes (squashing is default) - pre-commit command should fail and block merge
@@ -1167,9 +1136,6 @@ EOF
         .current_dir(repo.root_path())
         .output()
         .unwrap();
-
-    // Create a worktree for main
-    repo.add_main_worktree();
 
     // Create a feature worktree and make multiple commits
     let feature_wt = repo.add_worktree("feature-auth");
@@ -1482,9 +1448,6 @@ fi
         .current_dir(repo.root_path())
         .output()
         .unwrap();
-
-    // Create a worktree for main
-    repo.add_main_worktree();
 
     // Create a feature worktree and make multiple commits
     let feature_wt = repo.add_worktree("feature-auth");
