@@ -176,7 +176,8 @@ impl CommitOptions<'_> {
                 HookType::PreCommit,
                 &extra_vars,
                 HookFailureStrategy::FailFast,
-                None,
+                None, // name_filter: run all hooks
+                None, // display_path: running in expected directory
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }

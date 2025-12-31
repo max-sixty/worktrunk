@@ -12,10 +12,13 @@
 // The source prefix in filtering (option 2) would need to be used elsewhere too to justify
 // the syntax. Current behavior is reasonable but worth revisiting if users find it confusing.
 
+use std::path::{Path, PathBuf};
+
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::CommandConfig;
 use worktrunk::git::WorktrunkError;
+use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{format_bash_with_gutter, progress_message, warning_message};
 
 use super::command_executor::{CommandContext, PreparedCommand, prepare_commands};
@@ -28,6 +31,9 @@ pub struct SourcedCommand {
     pub source: HookSource,
     /// Display label like "user post-start" or "project pre-merge"
     pub label: String,
+    /// Path to display in announcement, if different from user's current directory.
+    /// When `Some`, shows "@ path" suffix to clarify where the command runs.
+    pub display_path: Option<PathBuf>,
 }
 
 impl SourcedCommand {
@@ -35,7 +41,14 @@ impl SourcedCommand {
     fn announce(&self) -> anyhow::Result<()> {
         let full_label =
             crate::commands::format_command_label(&self.label, self.prepared.name.as_deref());
-        crate::output::print(progress_message(format!("{full_label}:")))?;
+        let message = match &self.display_path {
+            Some(path) => {
+                let path_display = format_path_for_display(path);
+                cformat!("{full_label} @ <bold>{path_display}</>:")
+            }
+            None => format!("{full_label}:"),
+        };
+        crate::output::print(progress_message(message))?;
         crate::output::gutter(format_bash_with_gutter(&self.prepared.expanded))?;
         Ok(())
     }
@@ -75,6 +88,10 @@ impl HookSource {
 ///
 /// Collects commands from user config first, then project config, applying the name filter.
 /// Returns a flat list of commands with source information for execution.
+///
+/// `display_path`: When `Some`, the path is shown in hook announcements (e.g., "@ ~/repo").
+/// Use this when commands run in a different directory than where the user invoked the command.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_hook_commands(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
@@ -82,8 +99,11 @@ pub fn prepare_hook_commands(
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     name_filter: Option<&str>,
+    display_path: Option<&Path>,
 ) -> anyhow::Result<Vec<SourcedCommand>> {
     let mut commands = Vec::new();
+
+    let display_path = display_path.map(|p| p.to_path_buf());
 
     if let Some(config) = user_config {
         let prepared = prepare_commands(config, ctx, extra_vars, hook_type)?;
@@ -93,6 +113,7 @@ pub fn prepare_hook_commands(
             prepared: p,
             source: HookSource::User,
             label: label.clone(),
+            display_path: display_path.clone(),
         }));
     }
 
@@ -104,6 +125,7 @@ pub fn prepare_hook_commands(
             prepared: p,
             source: HookSource::Project,
             label: label.clone(),
+            display_path: display_path.clone(),
         }));
     }
 
@@ -218,6 +240,10 @@ fn check_name_filter_matched(
 /// This is the canonical implementation for running hooks from both sources.
 /// Runs user hooks first, then project hooks sequentially. Handles name filtering
 /// and returns an error if a name filter was provided but no matching command found.
+///
+/// `display_path`: When `Some`, shows the path in hook announcements. Use when hooks
+/// run in a different directory than where the user invoked the command.
+#[allow(clippy::too_many_arguments)]
 pub fn run_hook_with_filter(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
@@ -226,6 +252,7 @@ pub fn run_hook_with_filter(
     extra_vars: &[(&str, &str)],
     failure_strategy: HookFailureStrategy,
     name_filter: Option<&str>,
+    display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     let commands = prepare_hook_commands(
         ctx,
@@ -234,6 +261,7 @@ pub fn run_hook_with_filter(
         hook_type,
         extra_vars,
         name_filter,
+        display_path,
     )?;
 
     check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
@@ -315,6 +343,10 @@ pub fn run_hook_with_filter(
 /// All commands from both sources run in parallel together. Collects all failures and returns
 /// a combined error at the end. Handles name filtering and returns an error if a name
 /// filter was provided but no matching command found.
+///
+/// `display_path`: When `Some`, shows the path in hook announcements. Use when hooks
+/// run in a different directory than where the user invoked the command.
+#[allow(clippy::too_many_arguments)]
 pub fn run_hook_concurrent_with_filter(
     ctx: &CommandContext,
     user_config: Option<&CommandConfig>,
@@ -322,6 +354,7 @@ pub fn run_hook_concurrent_with_filter(
     hook_type: HookType,
     extra_vars: &[(&str, &str)],
     name_filter: Option<&str>,
+    display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     use std::process::Stdio;
     use std::thread;
@@ -334,6 +367,7 @@ pub fn run_hook_concurrent_with_filter(
         hook_type,
         extra_vars,
         name_filter,
+        display_path,
     )?;
 
     check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;

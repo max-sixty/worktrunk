@@ -826,6 +826,7 @@ impl<'a> CommandContext<'a> {
             &[],
             HookFailureStrategy::Warn,
             None,
+            None, // No path display - running in expected directory
         )
     }
 
@@ -842,6 +843,7 @@ impl<'a> CommandContext<'a> {
             HookType::PostStart,
             &[],
             None,
+            None, // No path display - running in expected directory
         )?;
 
         spawn_hook_commands_background(self, commands, HookType::PostStart)
@@ -862,6 +864,7 @@ impl<'a> CommandContext<'a> {
             HookType::PostSwitch,
             &[],
             None,
+            None, // No path display - running in expected directory
         )?;
 
         spawn_hook_commands_background(self, commands, HookType::PostSwitch)
