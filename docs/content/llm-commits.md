@@ -8,6 +8,13 @@ group = "Reference"
 
 Worktrunk generates commit messages by building a templated prompt and piping it to an external command. This integrates with `wt merge`, `wt step commit`, and `wt step squash`.
 
+<figure class="demo">
+<picture>
+  <source srcset="/assets/docs/dark/wt-commit.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/docs/light/wt-commit.gif" alt="LLM commit message generation demo" width="1600" height="900">
+</picture>
+</figure>
+
 ## Setup
 
 ### Install llm

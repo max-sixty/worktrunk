@@ -1007,7 +1007,6 @@ test = "echo '✓ All 47 tests passed in 2.3s'"
         .unwrap();
 
         repo.commit("Add pre-merge validation");
-        repo.add_main_worktree();
         let feature_wt = repo.add_feature();
 
         // Pre-approve commands
@@ -1061,7 +1060,6 @@ test = "echo '✗ Test suite failed: 3 tests failing' && exit 1"
         .unwrap();
 
         repo.commit("Add failing pre-merge validation");
-        repo.add_main_worktree();
 
         // Create feature worktree with a commit
         let feature_wt = repo.add_worktree_with_commit(
@@ -1138,7 +1136,6 @@ check2 = "{} check2 3"
         .unwrap();
 
         repo.commit("Add pre-merge validation with mixed output");
-        repo.add_main_worktree();
         let feature_wt = repo.add_feature();
 
         // Pre-approve commands
@@ -2168,8 +2165,6 @@ fi
             .current_dir(repo.root_path())
             .output()
             .unwrap();
-
-        repo.add_main_worktree();
 
         // Create a feature worktree and make multiple commits
         let feature_wt = repo.add_worktree("feature-auth");

@@ -79,7 +79,8 @@ fn test_get_default_branch_with_custom_remote(mut repo: TestRepo) {
 
 #[rstest]
 fn test_primary_remote_detects_custom_remote(mut repo: TestRepo) {
-    repo.setup_custom_remote("upstream", "develop");
+    // Use "main" since that's the local branch - the test only cares about remote name detection
+    repo.setup_custom_remote("upstream", "main");
 
     // Test that primary_remote detects the custom remote name
     let git_repo = Repository::at(repo.root_path());

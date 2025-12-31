@@ -112,6 +112,18 @@
     <script src="/code-copy.js" defer></script>
     <script src="/mobile-menu.js" defer></script>
     <script src="//instant.page/5.2.0" type="module" integrity="sha384-jnZyxPjiipYXnSU0ygqeac2q7CVYMbh84q0uHVRRxEtvFPiQYbXWUorga2aqZJ0z"></script>
+    <script>
+    // Show demo images with fade-in after they load (hides broken-image icon during loading)
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('figure.demo img').forEach(function(img) {
+            if (img.complete) {
+                img.classList.add('loaded');
+            } else {
+                img.addEventListener('load', function() { img.classList.add('loaded'); });
+            }
+        });
+    });
+    </script>
 </head>
 
 <body>

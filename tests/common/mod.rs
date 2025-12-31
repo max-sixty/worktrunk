@@ -169,22 +169,22 @@ pub fn repo_with_remote(mut repo: TestRepo) -> TestRepo {
     repo
 }
 
-/// Repo with a separate worktree for the main branch.
+/// Repo with main branch available for merge operations.
 ///
-/// Many merge/push tests need the main branch in a separate worktree so the
-/// primary worktree can be on a feature branch. This fixture sets that up.
+/// The primary worktree is already on main, so no separate worktree is needed.
+/// This fixture exists for compatibility with tests that expect it.
 ///
 /// Use `#[from(repo_with_main_worktree)]` in rstest:
 /// ```ignore
 /// #[rstest]
 /// fn test_merge(#[from(repo_with_main_worktree)] mut repo: TestRepo) {
 ///     let feature_wt = repo.add_worktree("feature");
-///     // main is already in a separate worktree
+///     // primary is on main, ready for merge
 /// }
 /// ```
 #[rstest::fixture]
 pub fn repo_with_main_worktree(repo: TestRepo) -> TestRepo {
-    repo.add_main_worktree();
+    // Primary is already on main - no separate worktree needed
     repo
 }
 
@@ -213,9 +213,9 @@ pub fn repo_with_feature_worktree(mut repo_with_main_worktree: TestRepo) -> Test
     repo_with_main_worktree
 }
 
-/// Repo with remote, main worktree, and a feature branch with one commit.
+/// Repo with remote and a feature branch with one commit.
 ///
-/// Combines `repo_with_remote` with a main worktree and feature worktree setup.
+/// Combines `repo_with_remote` with a feature worktree setup.
 /// Access the feature worktree path via `repo.worktrees["feature"]`.
 ///
 /// Use for tests that need remote tracking AND a feature branch ready to merge/push.
@@ -224,12 +224,12 @@ pub fn repo_with_feature_worktree(mut repo_with_main_worktree: TestRepo) -> Test
 /// fn test_push(mut repo_with_remote_and_feature: TestRepo) {
 ///     let repo = &mut repo_with_remote_and_feature;
 ///     let feature_wt = &repo.worktrees["feature"];
-///     // Has remote, main worktree, and feature with one commit
+///     // Has remote and feature with one commit
 /// }
 /// ```
 #[rstest::fixture]
 pub fn repo_with_remote_and_feature(mut repo_with_remote: TestRepo) -> TestRepo {
-    repo_with_remote.add_main_worktree();
+    // Primary is already on main - no separate worktree needed
     repo_with_remote.add_worktree_with_commit(
         "feature",
         "feature.txt",
@@ -296,7 +296,7 @@ pub fn repo_with_multi_commit_feature(mut repo_with_main_worktree: TestRepo) -> 
 /// Merge test setup with a single commit on feature branch.
 ///
 /// Creates a repo with:
-/// - A worktree for main at `repo.main-wt`
+/// - Primary worktree on main (unchanged)
 /// - A feature worktree with one commit adding `feature.txt`
 ///
 /// Returns `(repo, feature_worktree_path)`.
@@ -311,32 +311,12 @@ pub fn repo_with_multi_commit_feature(mut repo_with_main_worktree: TestRepo) -> 
 /// ```
 #[rstest::fixture]
 pub fn merge_scenario(mut repo: TestRepo) -> (TestRepo, PathBuf) {
-    // Create a worktree for main
-    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
     // Create a feature worktree and make a commit
+    // Primary stays on main - no need for separate main worktree
     let feature_wt = repo.add_worktree("feature");
     std::fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "feature.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "Add feature file"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.run_git_in(&feature_wt, &["add", "feature.txt"]);
+    repo.run_git_in(&feature_wt, &["commit", "-m", "Add feature file"]);
 
     (repo, feature_wt)
 }
@@ -344,7 +324,7 @@ pub fn merge_scenario(mut repo: TestRepo) -> (TestRepo, PathBuf) {
 /// Merge test setup with multiple commits on feature branch.
 ///
 /// Creates a repo with:
-/// - A worktree for main at `repo.main-wt`
+/// - Primary worktree on main (unchanged)
 /// - A feature worktree with two commits: `file1.txt` and `file2.txt`
 ///
 /// Returns `(repo, feature_worktree_path)`.
@@ -359,45 +339,11 @@ pub fn merge_scenario(mut repo: TestRepo) -> (TestRepo, PathBuf) {
 /// ```
 #[rstest::fixture]
 pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
-    // Create a worktree for main
-    let main_wt = repo.root_path().parent().unwrap().join("repo.main-wt");
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
-        .current_dir(repo.root_path())
-        .output()
-        .unwrap();
-
     // Create a feature worktree and make multiple commits
+    // Primary stays on main - no need for separate main worktree
     let feature_wt = repo.add_worktree("feature");
-
-    std::fs::write(feature_wt.join("file1.txt"), "content 1").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file1.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 1"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-
-    std::fs::write(feature_wt.join("file2.txt"), "content 2").unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["add", "file2.txt"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
-    let mut cmd = Command::new("git");
-    repo.configure_git_cmd(&mut cmd);
-    cmd.args(["commit", "-m", "feat: add file 2"])
-        .current_dir(&feature_wt)
-        .output()
-        .unwrap();
+    repo.commit_in_worktree(&feature_wt, "file1.txt", "content 1", "feat: add file 1");
+    repo.commit_in_worktree(&feature_wt, "file2.txt", "content 2", "feat: add file 2");
 
     (repo, feature_wt)
 }
@@ -640,6 +586,27 @@ pub fn configure_git_cmd(cmd: &mut Command, git_config_path: &Path) {
     cmd.env("GIT_TERMINAL_PROMPT", "0");
 }
 
+/// Shared interface for test repository fixtures.
+///
+/// Provides `configure_git_cmd()` and `git_command()` with consistent environment isolation.
+pub trait TestRepoBase {
+    /// Path to the git config file for this test.
+    fn git_config_path(&self) -> &Path;
+
+    /// Configure a git command with isolated environment.
+    fn configure_git_cmd(&self, cmd: &mut Command) {
+        configure_git_cmd(cmd, self.git_config_path());
+    }
+
+    /// Create a git command for the given directory.
+    fn git_command(&self, dir: &Path) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(dir);
+        self.configure_git_cmd(&mut cmd);
+        cmd
+    }
+}
+
 /// Create a temporary file for directive output.
 ///
 /// The shell wrapper sets WORKTRUNK_DIRECTIVE_FILE to a temp file before running wt.
@@ -785,6 +752,26 @@ pub fn set_temp_home_env(cmd: &mut Command, home: &Path) {
     cmd.env("APPDATA", home.join(".config"));
 }
 
+/// Check that a git command succeeded, panicking with diagnostics if not.
+///
+/// Use this after `git_command().output()` to ensure the command succeeded.
+///
+/// # Example
+/// ```ignore
+/// let output = repo.git_command().args(["add", "."]).current_dir(&dir).output().unwrap();
+/// check_git_status(&output, "add");
+/// ```
+pub fn check_git_status(output: &std::process::Output, cmd_desc: &str) {
+    if !output.status.success() {
+        panic!(
+            "git {} failed:\nstdout: {}\nstderr: {}",
+            cmd_desc,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 pub struct TestRepo {
     temp_dir: TempDir, // Must keep to ensure cleanup on drop
     root: PathBuf,
@@ -870,12 +857,7 @@ impl TestRepo {
         };
 
         // Run git init (can't avoid this for empty repos)
-        let mut cmd = Command::new("git");
-        repo.configure_git_cmd(&mut cmd);
-        cmd.args(["init", "-q"])
-            .current_dir(&repo.root)
-            .output()
-            .unwrap();
+        repo.run_git(&["init", "-q"]);
 
         repo
     }
@@ -939,6 +921,64 @@ impl TestRepo {
         self.configure_git_cmd(&mut cmd);
         cmd.current_dir(&self.root);
         cmd
+    }
+
+    /// Run a git command in the repo root, panicking on failure.
+    ///
+    /// Thin wrapper around `git_command()` that runs the command and checks status.
+    pub fn run_git(&self, args: &[&str]) {
+        let output = self.git_command().args(args).output().unwrap();
+        check_git_status(&output, &args.join(" "));
+    }
+
+    /// Run a git command in a specific directory, panicking on failure.
+    ///
+    /// Thin wrapper around `git_command()` that runs in `dir` and checks status.
+    pub fn run_git_in(&self, dir: &Path, args: &[&str]) {
+        let output = self
+            .git_command()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        check_git_status(&output, &args.join(" "));
+    }
+
+    /// Run a git command and return stdout as a trimmed string.
+    ///
+    /// Thin wrapper around `git_command()` for commands that return output.
+    pub fn git_output(&self, args: &[&str]) -> String {
+        let output = self.git_command().args(args).output().unwrap();
+        check_git_status(&output, &args.join(" "));
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Stage all changes in a directory.
+    pub fn stage_all(&self, dir: &Path) {
+        self.run_git_in(dir, &["add", "."]);
+    }
+
+    /// Get the HEAD commit SHA.
+    pub fn head_sha(&self) -> String {
+        let output = self
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        check_git_status(&output, "rev-parse HEAD");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Get the HEAD commit SHA in a specific directory.
+    pub fn head_sha_in(&self, dir: &Path) -> String {
+        let output = self
+            .git_command()
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        check_git_status(&output, "rev-parse HEAD");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
     /// Configure command for CLI tests with isolated environment.
@@ -1151,28 +1191,9 @@ impl TestRepo {
         // Use default template path format: ../{{ main_worktree }}.{{ branch }}
         // From {temp_dir}/repo, this resolves to {temp_dir}/repo.{branch}
         let worktree_path = self.temp_dir.path().join(format!("repo.{}", safe_branch));
+        let worktree_str = worktree_path.to_str().unwrap();
 
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        let output = cmd
-            .args([
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                worktree_path.to_str().unwrap(),
-            ])
-            .current_dir(&self.root)
-            .output()
-            .unwrap();
-
-        if !output.status.success() {
-            panic!(
-                "Failed to add worktree:\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        self.run_git(&["worktree", "add", "-b", branch, worktree_str]);
 
         // Canonicalize worktree path to match what git returns
         let canonical_path = canonicalize(&worktree_path).unwrap();
@@ -1187,14 +1208,18 @@ impl TestRepo {
     /// This is a convenience method that creates a worktree for the main branch
     /// in the standard location expected by merge tests. Returns the path to the
     /// created worktree.
+    ///
+    /// If the primary worktree is currently on "main", this method detaches HEAD
+    /// first so the worktree can be created.
     pub fn add_main_worktree(&self) -> PathBuf {
+        // If primary is on main, detach HEAD first so we can create a worktree for it
+        if self.current_branch() == "main" {
+            self.detach_head();
+        }
+
         let main_wt = self.root_path().parent().unwrap().join("repo.main-wt");
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["worktree", "add", main_wt.to_str().unwrap(), "main"])
-            .current_dir(self.root_path())
-            .output()
-            .unwrap();
+        let main_wt_str = main_wt.to_str().unwrap();
+        self.run_git(&["worktree", "add", main_wt_str, "main"]);
         main_wt
     }
 
@@ -1222,23 +1247,9 @@ impl TestRepo {
         message: &str,
     ) -> PathBuf {
         let worktree_path = self.add_worktree(branch);
-
         std::fs::write(worktree_path.join(filename), content).unwrap();
-
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["add", filename])
-            .current_dir(&worktree_path)
-            .output()
-            .unwrap();
-
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", message])
-            .current_dir(&worktree_path)
-            .output()
-            .unwrap();
-
+        self.run_git_in(&worktree_path, &["add", filename]);
+        self.run_git_in(&worktree_path, &["commit", "-m", message]);
         worktree_path
     }
 
@@ -1284,20 +1295,8 @@ impl TestRepo {
         message: &str,
     ) {
         std::fs::write(worktree_path.join(filename), content).unwrap();
-
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["add", filename])
-            .current_dir(worktree_path)
-            .output()
-            .unwrap();
-
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["commit", "-m", message])
-            .current_dir(worktree_path)
-            .output()
-            .unwrap();
+        self.run_git_in(worktree_path, &["add", filename]);
+        self.run_git_in(worktree_path, &["commit", "-m", message]);
     }
 
     /// Creates a branch without a worktree.
@@ -1305,12 +1304,7 @@ impl TestRepo {
     /// This creates a local branch pointing to HEAD without checking it out.
     /// Useful for testing branch listing without creating worktrees.
     pub fn create_branch(&self, branch_name: &str) {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["branch", branch_name])
-            .current_dir(self.root_path())
-            .output()
-            .unwrap();
+        self.run_git(&["branch", branch_name]);
     }
 
     /// Pushes a branch to origin.
@@ -1318,12 +1312,7 @@ impl TestRepo {
     /// Creates a remote tracking branch on origin. Requires `setup_remote()`
     /// to have been called first.
     pub fn push_branch(&self, branch_name: &str) {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["push", "origin", branch_name])
-            .current_dir(self.root_path())
-            .output()
-            .unwrap();
+        self.run_git(&["push", "origin", branch_name]);
     }
 
     /// Detach HEAD in the main repository
@@ -1338,39 +1327,19 @@ impl TestRepo {
     }
 
     fn detach_head_at(&self, path: &Path) {
-        // Get current commit SHA
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        let output = cmd
-            .args(["rev-parse", "HEAD"])
-            .current_dir(path)
-            .output()
-            .unwrap();
-
-        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["checkout", "--detach", &sha])
-            .current_dir(path)
-            .output()
-            .unwrap();
+        let sha = self.head_sha_in(path);
+        self.run_git_in(path, &["checkout", "--detach", &sha]);
     }
 
     /// Lock a worktree with an optional reason
     pub fn lock_worktree(&self, name: &str, reason: Option<&str>) {
         let worktree_path = self.worktree_path(name);
+        let worktree_str = worktree_path.to_str().unwrap();
 
-        let mut args = vec!["worktree", "lock"];
-        if let Some(r) = reason {
-            args.push("--reason");
-            args.push(r);
+        match reason {
+            Some(r) => self.run_git(&["worktree", "lock", "--reason", r, worktree_str]),
+            None => self.run_git(&["worktree", "lock", worktree_str]),
         }
-        args.push(worktree_path.to_str().unwrap());
-
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(&args).current_dir(&self.root).output().unwrap();
     }
 
     /// Create a bare remote repository and set it as origin
@@ -1392,39 +1361,19 @@ impl TestRepo {
         let remote_path = self.temp_dir.path().join(format!("{}.git", remote_name));
         std::fs::create_dir(&remote_path).unwrap();
 
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["init", "--bare", "--initial-branch", default_branch])
-            .current_dir(&remote_path)
-            .output()
-            .unwrap();
+        self.run_git_in(
+            &remote_path,
+            &["init", "--bare", "--initial-branch", default_branch],
+        );
 
         // Canonicalize remote path
         let remote_path = canonicalize(&remote_path).unwrap();
+        let remote_path_str = remote_path.to_str().unwrap();
 
-        // Add as remote
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["remote", "add", remote_name, remote_path.to_str().unwrap()])
-            .current_dir(&self.root)
-            .output()
-            .unwrap();
-
-        // Push current branch to remote
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["push", "-u", remote_name, default_branch])
-            .current_dir(&self.root)
-            .output()
-            .unwrap();
-
-        // Set remote/HEAD to point to the default branch
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["remote", "set-head", remote_name, default_branch])
-            .current_dir(&self.root)
-            .output()
-            .unwrap_or_else(|_| panic!("Failed to set {}/HEAD", remote_name));
+        // Add as remote, push, and set HEAD
+        self.run_git(&["remote", "add", remote_name, remote_path_str]);
+        self.run_git(&["push", "-u", remote_name, default_branch]);
+        self.run_git(&["remote", "set-head", remote_name, default_branch]);
 
         self.remote = Some(remote_path);
     }
@@ -1434,12 +1383,7 @@ impl TestRepo {
     /// This forces git to not have a cached default branch, useful for testing
     /// the fallback path that queries the remote.
     pub fn clear_origin_head(&self) {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["remote", "set-head", "origin", "--delete"])
-            .current_dir(&self.root)
-            .output()
-            .unwrap();
+        self.run_git(&["remote", "set-head", "origin", "--delete"]);
     }
 
     /// Check if origin/HEAD is set
@@ -1459,26 +1403,14 @@ impl TestRepo {
     /// Creates a new branch and switches to it in the primary worktree.
     /// This is useful for testing scenarios where the primary worktree is not on the main branch.
     pub fn switch_primary_to(&self, branch: &str) {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        cmd.args(["switch", "-c", branch])
-            .current_dir(&self.root)
-            .output()
-            .unwrap_or_else(|_| panic!("Failed to create {} branch", branch));
+        self.run_git(&["switch", "-c", branch]);
     }
 
     /// Get the current branch of the primary worktree
     ///
     /// Returns the name of the current branch, or panics if HEAD is detached.
     pub fn current_branch(&self) -> String {
-        let mut cmd = Command::new("git");
-        self.configure_git_cmd(&mut cmd);
-        let output = cmd
-            .args(["branch", "--show-current"])
-            .current_dir(&self.root)
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
+        self.git_output(&["branch", "--show-current"])
     }
 
     /// Setup mock `gh` and `glab` commands that return immediately without network calls
@@ -1798,6 +1730,12 @@ exit 1
             .args(["config", &config_key, &json_value])
             .output()
             .unwrap();
+    }
+}
+
+impl TestRepoBase for TestRepo {
+    fn git_config_path(&self) -> &Path {
+        &self.git_config_path
     }
 }
 

@@ -10,7 +10,7 @@ Worktrunk's three core commands make worktrees as easy as branches.
 Plus, Worktrunk has a bunch of quality-of-life features to simplify working
 with many parallel changes, including hooks to automate local workflows.
 
-Scaling agents becomes trivial. Here's a quick demo:
+Scaling agents becomes trivial. A quick demo:
 
 <figure class="demo">
 <picture>
@@ -85,7 +85,7 @@ git branch -d feat{% end %}</td>
 - **[Merge workflow](@/merge.md)** — squash, rebase, merge, clean up in one command
 - ...and **[lots more](#next-steps)**
 
-Here's a demo with some of the more advanced features:
+A demo with some advanced features:
 
 <figure class="demo">
 <picture>

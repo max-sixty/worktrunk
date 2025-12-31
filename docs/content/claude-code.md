@@ -53,6 +53,13 @@ $ git config worktrunk.state.feature.marker '{"marker":"💬","set_at":0}'  # Di
 
 <code>~/w/myproject.feature-auth  !🤖  @<span style='color:#0a0'>+42</span> <span style='color:#a00'>-8</span>  <span style='color:#0a0'>↑3</span>  <span style='color:#0a0'>⇡1</span>  <span style='color:#0a0'>●</span>  | Opus</code>
 
+<figure class="demo">
+<picture>
+  <source srcset="/assets/docs/dark/wt-statusline.gif" media="(prefers-color-scheme: dark)">
+  <img src="/assets/docs/light/wt-statusline.gif" alt="Claude Code statusline demo" width="1600" height="900">
+</picture>
+</figure>
+
 Add to `~/.claude/settings.json`:
 
 ```json

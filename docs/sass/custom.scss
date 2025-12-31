@@ -371,7 +371,16 @@ main {
     margin-top: 0.25rem;
 
     img {
+        display: block;
         min-width: 800px;
+        max-width: 100%;
+        height: auto;
+        // Hide until loaded (JS adds .loaded class) - visibility preserves GIF animation state
+        visibility: hidden;
+
+        &.loaded {
+            visibility: visible;
+        }
     }
 }
 

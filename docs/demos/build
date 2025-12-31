@@ -257,6 +257,10 @@ echo "Add placeholder module for user profile settings."
 
 DOCS_DEMOS = [
     ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
+    ("wt-switch.tape", "wt-switch", prepare_switch, "vhs"),
+    ("wt-list.tape", "wt-list", prepare_with_hooks, "vhs"),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo, "vhs"),
+    ("wt-statusline.tape", "wt-statusline", prepare_switch, "vhs"),
     ("wt-merge.tape", "wt-merge", prepare_merge_demo, "vhs"),
     ("wt-select.tape", "wt-select", prepare_basic, "vhs-keystrokes"),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),

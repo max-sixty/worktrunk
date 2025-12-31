@@ -68,9 +68,9 @@ Global Options:
   -v, --verbose
           Show commands and debug info
 
-<!-- demo: wt-merge.gif 1600x900 -->
-
 Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
+
+<!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples
 

@@ -1,5 +1,6 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, repo, repo_with_feature_worktree, setup_snapshot_settings,
+    TestRepo, make_snapshot_cmd, repo, repo_with_feature_worktree, repo_with_remote,
+    setup_snapshot_settings,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -197,7 +198,7 @@ fn test_push_dirty_target_overlap_renamed_file(mut repo: TestRepo) {
 }
 
 #[rstest]
-fn test_push_error_not_fast_forward(mut repo: TestRepo) {
+fn test_push_error_not_fast_forward(#[from(repo_with_remote)] mut repo: TestRepo) {
     // Create feature branch from initial commit
     let feature_wt = repo.add_worktree("feature");
 
