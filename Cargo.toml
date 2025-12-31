@@ -5,7 +5,7 @@ default-members = [".", "tests/helpers/dev-detach"]
 
 [package]
 name = "worktrunk"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 rust-version = "1.89"
 build = "build.rs"

@@ -9,10 +9,9 @@ repos:
       - id: trailing-whitespace
         # rustfmt handles rust files, and in snapshots we expect trailing spaces.
         exclude: '.*\.(rs|snap)$'
-  # Commit hash silences mutable ref warning; autoupdate reverts to v1 tag
-  # TODO: Update periodically
+  # pre-commit autoupdate reverts to mutable v1 tag; update manually
   - repo: https://github.com/crate-ci/typos
-    rev: v1
+    rev: v1.41.0
     hooks:
       - id: typos
         # https://github.com/crate-ci/typos/issues/347
@@ -27,7 +26,7 @@ repos:
       - id: clippy
         args: ["--all-targets", "--all-features", "--", "-D", "warnings"]
   - repo: https://github.com/lycheeverse/lychee
-    rev: nightly
+    rev: lychee-v0.22.0
     hooks:
       # Check links using .config/lychee.toml exclusions
       # Uses lychee-system (requires `cargo install lychee`) to avoid /bin/bash dependency on Windows
