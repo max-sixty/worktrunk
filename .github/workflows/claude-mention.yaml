@@ -1,4 +1,4 @@
-name: claude
+name: claude-mention
 
 on:
   issue_comment:
@@ -58,7 +58,7 @@ jobs:
           prefix-key: ${{ hashFiles('Cargo.lock') }}
           save-if: false
 
-      - name: Install shells (bash, zsh, fish)
+      - name: Install shells (zsh, fish)
         run: |
           sudo apt-get update
           sudo apt-get install -y zsh fish

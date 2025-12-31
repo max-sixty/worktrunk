@@ -1,0 +1,118 @@
+name: claude-ci-fix
+
+# Trigger when CI workflow fails on main
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+# Consistent with ci.yaml for cache compatibility
+env:
+  CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: 1
+  RUSTFLAGS: "-C debuginfo=0"
+  RUSTDOCFLAGS: "-Dwarnings"
+
+jobs:
+  fix-ci:
+    # Only run when CI failed on main
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 🔧 Configure git for Claude
+        run: |
+          git config --global user.name "Claude Code"
+          git config --global user.email "claude@anthropic.com"
+
+      - name: Install cargo-insta
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-insta
+
+      - name: Install cargo-nextest
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-nextest
+
+      - name: 💰 Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ hashFiles('Cargo.lock') }}
+          save-if: false
+
+      - name: Install shells (zsh, fish)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+
+      - name: 🤖 Run Claude Code to fix CI
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+
+          # Provide Claude with context about the failure and instructions
+          direct_prompt: |
+            CI has failed on main branch. Your job is to diagnose and fix the failure, then create a PR.
+
+            ## Failed workflow information
+            - Run ID: ${{ github.event.workflow_run.id }}
+            - Run URL: ${{ github.event.workflow_run.html_url }}
+            - Commit: ${{ github.event.workflow_run.head_sha }}
+            - Commit message: ${{ github.event.workflow_run.head_commit.message }}
+
+            ## Instructions
+
+            1. **Diagnose the failure**:
+               - Run `gh run view ${{ github.event.workflow_run.id }} --log-failed` to see the failure logs
+               - Identify which job(s) failed and why
+               - Look for specific error messages, test failures, or lint errors
+
+            2. **Reproduce locally**:
+               - Run the appropriate commands to reproduce the failure:
+                 - Tests: `cargo insta test --dnd --test-runner=nextest`
+                 - Lints: `cargo clippy --all-targets --all-features -- -D warnings`
+                 - Format: `cargo fmt --all --check`
+                 - Docs: `cargo doc --no-deps`
+
+            3. **Fix the issue**:
+               - Make the minimal changes needed to fix the failure
+               - Verify the fix works locally before proceeding
+
+            4. **Create a fix branch and PR**:
+               - Create a new branch: `git checkout -b fix/ci-${{ github.event.workflow_run.id }}`
+               - Commit your changes with a clear message explaining the fix
+               - Push the branch: `git push -u origin fix/ci-${{ github.event.workflow_run.id }}`
+               - Create a PR: `gh pr create --title "Fix CI failure from ${{ github.event.workflow_run.head_sha }}" --body "..."`
+
+            5. **PR description should include**:
+               - What failed and why
+               - What the fix does
+               - Link to the failed run
+               - Note that this is an automated fix for human review
+
+            6. **Iterate until CI passes**:
+               - After pushing, monitor CI with `gh run list --branch fix/ci-${{ github.event.workflow_run.id }}`
+               - Wait for CI to complete with `gh run watch`
+               - If CI fails, diagnose with `gh run view <run-id> --log-failed`
+               - Fix issues, commit, push, repeat
+               - Don't return until CI passes or you've exhausted reasonable fixes
+
+            Follow the project guidelines in CLAUDE.md. Be thorough but make minimal changes.
+
+          claude_args: |
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep,WebSearch,WebFetch
