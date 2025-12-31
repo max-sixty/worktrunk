@@ -13,7 +13,9 @@ use worktrunk::styling::{
 use super::command_executor::CommandContext;
 use super::commit::{CommitGenerator, CommitOptions};
 use super::context::CommandEnv;
-use super::hooks::{HookFailureStrategy, HookPipeline, run_hook_with_filter};
+use super::hooks::{
+    HookFailureStrategy, HookPipeline, run_hook_concurrent_with_filter, run_hook_with_filter,
+};
 use super::merge::{
     execute_post_merge_commands, execute_pre_remove_commands, run_pre_merge_commands,
 };
@@ -90,34 +92,34 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
             )
         }
         HookType::PostStart => {
+            // post-start hooks run concurrently (matching their normal background behavior)
             let user_config = user_hook!(post_start);
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref());
             require_hooks(user_config, project_config, hook_type)?;
-            run_hook_with_filter(
+            run_hook_concurrent_with_filter(
                 &ctx,
                 user_config,
                 project_config,
                 hook_type,
                 &[],
-                HookFailureStrategy::FailFast,
                 name_filter,
             )
         }
         HookType::PostSwitch => {
+            // post-switch hooks run concurrently (matching their normal background behavior)
             let user_config = user_hook!(post_switch);
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref());
             require_hooks(user_config, project_config, hook_type)?;
-            run_hook_with_filter(
+            run_hook_concurrent_with_filter(
                 &ctx,
                 user_config,
                 project_config,
                 hook_type,
                 &[],
-                HookFailureStrategy::FailFast,
                 name_filter,
             )
         }
