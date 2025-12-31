@@ -70,8 +70,8 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-
 Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
+
 
 [32mExamples
 

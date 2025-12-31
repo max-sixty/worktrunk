@@ -80,6 +80,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
 
 Change directory to a worktree, creating one if needed. Creating a worktree runs hooks.
 
+
 Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
 
 [32mExamples
