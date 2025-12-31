@@ -23,7 +23,6 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: false
@@ -31,6 +30,6 @@ exit_code: 1
 ----- stdout -----
 
 ----- stderr -----
-[31m✗[39m [31mCannot create worktree for [1mmain[22m: existing worktree at [1m_REPO_[22m on [1mfeature[22m[39m
-[2m↳[22m [2mTo switch the worktree to this branch:[22m
+[31m✗[39m [31mCannot switch to [1mmain[22m — there's a worktree at the expected path [1m_REPO_[22m on branch [1mfeature-rpa[22m[39m
+[2m↳[22m [2mTo switch the worktree at [1m_REPO_[22m to branch [1mmain[22m:[22m
 [107m [0m [2m[0m[2m[34mcd[0m[2m _REPO_ [0m[2m[36m&&[0m[2m [0m[2m[34mgit[0m[2m switch main

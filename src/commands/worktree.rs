@@ -502,7 +502,7 @@ pub fn handle_switch(
     // Compute expected worktree path for this branch
     let expected_path = compute_worktree_path(&repo, &resolved_branch, config)?;
 
-    // Helper to build switch result for an existing worktree
+    // Helper to build switch result for an existing worktree.
     let switch_to_existing = |path: PathBuf| -> (SwitchResult, SwitchBranchInfo) {
         let canonical_path = canonicalize(&path).unwrap_or(path.clone());
         let current_dir = std::env::current_dir()
@@ -513,7 +513,7 @@ pub fn handle_switch(
             .map(|cur| cur == &canonical_path)
             .unwrap_or(false);
 
-        // Check if the actual path matches the expected path
+        // Check if the actual path matches the expected path.
         let canonical_expected = canonicalize(&expected_path).unwrap_or(expected_path.clone());
         let path_mismatch = if canonical_path != canonical_expected {
             Some(expected_path.clone())
@@ -555,6 +555,7 @@ pub fn handle_switch(
             let branch = path_branch.unwrap_or_else(|| resolved_branch.clone());
             return Err(GitError::WorktreeMissing { branch }.into());
         }
+
         // Path is occupied by a different branch's worktree
         return Err(GitError::WorktreePathOccupied {
             branch: resolved_branch.clone(),
