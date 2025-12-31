@@ -30,6 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh repo clone max-sixty/worktrunk-assets /tmp/worktrunk-assets -- --depth 1
+          mkdir -p docs/static/assets
           cp -r /tmp/worktrunk-assets/demos/* docs/static/assets/
 
       - name: 🕷️ Build docs
