@@ -24,7 +24,8 @@ fn test_get_default_branch_without_origin_head(#[from(repo_with_remote)] repo: T
 
     // Verify that worktrunk's cache is now set
     let cached = repo
-        .git_command(&["config", "--get", "worktrunk.default-branch"])
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&cached.stdout).trim(), "main");
@@ -35,13 +36,15 @@ fn test_get_default_branch_caches_result(#[from(repo_with_remote)] repo: TestRep
     // Clear both caches to force remote query
     repo.clear_origin_head();
     let _ = repo
-        .git_command(&["config", "--unset", "worktrunk.default-branch"])
+        .git_command()
+        .args(["config", "--unset", "worktrunk.default-branch"])
         .output();
 
     // First call queries remote and caches to worktrunk config
     Repository::at(repo.root_path()).default_branch().unwrap();
     let cached = repo
-        .git_command(&["config", "--get", "worktrunk.default-branch"])
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
         .output()
         .unwrap();
     assert!(cached.status.success());
@@ -100,8 +103,14 @@ fn test_branch_exists_with_custom_remote(mut repo: TestRepo) {
 #[rstest]
 fn test_get_default_branch_no_remote_common_names_fallback(repo: TestRepo) {
     // Create additional branches (no remote configured)
-    repo.git_command(&["branch", "feature"]).status().unwrap();
-    repo.git_command(&["branch", "bugfix"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["branch", "bugfix"])
+        .status()
+        .unwrap();
 
     // Now we have multiple branches: main, feature, bugfix
     // Should detect "main" from the common names list
@@ -112,11 +121,18 @@ fn test_get_default_branch_no_remote_common_names_fallback(repo: TestRepo) {
 #[rstest]
 fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
     // Rename main to master, then create other branches
-    repo.git_command(&["branch", "-m", "main", "master"])
+    repo.git_command()
+        .args(["branch", "-m", "main", "master"])
         .status()
         .unwrap();
-    repo.git_command(&["branch", "feature"]).status().unwrap();
-    repo.git_command(&["branch", "bugfix"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["branch", "bugfix"])
+        .status()
+        .unwrap();
 
     // Now we have: master, feature, bugfix (no "main")
     // Should detect "master" from the common names list
@@ -127,13 +143,18 @@ fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
 #[rstest]
 fn test_get_default_branch_no_remote_init_default_branch_config(repo: TestRepo) {
     // Rename main to something non-standard, create the configured default
-    repo.git_command(&["branch", "-m", "main", "primary"])
+    repo.git_command()
+        .args(["branch", "-m", "main", "primary"])
         .status()
         .unwrap();
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     // Set init.defaultBranch - this should be checked before common names
-    repo.git_command(&["config", "init.defaultBranch", "primary"])
+    repo.git_command()
+        .args(["config", "init.defaultBranch", "primary"])
         .status()
         .unwrap();
 
@@ -146,11 +167,12 @@ fn test_get_default_branch_no_remote_init_default_branch_config(repo: TestRepo) 
 #[rstest]
 fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
     // Rename main to something non-standard
-    repo.git_command(&["branch", "-m", "main", "xyz"])
+    repo.git_command()
+        .args(["branch", "-m", "main", "xyz"])
         .status()
         .unwrap();
-    repo.git_command(&["branch", "abc"]).status().unwrap();
-    repo.git_command(&["branch", "def"]).status().unwrap();
+    repo.git_command().args(["branch", "abc"]).status().unwrap();
+    repo.git_command().args(["branch", "def"]).status().unwrap();
 
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
     // Should fail with an error

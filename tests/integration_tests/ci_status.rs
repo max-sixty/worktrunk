@@ -19,7 +19,8 @@ use std::process::Command;
 /// Get the HEAD commit SHA for a branch
 fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
     let output = repo
-        .git_command(&["rev-parse", branch])
+        .git_command()
+        .args(["rev-parse", branch])
         .output()
         .expect("Failed to get commit SHA");
     String::from_utf8_lossy(&output.stdout).trim().to_string()
@@ -29,14 +30,15 @@ fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
 #[rstest]
 fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -73,14 +75,15 @@ fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -117,14 +120,15 @@ fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -161,14 +165,15 @@ fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -205,14 +210,15 @@ fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -249,14 +255,15 @@ fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -293,14 +300,15 @@ fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it (so has_upstream is true)
     repo.add_worktree("feature");
@@ -333,14 +341,15 @@ fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -373,14 +382,15 @@ fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_stale_pr(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -428,14 +438,15 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -474,14 +485,15 @@ fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/test-owner/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/test-owner/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");
@@ -516,14 +528,15 @@ fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
 #[rstest]
 fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     // Add GitHub remote with specific owner
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/my-org/test-repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/my-org/test-repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create a feature branch and push it
     repo.add_worktree("feature");

@@ -424,7 +424,7 @@ worktree-path = "{{ branch }}"
     bare_list.arg("list").current_dir(&bare_main);
 
     let mut normal_list = wt_command();
-    repo.clean_cli_env(&mut normal_list);
+    repo.configure_wt_cmd(&mut normal_list);
     normal_list.arg("list").current_dir(repo.root_path());
 
     let bare_output = bare_list.output().unwrap();

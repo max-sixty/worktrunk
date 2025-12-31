@@ -235,14 +235,14 @@ fn test_list_previous_worktree_gutter(mut repo: TestRepo) {
 
     // Step 1: From main, switch to feature (history: current=feature, previous=main)
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(["switch", "feature"])
         .current_dir(repo.root_path());
     cmd.output().unwrap();
 
     // Step 2: From feature, switch back to main (history: current=main, previous=feature)
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(["switch", "main"]).current_dir(&feature_path);
     cmd.output().unwrap();
 
@@ -719,7 +719,7 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("list")
             .arg("--branches")
@@ -2415,7 +2415,8 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     // Remember the shared base (Feature work)
     let base_sha = {
         let output = repo
-            .git_command(&["rev-parse", "HEAD"])
+            .git_command()
+            .args(["rev-parse", "HEAD"])
             .current_dir(&feature)
             .output()
             .unwrap();
@@ -2424,17 +2425,20 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
 
     // Remote-only commit
     std::fs::write(feature.join("remote-file.txt"), "remote content").unwrap();
-    repo.git_command(&["add", "remote-file.txt"])
+    repo.git_command()
+        .args(["add", "remote-file.txt"])
         .current_dir(&feature)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Remote commit"])
+    repo.git_command()
+        .args(["commit", "-m", "Remote commit"])
         .current_dir(&feature)
         .output()
         .unwrap();
     let remote_sha = {
         let output = repo
-            .git_command(&["rev-parse", "HEAD"])
+            .git_command()
+            .args(["rev-parse", "HEAD"])
             .current_dir(&feature)
             .output()
             .unwrap();
@@ -2442,28 +2446,33 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     };
 
     // Reset back to base so the remote commit is not in the local branch history
-    repo.git_command(&["reset", "--hard", &base_sha])
+    repo.git_command()
+        .args(["reset", "--hard", &base_sha])
         .current_dir(&feature)
         .output()
         .unwrap();
 
     // Local-only commit (divergence on the local side)
     std::fs::write(feature.join("local-file.txt"), "local content").unwrap();
-    repo.git_command(&["add", "local-file.txt"])
+    repo.git_command()
+        .args(["add", "local-file.txt"])
         .current_dir(&feature)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Local commit"])
+    repo.git_command()
+        .args(["commit", "-m", "Local commit"])
         .current_dir(&feature)
         .output()
         .unwrap();
 
     // Wire up upstream tracking deterministically: point origin/feature at the remote-only commit
-    repo.git_command(&["update-ref", "refs/remotes/origin/feature", &remote_sha])
+    repo.git_command()
+        .args(["update-ref", "refs/remotes/origin/feature", &remote_sha])
         .current_dir(&feature)
         .output()
         .unwrap();
-    repo.git_command(&["branch", "--set-upstream-to=origin/feature", "feature"])
+    repo.git_command()
+        .args(["branch", "--set-upstream-to=origin/feature", "feature"])
         .current_dir(&feature)
         .output()
         .unwrap();
@@ -2644,24 +2653,33 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
 #[rstest]
 fn test_list_handles_orphan_branch(repo: TestRepo) {
     // Create an orphan branch (no common ancestor with main)
-    repo.git_command(&["checkout", "--orphan", "assets"])
+    repo.git_command()
+        .args(["checkout", "--orphan", "assets"])
         .output()
         .unwrap();
 
     // Clear working tree and create new content
-    repo.git_command(&["rm", "-rf", "."]).output().unwrap();
+    repo.git_command()
+        .args(["rm", "-rf", "."])
+        .output()
+        .unwrap();
     std::fs::write(repo.root_path().join("asset.txt"), "asset content\n").unwrap();
-    repo.git_command(&["add", "."]).output().unwrap();
-    repo.git_command(&["commit", "-m", "Add asset"])
+    repo.git_command().args(["add", "."]).output().unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add asset"])
         .output()
         .unwrap();
 
     // Go back to main
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
 
     // Verify no merge base exists (this confirms we have a true orphan branch)
     let output = repo
-        .git_command(&["merge-base", "main", "assets"])
+        .git_command()
+        .args(["merge-base", "main", "assets"])
         .output()
         .unwrap();
     assert!(

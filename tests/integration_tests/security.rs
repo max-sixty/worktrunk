@@ -221,7 +221,7 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     settings.bind(|| {
         let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg("--create")
@@ -260,7 +260,7 @@ fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     settings.bind(|| {
         let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg("--create")
@@ -295,7 +295,7 @@ fn test_commit_message_with_directive_not_executed(mut repo: TestRepo) {
     // Run 'wt list' which might show commit messages
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
 
         // Verify output - commit message should be escaped/sanitized
@@ -326,7 +326,7 @@ fn test_path_with_directive_not_executed(repo: TestRepo) {
     // Run a command that might display this path
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -363,7 +363,7 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     settings.bind(|| {
         let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg("--create")
@@ -388,7 +388,7 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
     settings.bind(|| {
         let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg(malicious_branch)
@@ -432,7 +432,7 @@ fn test_execute_flag_with_directive_like_branch_name(repo: TestRepo) {
     settings.bind(|| {
         let (directive_path, _guard) = directive_file();
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg("--create")

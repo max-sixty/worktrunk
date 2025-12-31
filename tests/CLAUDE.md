@@ -1,5 +1,60 @@
 # Testing Guidelines
 
+## Running `wt` Commands in Tests
+
+**Use the correct helper to ensure test isolation.** Tests that spawn `wt` must
+be isolated from the host environment to prevent:
+
+- **Directive leakage**: Test commands writing to the user's shell directive file
+- **Config pollution**: Tests reading/writing the user's real config
+- **Git interference**: Host GIT_* environment variables affecting test behavior
+
+### With a TestRepo fixture (most tests)
+
+Use `repo.wt_command()` which returns a pre-configured Command:
+
+```rust
+// ✅ GOOD: Simple case
+let output = repo.wt_command()
+    .args(["switch", "--create", "feature"])
+    .output()?;
+
+// ✅ GOOD: With additional configuration (piped stdin, etc.)
+let mut cmd = repo.wt_command();
+cmd.args(["switch", "--create", "feature"])
+    .stdin(Stdio::piped());
+```
+
+```rust
+// ❌ BAD: Missing isolation - inherits host environment
+let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    .args(["switch", "--create", "feature"])
+    .current_dir(repo.root_path())
+    .output()?;
+```
+
+### Without a TestRepo (e.g., readme_sync tests)
+
+Use the free function `wt_command()`:
+
+```rust
+use crate::common::wt_command;
+
+// ✅ GOOD: Isolated from host environment
+let output = wt_command()
+    .args(["--help"])
+    .current_dir(project_root)
+    .output()?;
+```
+
+### Method reference
+
+| Method | Use when |
+|--------|----------|
+| `repo.wt_command()` | Running wt commands with a TestRepo |
+| `wt_command()` | Running wt without a TestRepo (free function) |
+| `repo.git_command()` | Running git commands |
+
 ## Timing Tests: Long Timeouts with Fast Polling
 
 **Core principle:** Use long timeouts (5+ seconds) for reliability on slow CI, but poll frequently (10-50ms) so tests complete quickly when things work.

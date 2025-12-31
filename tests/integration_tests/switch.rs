@@ -122,7 +122,7 @@ fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
     repo.add_worktree("shell-configured");
 
     // Simulate shell integration configured in user's shell rc files
-    // (repo.home_path() is automatically set as HOME by clean_cli_env)
+    // (repo.home_path() is automatically set as HOME by configure_wt_cmd)
     let zshrc_path = repo.home_path().join(".zshrc");
     fs::write(
         &zshrc_path,
@@ -368,7 +368,7 @@ fn test_switch_no_config_commands_with_yes(repo: TestRepo) {
     repo.commit("Add config");
 
     // With --no-verify, even --yes shouldn't execute config commands
-    // (HOME is automatically set to repo.home_path() by clean_cli_env)
+    // (HOME is automatically set to repo.home_path() by configure_wt_cmd)
     snapshot_switch(
         "switch_no_hooks_with_yes",
         &repo,
@@ -737,14 +737,12 @@ fn test_switch_missing_argument_shows_hints(repo: TestRepo) {
 #[rstest]
 fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
     use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let test_input = "stdin_inheritance_test_content\n";
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.configure_git_cmd(&mut cmd);
+    let mut cmd = repo.wt_command();
     cmd.args(["switch", "--create", "stdin-test", "--execute", "cat"])
-        .current_dir(repo.root_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

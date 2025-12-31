@@ -170,7 +170,7 @@ fn generate_wrapper(repo: &TestRepo, shell: &str) -> String {
     cmd.arg("config").arg("shell").arg("init").arg(shell);
 
     // Configure environment
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
 
     let output = cmd.output().unwrap_or_else(|e| {
         panic!(

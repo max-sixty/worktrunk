@@ -40,7 +40,7 @@ test = "cargo test"
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("hook").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
@@ -64,7 +64,7 @@ fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("hook").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 
@@ -103,7 +103,7 @@ deploy = "scripts/deploy.sh"
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("hook")
             .arg("show")
             .arg("pre-merge")
@@ -143,7 +143,7 @@ test = "cargo test"
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         // Override config path to point to our test config with approval
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
         cmd.arg("hook").arg("show").current_dir(repo.root_path());
@@ -193,7 +193,7 @@ worktree-path = "../project.{{ branch }}"
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("hook").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
 

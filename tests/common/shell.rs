@@ -158,7 +158,7 @@ pub fn execute_shell_script(repo: &TestRepo, shell: &str, script: &str) -> Strin
 /// Generate `wt config shell init <shell>` output for the repo.
 pub fn generate_init_code(repo: &TestRepo, shell: &str) -> String {
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
 
     let output = cmd
         .args(["config", "shell", "init", shell])

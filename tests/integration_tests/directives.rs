@@ -23,7 +23,7 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("switch")
             .arg("feature")
@@ -53,7 +53,7 @@ fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("merge").arg("main").current_dir(feature_wt);
 
@@ -80,7 +80,7 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("remove").current_dir(&feature_wt);
 
@@ -107,7 +107,7 @@ fn test_switch_without_directive_file(repo: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("switch")
             .arg("my-feature")
             .current_dir(repo.root_path());
@@ -123,7 +123,7 @@ fn test_remove_without_directive_file(repo: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("remove").current_dir(repo.root_path());
 
         assert_cmd_snapshot!(cmd);
@@ -141,7 +141,7 @@ fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("merge")
             .arg("main")
@@ -164,7 +164,7 @@ fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         configure_directive_file(&mut cmd, &directive_path);
         cmd.arg("merge").arg("main").current_dir(feature_wt);
 

@@ -369,7 +369,8 @@ fn test_select_with_branches(mut repo: TestRepo) {
     repo.add_worktree("active-worktree");
     // Create a branch without a worktree
     let output = repo
-        .git_command(&["branch", "orphan-branch"])
+        .git_command()
+        .args(["branch", "orphan-branch"])
         .output()
         .unwrap();
     assert!(output.status.success(), "Failed to create branch");
@@ -398,12 +399,14 @@ fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
     // First, create and commit a file so we have something to modify
     std::fs::write(feature_path.join("tracked.txt"), "Original content\n").unwrap();
     let output = repo
-        .git_command(&["-C", feature_path.to_str().unwrap(), "add", "tracked.txt"])
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "tracked.txt"])
         .output()
         .unwrap();
     assert!(output.status.success(), "Failed to add file");
     let output = repo
-        .git_command(&[
+        .git_command()
+        .args([
             "-C",
             feature_path.to_str().unwrap(),
             "commit",
@@ -456,12 +459,14 @@ fn test_select_preview_panel_log(mut repo: TestRepo) {
         )
         .unwrap();
         let output = repo
-            .git_command(&["-C", feature_path.to_str().unwrap(), "add", "."])
+            .git_command()
+            .args(["-C", feature_path.to_str().unwrap(), "add", "."])
             .output()
             .unwrap();
         assert!(output.status.success(), "Failed to add files");
         let output = repo
-            .git_command(&[
+            .git_command()
+            .args([
                 "-C",
                 feature_path.to_str().unwrap(),
                 "commit",
@@ -513,12 +518,14 @@ fn test_select_preview_panel_main_diff(mut repo: TestRepo) {
     )
     .unwrap();
     let output = repo
-        .git_command(&["-C", feature_path.to_str().unwrap(), "add", "."])
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
         .output()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
-        .git_command(&[
+        .git_command()
+        .args([
             "-C",
             feature_path.to_str().unwrap(),
             "commit",
@@ -540,12 +547,14 @@ fn test_new_feature() {
     )
     .unwrap();
     let output = repo
-        .git_command(&["-C", feature_path.to_str().unwrap(), "add", "."])
+        .git_command()
+        .args(["-C", feature_path.to_str().unwrap(), "add", "."])
         .output()
         .unwrap();
     assert!(output.status.success(), "Failed to add files");
     let output = repo
-        .git_command(&[
+        .git_command()
+        .args([
             "-C",
             feature_path.to_str().unwrap(),
             "commit",

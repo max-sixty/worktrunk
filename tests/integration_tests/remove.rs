@@ -149,7 +149,7 @@ fn test_remove_nonexistent_worktree(repo: TestRepo) {
 #[rstest]
 fn test_remove_branch_no_worktree_path_occupied(mut repo: TestRepo) {
     // Create branch `npm` without a worktree
-    repo.git_command(&["branch", "npm"]).output().unwrap();
+    repo.git_command().args(["branch", "npm"]).output().unwrap();
 
     // Create a worktree for a different branch at the path where `npm` worktree would be
     // (the path template puts worktrees at ../repo.branch, so ../repo.npm would be npm's path)
@@ -167,24 +167,26 @@ fn test_remove_branch_no_worktree_path_occupied(mut repo: TestRepo) {
     ));
 
     // Remove the worktree metadata and move the directory
-    repo.git_command(&[
-        "worktree",
-        "remove",
-        "--force",
-        other_path.to_str().unwrap(),
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            other_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
 
     // Create worktree at npm's expected path but for the "other" branch
-    repo.git_command(&[
-        "worktree",
-        "add",
-        npm_expected_path.to_str().unwrap(),
-        "other",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "worktree",
+            "add",
+            npm_expected_path.to_str().unwrap(),
+            "other",
+        ])
+        .output()
+        .unwrap();
 
     // Now: branch `npm` exists, no worktree for it, but npm's expected path has `other` branch
     // Running `wt remove npm` should show "No worktree found" NOT "Cannot create worktree"
@@ -326,11 +328,13 @@ fn test_remove_branch_not_fully_merged(mut repo: TestRepo) {
 
     // Add a commit to the feature branch that's not in main
     std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
-    repo.git_command(&["add", "feature.txt"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Add feature"])
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
@@ -366,11 +370,13 @@ fn test_remove_foreground_unmerged(mut repo: TestRepo) {
 
     // Add a commit to the feature branch that's not in main
     std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
-    repo.git_command(&["add", "feature.txt"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Add feature"])
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
@@ -410,17 +416,22 @@ fn test_remove_foreground_no_delete_branch_unmerged(mut repo: TestRepo) {
 
     // Add a commit to the feature branch that's not in main
     std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
-    repo.git_command(&["add", "feature.txt"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Add feature"])
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
 
     // Go back to main
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
 
     // Remove with both --no-background and --no-delete-branch
     // No hint because:
@@ -460,17 +471,22 @@ fn test_remove_no_delete_branch_unmerged(mut repo: TestRepo) {
 
     // Add a commit to the feature branch that's not in main
     std::fs::write(worktree_path.join("feature.txt"), "new feature").unwrap();
-    repo.git_command(&["add", "feature.txt"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Add feature"])
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
         .current_dir(&worktree_path)
         .output()
         .unwrap();
 
     // Go back to main before removing
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
 
     // Remove worktree with --no-delete-branch flag
     // Since branch is unmerged, the flag has no effect - no hint shown
@@ -485,7 +501,8 @@ fn test_remove_no_delete_branch_unmerged(mut repo: TestRepo) {
 #[rstest]
 fn test_remove_branch_only_merged(repo: TestRepo) {
     // Create a branch from main without a worktree (already merged)
-    repo.git_command(&["branch", "feature-merged"])
+    repo.git_command()
+        .args(["branch", "feature-merged"])
         .output()
         .unwrap();
 
@@ -501,20 +518,29 @@ fn test_remove_branch_only_merged(repo: TestRepo) {
 #[rstest]
 fn test_remove_branch_only_unmerged(repo: TestRepo) {
     // Create a branch with a unique commit (not in main)
-    repo.git_command(&["branch", "feature-unmerged"])
+    repo.git_command()
+        .args(["branch", "feature-unmerged"])
         .output()
         .unwrap();
 
     // Add a commit to the branch that's not in main
-    repo.git_command(&["checkout", "feature-unmerged"])
+    repo.git_command()
+        .args(["checkout", "feature-unmerged"])
         .output()
         .unwrap();
     std::fs::write(repo.root_path().join("feature.txt"), "new feature").unwrap();
-    repo.git_command(&["add", "feature.txt"]).output().unwrap();
-    repo.git_command(&["commit", "-m", "Add feature"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
         .output()
         .unwrap();
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
 
     // Try to remove the branch (no worktree exists, branch not merged)
     // Branch deletion should fail but not error
@@ -529,20 +555,29 @@ fn test_remove_branch_only_unmerged(repo: TestRepo) {
 #[rstest]
 fn test_remove_branch_only_force_delete(repo: TestRepo) {
     // Create a branch with a unique commit (not in main)
-    repo.git_command(&["branch", "feature-force"])
+    repo.git_command()
+        .args(["branch", "feature-force"])
         .output()
         .unwrap();
 
     // Add a commit to the branch that's not in main
-    repo.git_command(&["checkout", "feature-force"])
+    repo.git_command()
+        .args(["checkout", "feature-force"])
         .output()
         .unwrap();
     std::fs::write(repo.root_path().join("feature.txt"), "new feature").unwrap();
-    repo.git_command(&["add", "feature.txt"]).output().unwrap();
-    repo.git_command(&["commit", "-m", "Add feature"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
         .output()
         .unwrap();
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature"])
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
 
     // Force delete the branch (no worktree exists)
     snapshot_remove(
@@ -626,31 +661,45 @@ fn test_remove_at_from_detached_head_in_worktree(mut repo: TestRepo) {
 #[rstest]
 fn test_remove_branch_matching_tree_content(repo: TestRepo) {
     // Create a feature branch from main
-    repo.git_command(&["branch", "feature-squashed"])
+    repo.git_command()
+        .args(["branch", "feature-squashed"])
         .output()
         .unwrap();
 
     // On feature branch: add a file
-    repo.git_command(&["checkout", "feature-squashed"])
+    repo.git_command()
+        .args(["checkout", "feature-squashed"])
         .output()
         .unwrap();
     std::fs::write(repo.root_path().join("feature.txt"), "squash content").unwrap();
-    repo.git_command(&["add", "feature.txt"]).output().unwrap();
-    repo.git_command(&["commit", "-m", "Add feature (on feature branch)"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature (on feature branch)"])
         .output()
         .unwrap();
 
     // On main: add the same file with same content (simulates squash merge result)
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
     std::fs::write(repo.root_path().join("feature.txt"), "squash content").unwrap();
-    repo.git_command(&["add", "feature.txt"]).output().unwrap();
-    repo.git_command(&["commit", "-m", "Add feature (squash merged)"])
+    repo.git_command()
+        .args(["add", "feature.txt"])
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Add feature (squash merged)"])
         .output()
         .unwrap();
 
     // Verify the setup: feature-squashed is NOT an ancestor of main (different commits)
     let is_ancestor = repo
-        .git_command(&["merge-base", "--is-ancestor", "feature-squashed", "main"])
+        .git_command()
+        .args(["merge-base", "--is-ancestor", "feature-squashed", "main"])
         .output()
         .unwrap();
     assert!(
@@ -660,14 +709,16 @@ fn test_remove_branch_matching_tree_content(repo: TestRepo) {
 
     // Verify: tree SHAs should match
     let feature_tree = String::from_utf8(
-        repo.git_command(&["rev-parse", "feature-squashed^{tree}"])
+        repo.git_command()
+            .args(["rev-parse", "feature-squashed^{tree}"])
             .output()
             .unwrap()
             .stdout,
     )
     .unwrap();
     let main_tree = String::from_utf8(
-        repo.git_command(&["rev-parse", "main^{tree}"])
+        repo.git_command()
+            .args(["rev-parse", "main^{tree}"])
             .output()
             .unwrap()
             .stdout,
@@ -878,42 +929,55 @@ fn test_remove_default_branch_no_tautology() {
 #[rstest]
 fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
     // Create feature branch
-    repo.git_command(&["checkout", "-b", "feature-squash"])
+    repo.git_command()
+        .args(["checkout", "-b", "feature-squash"])
         .output()
         .unwrap();
 
     // Make changes on feature branch (file A)
     std::fs::write(repo.root_path().join("feature-a.txt"), "feature content").unwrap();
-    repo.git_command(&["add", "feature-a.txt"])
+    repo.git_command()
+        .args(["add", "feature-a.txt"])
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Add feature A"])
+    repo.git_command()
+        .args(["commit", "-m", "Add feature A"])
         .output()
         .unwrap();
 
     // Go back to main
-    repo.git_command(&["checkout", "main"]).output().unwrap();
+    repo.git_command()
+        .args(["checkout", "main"])
+        .output()
+        .unwrap();
 
     // Squash merge feature into main (simulating GitHub squash merge)
     // This creates a NEW commit on main with the same content changes
     std::fs::write(repo.root_path().join("feature-a.txt"), "feature content").unwrap();
-    repo.git_command(&["add", "feature-a.txt"])
+    repo.git_command()
+        .args(["add", "feature-a.txt"])
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Add feature A (squash merged)"])
+    repo.git_command()
+        .args(["commit", "-m", "Add feature A (squash merged)"])
         .output()
         .unwrap();
 
     // Main advances with another commit (file B)
     std::fs::write(repo.root_path().join("main-b.txt"), "main content").unwrap();
-    repo.git_command(&["add", "main-b.txt"]).output().unwrap();
-    repo.git_command(&["commit", "-m", "Main advances with B"])
+    repo.git_command()
+        .args(["add", "main-b.txt"])
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Main advances with B"])
         .output()
         .unwrap();
 
     // Verify setup: feature-squash is NOT an ancestor of main (squash creates different SHAs)
     let is_ancestor = repo
-        .git_command(&["merge-base", "--is-ancestor", "feature-squash", "main"])
+        .git_command()
+        .args(["merge-base", "--is-ancestor", "feature-squash", "main"])
         .output()
         .unwrap();
     assert!(
@@ -923,14 +987,16 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
 
     // Verify setup: trees don't match (main has file B that feature doesn't)
     let feature_tree = String::from_utf8(
-        repo.git_command(&["rev-parse", "feature-squash^{tree}"])
+        repo.git_command()
+            .args(["rev-parse", "feature-squash^{tree}"])
             .output()
             .unwrap()
             .stdout,
     )
     .unwrap();
     let main_tree = String::from_utf8(
-        repo.git_command(&["rev-parse", "main^{tree}"])
+        repo.git_command()
+            .args(["rev-parse", "main^{tree}"])
             .output()
             .unwrap()
             .stdout,
@@ -1052,7 +1118,7 @@ approved-commands = ["echo 'hook ran' > {}"]
 
     // Remove in background mode (default)
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.current_dir(repo.root_path())
         .args(["remove", "feature-bg"])
         .output()
@@ -1126,13 +1192,14 @@ approved-commands = ["echo 'hook ran' > {}"]
     ));
 
     // Create a branch without a worktree
-    repo.git_command(&["branch", "branch-only"])
+    repo.git_command()
+        .args(["branch", "branch-only"])
         .output()
         .unwrap();
 
     // Remove the branch (no worktree)
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_wt"));
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.current_dir(repo.root_path())
         .args(["remove", "branch-only"])
         .output()

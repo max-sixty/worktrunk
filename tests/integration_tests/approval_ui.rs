@@ -5,7 +5,7 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Helper to create snapshot with test environment
 fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: bool) {
@@ -119,13 +119,10 @@ fn test_yes_flag_does_not_save_approvals(repo: TestRepo) {
     });
 
     // Clean up the worktree
-    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
-    repo.clean_cli_env(&mut cmd);
-    cmd.arg("remove")
-        .arg("test-yes")
-        .arg("--yes")
-        .current_dir(repo.root_path());
-    cmd.output().unwrap();
+    repo.wt_command()
+        .args(["remove", "test-yes", "--yes"])
+        .output()
+        .unwrap();
 
     // Run again WITHOUT --yes - should prompt
     snapshot_approval(
@@ -335,14 +332,15 @@ fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
     repo.commit("Add post-merge hook");
 
     // Create and switch to a feature branch
-    repo.git_command(&["checkout", "-b", "my-feature-branch"])
+    repo.git_command()
+        .args(["checkout", "-b", "my-feature-branch"])
         .output()
         .unwrap();
 
     // Run the hook with --yes to skip approval
-    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = repo
+        .wt_command()
         .args(["hook", "post-merge", "--yes"])
-        .current_dir(repo.root_path())
         .env("NO_COLOR", "1")
         .output()
         .expect("Failed to run wt hook post-merge");
@@ -372,14 +370,15 @@ fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
     repo.commit("Add pre-merge hook");
 
     // Create and switch to a feature branch
-    repo.git_command(&["checkout", "-b", "my-feature-branch"])
+    repo.git_command()
+        .args(["checkout", "-b", "my-feature-branch"])
         .output()
         .unwrap();
 
     // Run the hook with --yes to skip approval
-    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = repo
+        .wt_command()
         .args(["hook", "pre-merge", "--yes"])
-        .current_dir(repo.root_path())
         .env("NO_COLOR", "1")
         .output()
         .expect("Failed to run wt hook pre-merge");
@@ -415,9 +414,9 @@ build = "echo 'running build' > build.txt"
     repo.commit("Add pre-merge hooks");
 
     // Run only the "lint" command with --yes to skip approval
-    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = repo
+        .wt_command()
         .args(["hook", "pre-merge", "lint", "--yes"])
-        .current_dir(repo.root_path())
         .env("NO_COLOR", "1")
         .output()
         .expect("Failed to run wt hook pre-merge lint");
@@ -493,9 +492,9 @@ third = "echo 'third' >> output.txt"
     repo.commit("Add pre-merge hooks");
 
     // Run without name filter (all commands should run)
-    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    let output = repo
+        .wt_command()
         .args(["hook", "pre-merge", "--yes"])
-        .current_dir(repo.root_path())
         .env("NO_COLOR", "1")
         .output()
         .expect("Failed to run wt hook pre-merge");

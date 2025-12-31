@@ -16,7 +16,7 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         // Force compinit warning for deterministic tests across environments
@@ -59,7 +59,7 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         // Force compinit warning for deterministic tests across environments
@@ -105,7 +105,7 @@ fn test_configure_shell_already_exists(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -138,7 +138,7 @@ fn test_configure_shell_fish(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config")
@@ -191,7 +191,7 @@ fn test_configure_shell_fish_extension_exists(repo: TestRepo, temp_home: TempDir
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config")
@@ -251,7 +251,7 @@ fn test_configure_shell_fish_all_already_configured(repo: TestRepo, temp_home: T
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config")
@@ -272,7 +272,7 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -307,7 +307,7 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         // Force compinit warning for deterministic tests across environments
@@ -367,7 +367,7 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         // Force compinit warning for deterministic tests across environments
@@ -425,7 +425,7 @@ fn test_uninstall_shell(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -482,7 +482,7 @@ fn test_uninstall_shell_multiple(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -531,7 +531,7 @@ fn test_uninstall_shell_not_found(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -568,7 +568,7 @@ fn test_uninstall_shell_fish(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/fish");
         cmd.arg("config")
@@ -609,7 +609,7 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
     // First install
     {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -630,7 +630,7 @@ fn test_install_uninstall_roundtrip(repo: TestRepo, temp_home: TempDir) {
     // Then uninstall
     {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -672,7 +672,7 @@ fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: 
     // Install
     {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.args(["config", "shell", "install", "zsh", "--yes"]);
@@ -690,7 +690,7 @@ fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: 
     // Uninstall
     {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.args(["config", "shell", "uninstall", "zsh", "--yes"]);
@@ -708,7 +708,7 @@ fn test_install_uninstall_no_blank_line_accumulation(repo: TestRepo, temp_home: 
     // Re-install
     {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.args(["config", "shell", "install", "zsh", "--yes"]);
@@ -744,7 +744,7 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_ho
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.env("ZDOTDIR", temp_home.path()); // Point zsh to our test home for config
@@ -783,7 +783,7 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/bash"); // User's primary shell is bash
         cmd.arg("config")
@@ -820,7 +820,7 @@ fn test_configure_shell_no_warning_for_fish_install(repo: TestRepo, temp_home: T
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh"); // User is zsh user, but installing fish
         cmd.arg("config")
@@ -859,7 +859,7 @@ fn test_configure_shell_no_warning_when_already_configured(repo: TestRepo, temp_
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
         cmd.arg("config")
@@ -894,7 +894,7 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
     let settings = setup_home_snapshot_settings(&temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.env_remove("SHELL"); // Explicitly unset SHELL
         cmd.arg("config")

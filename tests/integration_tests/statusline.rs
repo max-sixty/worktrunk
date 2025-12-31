@@ -21,7 +21,7 @@ fn run_statusline_from_dir(
     cmd.args(args);
 
     // Apply repo's git environment
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
 
     if stdin_json.is_some() {
         cmd.stdin(Stdio::piped());
@@ -73,21 +73,25 @@ fn add_commits_ahead(repo: &mut TestRepo) {
 
     // Add commits in the feature worktree
     std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
-    repo.git_command(&["add", "."])
+    repo.git_command()
+        .args(["add", "."])
         .current_dir(&feature_path)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Feature commit 1"])
+    repo.git_command()
+        .args(["commit", "-m", "Feature commit 1"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
 
     std::fs::write(feature_path.join("feature2.txt"), "more content").unwrap();
-    repo.git_command(&["add", "."])
+    repo.git_command()
+        .args(["add", "."])
         .current_dir(&feature_path)
         .output()
         .unwrap();
-    repo.git_command(&["commit", "-m", "Feature commit 2"])
+    repo.git_command()
+        .args(["commit", "-m", "Feature commit 2"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
@@ -220,9 +224,13 @@ fn test_statusline_reflects_checked_out_branch(mut repo: TestRepo) {
     );
 
     // Create and checkout a different branch "other" in the feature worktree
-    repo.git_command(&["branch", "other"]).output().unwrap();
+    repo.git_command()
+        .args(["branch", "other"])
+        .output()
+        .unwrap();
     let checkout_output = repo
-        .git_command(&["checkout", "other"])
+        .git_command()
+        .args(["checkout", "other"])
         .current_dir(&feature_path)
         .output()
         .unwrap();
@@ -251,7 +259,8 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
 
     // Detach HEAD
-    repo.git_command(&["checkout", "--detach"])
+    repo.git_command()
+        .args(["checkout", "--detach"])
         .current_dir(&feature_path)
         .output()
         .unwrap();

@@ -19,11 +19,11 @@
 //! 4. **Updating**: `update_section()` finds markers and replaces content
 #![cfg(not(windows))]
 
+use crate::common::wt_command;
 use ansi_to_html::convert as ansi_to_html;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::sync::LazyLock;
 
 /// Unified pattern for all AUTO-GENERATED markers (README and docs)
@@ -558,8 +558,8 @@ fn get_help_output(id: &str, project_root: &Path) -> Result<String, String> {
         return Err(format!("Command must end with '--help-md': {}", command));
     }
 
-    // Use the already-built binary from cargo test
-    let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+    // Use the already-built binary from cargo test (wt_command provides isolation)
+    let output = wt_command()
         .args(&args[1..]) // Skip "wt" prefix
         .current_dir(project_root)
         .output()
@@ -1175,7 +1175,7 @@ fn test_command_pages_are_in_sync() {
         }
 
         // Run wt <cmd> --help-page (outputs START marker + content + END marker)
-        let output = Command::new(env!("CARGO_BIN_EXE_wt"))
+        let output = wt_command()
             .args([cmd, "--help-page"])
             .current_dir(project_root)
             .output()

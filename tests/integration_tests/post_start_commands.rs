@@ -251,7 +251,8 @@ approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 #[rstest]
 fn test_post_create_git_variables_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Set up an upstream tracking branch
-    repo.git_command(&["push", "-u", "origin", "main"])
+    repo.git_command()
+        .args(["push", "-u", "origin", "main"])
         .output()
         .expect("failed to push");
 
@@ -323,7 +324,8 @@ worktree_name = "echo 'Worktree Name: {{ worktree_name }}' >> git_vars.txt"
 #[rstest]
 fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) {
     // Push main to set up tracking
-    repo.git_command(&["push", "-u", "origin", "main"])
+    repo.git_command()
+        .args(["push", "-u", "origin", "main"])
         .output()
         .expect("failed to push main");
 

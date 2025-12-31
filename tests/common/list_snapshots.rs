@@ -21,7 +21,7 @@ pub fn json_settings(repo: &TestRepo) -> Settings {
 
 pub fn command(repo: &TestRepo, cwd: &Path) -> Command {
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(cwd);
     cmd
 }
@@ -100,7 +100,7 @@ pub fn command_progressive_full(repo: &TestRepo) -> Command {
 
 pub fn command_progressive_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(["list", "--progressive"]).current_dir(cwd);
     cmd
 }

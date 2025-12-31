@@ -41,7 +41,7 @@ server = "npm run dev"
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -69,7 +69,7 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -130,7 +130,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         // Force compinit warning for deterministic tests across environments
         cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
@@ -173,7 +173,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -209,7 +209,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -249,7 +249,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("ZDOTDIR", temp_home.path());
@@ -296,7 +296,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         // Keep PATH minimal so the probe zsh doesn't find a globally-installed `wt`.
         cmd.env("PATH", "/usr/bin:/bin");
         cmd.env("ZDOTDIR", temp_home.path());
@@ -340,7 +340,7 @@ fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: Te
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -367,7 +367,7 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -395,7 +395,7 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         // Override WORKTRUNK_CONFIG_PATH to point to our test config
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
@@ -433,7 +433,7 @@ args = ["-m", "test-model"]
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         // Override WORKTRUNK_CONFIG_PATH to point to our test config
         cmd.env("WORKTRUNK_CONFIG_PATH", &config_path);
@@ -454,14 +454,15 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Add GitHub remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://github.com/example/repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create fake global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -476,7 +477,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -492,14 +493,15 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     repo.setup_mock_ci_tools_unauthenticated();
 
     // Add GitLab remote
-    repo.git_command(&[
-        "remote",
-        "add",
-        "origin",
-        "https://gitlab.com/example/repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://gitlab.com/example/repo.git",
+        ])
+        .output()
+        .unwrap();
 
     // Create fake global config
     let global_config_dir = temp_home.path().join(".config").join("worktrunk");
@@ -514,7 +516,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -547,7 +549,7 @@ fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir)
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
@@ -580,7 +582,7 @@ fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
         cmd.arg("config").arg("show").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());

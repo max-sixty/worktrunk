@@ -526,6 +526,7 @@ const NULL_DEVICE: &str = "/dev/null";
 /// - All host `GIT_*` and `WORKTRUNK_*` variables are cleared
 /// - Color output is forced (`CLICOLOR_FORCE=1`) so ANSI styling appears in snapshots
 /// - Terminal width set to 150 columns (`COLUMNS=150`)
+#[must_use]
 pub fn wt_command() -> Command {
     let mut cmd = Command::new(get_cargo_bin("wt"));
     configure_cli_command(&mut cmd);
@@ -593,7 +594,7 @@ pub fn configure_cli_command(cmd: &mut Command) {
         }
     }
     // Set to non-existent path to prevent loading user's real config.
-    // Tests that need config should use TestRepo::clean_cli_env() which overrides this.
+    // Tests that need config should use TestRepo::configure_wt_cmd() which overrides this.
     // Note: env_remove above may cause insta-cmd to capture empty values in snapshots,
     // but correctness (isolating from host WORKTRUNK_* vars) trumps snapshot aesthetics.
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
@@ -908,25 +909,21 @@ impl TestRepo {
         ]
     }
 
-    /// Create a configured git command with args and current_dir set
+    /// Create a `git` command pre-configured for this test repo.
     ///
-    /// This is a convenience wrapper around configure_git_cmd that reduces boilerplate.
-    /// Returns a Command ready to execute with .output(), .status(), etc.
+    /// Returns an isolated Command with test-specific git config.
+    /// Chain `.args()` to add arguments.
     ///
     /// # Example
     /// ```ignore
-    /// // Before:
-    /// let mut cmd = Command::new("git");
-    /// self.configure_git_cmd(&mut cmd);
-    /// cmd.args(["add", "."]).current_dir(&self.root).output()?;
-    ///
-    /// // After:
-    /// self.git_command(&["add", "."]).output()?;
+    /// repo.git_command()
+    ///     .args(["status", "--porcelain"])
+    ///     .output()?;
     /// ```
-    pub fn git_command(&self, args: &[&str]) -> Command {
+    #[must_use]
+    pub fn git_command(&self) -> Command {
         let mut cmd = Command::new("git");
         self.configure_git_cmd(&mut cmd);
-        cmd.args(args);
         cmd.current_dir(&self.root);
         cmd
     }
@@ -934,12 +931,35 @@ impl TestRepo {
     /// Configure command for CLI tests with isolated environment.
     ///
     /// Sets `WORKTRUNK_CONFIG_PATH`, `HOME`, and mock gh/glab commands.
-    pub fn clean_cli_env(&self, cmd: &mut Command) {
+    ///
+    /// **Internal helper** - used by `wt_command()` and `make_snapshot_cmd()`.
+    /// Tests should use `repo.wt_command()` instead of calling this directly.
+    pub fn configure_wt_cmd(&self, cmd: &mut Command) {
         configure_cli_command(cmd);
         self.configure_git_cmd(cmd);
         cmd.env("WORKTRUNK_CONFIG_PATH", &self.test_config_path);
         set_temp_home_env(cmd, self.home_path());
         self.configure_mock_commands(cmd);
+    }
+
+    /// Create a `wt` command pre-configured for this test repo.
+    ///
+    /// This is the preferred way to run wt commands in tests. The returned
+    /// Command is isolated from the host environment (no WORKTRUNK_* leakage,
+    /// no GIT_* interference) and configured with the test repo's config.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let output = repo.wt_command()
+    ///     .args(["switch", "--create", "feature"])
+    ///     .output()?;
+    /// ```
+    #[must_use]
+    pub fn wt_command(&self) -> Command {
+        let mut cmd = Command::new(get_cargo_bin("wt"));
+        self.configure_wt_cmd(&mut cmd);
+        cmd.current_dir(self.root_path());
+        cmd
     }
 
     /// Get the isolated HOME directory for this test.
@@ -969,7 +989,7 @@ impl TestRepo {
     pub fn completion_cmd_for_shell(&self, words: &[&str], shell: &str) -> Command {
         let mut cmd = wt_command();
         configure_completion_invocation_for_shell(&mut cmd, words, shell);
-        self.clean_cli_env(&mut cmd);
+        self.configure_wt_cmd(&mut cmd);
         cmd.current_dir(self.root_path());
         cmd
     }
@@ -982,7 +1002,7 @@ impl TestRepo {
     /// Get the path to the isolated test config file
     ///
     /// This config path is automatically set via WORKTRUNK_CONFIG_PATH when using
-    /// `clean_cli_env()`, ensuring tests don't pollute the user's real config.
+    /// `configure_wt_cmd()`, ensuring tests don't pollute the user's real config.
     pub fn test_config_path(&self) -> &Path {
         &self.test_config_path
     }
@@ -1012,9 +1032,10 @@ impl TestRepo {
         let file_path = self.root.join("file.txt");
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command(&["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).output().unwrap();
 
-        self.git_command(&["commit", "-m", message])
+        self.git_command()
+            .args(["commit", "-m", message])
             .output()
             .unwrap();
     }
@@ -1031,9 +1052,10 @@ impl TestRepo {
         let file_path = self.root.join(format!("file-{}.txt", sanitized));
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command(&["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).output().unwrap();
 
-        self.git_command(&["commit", "-m", message])
+        self.git_command()
+            .args(["commit", "-m", message])
             .output()
             .unwrap();
     }
@@ -1062,7 +1084,7 @@ impl TestRepo {
         let file_path = self.root.join("file.txt");
         std::fs::write(&file_path, message).unwrap();
 
-        self.git_command(&["add", "."]).output().unwrap();
+        self.git_command().args(["add", "."]).output().unwrap();
 
         // Create commit with custom timestamp
         let mut cmd = Command::new("git");
@@ -1759,7 +1781,8 @@ exit 1
     pub fn set_marker(&self, branch: &str, marker: &str) {
         let config_key = format!("worktrunk.state.{branch}.marker");
         let json_value = format!(r#"{{"marker":"{}","set_at":{}}}"#, marker, TEST_EPOCH);
-        self.git_command(&["config", &config_key, &json_value])
+        self.git_command()
+            .args(["config", &config_key, &json_value])
             .output()
             .unwrap();
     }
@@ -2061,7 +2084,7 @@ pub fn make_snapshot_cmd_with_global_flags(
     global_flags: &[&str],
 ) -> Command {
     let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(global_flags)
         .arg(subcommand)
         .args(args)
@@ -2393,7 +2416,11 @@ mod tests {
         repo.commit_with_age("Ten minutes ago", 10 * MINUTE);
 
         // Verify commits were created (1 from fixture + 4 = 5 commits)
-        let output = repo.git_command(&["log", "--oneline"]).output().unwrap();
+        let output = repo
+            .git_command()
+            .args(["log", "--oneline"])
+            .output()
+            .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         assert_eq!(log.lines().count(), 5);
     }

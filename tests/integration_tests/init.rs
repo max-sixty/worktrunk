@@ -21,7 +21,7 @@ fn snapshot_init(test_name: &str, repo: &TestRepo, shell: &str, extra_args: &[&s
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("config").arg("shell").arg("init").arg(shell);
 
         for arg in extra_args {
@@ -52,7 +52,7 @@ fn test_init_invalid_shell(repo: TestRepo) {
 
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("config")
             .arg("shell")
             .arg("init")

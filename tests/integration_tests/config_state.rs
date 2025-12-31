@@ -30,7 +30,7 @@ fn write_ci_cache(repo: &TestRepo, branch: &str, json: &str) {
 /// Create a command for `wt config state <key> <action> [args...]`
 fn wt_state_cmd(repo: &TestRepo, key: &str, action: &str, args: &[&str]) -> Command {
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(["config", "state", key, action]);
     cmd.args(args);
     cmd.current_dir(repo.root_path());
@@ -39,7 +39,7 @@ fn wt_state_cmd(repo: &TestRepo, key: &str, action: &str, args: &[&str]) -> Comm
 
 fn wt_state_get_cmd(repo: &TestRepo) -> Command {
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(["config", "state", "get"]);
     cmd.current_dir(repo.root_path());
     cmd
@@ -47,7 +47,7 @@ fn wt_state_get_cmd(repo: &TestRepo) -> Command {
 
 fn wt_state_get_json_cmd(repo: &TestRepo) -> Command {
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.args(["config", "state", "get", "--format=json"]);
     cmd.current_dir(repo.root_path());
     cmd
@@ -88,7 +88,8 @@ fn test_state_set_default_branch(repo: TestRepo) {
 
     // Verify it was set in worktrunk's cache
     let output = repo
-        .git_command(&["config", "--get", "worktrunk.default-branch"])
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "develop");
@@ -112,7 +113,8 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
 
     // Verify worktrunk's cache was cleared
     let output = repo
-        .git_command(&["config", "--get", "worktrunk.default-branch"])
+        .git_command()
+        .args(["config", "--get", "worktrunk.default-branch"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -121,7 +123,8 @@ fn test_state_clear_default_branch(mut repo: TestRepo) {
 #[rstest]
 fn test_state_clear_default_branch_empty(repo: TestRepo) {
     // Set up remote but don't set default branch cache
-    repo.git_command(&["remote", "add", "origin", "https://example.com/repo.git"])
+    repo.git_command()
+        .args(["remote", "add", "origin", "https://example.com/repo.git"])
         .output()
         .unwrap();
 
@@ -209,7 +212,10 @@ fn test_state_get_ci_status(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_ci_status_specific_branch(repo: TestRepo) {
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     // Without any CI configured, should return "no-ci"
     let output = wt_state_cmd(&repo, "ci-status", "get", &["--branch", "feature"])
@@ -242,7 +248,7 @@ fn test_state_clear_ci_status_all_empty(repo: TestRepo) {
 #[rstest]
 fn test_state_clear_ci_status_branch(repo: TestRepo) {
     // Add CI cache entry
-    repo.git_command(&[
+    repo.git_command().args([
         "config",
         "worktrunk.state.main.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
@@ -291,7 +297,10 @@ fn test_state_get_marker_empty(repo: TestRepo) {
 
 #[rstest]
 fn test_state_get_marker_specific_branch(repo: TestRepo) {
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     // Set a marker for feature branch (using JSON format)
     repo.set_marker("feature", "🔧");
@@ -319,7 +328,10 @@ fn test_state_set_marker_branch_default(repo: TestRepo) {
 
 #[rstest]
 fn test_state_set_marker_branch_specific(repo: TestRepo) {
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "set", &["🔧", "--branch", "feature"])
         .output()
@@ -347,7 +359,8 @@ fn test_state_clear_marker_branch_default(repo: TestRepo) {
 
     // Verify it was unset
     let output = repo
-        .git_command(&["config", "--get", "worktrunk.state.main.marker"])
+        .git_command()
+        .args(["config", "--get", "worktrunk.state.main.marker"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -366,7 +379,8 @@ fn test_state_clear_marker_branch_specific(repo: TestRepo) {
 
     // Verify it was unset
     let output = repo
-        .git_command(&["config", "--get", "worktrunk.state.feature.marker"])
+        .git_command()
+        .args(["config", "--get", "worktrunk.state.feature.marker"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -387,7 +401,8 @@ fn test_state_clear_marker_all(repo: TestRepo) {
 
     // Verify all were unset
     let output = repo
-        .git_command(&["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
+        .git_command()
+        .args(["config", "--get-regexp", r"^worktrunk\.state\..+\.marker$"])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
@@ -540,7 +555,8 @@ fn test_state_clear_all_empty(repo: TestRepo) {
 fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // Set up various state
     // Previous branch
-    repo.git_command(&["config", "worktrunk.history", "feature"])
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
         .status()
         .unwrap();
 
@@ -566,7 +582,8 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
 
     // Verify everything was cleared
     assert!(
-        repo.git_command(&["config", "--get", "worktrunk.history"])
+        repo.git_command()
+            .args(["config", "--get", "worktrunk.history"])
             .output()
             .unwrap()
             .status
@@ -574,7 +591,8 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
             == Some(1)
     ); // Not found
     assert!(
-        repo.git_command(&["config", "--get", "worktrunk.state.main.marker"])
+        repo.git_command()
+            .args(["config", "--get", "worktrunk.state.main.marker"])
             .output()
             .unwrap()
             .status
@@ -660,25 +678,28 @@ fn test_state_get_with_ci_entries(repo: TestRepo) {
 #[rstest]
 fn test_state_get_comprehensive(repo: TestRepo) {
     // Set up previous branch
-    repo.git_command(&["config", "worktrunk.history", "feature"])
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
         .status()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps for deterministic age)
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.feature.marker",
-        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
-    ])
-    .status()
-    .unwrap();
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.bugfix.marker",
-        &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
-    ])
-    .status()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "config",
+            "worktrunk.state.feature.marker",
+            &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+        ])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args([
+            "config",
+            "worktrunk.state.bugfix.marker",
+            &format!(r#"{{"marker":"🐛 debugging","set_at":{TEST_EPOCH}}}"#),
+        ])
+        .status()
+        .unwrap();
 
     // Set up CI cache (file-based)
     write_ci_cache(
@@ -719,18 +740,20 @@ fn test_state_get_json_empty(repo: TestRepo) {
 #[rstest]
 fn test_state_get_json_comprehensive(repo: TestRepo) {
     // Set up previous branch
-    repo.git_command(&["config", "worktrunk.history", "feature"])
+    repo.git_command()
+        .args(["config", "worktrunk.history", "feature"])
         .status()
         .unwrap();
 
     // Set up branch markers (JSON format with timestamps)
-    repo.git_command(&[
-        "config",
-        "worktrunk.state.feature.marker",
-        &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
-    ])
-    .status()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "config",
+            "worktrunk.state.feature.marker",
+            &format!(r#"{{"marker":"🚧 WIP","set_at":{TEST_EPOCH}}}"#),
+        ])
+        .status()
+        .unwrap();
 
     // Set up CI cache (file-based)
     write_ci_cache(
@@ -849,10 +872,13 @@ fn test_state_clear_ci_status_all_single_entry(repo: TestRepo) {
 #[rstest]
 fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
     // Create a feature branch
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     // Add CI cache via git config for the specific branch
-    repo.git_command(&[
+    repo.git_command().args([
         "config",
         "worktrunk.state.feature.ci-status",
         &format!(r#"{{"status":{{"ci_status":"passed","source":"pull-request","is_stale":false}},"checked_at":{TEST_EPOCH},"head":"abc12345"}}"#),
@@ -870,7 +896,10 @@ fn test_state_clear_ci_status_specific_branch(repo: TestRepo) {
 #[rstest]
 fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
     // Create a feature branch without any CI cache
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     let output = wt_state_cmd(&repo, "ci-status", "clear", &["--branch", "feature"])
         .output()
@@ -882,7 +911,10 @@ fn test_state_clear_ci_status_specific_branch_not_cached(repo: TestRepo) {
 #[rstest]
 fn test_state_clear_marker_specific_branch(repo: TestRepo) {
     // Create a feature branch and set marker
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
     repo.set_marker("feature", "🔧");
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
@@ -895,7 +927,10 @@ fn test_state_clear_marker_specific_branch(repo: TestRepo) {
 #[rstest]
 fn test_state_clear_marker_specific_branch_not_set(repo: TestRepo) {
     // Create a feature branch without any marker
-    repo.git_command(&["branch", "feature"]).status().unwrap();
+    repo.git_command()
+        .args(["branch", "feature"])
+        .status()
+        .unwrap();
 
     let output = wt_state_cmd(&repo, "marker", "clear", &["--branch", "feature"])
         .output()

@@ -27,7 +27,7 @@ full = true
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
@@ -62,7 +62,7 @@ branches = true
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
@@ -97,7 +97,7 @@ branches = false
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         // CLI flag --branches should override config
         cmd.arg("list")
@@ -136,7 +136,7 @@ branches = true
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
@@ -168,7 +168,7 @@ fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
@@ -199,7 +199,7 @@ url = "http://localhost:{{ branch | hash_port }}"
     let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
     settings.bind(|| {
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         set_temp_home_env(&mut cmd, temp_home.path());
         cmd.arg("list").current_dir(repo.root_path());
 
@@ -228,7 +228,7 @@ url = "http://localhost:{{ branch | hash_port }}"
     .unwrap();
 
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--format=json"])
         .current_dir(repo.root_path());
@@ -269,7 +269,7 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
     .unwrap();
 
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--format=json"])
         .current_dir(repo.root_path());
@@ -317,7 +317,7 @@ url = "http://localhost:{{ branch | hash_port }}"
     .unwrap();
 
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--branches", "--format=json"])
         .current_dir(repo.root_path());
@@ -358,7 +358,7 @@ url = "http://localhost:8080/{{ branch }}"
     .unwrap();
 
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     set_temp_home_env(&mut cmd, temp_home.path());
     cmd.args(["list", "--format=json"])
         .current_dir(repo.root_path());

@@ -141,7 +141,8 @@ fn test_available_branches_all_have_worktrees() {
 fn test_available_branches_some_without_worktrees() {
     let repo = TestRepo::new();
     // Create a branch without a worktree
-    repo.git_command(&["branch", "orphan-branch"])
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
         .output()
         .unwrap();
 
@@ -162,8 +163,14 @@ fn test_available_branches_some_without_worktrees() {
 fn test_all_branches() {
     let repo = TestRepo::new();
     // Create some branches
-    repo.git_command(&["branch", "alpha"]).output().unwrap();
-    repo.git_command(&["branch", "beta"]).output().unwrap();
+    repo.git_command()
+        .args(["branch", "alpha"])
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["branch", "beta"])
+        .output()
+        .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf());
     let branches = repository.all_branches().unwrap();
@@ -182,14 +189,15 @@ fn test_project_identifier_https() {
     let mut repo = TestRepo::new();
     repo.setup_remote("main");
     // Override the remote URL to https format
-    repo.git_command(&[
-        "remote",
-        "set-url",
-        "origin",
-        "https://github.com/user/repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/user/repo.git",
+        ])
+        .output()
+        .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf());
     let id = repository.project_identifier().unwrap();
@@ -201,14 +209,15 @@ fn test_project_identifier_http() {
     let mut repo = TestRepo::new();
     repo.setup_remote("main");
     // Override the remote URL to http format (no SSL)
-    repo.git_command(&[
-        "remote",
-        "set-url",
-        "origin",
-        "http://gitlab.example.com/team/project.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "http://gitlab.example.com/team/project.git",
+        ])
+        .output()
+        .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf());
     let id = repository.project_identifier().unwrap();
@@ -220,14 +229,15 @@ fn test_project_identifier_ssh_colon() {
     let mut repo = TestRepo::new();
     repo.setup_remote("main");
     // Override the remote URL to SSH format with colon
-    repo.git_command(&[
-        "remote",
-        "set-url",
-        "origin",
-        "git@github.com:user/repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:user/repo.git",
+        ])
+        .output()
+        .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf());
     let id = repository.project_identifier().unwrap();
@@ -239,14 +249,15 @@ fn test_project_identifier_ssh_protocol() {
     let mut repo = TestRepo::new();
     repo.setup_remote("main");
     // Override the remote URL to ssh:// format
-    repo.git_command(&[
-        "remote",
-        "set-url",
-        "origin",
-        "ssh://git@github.com/user/repo.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://git@github.com/user/repo.git",
+        ])
+        .output()
+        .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf());
     let id = repository.project_identifier().unwrap();
@@ -259,14 +270,15 @@ fn test_project_identifier_ssh_protocol_with_port() {
     let mut repo = TestRepo::new();
     repo.setup_remote("main");
     // Override the remote URL to ssh:// format with port
-    repo.git_command(&[
-        "remote",
-        "set-url",
-        "origin",
-        "ssh://git@gitlab.example.com:2222/team/project.git",
-    ])
-    .output()
-    .unwrap();
+    repo.git_command()
+        .args([
+            "remote",
+            "set-url",
+            "origin",
+            "ssh://git@gitlab.example.com:2222/team/project.git",
+        ])
+        .output()
+        .unwrap();
 
     let repository = Repository::at(repo.root_path().to_path_buf());
     let id = repository.project_identifier().unwrap();
@@ -292,7 +304,8 @@ fn test_project_identifier_no_remote_fallback() {
 #[test]
 fn test_get_config_exists() {
     let repo = TestRepo::new();
-    repo.git_command(&["config", "test.key", "test-value"])
+    repo.git_command()
+        .args(["config", "test.key", "test-value"])
         .output()
         .unwrap();
 

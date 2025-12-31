@@ -327,7 +327,7 @@ fn test_alignment_verification_with_varying_content(mut repo: TestRepo) {
 
     // Run wt list and capture output
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -355,7 +355,7 @@ fn test_alignment_with_unicode_content(mut repo: TestRepo) {
 
     // Run wt list
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -391,7 +391,7 @@ fn test_alignment_with_sparse_columns(mut repo: TestRepo) {
 
     // Run wt list
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -439,7 +439,7 @@ fn test_alignment_real_world_scenario(mut repo: TestRepo) {
 
     // Run wt list at a width where Dirty column is visible
     let mut cmd = wt_command();
-    repo.clean_cli_env(&mut cmd);
+    repo.configure_wt_cmd(&mut cmd);
     cmd.arg("list").current_dir(repo.root_path());
 
     let output = cmd.output().unwrap();
@@ -469,7 +469,7 @@ fn test_alignment_at_different_terminal_widths(mut repo: TestRepo) {
         println!("\n### Testing at width {} ###", width);
 
         let mut cmd = wt_command();
-        repo.clean_cli_env(&mut cmd);
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list")
             .current_dir(repo.root_path())
             .env("COLUMNS", width.to_string());
