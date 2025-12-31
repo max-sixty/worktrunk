@@ -50,7 +50,7 @@ Branches without worktrees are included — selecting one creates a worktree. (`
 ## See also
 
 - [wt list](@/list.md) — Static table view with all worktree metadata
-- [wt switch](@/switch.md) — Direct switching when you know the target branch
+- [wt switch](@/switch.md) — Direct switching to a known target branch
 
 ## Command reference
 

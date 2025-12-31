@@ -176,7 +176,7 @@ The `sanitize` filter makes branch names safe for filesystem paths. The `hash_po
 dev = "npm run dev -- --host {{ branch }}.lvh.me --port {{ branch | hash_port }}"
 ```
 
-You can hash any string, including concatenations:
+Hash any string, including concatenations:
 
 ```toml
 # Unique port per repo+branch combination

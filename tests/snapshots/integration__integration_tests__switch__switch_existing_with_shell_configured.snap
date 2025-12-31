@@ -14,7 +14,6 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
-    GIT_FETCH_ARGS: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -31,4 +30,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — restart your shell to activate[39m
+[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — restart the shell to activate[39m

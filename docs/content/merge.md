@@ -61,7 +61,7 @@ wt merge --no-commit
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Project commands run after cleanup. Failures are logged but don't abort.
 
-Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless you pass `--no-rebase`. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 
 ## Local CI
 

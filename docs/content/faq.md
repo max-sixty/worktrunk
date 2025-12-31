@@ -12,7 +12,7 @@ Worktrunk executes commands in three contexts:
 
 1. **Project hooks** (`.config/wt.toml`) — Automation for worktree lifecycle
 2. **LLM commands** (`~/.config/worktrunk/config.toml`) — Commit message generation
-3. **--execute flag** — Commands you provide explicitly
+3. **--execute flag** — Explicitly provided commands
 
 Commands from project hooks require approval on first run. Approved commands are saved to user config. If a command changes, Worktrunk requires new approval.
 

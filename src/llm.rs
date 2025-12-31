@@ -633,7 +633,7 @@ pub fn test_commit_generation(
 ) -> anyhow::Result<String> {
     if !commit_generation_config.is_configured() {
         anyhow::bail!(
-            "Commit generation is not configured. Add [commit-generation] to your config."
+            "Commit generation is not configured. Add [commit-generation] to the config."
         );
     }
 
