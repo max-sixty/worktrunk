@@ -13,7 +13,10 @@ use worktrunk::styling::{
 use super::command_executor::CommandContext;
 use super::commit::{CommitGenerator, CommitOptions};
 use super::context::CommandEnv;
-use super::hooks::{HookFailureStrategy, run_hook_concurrent_with_filter, run_hook_with_filter};
+use super::hooks::{
+    HookFailureStrategy, check_name_filter_matched, prepare_hook_commands, run_hook_with_filter,
+    spawn_hook_commands_background,
+};
 use super::merge::{
     execute_post_merge_commands, execute_pre_remove_commands, run_pre_merge_commands,
 };
@@ -91,13 +94,13 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
             )
         }
         HookType::PostStart => {
-            // post-start hooks run concurrently (matching their normal background behavior)
+            // post-start hooks spawn in background (matching their normal behavior during switch)
             let user_config = user_hook!(post_start);
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref());
             require_hooks(user_config, project_config, hook_type)?;
-            run_hook_concurrent_with_filter(
+            let commands = prepare_hook_commands(
                 &ctx,
                 user_config,
                 project_config,
@@ -105,16 +108,18 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &[],
                 name_filter,
                 None,
-            )
+            )?;
+            check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
+            spawn_hook_commands_background(&ctx, commands, hook_type)
         }
         HookType::PostSwitch => {
-            // post-switch hooks run concurrently (matching their normal background behavior)
+            // post-switch hooks spawn in background (matching their normal behavior during switch)
             let user_config = user_hook!(post_switch);
             let project_config = project_config
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref());
             require_hooks(user_config, project_config, hook_type)?;
-            run_hook_concurrent_with_filter(
+            let commands = prepare_hook_commands(
                 &ctx,
                 user_config,
                 project_config,
@@ -122,7 +127,9 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &[],
                 name_filter,
                 None,
-            )
+            )?;
+            check_name_filter_matched(name_filter, commands.len(), user_config, project_config)?;
+            spawn_hook_commands_background(&ctx, commands, hook_type)
         }
         HookType::PreCommit => {
             let user_config = user_hook!(pre_commit);
