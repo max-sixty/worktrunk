@@ -31,18 +31,18 @@ See [Worktrunk's own `.config/wt.toml`](https://github.com/max-sixty/worktrunk/b
 
 ## Dev server per worktree
 
-Each worktree can run its own dev server on a deterministic port. The `hash_port` filter generates a stable port (10000-19999) from the branch name:
+Each worktree runs its own dev server on a deterministic port. The `hash_port` filter generates a stable port (10000-19999) from the branch name:
 
 ```toml
 # .config/wt.toml
 [post-start]
-server = "npm run dev -- --port {{ branch | hash_port }} &"
+server = "npm run dev -- --port {{ branch | hash_port }}"
 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-`post-start` runs in background after worktree creation (like `post-create`, but non-blocking). The URL column in `wt list` shows each worktree's dev server:
+The URL column in `wt list` shows each worktree's dev server:
 
 <!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__tips_dev_server_workflow.snap — edit source to update -->
 
@@ -59,6 +59,46 @@ url = "http://localhost:{{ branch | hash_port }}"
 <!-- END AUTO-GENERATED -->
 
 Ports are deterministic — `fix-auth` always gets port 16460, regardless of which machine or when. The URL dims if the server isn't running.
+
+For subdomain-based routing (useful for cookies and CORS), use `lvh.me` which resolves to 127.0.0.1:
+
+```toml
+[post-start]
+server = "npm run dev -- --host {{ branch | sanitize }}.lvh.me --port {{ branch | hash_port }}"
+```
+
+## Database per worktree
+
+Each worktree can have its own isolated database. Docker containers get unique names and ports:
+
+```toml
+[post-start]
+db = """
+docker run -d --rm \
+  --name {{ repo }}-{{ branch | sanitize }}-postgres \
+  -p {{ 'db-' ~ branch | hash_port }}:5432 \
+  -e POSTGRES_DB={{ repo }} \
+  -e POSTGRES_PASSWORD=dev \
+  postgres:16
+"""
+
+[pre-remove]
+db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
+
+The `'db-' ~ branch` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
+
+Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
+
+```toml
+[post-create]
+env = """
+cat > .env.local << EOF
+DATABASE_URL=postgres://postgres:dev@localhost:{{ 'db-' ~ branch | hash_port }}/{{ repo }}
+DEV_PORT={{ branch | hash_port }}
+EOF
+"""
+```
 
 ## Local CI gate
 
