@@ -332,10 +332,7 @@ fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
     repo.commit("Add post-merge hook");
 
     // Create and switch to a feature branch
-    repo.git_command()
-        .args(["checkout", "-b", "my-feature-branch"])
-        .output()
-        .unwrap();
+    repo.run_git(&["checkout", "-b", "my-feature-branch"]);
 
     // Run the hook with --yes to skip approval
     let output = repo
@@ -370,10 +367,7 @@ fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
     repo.commit("Add pre-merge hook");
 
     // Create and switch to a feature branch
-    repo.git_command()
-        .args(["checkout", "-b", "my-feature-branch"])
-        .output()
-        .unwrap();
+    repo.run_git(&["checkout", "-b", "my-feature-branch"]);
 
     // Run the hook with --yes to skip approval
     let output = repo
