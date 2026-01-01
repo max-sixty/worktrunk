@@ -41,7 +41,7 @@ Regenerate a single demo:
 | Target | Demos |
 |--------|-------|
 | docs | wt-core, wt-switch, wt-list, wt-commit, wt-statusline, wt-merge, wt-select, wt-zellij-omnibus |
-| social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-select-short, wt-core, wt-zellij-omnibus |
+| social | wt-switch, wt-statusline, wt-list, wt-list-remove, wt-hooks, wt-devserver, wt-commit, wt-merge, wt-select, wt-core, wt-zellij-omnibus |
 
 ## Prerequisites
 
@@ -73,23 +73,38 @@ Both build and fetch output to the same location (`docs/static/assets/`), so loc
 
 ## vhs-keystrokes setup (REQUIRED for wt-select demos)
 
-The `wt-select` demos require a custom VHS fork with keystroke overlay. **Claude must build this binary before regenerating demos.**
+The `wt-select` demos require a custom VHS fork with keystroke overlay. The `keypress-overlay` branch contains our features (bottom positioning, gold highlighting for newest key).
 
-Check if the binary exists:
-
-```bash
-ls docs/demos/vhs-keystrokes/vhs-keystrokes
-```
-
-If missing, **build it** (requires Go):
+All commands run from **worktrunk root**:
 
 ```bash
-cd docs/demos
-git clone -b keypress-overlay https://github.com/max-sixty/vhs.git vhs-keystrokes
-cd vhs-keystrokes && go build -o vhs-keystrokes .
+# First-time setup (requires Go)
+git clone -b keypress-overlay https://github.com/max-sixty/vhs.git docs/demos/vhs-keystrokes
+(cd docs/demos/vhs-keystrokes && go build -o vhs-keystrokes .)
+
+# Update existing clone
+git -C docs/demos/vhs-keystrokes pull origin keypress-overlay
+(cd docs/demos/vhs-keystrokes && go build -o vhs-keystrokes .)
 ```
 
-The binary is gitignored. Build scripts skip wt-select GIF recording if missing—**always build vhs-keystrokes first** when regenerating demos.
+The binary is gitignored. Build scripts skip wt-select GIF recording if missing.
+
+### Modifying the fork
+
+All commands run from **worktrunk root**:
+
+```bash
+# 1. Rebuild and test
+(cd docs/demos/vhs-keystrokes && go build -o vhs-keystrokes .)
+./docs/demos/build docs --only wt-select
+
+# 2. Commit and push
+git -C docs/demos/vhs-keystrokes add -A
+git -C docs/demos/vhs-keystrokes commit -m "Description"
+git -C docs/demos/vhs-keystrokes push origin keypress-overlay
+```
+
+**CRITICAL**: Always push to `origin keypress-overlay` after changes. The directory is gitignored from worktrunk—changes only persist in the vhs fork repo.
 
 ### Keystroke timing calibration
 
