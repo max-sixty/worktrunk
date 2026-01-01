@@ -32,87 +32,8 @@ pub fn command_readme(repo: &TestRepo, cwd: &Path) -> Command {
     cmd
 }
 
-pub fn command_json(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.arg("--format=json");
-    cmd
-}
-
-pub fn command_branches(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.arg("--branches");
-    cmd
-}
-
 pub fn command_with_width(repo: &TestRepo, width: usize) -> Command {
     let mut cmd = command(repo, repo.root_path());
     cmd.env("COLUMNS", width.to_string());
-    cmd
-}
-
-pub fn command_progressive(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.arg("--progressive");
-    cmd
-}
-
-pub fn command_no_progressive(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.arg("--no-progressive");
-    cmd
-}
-
-pub fn command_progressive_json(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.args(["--progressive", "--format=json"]);
-    cmd
-}
-
-pub fn command_remotes(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.arg("--remotes");
-    cmd
-}
-
-pub fn command_branches_and_remotes(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.args(["--branches", "--remotes"]);
-    cmd
-}
-
-pub fn command_no_progressive_json(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.args(["--no-progressive", "--format=json"]);
-    cmd
-}
-
-pub fn command_progressive_branches(repo: &TestRepo) -> Command {
-    let mut cmd = command(repo, repo.root_path());
-    cmd.args(["--progressive", "--branches"]);
-    cmd
-}
-
-pub fn command_progressive_full(repo: &TestRepo) -> Command {
-    let mut cmd = command_progressive(repo);
-    cmd.arg("--full");
-    cmd
-}
-
-pub fn command_progressive_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
-    let mut cmd = wt_command();
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.args(["list", "--progressive"]).current_dir(cwd);
-    cmd
-}
-
-pub fn command_readme_full_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
-    let mut cmd = command_readme(repo, cwd);
-    cmd.arg("--full");
-    cmd
-}
-
-pub fn command_readme_branches_full_from_dir(repo: &TestRepo, cwd: &Path) -> Command {
-    let mut cmd = command_readme(repo, cwd);
-    cmd.args(["--branches", "--full"]);
     cmd
 }

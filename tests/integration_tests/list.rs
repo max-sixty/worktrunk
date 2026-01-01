@@ -25,35 +25,27 @@ fn snapshot_list_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
 }
 
 fn snapshot_list_json(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        list_snapshots::json_settings(repo),
-        test_name,
-        list_snapshots::command_json(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.arg("--format=json");
+    run_snapshot(list_snapshots::json_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_with_branches(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_branches(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.arg("--branches");
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_with_remotes(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_remotes(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.arg("--remotes");
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_with_branches_and_remotes(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_branches_and_remotes(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.args(["--branches", "--remotes"]);
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_full(test_name: &str, repo: &TestRepo) {
@@ -63,35 +55,27 @@ fn snapshot_list_full(test_name: &str, repo: &TestRepo) {
 }
 
 fn snapshot_list_progressive(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_progressive(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.arg("--progressive");
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_no_progressive(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_no_progressive(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.arg("--no-progressive");
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_progressive_branches(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_progressive_branches(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.args(["--progressive", "--branches"]);
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_list_progressive_full(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_progressive_full(repo),
-    );
+    let mut cmd = list_snapshots::command(repo, repo.root_path());
+    cmd.args(["--progressive", "--full"]);
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 // README example snapshots - use narrower width for doc site code blocks
@@ -104,19 +88,15 @@ fn snapshot_readme_list_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
 }
 
 fn snapshot_readme_list_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_readme_full_from_dir(repo, cwd),
-    );
+    let mut cmd = list_snapshots::command_readme(repo, cwd);
+    cmd.arg("--full");
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn snapshot_readme_list_branches_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_readme_branches_full_from_dir(repo, cwd),
-    );
+    let mut cmd = list_snapshots::command_readme(repo, cwd);
+    cmd.args(["--branches", "--full"]);
+    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
 }
 
 fn run_snapshot(settings: Settings, test_name: &str, mut cmd: Command) {
@@ -1746,10 +1726,12 @@ fn test_list_task_dag_ordering_stability(mut repo: TestRepo) {
 
     // Run from feature-current worktree
     // Expected order: main, feature-current, then by timestamp: feature-newest, feature-middle, feature-oldest
+    let mut cmd = list_snapshots::command(&repo, &current_path);
+    cmd.arg("--progressive");
     run_snapshot(
         setup_snapshot_settings(&repo),
         "task_dag_ordering_stability",
-        list_snapshots::command_progressive_from_dir(&repo, &current_path),
+        cmd,
     );
 }
 
@@ -1773,13 +1755,17 @@ fn test_list_progressive_vs_buffered_identical_data(mut repo: TestRepo) {
     std::fs::write(feature_a_path.join("changes.txt"), "test").unwrap();
 
     // Run both modes with JSON output to compare data (not formatting)
-    let progressive_output = list_snapshots::command_progressive_json(&repo)
-        .output()
-        .unwrap();
+    let progressive_output = {
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--progressive", "--format=json"]);
+        cmd.output().unwrap()
+    };
 
-    let buffered_output = list_snapshots::command_no_progressive_json(&repo)
-        .output()
-        .unwrap();
+    let buffered_output = {
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--no-progressive", "--format=json"]);
+        cmd.output().unwrap()
+    };
 
     // Both should succeed
     assert!(
