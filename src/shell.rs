@@ -377,8 +377,21 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     let mut child = Command::new("zsh")
         .arg("-ic")
         .arg(probe_cmd)
+        .stdin(Stdio::null()) // Prevent compinit from prompting interactively
         .stdout(Stdio::piped())
         .stderr(Stdio::null()) // Suppress user's zsh startup messages
+        // Suppress zsh's "insecure directories" warning from compinit.
+        //
+        // When fpath contains directories with insecure permissions, compinit prompts:
+        //   "zsh compinit: insecure directories, run compaudit for list."
+        //   "Ignore insecure directories and continue [y] or abort compinit [n]?"
+        //
+        // This prompt goes to the TTY (not stderr), so it leaks through even with
+        // stderr redirected. It's safe to suppress because:
+        // 1. Users with this issue already see the warning every time they open a terminal
+        // 2. We're only probing zsh's state, not doing anything security-sensitive
+        // 3. This only affects our subprocess, not the user's actual shell
+        .env("ZSH_DISABLE_COMPFIX", "true")
         // Prevent subprocesses from writing to the directive file
         .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
         .spawn()
