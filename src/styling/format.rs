@@ -514,32 +514,16 @@ mod tests {
             "{dim}{green}This is a very long string that definitely needs to wrap across multiple lines{reset}"
         );
 
-        // Force wrapping
+        // Force wrapping at 30 chars - should produce multiple lines
         let result = wrap_styled_text(&styled, 30);
-
-        assert!(
-            result.len() > 1,
-            "Should wrap into multiple lines, got {} lines",
-            result.len()
-        );
+        assert!(result.len() > 1);
 
         // First line should have dim+green (as input)
-        assert!(
-            result[0].starts_with("\x1b[2m\x1b[32m"),
-            "First line should start with dim+green, got: {:?}",
-            &result[0][..result[0].len().min(20)]
-        );
+        assert!(result[0].starts_with("\x1b[2m\x1b[32m"));
 
-        // Continuation lines should ALSO have dim before the color
-        for (i, line) in result.iter().enumerate().skip(1) {
-            // Each continuation line should start with dim (restored by our fix)
-            // followed by the color (restored by wrap_ansi)
-            assert!(
-                line.starts_with("\x1b[2m\x1b[32m") || line.starts_with("\x1b[2m"),
-                "Continuation line {} should start with dim, got: {:?}",
-                i + 1,
-                &line[..line.len().min(20)]
-            );
+        // Continuation lines should ALSO have dim before the color (restored by our fix)
+        for line in result.iter().skip(1) {
+            assert!(line.starts_with("\x1b[2m\x1b[32m") || line.starts_with("\x1b[2m"));
         }
     }
 

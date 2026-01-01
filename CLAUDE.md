@@ -170,9 +170,26 @@ Users can clean up old logs manually or use a git hook. No automatic cleanup is 
 
 ## Coverage
 
+We maintain high code coverage. The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them.
+
+### Running Coverage Locally
+
 - Install once: `cargo install cargo-llvm-cov`.
-- Run: `./dev/coverage.sh` — runs tests once, then generates HTML (`target/llvm-cov/html/index.html`) and LCOV (`target/llvm-cov/lcov.info`). Set `COVERAGE_OPEN=0` to skip opening the HTML report.
+- Run: `./dev/coverage.sh` — runs tests once, then generates HTML (`target/llvm-cov/html/index.html`) and LCOV (`target/llvm-cov/lcov.info`).
 - Pass extra args to the test run (for example to filter tests): `./dev/coverage.sh -- --test test_name`.
+
+### Investigating codecov/patch Failures
+
+When `codecov/patch` fails, find which changed lines lack coverage:
+
+```bash
+# 1. Run coverage and show uncovered lines
+./dev/coverage.sh
+cargo llvm-cov report --show-missing-lines | grep <file>
+
+# 2. Compare against your diff (use three-dot diff for PR changes)
+git diff main...HEAD -- path/to/file.rs
+```
 
 ## Benchmarks
 
