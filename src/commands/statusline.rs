@@ -123,7 +123,7 @@ fn format_directory_fish_style(path: &Path) -> String {
 
 /// Run the statusline command.
 ///
-/// Output uses `output::data()` for raw stdout (bypasses anstream color detection).
+/// Output uses `output::stdout()` for raw stdout (bypasses anstream color detection).
 /// Shell prompts (PS1) and Claude Code always expect ANSI codes.
 pub fn run(claude_code: bool) -> Result<()> {
     // Get context - either from stdin (claude-code mode) or current directory
@@ -200,7 +200,7 @@ pub fn run(claude_code: bool) -> Result<()> {
         use worktrunk::styling::fix_dim_after_color_reset;
         let reset = anstyle::Reset;
         let output = fix_dim_after_color_reset(&output);
-        output::data(format!("{reset} {output}"))?;
+        output::stdout(format!("{reset} {output}"))?;
     }
 
     Ok(())
