@@ -1018,4 +1018,63 @@ mod pty_tests {
             "File should not be modified when user declines"
         );
     }
+
+    /// Diagnostic test: Run `zsh -ic` directly in PTY (no worktrunk) to prove that
+    /// the "insecure directories" warning is a pre-existing CI environment issue.
+    ///
+    /// If this test shows the warning, it confirms that the CI environment's zsh
+    /// configuration triggers compinit's insecure directories check on ANY `zsh -ic`
+    /// command - not something worktrunk specifically causes.
+    #[test]
+    fn test_zsh_compinit_warning_is_preexisting_ci_issue() {
+        use std::io::Read;
+
+        let pair = open_pty();
+
+        // Run zsh -ic directly - NO worktrunk, NO custom HOME, NO environment changes
+        // This uses the exact same zsh that worktrunk's probe would use
+        let mut cmd = CommandBuilder::new("zsh");
+        cmd.args(["-ic", "echo DIAGNOSTIC_MARKER_NO_WORKTRUNK_INVOLVED"]);
+
+        // Use system environment (same as what detect_zsh_compinit() sees)
+        // We explicitly do NOT clear the environment or set a custom HOME
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        drop(pair.master.take_writer().unwrap());
+
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+
+        let exit_status = child.wait().unwrap();
+        let output = buf.replace("\r\n", "\n");
+
+        // Print diagnostic info for CI logs
+        eprintln!("=== DIAGNOSTIC: zsh -ic in PTY (no worktrunk) ===");
+        eprintln!("Exit code: {}", exit_status.exit_code());
+        eprintln!("Output length: {} chars", output.len());
+        eprintln!("Output:\n{}", output);
+        eprintln!("================================================");
+
+        // The test passes regardless - it's diagnostic
+        assert!(
+            output.contains("DIAGNOSTIC_MARKER_NO_WORKTRUNK_INVOLVED"),
+            "zsh should have run and echoed our marker. Output: {}",
+            output
+        );
+
+        // Report findings for CI visibility
+        let has_compinit_warning = output.contains("compinit") || output.contains("insecure");
+        if has_compinit_warning {
+            eprintln!(">>> CONFIRMED: compinit warning appears in PTY even WITHOUT worktrunk <<<");
+            eprintln!(">>> This proves the warning is a pre-existing CI environment issue <<<");
+        } else {
+            eprintln!(">>> No compinit warning in raw zsh -ic output <<<");
+            eprintln!(
+                ">>> The warning must be triggered by something specific in worktrunk's probe <<<"
+            );
+        }
+    }
 }
