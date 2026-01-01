@@ -1104,14 +1104,14 @@ pub fn collect(
         } else {
             // Non-TTY: output to stdout (same as buffered mode)
             // Progressive skeleton was suppressed; now output the final table
-            crate::output::table(layout.format_header_line())?;
+            crate::output::stdout(layout.format_header_line())?;
             for item in &all_items {
-                crate::output::table(
+                crate::output::stdout(
                     layout.format_list_item_line(item, previous_branch.as_deref()),
                 )?;
             }
-            crate::output::table("")?;
-            crate::output::table(final_msg)?;
+            crate::output::stdout("")?;
+            crate::output::stdout(final_msg)?;
         }
     } else if render_table {
         // Buffered mode: render final table
@@ -1121,12 +1121,12 @@ pub fn collect(
             layout.hidden_column_count,
         );
 
-        crate::output::table(layout.format_header_line())?;
+        crate::output::stdout(layout.format_header_line())?;
         for item in &all_items {
-            crate::output::table(layout.format_list_item_line(item, previous_branch.as_deref()))?;
+            crate::output::stdout(layout.format_list_item_line(item, previous_branch.as_deref()))?;
         }
-        crate::output::table("")?;
-        crate::output::table(final_msg)?;
+        crate::output::stdout("")?;
+        crate::output::stdout(final_msg)?;
     }
 
     // Status symbols are now computed during data collection (both modes), no fallback needed

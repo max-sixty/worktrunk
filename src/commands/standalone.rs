@@ -184,7 +184,7 @@ pub fn step_commit(
     if show_prompt {
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let prompt = crate::llm::build_commit_prompt(&config.commit_generation)?;
-        crate::output::data(prompt)?;
+        crate::output::stdout(prompt)?;
         return Ok(());
     }
 
@@ -471,7 +471,7 @@ pub fn step_show_squash_prompt(
         repo_name,
         config,
     )?;
-    crate::output::data(prompt)?;
+    crate::output::stdout(prompt)?;
     Ok(())
 }
 

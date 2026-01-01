@@ -232,16 +232,20 @@ Specific rules:
 
 ## Output System
 
-Use `output::` functions, never direct `println!`. See `output-system-architecture.md`
-for stdout vs stderr decisions.
+Use `output::` functions for consistency. See `output-system-architecture.md`
+for stdout vs stderr decisions and simplification notes.
 
 ```rust
-// GOOD
+// Preferred - consistent routing and flushing
 output::print(success_message("Branch created"))?;
 
-// BAD - bypasses output system
-println!("Branch created");
+// Acceptable for simple cases - just remember to flush if needed
+eprintln!("{}", success_message("Branch created"));
 ```
+
+**Note:** The output wrappers are thin (`eprintln!` + flush). The main value is
+consistency, not complex logic. See "Simplification Notes" in
+`output-system-architecture.md`.
 
 **Interactive prompts** must flush stderr before blocking on stdin:
 
@@ -350,7 +354,7 @@ output::print(hint_message("Run 'wt list' to see worktrees"))?;
 ## Design Principles
 
 - **`cformat!` for styling** — Never manual escape codes (`\x1b[...`)
-- **`output::` for printing** — Never direct `println!`/`eprintln!`
+- **`output::` for printing** — Preferred for consistency; direct `println!`/`eprintln!` acceptable
 - **YAGNI** — Most output needs no styling
 - **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
 - **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
