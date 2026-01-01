@@ -40,26 +40,26 @@ LIGHT_THEME = {
 #   Terminal colors: --cyan: #67d4d4, --green: #4ade80, --red: #f87171, etc.
 DARK_THEME = {
     "name": "Warm Workbench Dark",
-    "black": "#6b7280",           # --bright-black from CSS
-    "red": "#f87171",             # --red dark mode
-    "green": "#4ade80",           # --green dark mode
-    "yellow": "#fbbf24",          # --yellow dark mode
-    "blue": "#60a5fa",            # --blue dark mode
-    "magenta": "#c084fc",         # --magenta dark mode
-    "cyan": "#67d4d4",            # --cyan dark mode
-    "white": "#a8a29e",           # --wt-color-text-muted
-    "brightBlack": "#6b7280",     # same as black
-    "brightRed": "#fca5a5",       # lighter red
-    "brightGreen": "#86efac",     # lighter green
-    "brightYellow": "#fde047",    # lighter yellow
-    "brightBlue": "#93c5fd",      # lighter blue
-    "brightMagenta": "#d8b4fe",   # lighter magenta
-    "brightCyan": "#a5f3fc",      # lighter cyan
-    "brightWhite": "#e8e6e3",     # --wt-color-text
-    "background": "#1c1b1a",      # --wt-color-bg dark mode
-    "foreground": "#e8e6e3",      # --wt-color-text dark mode
-    "cursor": "#f59e0b",          # --wt-color-accent dark mode
-    "selection": "#422006",       # --wt-color-accent-soft dark mode
+    "black": "#6b7280",  # --bright-black from CSS
+    "red": "#f87171",  # --red dark mode
+    "green": "#4ade80",  # --green dark mode
+    "yellow": "#fbbf24",  # --yellow dark mode
+    "blue": "#60a5fa",  # --blue dark mode
+    "magenta": "#c084fc",  # --magenta dark mode
+    "cyan": "#67d4d4",  # --cyan dark mode
+    "white": "#a8a29e",  # --wt-color-text-muted
+    "brightBlack": "#6b7280",  # same as black
+    "brightRed": "#fca5a5",  # lighter red
+    "brightGreen": "#86efac",  # lighter green
+    "brightYellow": "#fde047",  # lighter yellow
+    "brightBlue": "#93c5fd",  # lighter blue
+    "brightMagenta": "#d8b4fe",  # lighter magenta
+    "brightCyan": "#a5f3fc",  # lighter cyan
+    "brightWhite": "#e8e6e3",  # --wt-color-text
+    "background": "#1c1b1a",  # --wt-color-bg dark mode
+    "foreground": "#e8e6e3",  # --wt-color-text dark mode
+    "cursor": "#f59e0b",  # --wt-color-accent dark mode
+    "selection": "#422006",  # --wt-color-accent-soft dark mode
 }
 
 THEMES = {

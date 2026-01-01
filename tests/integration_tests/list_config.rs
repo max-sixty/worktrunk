@@ -222,19 +222,15 @@ url = "http://localhost:{{ branch | hash_port }}"
     assert!(!items.is_empty());
 
     let first = &items[0];
-    // URL should be present and contain the hash_port result
-    assert!(first.get("url").is_some());
+    // URL should be present with hash_port result (port in 10000-19999 range)
     let url = first["url"].as_str().unwrap();
     assert!(url.starts_with("http://localhost:"));
-    // Port should be 5 digits (10000-19999)
     let port: u16 = url.split(':').next_back().unwrap().parse().unwrap();
     assert!((10000..=19999).contains(&port));
 
-    // url_active should be present and be a boolean
-    // Note: We can't assert the specific value since it depends on whether
+    // url_active is present but we can't test its value - depends on whether
     // something happens to be listening on the hashed port
-    assert!(first.get("url_active").is_some());
-    assert!(first["url_active"].as_bool().is_some());
+    assert!(first["url_active"].is_boolean());
 }
 
 /// Test `wt list --format=json` has null URL fields when no template configured

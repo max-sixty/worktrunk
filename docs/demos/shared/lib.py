@@ -15,7 +15,7 @@ REAL_HOME = Path.home()
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Shared content for demos
-VALIDATION_RS = '''//! Input validation utilities.
+VALIDATION_RS = """//! Input validation utilities.
 
 /// Validates that a number is positive.
 pub fn is_positive(n: i32) -> bool {
@@ -38,7 +38,7 @@ mod tests {
         assert!(!is_positive(-1));
     }
 }
-'''
+"""
 
 
 @dataclass
@@ -73,8 +73,7 @@ class DemoEnv:
 def run(cmd, cwd=None, env=None, check=True, capture=False):
     """Run a command."""
     result = subprocess.run(
-        cmd, cwd=cwd, env=env, check=check,
-        capture_output=capture, text=True
+        cmd, cwd=cwd, env=env, check=check, capture_output=capture, text=True
     )
     return result.stdout if capture else None
 
@@ -106,7 +105,7 @@ def render_tape(template_path: Path, replacements: dict, repo_root: Path) -> str
         source_path = repo_root / match.group(1).strip().strip('"')
         return source_path.read_text()
 
-    rendered = re.sub(r'^Source\s+(.+)$', inline_source, rendered, flags=re.MULTILINE)
+    rendered = re.sub(r"^Source\s+(.+)$", inline_source, rendered, flags=re.MULTILINE)
 
     # Apply template variable replacements
     for key, value in replacements.items():
@@ -189,7 +188,7 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
 
     # Rust project
     (env.repo / "Cargo.toml").write_text(
-        "[package]\nname = \"acme\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n"
+        '[package]\nname = "acme"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n'
     )
     (env.repo / "src").mkdir()
     shutil.copy(FIXTURES_DIR / "lib.rs", env.repo / "src" / "lib.rs")
@@ -204,7 +203,7 @@ def prepare_base_repo(env: DemoEnv, repo_root: Path):
     git(["-C", str(env.repo), "push", "-q"])
 
     # Mock CLI tools
-    bin_dir = env.home / "bin"
+    bin_dir = env.home / ".local" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
 
     # bat wrapper for syntax highlighting (alias cat to bat for toml files)
@@ -250,61 +249,77 @@ def setup_claude_code_config(
         worktree_paths: List of worktree paths to pre-approve for trust
         allowed_tools: List of tools to pre-approve (default: none, Claude will ask)
     """
-    api_key_suffix = os.environ.get("ANTHROPIC_API_KEY", "")[-20:] if os.environ.get("ANTHROPIC_API_KEY") else ""
+    api_key_suffix = (
+        os.environ.get("ANTHROPIC_API_KEY", "")[-20:]
+        if os.environ.get("ANTHROPIC_API_KEY")
+        else ""
+    )
 
     # Build projects config - pre-approve trust for all worktree paths
     # Use resolved paths to handle macOS symlinks (/var -> /private/var)
     projects_config = {}
     for path in worktree_paths:
         resolved_path = str(Path(path).resolve())
-        projects_config[resolved_path] = {"allowedTools": [], "hasTrustDialogAccepted": True}
+        projects_config[resolved_path] = {
+            "allowedTools": [],
+            "hasTrustDialogAccepted": True,
+        }
 
     claude_json = env.home / ".claude.json"
-    claude_json.write_text(json.dumps({
-        "numStartups": 100,
-        "installMethod": "global",
-        "theme": "light",
-        "firstStartTime": "2025-01-01T00:00:00.000Z",
-        "hasCompletedOnboarding": True,
-        "hasCompletedClaudeInChromeOnboarding": True,
-        "claudeInChromeDefaultEnabled": False,
-        "sonnet45MigrationComplete": True,
-        "opus45MigrationComplete": True,
-        "thinkingMigrationComplete": True,
-        "hasShownOpus45Notice": {},
-        "lastReleaseNotesSeen": "99.0.0",
-        "lastOnboardingVersion": "99.0.0",
-        "oauthAccount": {
-            "displayName": "wt",
-            "emailAddress": "demo@example.com"
-        },
-        "customApiKeyResponses": {
-            "approved": [api_key_suffix] if api_key_suffix else [],
-            "rejected": []
-        },
-        "officialMarketplaceAutoInstalled": True,
-        "tipsHistory": {
-            "new-user-warmup": 100,
-            "terminal-setup": 100,
-            "theme-command": 100
-        },
-        "projects": projects_config
-    }, indent=2))
+    claude_json.write_text(
+        json.dumps(
+            {
+                "numStartups": 100,
+                "installMethod": "global",
+                "theme": "light",
+                "firstStartTime": "2025-01-01T00:00:00.000Z",
+                "hasCompletedOnboarding": True,
+                "hasCompletedClaudeInChromeOnboarding": True,
+                "claudeInChromeDefaultEnabled": False,
+                "sonnet45MigrationComplete": True,
+                "opus45MigrationComplete": True,
+                "thinkingMigrationComplete": True,
+                "hasShownOpus45Notice": {},
+                "lastReleaseNotesSeen": "99.0.0",
+                "lastOnboardingVersion": "99.0.0",
+                "oauthAccount": {
+                    "displayName": "wt",
+                    "emailAddress": "demo@example.com",
+                },
+                "customApiKeyResponses": {
+                    "approved": [api_key_suffix] if api_key_suffix else [],
+                    "rejected": [],
+                },
+                "officialMarketplaceAutoInstalled": True,
+                "tipsHistory": {
+                    "new-user-warmup": 100,
+                    "terminal-setup": 100,
+                    "theme-command": 100,
+                },
+                "projects": projects_config,
+            },
+            indent=2,
+        )
+    )
+
+    # Copy claude binary to prevent "installMethod is native" warnings
+    # Claude Code detects native install by checking if ~/.local/bin/claude exists
+    local_bin = env.home / ".local" / "bin"
+    local_bin.mkdir(parents=True, exist_ok=True)
+    real_claude = REAL_HOME / ".local" / "bin" / "claude"
+    if real_claude.exists():
+        shutil.copy(real_claude.resolve(), local_bin / "claude")
 
     # Claude settings.json
     claude_dir = env.home / ".claude"
     claude_dir.mkdir(exist_ok=True)
     settings = {
-        "permissions": {
-            "allow": allowed_tools or [],
-            "deny": [],
-            "ask": []
-        },
+        "permissions": {"allow": allowed_tools or [], "deny": [], "ask": []},
         "model": "claude-opus-4-5-20251101",
         "statusLine": {
             "type": "command",
-            "command": "wt list statusline --claude-code"
-        }
+            "command": "wt list statusline --claude-code",
+        },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2))
 
@@ -334,7 +349,7 @@ def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
     default_cwd_line = f'default_cwd "{default_cwd}"' if default_cwd else ""
 
     zellij_config = zellij_config_dir / "config.kdl"
-    zellij_config.write_text(f'''// Demo Zellij config
+    zellij_config.write_text(f"""// Demo Zellij config
 default_shell "fish"
 {default_cwd_line}
 pane_frames false
@@ -390,7 +405,7 @@ keybinds clear-defaults=true {{
         bind "Esc" {{ SwitchToMode "normal"; }}
     }}
 }}
-''')
+""")
 
 
 def setup_fish_config(env: DemoEnv, wsl_create: bool = False) -> None:
@@ -410,10 +425,14 @@ def setup_fish_config(env: DemoEnv, wsl_create: bool = False) -> None:
     fish_config_dir = env.home / ".config" / "fish"
     fish_config_dir.mkdir(parents=True, exist_ok=True)
 
-    wsl_cmd = "wt switch --execute=claude --create" if wsl_create else "wt switch --execute=claude"
+    wsl_cmd = (
+        "wt switch --execute=claude --create"
+        if wsl_create
+        else "wt switch --execute=claude"
+    )
 
     fish_config = fish_config_dir / "config.fish"
-    fish_config.write_text(f'''# Demo fish config
+    fish_config.write_text(f"""# Demo fish config
 set -U fish_greeting ""
 # wsl abbreviation: switch to worktree and launch Claude
 abbr --add wsl '{wsl_cmd}'
@@ -437,7 +456,7 @@ function __zellij_tab_rename --on-variable PWD
         end
     end
 end
-''')
+""")
 
 
 def setup_mock_clis(env: DemoEnv) -> None:
@@ -446,7 +465,7 @@ def setup_mock_clis(env: DemoEnv) -> None:
     Creates mocks for: npm, docker, flyctl, llm, cargo.
     Each mock handles all cases - demos just use the branches they need.
     """
-    bin_dir = env.home / "bin"
+    bin_dir = env.home / ".local" / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
 
     # npm mock - handles install, build, dev (with optional port)
@@ -558,7 +577,7 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
     git(["-C", str(env.repo), "push", "-q"])
 
     # Mock gh CLI with varied CI status per branch
-    bin_dir = env.home / "bin"
+    bin_dir = env.home / ".local" / "bin"
     gh_mock = bin_dir / "gh"
     shutil.copy(FIXTURES_DIR / "gh-mock.sh", gh_mock)
     gh_mock.chmod(0o755)
@@ -572,7 +591,9 @@ def prepare_demo_repo(env: DemoEnv, repo_root: Path, hooks_config: str = None):
 
     # Commit to main so beta is behind
     readme = env.repo / "README.md"
-    readme.write_text(readme.read_text() + "\n## Development\n\nSee CONTRIBUTING.md for guidelines.\n")
+    readme.write_text(
+        readme.read_text() + "\n## Development\n\nSee CONTRIBUTING.md for guidelines.\n"
+    )
     (env.repo / "notes.md").write_text("# Notes\n")
     git(["-C", str(env.repo), "add", "README.md", "notes.md"])
     commit_dated(env.repo, "docs: add development section", "1d")
@@ -591,7 +612,7 @@ def _create_branch_alpha(env: DemoEnv):
     git(["-C", str(env.repo), "checkout", "-q", "-b", branch, "main"])
 
     # Initial README changes
-    (env.repo / "README.md").write_text('''# Acme App
+    (env.repo / "README.md").write_text("""# Acme App
 
 A demo application for showcasing worktrunk features.
 
@@ -605,7 +626,7 @@ A demo application for showcasing worktrunk features.
 ## Getting Started
 
 Run `wt list` to see all worktrees.
-''')
+""")
     git(["-C", str(env.repo), "add", "README.md"])
     commit_dated(env.repo, "docs: expand README", "3d")
 
@@ -713,7 +734,7 @@ def is_interactive_tape(tape_path: Path) -> bool:
     # Also check for keystroke overlay which indicates visual TUI demo
     interactive_pattern = re.compile(
         r"^(Down|Up|Left|Right|Ctrl\+|Tab\s|Backspace|Escape|Set KeyStrokes)",
-        re.MULTILINE
+        re.MULTILINE,
     )
     return bool(interactive_pattern.search(content))
 
@@ -751,11 +772,15 @@ def record_text(
 
     # Modify for text output
     temp_txt = (demo_env.out_dir / ".text-output.txt").resolve()
-    rendered = re.sub(r'^Output\s+"[^"]+"', f'Output "{temp_txt}"', rendered, flags=re.MULTILINE)
-    rendered = re.sub(r'^Set Width .*$', 'Set Width 120', rendered, flags=re.MULTILINE)
-    rendered = re.sub(r'^Set Height .*$', 'Set Height 120', rendered, flags=re.MULTILINE)
+    rendered = re.sub(
+        r'^Output\s+"[^"]+"', f'Output "{temp_txt}"', rendered, flags=re.MULTILINE
+    )
+    rendered = re.sub(r"^Set Width .*$", "Set Width 120", rendered, flags=re.MULTILINE)
+    rendered = re.sub(
+        r"^Set Height .*$", "Set Height 120", rendered, flags=re.MULTILINE
+    )
     for setting in ["FontSize", "Theme", "Padding"]:
-        rendered = re.sub(rf'^Set {setting} .*$\n?', '', rendered, flags=re.MULTILINE)
+        rendered = re.sub(rf"^Set {setting} .*$\n?", "", rendered, flags=re.MULTILINE)
 
     # Write and run
     tape_rendered = (demo_env.out_dir / ".text-rendered.tape").resolve()
@@ -774,6 +799,7 @@ def record_text(
 @dataclass
 class DemoSize:
     """Canvas and font size for demo recording."""
+
     width: int
     height: int
     fontsize: int
@@ -781,7 +807,7 @@ class DemoSize:
 
 # Predefined sizes for different contexts
 SIZE_SOCIAL = DemoSize(width=1200, height=700, fontsize=26)  # Big text for mobile
-SIZE_DOCS = DemoSize(width=1600, height=900, fontsize=24)    # More content for docs
+SIZE_DOCS = DemoSize(width=1600, height=900, fontsize=24)  # More content for docs
 
 
 def build_tape_replacements(demo_env: DemoEnv, repo_root: Path) -> dict:
