@@ -189,7 +189,6 @@ command for easy copying:
 // GOOD - command at end for easy copying
 "To delete the unmerged branch, run wt remove feature -D"
 "To rebase onto main, run wt step rebase or wt merge"
-"To create a new branch, run wt switch feature --create; to list branches, run wt list --branches"
 
 // GOOD - when user needs to modify their command
 "To switch to the remote branch, remove --create; run wt switch feature"
@@ -199,6 +198,17 @@ command for easy copying:
 
 // BAD - command not at end (hard to copy)
 "Run wt switch feature (without --create) to switch to the remote branch"
+```
+
+**Multiple suggestions in one hint:** When combining suggestions with semicolons,
+put the more commonly needed command last for easy terminal copying:
+
+```rust
+// GOOD - common action (create) last, easy to select and copy
+"To list branches, run wt list --branches; to create a new branch, run wt switch feature --create"
+
+// BAD - common action buried, harder to copy
+"To create a new branch, run wt switch feature --create; to list branches, run wt list --branches"
 ```
 
 Use `suggest_command()` from `worktrunk::styling` for proper shell escaping.
