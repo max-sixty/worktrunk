@@ -1843,7 +1843,7 @@ env = "cp {{ repo_root }}/.env.local .env"
     /// Interactive worktree selector
     ///
     /// Toggle preview tabs with 1/2/3 keys. Toggle preview visibility with alt-p.
-    #[cfg(unix)]
+    #[cfg_attr(not(unix), command(hide = true))]
     #[command(
         after_long_help = r#"Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
 <!-- demo: wt-select.gif 1600x800 -->
