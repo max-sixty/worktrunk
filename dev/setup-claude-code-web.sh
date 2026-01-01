@@ -158,29 +158,9 @@ fi
 # Install development tools
 echo ""
 echo "Installing development tools..."
-
-# Install cargo-insta (snapshot testing)
-if cargo insta --version &> /dev/null; then
-    print_status "cargo-insta already installed"
-else
-    echo "  Installing cargo-insta..."
-    cargo install cargo-insta --quiet
-    print_status "cargo-insta installed"
-fi
-
-# Install cargo-nextest (faster test runner)
-if cargo nextest --version &> /dev/null; then
-    print_status "cargo-nextest already installed"
-else
-    echo "  Installing cargo-nextest..."
-    cargo install cargo-nextest --quiet
-    print_status "cargo-nextest installed"
-fi
-
-# Install worktrunk itself
-echo "  Installing worktrunk from source..."
+cargo install cargo-insta cargo-nextest --quiet
 cargo install --path . --quiet
-print_status "worktrunk installed"
+print_status "Installed cargo-insta, cargo-nextest, worktrunk"
 
 # Summary
 echo ""
