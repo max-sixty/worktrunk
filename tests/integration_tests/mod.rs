@@ -43,6 +43,7 @@ pub mod repository;
 pub mod security;
 pub mod select;
 pub mod shell_wrapper;
+pub mod shell_wrapper_windows;
 pub mod spacing_edge_cases;
 pub mod statusline;
 pub mod switch;
