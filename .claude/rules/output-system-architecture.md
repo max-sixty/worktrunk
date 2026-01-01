@@ -59,21 +59,19 @@ output::change_directory(&path)?;  // Writes to directive file if set, else no-o
 
 ## stdout vs stderr
 
-- **stdout**: Primary output (tables, JSON) — pipeable
-- **stderr**: Status messages (progress, success, errors, hints)
-- **directive file**: Shell commands (cd, exec)
+**Decision principle:** If this command is piped, what should the receiving program get?
 
-This separation makes `wt list | grep feature` work.
+- **stdout** → Data for pipes, scripts, `eval` (tables, JSON, shell code)
+- **stderr** → Status for the human watching (progress, success, errors, hints)
+- **directive file** → Shell commands executed after wt exits (cd, exec)
+
+Examples:
+- `wt list` → table/JSON to stdout (for grep, jq, scripts)
+- `wt config shell init` → shell code to stdout (for `eval`)
+- `wt switch` → status messages only (nothing to pipe)
 
 ## Security
 
 `WORKTRUNK_DIRECTIVE_FILE` is automatically removed from spawned subprocesses
 (via `shell_exec::run()`). This prevents hooks from writing to the directive
 file.
-
-## Adding New Output Functions
-
-Add the function to `global.rs`. The pattern:
-- **Primary output** (data the command produces) → stdout via `table()` or `data()`
-- **Status messages** (progress, success, errors) → stderr via `print()`
-- **Directives** (cd, exec) → directive file via `change_directory()`, `execute()`

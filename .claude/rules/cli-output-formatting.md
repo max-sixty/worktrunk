@@ -226,15 +226,16 @@ Use `suggest_command()` from `worktrunk::styling` for proper shell escaping.
 - **One blank after prompts** — Separate user input from results
 - **Never double blanks** — One blank line maximum between elements
 
-## stdout vs stderr
+## Output System
 
-See `output-system-architecture.md` for the stream separation. Key rule:
+Use `output::` functions, never direct `println!`. See `output-system-architecture.md`
+for stdout vs stderr decisions.
 
 ```rust
-// GOOD - use output system
+// GOOD
 output::print(success_message("Branch created"))?;
 
-// BAD - direct writes bypass output system
+// BAD - bypasses output system
 println!("Branch created");
 ```
 

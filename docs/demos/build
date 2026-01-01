@@ -307,7 +307,7 @@ SOCIAL_DEMOS = [
         partial(prepare_merge_demo, commit_generation=False, staged_changes=False),
         "vhs",
     ),
-    ("wt-select-short.tape", "wt-select-short", prepare_basic, "vhs-keystrokes"),
+    ("wt-select.tape", "wt-select", prepare_basic, "vhs-keystrokes"),
     ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),
 ]
