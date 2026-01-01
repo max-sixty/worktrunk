@@ -14,34 +14,29 @@ Sleep 500ms
 # Launch wt select
 Type "wt select"
 Enter
-Sleep 2s
+Sleep 1.5s
 
-# Navigate to alpha branch (has large main…± diff and working tree changes)
+# Quick browse - second down comes fast
 Down
-Sleep 1s
+Sleep 0.1s
 Down
-Sleep 1.5s
+Sleep 0.8s
 
-# Switch to main…± tab (panel 3) to see committed diff from main
-Type "3"
-Sleep 1.5s
+# Scroll the diff panel with Ctrl+D
+Ctrl+d
+Sleep 0.5s
+Ctrl+d
+Sleep 0.5s
+Ctrl+d
+Sleep 3s
 
-# Browse the diff with Ctrl+D (shows scrolling through large diff)
-Ctrl+d
-Sleep 1s
-Ctrl+d
-Sleep 1s
-Ctrl+d
-Sleep 1.5s
-
-# Filter to narrow down and select
+# Filter to find alpha branch
 Type "alp"
-Sleep 1.5s
-Enter
-Sleep 2s
+Sleep 1s
 
-# Show we're now in the worktree
-Sleep 500ms
+# Select it
+Enter
+Sleep 1.5s
 
 Type "exit"
 Enter
