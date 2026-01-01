@@ -78,7 +78,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Change directory to a worktree, creating one if needed. Creating a worktree runs hooks.
+Change directory to a worktree, creating one if needed.
 
 Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
 
@@ -95,7 +95,7 @@ The [2m--create[0m flag creates a new branch from the [2m--base[0m branch (d
 
 [32mCreating worktrees
 
-If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one.
+If the branch already has a worktree, [2mwt switch[0m changes directories to it. Otherwise, it creates one, running hooks.
 
 When creating a worktree, worktrunk:
 

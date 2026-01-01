@@ -650,11 +650,16 @@ impl Task for UrlStatusTask {
         };
 
         // Parse port from URL and check if it's listening
-        let active = parse_port_from_url(url).map(|port| {
-            // Quick TCP connect check with 50ms timeout
-            let addr = SocketAddr::from(([127, 0, 0, 1], port));
-            TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
-        });
+        // Skip health check in tests to avoid flaky results from random local processes
+        let active = if std::env::var("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK").is_ok() {
+            Some(false)
+        } else {
+            parse_port_from_url(url).map(|port| {
+                // Quick TCP connect check with 50ms timeout
+                let addr = SocketAddr::from(([127, 0, 0, 1], port));
+                TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+            })
+        };
 
         // Return only active status (url=None to avoid overwriting the already-sent URL)
         Ok(TaskResult::UrlStatus {
