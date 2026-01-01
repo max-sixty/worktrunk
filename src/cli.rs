@@ -1013,7 +1013,10 @@ pub enum HookCommand {
     ///
     /// Blocking — waits for completion before continuing.
     PostCreate {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1026,7 +1029,10 @@ pub enum HookCommand {
     ///
     /// Background — runs without blocking.
     PostStart {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1039,7 +1045,10 @@ pub enum HookCommand {
     ///
     /// Background — runs without blocking.
     PostSwitch {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1050,7 +1059,10 @@ pub enum HookCommand {
 
     /// Run pre-commit hooks
     PreCommit {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1061,7 +1073,10 @@ pub enum HookCommand {
 
     /// Run pre-merge hooks
     PreMerge {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1072,7 +1087,10 @@ pub enum HookCommand {
 
     /// Run post-merge hooks
     PostMerge {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1083,7 +1101,10 @@ pub enum HookCommand {
 
     /// Run pre-remove hooks
     PreRemove {
-        /// Run only this command from hook config
+        /// Filter by command name
+        ///
+        /// Supports `user:name` or `project:name` to filter by source.
+        /// `user:` alone runs all user hooks; `project:` alone runs all project hooks.
         #[arg(add = crate::completion::hook_command_name_completer())]
         name: Option<String>,
 
@@ -1454,23 +1475,9 @@ wt step push
     /// Run hooks independently
     #[command(
         name = "hook",
-        after_long_help = r#"Run hooks independently of normal worktree operations.
+        after_long_help = r#"Shell commands that run at key points in the worktree lifecycle.
 
-Hooks normally run automatically during `wt switch --create`, `wt merge`, and `wt remove`. This command runs them on demand — useful for testing hooks during development, running in CI pipelines, or re-running after a failure.
-
-Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
-
-```console
-wt hook pre-merge              # Run all pre-merge hooks
-wt hook pre-merge test         # Run hooks named "test" from both sources
-wt hook pre-merge user:        # Run all user hooks
-wt hook pre-merge project:     # Run all project hooks
-wt hook pre-merge user:test    # Run only user's "test" hook
-wt hook pre-merge project:test # Run only project's "test" hook
-wt hook pre-merge --yes        # Skip approval prompts (for CI)
-```
-
-The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
+Hooks run automatically during `wt switch`, `wt merge`, & `wt remove`. `wt hook <type>` runs them on demand. Both user hooks (from `~/.config/worktrunk/config.toml`) and project hooks (from `.config/wt.toml`) are supported.
 
 ## Hook types
 
@@ -1784,6 +1791,22 @@ database = "docker-compose up -d postgres"
 frontend-tests = "cd frontend && npm test"
 backend-tests = "cd backend && cargo test"
 ```
+
+## Running hooks manually
+
+`wt hook <type>` runs hooks on demand — useful for testing during development, running in CI pipelines, or re-running after a failure.
+
+```console
+wt hook pre-merge              # Run all pre-merge hooks
+wt hook pre-merge test         # Run hooks named "test" from both sources
+wt hook pre-merge user:        # Run all user hooks
+wt hook pre-merge project:     # Run all project hooks
+wt hook pre-merge user:test    # Run only user's "test" hook
+wt hook pre-merge project:test # Run only project's "test" hook
+wt hook pre-merge --yes        # Skip approval prompts (for CI)
+```
+
+The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
 
 ### Common patterns
 
