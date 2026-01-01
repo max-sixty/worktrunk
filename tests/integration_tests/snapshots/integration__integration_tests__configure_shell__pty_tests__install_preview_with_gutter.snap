@@ -13,6 +13,4 @@ y
 ↳ Skipped fish; ~/.config/fish/conf.d not found
 
 ✓ Configured 1 shell
-▲ Completions require compinit; add to ~/.zshrc before the wt line:
-  autoload -Uz compinit && compinit
 ↳ Restart shell or run: source ~/.zshrc

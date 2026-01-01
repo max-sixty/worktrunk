@@ -2148,7 +2148,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
     /// Switch to a worktree
     #[command(
-        after_long_help = r#"Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
+        after_long_help = r#"Change directory to a worktree, creating one if needed.
 <!-- demo: wt-switch.gif 1600x900 -->
 
 Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
@@ -2168,7 +2168,7 @@ The `--create` flag creates a new branch from the `--base` branch (defaults to d
 
 ## Creating worktrees
 
-If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one.
+If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](@/hook.md).
 
 When creating a worktree, worktrunk:
 

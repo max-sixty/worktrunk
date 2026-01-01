@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt switch --help-page` — edit cli.rs to update -->
 
-Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
+Change directory to a worktree, creating one if needed.
 
 <figure class="demo">
 <picture>
@@ -34,7 +34,7 @@ The `--create` flag creates a new branch from the `--base` branch (defaults to d
 
 ## Creating worktrees
 
-If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one.
+If the branch already has a worktree, `wt switch` changes directories to it. Otherwise, it creates one, running [hooks](@/hook.md).
 
 When creating a worktree, worktrunk:
 
