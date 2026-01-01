@@ -11,6 +11,7 @@
 # - Installs required shells (zsh, fish) on Debian/Ubuntu
 # - Installs GitHub CLI (gh) for working with PRs/issues
 # - Builds the project
+# - Installs dev tools: cargo-insta, cargo-nextest, worktrunk
 #
 # After running this script, run tests with:
 #   cargo test --lib --bins           # Unit tests
@@ -154,6 +155,33 @@ else
     exit 1
 fi
 
+# Install development tools
+echo ""
+echo "Installing development tools..."
+
+# Install cargo-insta (snapshot testing)
+if cargo insta --version &> /dev/null; then
+    print_status "cargo-insta already installed"
+else
+    echo "  Installing cargo-insta..."
+    cargo install cargo-insta --quiet
+    print_status "cargo-insta installed"
+fi
+
+# Install cargo-nextest (faster test runner)
+if cargo nextest --version &> /dev/null; then
+    print_status "cargo-nextest already installed"
+else
+    echo "  Installing cargo-nextest..."
+    cargo install cargo-nextest --quiet
+    print_status "cargo-nextest installed"
+fi
+
+# Install worktrunk itself
+echo "  Installing worktrunk from source..."
+cargo install --path . --quiet
+print_status "worktrunk installed"
+
 # Summary
 echo ""
 echo "========================================"
@@ -166,6 +194,7 @@ print_status "Shells available: ${SHELLS_AVAILABLE[*]}"
 if command -v gh &> /dev/null; then
     print_status "GitHub CLI (gh) installed"
 fi
+print_status "Dev tools: cargo-insta, cargo-nextest, worktrunk"
 
 if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
     echo ""
