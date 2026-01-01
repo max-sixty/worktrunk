@@ -34,8 +34,6 @@ repos:
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          # Root dir for resolving absolute paths like /assets/...
-          - --root-dir=docs/static
   - repo: local
     hooks:
       - id: cargo-lock

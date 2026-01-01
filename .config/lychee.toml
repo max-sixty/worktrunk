@@ -1,6 +1,9 @@
 # Lychee link checker configuration
 # See: https://lychee.cli.rs/
 
+# Root directory for resolving absolute paths (e.g., /assets/...)
+root_dir = "docs/static"
+
 # Network resilience - handles transient failures
 max_retries = 5
 timeout = 20
