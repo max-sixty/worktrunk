@@ -984,6 +984,7 @@ mod pty_tests {
 
     /// Test that `wt config shell install` shows preview with gutter-formatted config lines
     #[rstest]
+    #[ignore = "flaky on CI due to zsh compinit warnings about insecure directories"]
     fn test_install_preview_with_gutter(repo: TestRepo, temp_home: TempDir) {
         // Create zsh config file
         let zshrc_path = temp_home.path().join(".zshrc");
