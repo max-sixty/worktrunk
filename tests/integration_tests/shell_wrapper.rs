@@ -388,6 +388,10 @@ fn exec_in_pty_interactive(
     }
 
     if shell == "bash" {
+        // Run in interactive mode but skip rc files to prevent PATH manipulation
+        // (similar to zsh isolation above)
+        cmd.arg("--norc");
+        cmd.arg("--noprofile");
         cmd.arg("-i");
     }
 
