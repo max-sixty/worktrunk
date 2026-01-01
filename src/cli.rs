@@ -1922,6 +1922,16 @@ Output as JSON for scripting:
 $ wt list --format=json
 ```
 
+## Global listing
+
+List worktrees across all projects when `global-worktree-dir` is configured:
+
+```console
+$ wt list --global
+```
+
+This scans the global worktree directory and groups results by project.
+
 ## Columns
 
 | Column | Shows |
@@ -2123,16 +2133,20 @@ Missing a field that would be generally useful? Open an issue at https://github.
         format: OutputFormat,
 
         /// Include branches without worktrees
-        #[arg(long)]
+        #[arg(long, conflicts_with = "global")]
         branches: bool,
 
         /// Include remote branches
-        #[arg(long)]
+        #[arg(long, conflicts_with = "global")]
         remotes: bool,
 
         /// Show CI, merge-base diffstat, and working tree conflict check
         #[arg(long)]
         full: bool,
+
+        /// List worktrees from all projects in global-worktree-dir
+        #[arg(long)]
+        global: bool,
 
         /// Show fast info immediately, update with slow info
         ///
@@ -2172,10 +2186,21 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 When creating a worktree, worktrunk:
 
-1. Creates worktree at configured path
+1. Creates worktree at configured path (see below)
 2. Switches to new directory
 3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
 4. Spawns [post-start hooks](@/hook.md#post-start) (background)
+
+## Worktree placement
+
+By default, worktrees are placed in sibling directories based on the `worktree-path` template. When `global-worktree-dir` is configured, new worktrees are placed there instead using `{project}.{branch}` naming:
+
+```toml
+# ~/.config/worktrunk/config.toml
+global-worktree-dir = "~/worktrees"
+```
+
+This creates worktrees like `~/worktrees/myrepo.feature-auth`.
 
 ```console
 wt switch feature                        # Existing branch → creates worktree

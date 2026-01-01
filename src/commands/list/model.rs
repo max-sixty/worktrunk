@@ -127,7 +127,7 @@ impl WorktreeData {
 /// WorktreeData is boxed to reduce the size of ItemKind enum (304 bytes → 24 bytes).
 /// This reduces stack pressure when passing ListItem by value and improves cache locality
 /// in `Vec<ListItem>` by keeping the discriminant and common fields together.
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ItemKind {
     Worktree(Box<WorktreeData>),
@@ -189,7 +189,7 @@ impl UpstreamStatus {
 }
 
 /// Unified item for displaying worktrees and branches in the same table
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct ListItem {
     // Common fields (present for both worktrees and branches)
     #[serde(rename = "head_sha")]
