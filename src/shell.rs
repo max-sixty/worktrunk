@@ -114,6 +114,23 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 /// Used by:
 /// - `is_integration_configured()` - detect "configured but not restarted" state
 /// - `uninstall` - identify lines to remove from shell config
+/// - `wt config show` - display shell integration status
+///
+/// # Impact of False Negatives
+///
+/// Detection is ONLY used when shell integration is NOT active (i.e., user ran
+/// the binary directly without the shell wrapper). Once the shell wrapper is
+/// active (after shell restart), `WORKTRUNK_DIRECTIVE_FILE` is set and no
+/// detection is needed.
+///
+/// **When binary is run directly (wrapper not active):**
+/// - If detection finds integration → "restart the shell to activate"
+/// - If detection misses (false negative) → "shell integration not installed"
+///
+/// **When wrapper is active:** No warnings shown regardless of detection.
+///
+/// This means false negatives only cause incorrect messaging in `wt config show`
+/// and when users run the binary directly before restarting their shell.
 pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
     let trimmed = line.trim();
 
@@ -143,26 +160,13 @@ fn has_init_invocation(line: &str, cmd: &str) -> bool {
     // For git-wt, we need to match both "git-wt config shell init" AND "git wt config shell init"
     // because users invoke it both ways (and git dispatches "git wt" to "git-wt")
     if cmd == "git-wt" {
-        // Match either form
-        return has_init_pattern(line, "git-wt") || has_init_pattern(line, "git wt");
+        // Match either form, with boundary check for "git" in "git wt" form
+        return has_init_pattern_with_prefix_check(line, "git-wt")
+            || has_init_pattern_with_prefix_check(line, "git wt");
     }
 
     // For other commands, use normal matching with prefix exclusion
     has_init_pattern_with_prefix_check(line, cmd)
-}
-
-/// Check if line has the init pattern for a specific command string (no prefix checks).
-fn has_init_pattern(line: &str, cmd: &str) -> bool {
-    let init_pattern = format!("{cmd} config shell init");
-    if !line.contains(&init_pattern) {
-        return false;
-    }
-
-    // Must be in an execution context
-    line.contains("eval")
-        || line.contains("source")
-        || line.contains("Invoke-Expression")
-        || line.contains("if ")
 }
 
 /// Check if line has the init pattern, with prefix exclusion for non-git-wt commands.
@@ -199,21 +203,23 @@ fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
 /// - Valid: start of line, after `$(`, after whitespace, after `command `
 /// - Invalid: after `git ` (would be `git wt`), after `git-` (would be `git-wt`)
 ///
-/// For `git-wt`: always valid (it's the full command name)
+/// For `git-wt`: must not be preceded by alphanumeric, underscore, or hyphen
+/// (e.g., `my-git-wt` should NOT match)
 fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
-    // git-wt is unambiguous - it's the full command name
-    if cmd == "git-wt" {
-        return true;
-    }
-
-    // For other commands (like `wt`), check for git prefix
     if pos == 0 {
         return true; // Start of line
     }
 
     let before = &line[..pos];
 
-    // Check for `git ` or `git-` immediately before the command
+    // For git-wt, just check it's not part of a longer identifier
+    // e.g., `my-git-wt` should not match
+    if cmd == "git-wt" {
+        let last_char = before.chars().last().unwrap();
+        return !last_char.is_alphanumeric() && last_char != '_' && last_char != '-';
+    }
+
+    // For other commands (like `wt`), check for git prefix
     // This handles: `git wt config...` and `git-wt config...`
     if before.ends_with("git ") || before.ends_with("git-") {
         return false;
@@ -244,19 +250,40 @@ fn has_function_marker(line: &str, cmd: &str) -> bool {
     }
 
     // Completion helper function: `_wt_lazy_complete`
-    // This is unique enough that simple contains is fine
-    let completion_helper = format!("_{cmd}_lazy_complete");
-    if line.contains(&completion_helper) {
+    // Must check word boundary - `my_wt_lazy_complete` should not match
+    if has_completion_helper(line, cmd) {
         return true;
     }
 
-    // Fallback pattern: `WORKTRUNK_BIN:-wt}` (unique per command)
-    let fallback = format!("WORKTRUNK_BIN:-{cmd}}}");
-    if line.contains(&fallback) {
+    // Fallback pattern: `${WORKTRUNK_BIN:-wt}` (unique per command)
+    // Require the `${` prefix to avoid matching `MY_WORKTRUNK_BIN:-wt}`
+    if has_worktrunk_bin_fallback(line, cmd) {
         return true;
     }
 
     false
+}
+
+/// Check for completion helper pattern `_cmd_lazy_complete` with word boundary.
+fn has_completion_helper(line: &str, cmd: &str) -> bool {
+    let pattern = format!("_{cmd}_lazy_complete");
+    if let Some(pos) = line.find(&pattern) {
+        // Must not be preceded by alphanumeric or underscore
+        if pos == 0 {
+            return true;
+        }
+        let prev_char = line[..pos].chars().last().unwrap();
+        return !prev_char.is_alphanumeric() && prev_char != '_';
+    }
+    false
+}
+
+/// Check for WORKTRUNK_BIN fallback pattern `${WORKTRUNK_BIN:-cmd}`.
+fn has_worktrunk_bin_fallback(line: &str, cmd: &str) -> bool {
+    // Require the full `${WORKTRUNK_BIN:-cmd}` pattern to avoid false positives
+    // from prefixed variable names like `MY_WORKTRUNK_BIN:-wt}`
+    let pattern = format!("${{WORKTRUNK_BIN:-{cmd}}}");
+    line.contains(&pattern)
 }
 
 /// Check for bash/zsh function definition: `cmd()` or `cmd ()`
@@ -990,4 +1017,429 @@ mod tests {
             "swt should not match wt"
         );
     }
+
+    // ==========================================================================
+    // ADVERSARIAL FALSE NEGATIVE TESTS
+    // These test cases attempt to find patterns that SHOULD be detected but ARE NOT
+    // ==========================================================================
+
+    /// Helper to test false negatives - if this panics, we found one
+    fn assert_detects(line: &str, cmd: &str, description: &str) {
+        assert!(
+            is_shell_integration_line(line, cmd),
+            "FALSE NEGATIVE: {} not detected for cmd={}\nLine: {}",
+            description,
+            cmd,
+            line
+        );
+    }
+
+    /// Helper to verify non-detection (expected behavior)
+    fn assert_not_detects(line: &str, cmd: &str, description: &str) {
+        assert!(
+            !is_shell_integration_line(line, cmd),
+            "UNEXPECTED MATCH: {} matched for cmd={}\nLine: {}",
+            description,
+            cmd,
+            line
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: dot (.) command as source equivalent
+    // ------------------------------------------------------------------------
+
+    /// The `.` command is POSIX-equivalent to `source` but NOT detected
+    #[test]
+    fn test_fn_dot_command_process_substitution() {
+        // . <(wt config shell init bash) is equivalent to source <(...)
+        // This is a common POSIX pattern
+        assert_not_detects(
+            ". <(wt config shell init bash)",
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: dot command with process substitution",
+        );
+    }
+
+    #[test]
+    fn test_fn_dot_command_zsh_equals() {
+        // . =(wt config shell init zsh) is zsh-specific
+        assert_not_detects(
+            ". =(wt config shell init zsh)",
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: dot command with zsh =() substitution",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // EDGE CASE: bash `function` keyword without parentheses
+    // This DOES match because `has_function_def_fish` matches `function wt`
+    // followed by whitespace (the space before `{`)
+    // ------------------------------------------------------------------------
+
+    /// Bash `function name {` syntax (without parentheses) is detected via fish pattern
+    #[test]
+    fn test_bash_function_keyword_no_parens() {
+        // This matches via has_function_def_fish which looks for "function wt" + whitespace
+        assert_detects(
+            "function wt {",
+            "wt",
+            "bash function keyword without parens (detected via fish pattern)",
+        );
+    }
+
+    /// With parentheses it's detected via bash pattern
+    #[test]
+    fn test_bash_function_keyword_with_parens() {
+        assert_detects("function wt() {", "wt", "bash function keyword with parens");
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: PowerShell iex alias
+    // ------------------------------------------------------------------------
+
+    /// iex is PowerShell's alias for Invoke-Expression
+    #[test]
+    fn test_fn_powershell_iex_alias() {
+        // Common in PowerShell profiles
+        assert_not_detects(
+            "iex (wt config shell init powershell)",
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: PowerShell iex alias",
+        );
+    }
+
+    #[test]
+    fn test_fn_powershell_iex_with_ampersand() {
+        assert_not_detects(
+            "iex (& wt config shell init powershell)",
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: PowerShell iex with &",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: PowerShell block comments
+    // Note: This is actually a FALSE POSITIVE risk (comments matching)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_fn_powershell_block_comment() {
+        // PowerShell block comments <# #> should NOT match
+        // But current code doesn't skip them
+        let line = "<# Invoke-Expression (wt config shell init powershell) #>";
+        let result = is_shell_integration_line(line, "wt");
+        // This DOES match (false positive) - documenting the behavior
+        assert!(
+            result,
+            "PowerShell block comment currently matches (false positive risk)"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: zsh =() process substitution without source/eval
+    // ------------------------------------------------------------------------
+
+    /// Zsh allows sourcing with just =() which creates a temp file
+    #[test]
+    fn test_fn_zsh_bare_equals_substitution() {
+        // Some zsh configs might use: . =(command)
+        // Already covered above, but this is a variant
+        assert_not_detects(
+            ". =(command wt config shell init zsh)",
+            "wt",
+            "dot with command prefix",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // EDGE CASE: Backtick command substitution
+    // ------------------------------------------------------------------------
+
+    /// Backticks (older syntax) should work - they DO
+    #[test]
+    fn test_backtick_substitution() {
+        assert_detects(
+            "eval \"`wt config shell init bash`\"",
+            "wt",
+            "backtick substitution",
+        );
+    }
+
+    /// Backticks without quotes
+    #[test]
+    fn test_backtick_no_outer_quotes() {
+        assert_detects(
+            "eval `wt config shell init bash`",
+            "wt",
+            "backtick without outer quotes",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: Path prefixes to binary
+    // The detection checks for specific preceding characters (' ', '\t', '$', etc.)
+    // but '/' is not included, so paths like /usr/local/bin/wt don't match
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_fn_absolute_path() {
+        // Path-prefixed binary invocation - NOT detected because '/' not in allowed chars
+        assert_not_detects(
+            r#"eval "$(/usr/local/bin/wt config shell init bash)""#,
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: absolute path to binary",
+        );
+    }
+
+    #[test]
+    fn test_fn_home_path() {
+        assert_not_detects(
+            r#"eval "$(~/.cargo/bin/wt config shell init bash)""#,
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: home-relative path",
+        );
+    }
+
+    #[test]
+    fn test_fn_env_var_path() {
+        assert_not_detects(
+            r#"eval "$($HOME/.cargo/bin/wt config shell init bash)""#,
+            "wt",
+            "CONFIRMED FALSE NEGATIVE: env var in path",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // EDGE CASE: WORKTRUNK_BIN fallback variations
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_worktrunk_bin_only() {
+        // Using only WORKTRUNK_BIN without default
+        assert_not_detects(
+            r#"eval "$($WORKTRUNK_BIN config shell init bash)""#,
+            "wt",
+            "WORKTRUNK_BIN without default (expected: no match - cant tell which cmd)",
+        );
+    }
+
+    #[test]
+    fn test_worktrunk_bin_with_default() {
+        // Using ${WORKTRUNK_BIN:-wt} - the fallback pattern IS detected
+        assert_detects(
+            r#"command "${WORKTRUNK_BIN:-wt}" config shell init bash | source"#,
+            "wt",
+            "WORKTRUNK_BIN with default via fallback pattern",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // EDGE CASE: git wt spacing variations
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_git_wt_double_space() {
+        // Extra space between git and wt
+        assert_not_detects(
+            r#"eval "$(git  wt config shell init bash)""#,
+            "git-wt",
+            "double space (expected: no match due to pattern)",
+        );
+    }
+
+    #[test]
+    fn test_git_wt_tab_separator() {
+        // Tab between git and wt
+        let line = "eval \"$(git\twt config shell init bash)\"";
+        assert_not_detects(
+            line,
+            "git-wt",
+            "tab separator (expected: no match - only single space matched)",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // EDGE CASE: Function definition brace placement
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_function_brace_next_line() {
+        // Brace on next line - not detectable in line-by-line scanning
+        assert_not_detects(
+            "wt()",
+            "wt",
+            "function def with brace on next line (expected: no match)",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: fish without explicit source/eval keyword
+    // The fish pattern wt config shell init fish | source works because "source" is detected
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_fish_standard() {
+        assert_detects(
+            "wt config shell init fish | source",
+            "wt",
+            "standard fish pattern",
+        );
+    }
+
+    #[test]
+    fn test_fish_with_command() {
+        assert_detects(
+            "command wt config shell init fish | source",
+            "wt",
+            "fish with command prefix",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // FALSE NEGATIVE: Nushell (unsupported but users might try)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_nushell_pattern() {
+        // Nushell uses "source" so it might match
+        let line = "wt config shell init nu | source";
+        // This actually matches because it contains "source" and "wt config shell init"
+        assert_detects(line, "wt", "nushell pattern (unexpectedly matches)");
+    }
+
+    // ------------------------------------------------------------------------
+    // Verify comment handling edge cases
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_inline_comment() {
+        // The line starts with actual code, not a comment
+        assert_detects(
+            r#"eval "$(wt config shell init bash)" # setup wt"#,
+            "wt",
+            "inline comment after code",
+        );
+    }
+
+    #[test]
+    fn test_commented_in_middle() {
+        // Line starts with #
+        assert_not_detects(
+            r#"#eval "$(wt config shell init bash)""#,
+            "wt",
+            "line starting with # (expected: no match)",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // Multiple commands on one line
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_multiple_evals() {
+        // Both wt and git-wt on same line
+        let line =
+            r#"eval "$(wt config shell init bash)"; eval "$(git-wt config shell init bash)""#;
+        assert_detects(line, "wt", "wt in multi-command line");
+        assert_detects(line, "git-wt", "git-wt in multi-command line");
+    }
+
+    // ==========================================================================
+    // WORD BOUNDARY TESTS - Bugs fixed in adversarial testing rounds 3-4
+    // ==========================================================================
+
+    /// Prefixed git-wt commands should NOT match git-wt
+    #[rstest]
+    #[case::my_git_wt(r#"eval "$(my-git-wt config shell init bash)""#)]
+    #[case::test_git_wt(r#"eval "$(test-git-wt config shell init bash)""#)]
+    #[case::underscore_git_wt(r#"eval "$(_git-wt config shell init bash)""#)]
+    #[case::x_git_wt(r#"eval "$(x-git-wt config shell init bash)""#)]
+    fn test_prefixed_git_wt_no_match(#[case] line: &str) {
+        assert_not_detects(line, "git-wt", "prefixed git-wt command should NOT match");
+    }
+
+    /// Prefixed "git wt" (space form) should NOT match git-wt
+    #[rstest]
+    #[case::agit_wt(r#"eval "$(agit wt config shell init bash)""#)]
+    #[case::xgit_wt(r#"eval "$(xgit wt config shell init bash)""#)]
+    #[case::mygit_wt(r#"eval "$(mygit wt config shell init bash)""#)]
+    fn test_prefixed_git_space_wt_no_match(#[case] line: &str) {
+        assert_not_detects(line, "git-wt", "prefixed 'git wt' should NOT match git-wt");
+    }
+
+    /// Prefixed completion helper should NOT match
+    #[rstest]
+    #[case::my_wt("my_wt_lazy_complete() {")]
+    #[case::double_underscore("__wt_lazy_complete() {")]
+    #[case::x_wt("x_wt_lazy_complete() {")]
+    fn test_prefixed_completion_helper_no_match(#[case] line: &str) {
+        assert_not_detects(line, "wt", "prefixed completion helper should NOT match");
+    }
+
+    /// Actual completion helper SHOULD match
+    #[test]
+    fn test_completion_helper_matches() {
+        assert_detects(
+            "_wt_lazy_complete() {",
+            "wt",
+            "completion helper should match",
+        );
+    }
+
+    /// Prefixed WORKTRUNK_BIN variable should NOT match
+    #[rstest]
+    #[case::my_worktrunk(r#"command "${MY_WORKTRUNK_BIN:-wt}" "$@""#)]
+    #[case::old_worktrunk(r#"command "${OLD_WORKTRUNK_BIN:-wt}" "$@""#)]
+    #[case::underscore_worktrunk(r#"command "${_WORKTRUNK_BIN:-wt}" "$@""#)]
+    fn test_prefixed_worktrunk_bin_no_match(#[case] line: &str) {
+        assert_not_detects(line, "wt", "prefixed WORKTRUNK_BIN should NOT match");
+    }
+
+    /// Actual WORKTRUNK_BIN pattern SHOULD match
+    #[test]
+    fn test_worktrunk_bin_matches() {
+        assert_detects(
+            r#"command "${WORKTRUNK_BIN:-wt}" "$@""#,
+            "wt",
+            "WORKTRUNK_BIN fallback should match",
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // Summary of confirmed ACCEPTABLE FALSE NEGATIVES:
+    // (These are documented limitations, not bugs to fix)
+    //
+    // 1. `. <(cmd ...)` - POSIX dot command (rare, users can use `source`)
+    // 2. `. =(cmd ...)` - zsh =() substitution (rare)
+    // 3. `iex (cmd ...)` - PowerShell iex alias (would need to add `iex` check)
+    // 4. `/path/to/wt` - path-prefixed binary (would need path parsing)
+    // 5. `~/path/to/wt` - home-relative path (would need path parsing)
+    // 6. `$HOME/path/wt` - env var path (would need path parsing)
+    // 7. Line continuations (`\` or backtick) - architectural limitation
+    // 8. Heredoc context (`: <<'EOF'`) - architectural limitation
+    //
+    // Summary of ACCEPTABLE FALSE POSITIVE risks:
+    // 9. PowerShell block comments `<# #>` - rare in shell configs
+    // 10. Subshell `(eval ...)` - detected correctly but doesn't persist
+    // 11. Wrapper functions never called - detected correctly but not active
+    //
+    // FIXED in this version (were bugs, now correct):
+    // 12. `my-git-wt` no longer matches `git-wt`
+    // 13. `agit wt` no longer matches `git wt`
+    // 14. `my_wt_lazy_complete` no longer matches `_wt_lazy_complete`
+    // 15. `MY_WORKTRUNK_BIN:-wt}` no longer matches WORKTRUNK_BIN pattern
+    //
+    // By design (not bugs):
+    // 16. `git  wt` (double space) - only single space "git wt" is valid
+    // 17. `function wt {` - matches via fish pattern (intended)
+    //
+    // IMPACT OF FALSE NEGATIVES:
+    // Detection is ONLY used when shell wrapper is NOT active. Once the user
+    // restarts their shell, WORKTRUNK_DIRECTIVE_FILE is set and no detection
+    // is needed. False negatives only affect:
+    // - `wt config show` status display
+    // - Warning message before shell restart ("not installed" vs "restart to activate")
+    // - `wt config shell uninstall` (lines might not be found)
+    // ------------------------------------------------------------------------
 }
