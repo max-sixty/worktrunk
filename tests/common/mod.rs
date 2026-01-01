@@ -549,6 +549,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("COLUMNS", "150");
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
+    // Skip URL health checks to avoid flaky tests from random local processes
+    cmd.env("WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK", "1");
 
     // Pass through LLVM coverage profiling environment for subprocess coverage collection.
     // When running under cargo-llvm-cov, spawned binaries need LLVM_PROFILE_FILE to record
