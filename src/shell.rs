@@ -326,6 +326,192 @@ fn has_function_def_fish(line: &str, cmd: &str) -> bool {
     false
 }
 
+/// Check if a line contains the command name at a word boundary.
+///
+/// Used to identify potential false negatives - lines that contain the command
+/// but weren't detected as integration lines.
+fn contains_cmd_at_word_boundary(line: &str, cmd: &str) -> bool {
+    let mut search_start = 0;
+    while let Some(pos) = line[search_start..].find(cmd) {
+        let absolute_pos = search_start + pos;
+
+        // Check character before (must be non-identifier or start of string)
+        let before_ok = if absolute_pos == 0 {
+            true
+        } else {
+            let prev_char = line[..absolute_pos].chars().last().unwrap();
+            !prev_char.is_alphanumeric() && prev_char != '_' && prev_char != '-'
+        };
+
+        // Check character after (must be non-identifier or end of string)
+        let after_pos = absolute_pos + cmd.len();
+        let after_ok = if after_pos >= line.len() {
+            true
+        } else {
+            let next_char = line[after_pos..].chars().next().unwrap();
+            !next_char.is_alphanumeric() && next_char != '_' && next_char != '-'
+        };
+
+        if before_ok && after_ok {
+            return true;
+        }
+
+        search_start = absolute_pos + 1;
+    }
+    false
+}
+
+/// Result of scanning a shell config file for integration detection.
+#[derive(Debug, Clone)]
+pub struct FileDetectionResult {
+    /// Path to the config file that was scanned.
+    pub path: PathBuf,
+    /// Lines that matched as shell integration (detected).
+    pub matched_lines: Vec<String>,
+    /// Lines containing the command at word boundary but NOT detected.
+    /// These are potential false negatives.
+    pub unmatched_candidates: Vec<String>,
+}
+
+/// Scan shell config files for detailed detection results.
+///
+/// Returns information about:
+/// - Which lines matched as shell integration
+/// - Which lines contain the command but didn't match (potential false negatives)
+///
+/// Used by `wt config show` to provide debugging output.
+pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>, std::io::Error> {
+    use std::collections::HashSet;
+    use std::fs;
+    use std::io::{BufRead, BufReader};
+
+    let home = home_dir_required()?;
+    let mut results = Vec::new();
+
+    // Check common shell config files for integration patterns
+    // Use HashSet to deduplicate paths (e.g., when ZDOTDIR == $HOME)
+    let mut config_files = vec![
+        // Bash
+        home.join(".bashrc"),
+        home.join(".bash_profile"),
+        home.join(".profile"),
+        // Zsh
+        home.join(".zshrc"),
+        std::env::var("ZDOTDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home.clone())
+            .join(".zshrc"),
+    ];
+
+    // Deduplicate paths
+    let mut seen = HashSet::new();
+    config_files.retain(|p| seen.insert(p.clone()));
+
+    for path in config_files {
+        if !path.exists() {
+            continue;
+        }
+
+        if let Ok(file) = fs::File::open(&path) {
+            let reader = BufReader::new(file);
+            let mut matched_lines = Vec::new();
+            let mut unmatched_candidates = Vec::new();
+
+            for line in reader.lines().map_while(Result::ok) {
+                let trimmed = line.trim();
+                // Skip empty lines and comments for candidates
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+
+                if is_shell_integration_line(&line, cmd) {
+                    matched_lines.push(line.clone());
+                } else if contains_cmd_at_word_boundary(&line, cmd) {
+                    unmatched_candidates.push(line.clone());
+                }
+            }
+
+            // Only include files that have something interesting
+            if !matched_lines.is_empty() || !unmatched_candidates.is_empty() {
+                results.push(FileDetectionResult {
+                    path,
+                    matched_lines,
+                    unmatched_candidates,
+                });
+            }
+        }
+    }
+
+    // Check Fish conf.d directory - look for {cmd}.fish file specifically
+    let fish_conf_d = home.join(".config/fish/conf.d");
+    let fish_config = fish_conf_d.join(format!("{cmd}.fish"));
+    if fish_config.exists()
+        && let Ok(file) = fs::File::open(&fish_config)
+    {
+        let reader = BufReader::new(file);
+        let mut matched_lines = Vec::new();
+        let mut unmatched_candidates = Vec::new();
+
+        for line in reader.lines().map_while(Result::ok) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            if is_shell_integration_line(&line, cmd) {
+                matched_lines.push(line.clone());
+            } else if contains_cmd_at_word_boundary(&line, cmd) {
+                unmatched_candidates.push(line.clone());
+            }
+        }
+
+        if !matched_lines.is_empty() || !unmatched_candidates.is_empty() {
+            results.push(FileDetectionResult {
+                path: fish_config,
+                matched_lines,
+                unmatched_candidates,
+            });
+        }
+    }
+
+    // Check PowerShell profiles for integration (both Core and 5.1)
+    for profile_path in powershell_profile_paths(&home) {
+        if !profile_path.exists() {
+            continue;
+        }
+
+        if let Ok(file) = fs::File::open(&profile_path) {
+            let reader = BufReader::new(file);
+            let mut matched_lines = Vec::new();
+            let mut unmatched_candidates = Vec::new();
+
+            for line in reader.lines().map_while(Result::ok) {
+                let trimmed = line.trim();
+                // Skip empty lines and comments
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+
+                if is_shell_integration_line(&line, cmd) {
+                    matched_lines.push(line.clone());
+                } else if contains_cmd_at_word_boundary(&line, cmd) {
+                    unmatched_candidates.push(line.clone());
+                }
+            }
+
+            if !matched_lines.is_empty() || !unmatched_candidates.is_empty() {
+                results.push(FileDetectionResult {
+                    path: profile_path,
+                    matched_lines,
+                    unmatched_candidates,
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
 /// Supported shells
 ///
 /// Currently supported: bash, fish, zsh, powershell
@@ -461,71 +647,11 @@ impl Shell {
     /// This ensures we only consider integration "configured" if it uses the same binary
     /// we're running as - prevents confusion when users have multiple installs.
     pub fn is_integration_configured(cmd: &str) -> Result<Option<PathBuf>, std::io::Error> {
-        use std::fs;
-        use std::io::{BufRead, BufReader};
-
-        let home = home_dir_required()?;
-
-        // Check common shell config files for integration patterns
-        let config_files = vec![
-            // Bash
-            home.join(".bashrc"),
-            home.join(".bash_profile"),
-            home.join(".profile"),
-            // Zsh
-            home.join(".zshrc"),
-            std::env::var("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.clone())
-                .join(".zshrc"),
-        ];
-
-        for path in config_files {
-            if !path.exists() {
-                continue;
-            }
-
-            if let Ok(file) = fs::File::open(&path) {
-                let reader = BufReader::new(file);
-                for line in reader.lines().map_while(Result::ok) {
-                    if is_shell_integration_line(&line, cmd) {
-                        return Ok(Some(path));
-                    }
-                }
-            }
-        }
-
-        // Check Fish conf.d directory - look for {cmd}.fish file specifically
-        let fish_conf_d = home.join(".config/fish/conf.d");
-        let fish_config = fish_conf_d.join(format!("{cmd}.fish"));
-        if fish_config.exists()
-            && let Ok(file) = fs::File::open(&fish_config)
-        {
-            let reader = BufReader::new(file);
-            for line in reader.lines().map_while(Result::ok) {
-                if is_shell_integration_line(&line, cmd) {
-                    return Ok(Some(fish_config));
-                }
-            }
-        }
-
-        // Check PowerShell profiles for integration (both Core and 5.1)
-        for profile_path in powershell_profile_paths(&home) {
-            if !profile_path.exists() {
-                continue;
-            }
-
-            if let Ok(file) = fs::File::open(&profile_path) {
-                let reader = BufReader::new(file);
-                for line in reader.lines().map_while(Result::ok) {
-                    if is_shell_integration_line(&line, cmd) {
-                        return Ok(Some(profile_path));
-                    }
-                }
-            }
-        }
-
-        Ok(None)
+        let results = scan_for_detection_details(cmd)?;
+        Ok(results
+            .into_iter()
+            .find(|r| !r.matched_lines.is_empty())
+            .map(|r| r.path))
     }
 }
 

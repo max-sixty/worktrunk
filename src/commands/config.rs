@@ -7,10 +7,10 @@ use worktrunk::config::WorktrunkConfig;
 use worktrunk::config::{find_unknown_project_keys, find_unknown_user_keys};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::Shell;
+use worktrunk::shell::{Shell, scan_for_detection_details};
 use worktrunk::styling::{
-    error_message, format_heading, format_toml, format_with_gutter, hint_message, info_message,
-    progress_message, success_message, warning_message,
+    error_message, format_bash_with_gutter, format_heading, format_toml, format_with_gutter,
+    hint_message, info_message, progress_message, success_message, warning_message,
 };
 use worktrunk::utils::get_now;
 
@@ -357,7 +357,11 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     };
 
+    // Get detection details to show matched lines inline
+    let detection_results = scan_for_detection_details(&cmd).unwrap_or_default();
+
     let mut any_not_configured = false;
+    let mut has_any_unmatched = false;
 
     // Show configured and not-configured shells (matching `config shell install` format exactly)
     // Bash/Zsh: inline completions, show "shell extension & completions"
@@ -381,6 +385,16 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                         "Already configured {what} for <bold>{shell}</> @ {path}"
                     ))
                 )?;
+
+                // Show the matched lines directly under this status
+                if let Some(detection) = detection_results
+                    .iter()
+                    .find(|d| d.path == result.path && !d.matched_lines.is_empty())
+                {
+                    for line in &detection.matched_lines {
+                        writeln!(out, "{}", format_bash_with_gutter(line.trim()))?;
+                    }
+                }
 
                 // Check if zsh has compinit enabled (required for completions)
                 if matches!(shell, Shell::Zsh) && check_zsh_compinit_missing() {
@@ -453,6 +467,57 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
             "{}",
             hint_message(cformat!(
                 "To enable shell integration, run <bright-black>wt config shell install</>"
+            ))
+        )?;
+    }
+
+    // Show potential false negatives (lines containing cmd but not detected)
+    for detection in &detection_results {
+        if !detection.unmatched_candidates.is_empty() {
+            has_any_unmatched = true;
+            let path = format_path_for_display(&detection.path);
+            writeln!(
+                out,
+                "{}",
+                warning_message(cformat!(
+                    "Found <bold>{cmd}</> in <bold>{path}</> but not detected as integration:"
+                ))
+            )?;
+            for line in &detection.unmatched_candidates {
+                writeln!(out, "{}", format_bash_with_gutter(line.trim()))?;
+            }
+        }
+    }
+
+    // If we have unmatched candidates but no configured shells, suggest raising an issue
+    let has_any_configured = scan_result
+        .configured
+        .iter()
+        .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
+    if has_any_unmatched && !has_any_configured {
+        let unmatched_summary: Vec<_> = detection_results
+            .iter()
+            .filter(|r| !r.unmatched_candidates.is_empty())
+            .flat_map(|r| r.unmatched_candidates.iter().map(|l| l.trim().to_string()))
+            .collect();
+        let body = format!(
+            "Shell integration not detected despite config containing `{cmd}`.\n\n\
+             **Unmatched lines:**\n```\n{}\n```\n\n\
+             **Expected behavior:** These lines should be detected as shell integration.",
+            unmatched_summary.join("\n")
+        );
+        let issue_url = format!(
+            "https://github.com/max-sixty/worktrunk/issues/new?title={}&body={}",
+            urlencoding::encode("Shell integration detection false negative"),
+            urlencoding::encode(&body)
+        );
+
+        writeln!(out)?;
+        writeln!(
+            out,
+            "{}",
+            hint_message(format!(
+                "If this is shell integration, report a false negative: {issue_url}"
             ))
         )?;
     }
