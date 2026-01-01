@@ -197,7 +197,7 @@ pub fn handle_list(
             let json_items = json_output::to_json_items(&items);
             let json =
                 serde_json::to_string_pretty(&json_items).context("Failed to serialize to JSON")?;
-            crate::output::data(json)?;
+            crate::output::stdout(json)?;
         }
         crate::OutputFormat::Table => {
             // Table and summary already rendered in collect() for all modes

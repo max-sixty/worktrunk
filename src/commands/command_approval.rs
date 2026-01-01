@@ -110,7 +110,7 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
     // Flushes both stdout (for data output) and stderr (for messages)
-    crate::output::flush_for_stderr_prompt()?;
+    crate::output::flush()?;
 
     output::print(cformat!(
         "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"

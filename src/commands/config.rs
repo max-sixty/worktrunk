@@ -678,11 +678,11 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             } else {
                 repo.default_branch()?
             };
-            crate::output::data(branch_name)?;
+            crate::output::stdout(branch_name)?;
         }
         "previous-branch" => match repo.get_switch_previous() {
-            Some(prev) => crate::output::data(prev)?,
-            None => crate::output::data("")?,
+            Some(prev) => crate::output::stdout(prev)?,
+            None => crate::output::stdout("")?,
         },
         "marker" => {
             let branch_name = match branch {
@@ -690,8 +690,8 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 None => repo.require_current_branch("get marker for current branch")?,
             };
             match repo.branch_keyed_marker(&branch_name) {
-                Some(marker) => crate::output::data(marker)?,
-                None => crate::output::data("")?,
+                Some(marker) => crate::output::stdout(marker)?,
+                None => crate::output::stdout("")?,
             }
         }
         "ci-status" => {
@@ -723,7 +723,7 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             let ci_status = PrStatus::detect(&branch_name, &head, repo_root, has_upstream)
                 .map_or(super::list::ci_status::CiStatus::NoCI, |s| s.ci_status);
             let status_str: &'static str = ci_status.into();
-            crate::output::data(status_str)?;
+            crate::output::stdout(status_str)?;
         }
         // TODO: Consider simplifying to just print the path and let users run `ls -al` themselves
         "logs" => {
@@ -1063,7 +1063,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "logs": logs
     });
 
-    crate::output::data(serde_json::to_string_pretty(&output)?)?;
+    crate::output::stdout(serde_json::to_string_pretty(&output)?)?;
     Ok(())
 }
 

@@ -36,12 +36,10 @@ output::change_directory(&path)?;  // Writes to directive file if set, else no-o
 | `print(message)` | stderr | Status messages (use with formatting functions) |
 | `shell_integration_hint(message)` | stderr | Hints suppressed when shell integration active |
 | `blank()` | stderr | Visual separation |
-| `table(content)` | stdout | Primary output (pipeable) |
-| `data(content)` | stdout | Structured data (JSON) |
+| `stdout(content)` | stdout | Primary output (tables, JSON, pipeable) |
 | `change_directory(path)` | directive file | Shell cd after wt exits |
 | `execute(command)` | directive file | Shell command after wt exits |
-| `flush()` | both | Flush buffers |
-| `flush_for_stderr_prompt()` | both | Flush before interactive prompts |
+| `flush()` | both | Flush buffers (call before interactive prompts) |
 | `terminate_output()` | stderr | Reset ANSI state on stderr |
 | `is_shell_integration_active()` | — | Check if directive file set (rarely needed) |
 
@@ -74,3 +72,25 @@ Examples:
 `WORKTRUNK_DIRECTIVE_FILE` is automatically removed from spawned subprocesses
 (via `shell_exec::run()`). This prevents hooks from writing to the directive
 file.
+
+## Simplification Notes
+
+The output system was originally more complex to handle shell integration
+edge cases. After consolidation, the thin wrappers (`print`, `stdout`,
+`blank`) are essentially `eprintln!`/`println!` + flush.
+
+**What still provides value:**
+
+- `change_directory()`, `execute()` — IPC with shell wrapper via directive file
+- `shell_integration_hint()` — conditional suppression logic
+- `terminate_output()` — ANSI reset when needed
+
+**What could be further simplified:**
+
+- `print()` → `eprintln!()` + flush (callers must remember to flush)
+- `stdout()` → `println!()` + flush
+- `blank()` → `eprintln!()` + flush
+
+The abstraction cost is low, but if we wanted to reduce indirection, these
+wrappers could be removed. The main value they provide is consistency (correct
+stream, always flushing).
