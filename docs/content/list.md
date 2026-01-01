@@ -77,6 +77,16 @@ Output as JSON for scripting:
 $ wt list --format=json
 ```
 
+## Global listing
+
+List worktrees across all projects when `global-worktree-dir` is configured:
+
+```bash
+$ wt list --global
+```
+
+This scans the global worktree directory and groups results by project.
+
 ## Columns
 
 | Column | Shows |
@@ -288,6 +298,9 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
 
       <b><span class=c>--full</span></b>
           Show CI, merge-base diffstat, and working tree conflict check
+
+      <b><span class=c>--global</span></b>
+          List worktrees from all projects in global-worktree-dir
 
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info

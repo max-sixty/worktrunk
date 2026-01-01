@@ -41,6 +41,9 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
       [1m[36m--full
           Show CI, merge-base diffstat, and working tree conflict check
 
+      [1m[36m--global
+          List worktrees from all projects in global-worktree-dir
+
       [1m[36m--progressive
           Show fast info immediately, update with slow info
           
@@ -82,6 +85,14 @@ Include branches that don't have worktrees:
 Output as JSON for scripting:
 
   [2m$ wt list --format=json
+
+[32mGlobal listing
+
+List worktrees across all projects when [2mglobal-worktree-dir[0m is configured:
+
+  [2m$ wt list --global
+
+This scans the global worktree directory and groups results by project.
 
 [32mColumns
 

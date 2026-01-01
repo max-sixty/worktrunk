@@ -2332,3 +2332,143 @@ fn test_list_handles_orphan_branch(repo: TestRepo) {
 
     snapshot_list_with_branches("orphan_branch_no_error", &repo);
 }
+
+// =============================================================================
+// --global flag tests
+// =============================================================================
+
+#[test]
+fn test_list_global_not_configured() {
+    let repo = TestRepo::new();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--global"]);
+
+    let mut settings = setup_snapshot_settings(&repo);
+    settings.add_filter(r"(?m)^\s+.*config\.toml:$", "  [CONFIG_PATH]:");
+    run_snapshot(settings, "list_global_not_configured", cmd);
+}
+
+#[test]
+fn test_list_global_dir_not_exists() {
+    let repo = TestRepo::new();
+    repo.write_test_config("global-worktree-dir = \"/nonexistent/path/to/worktrees\"\n");
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--global"]);
+
+    run_snapshot(
+        setup_snapshot_settings(&repo),
+        "list_global_dir_not_exists",
+        cmd,
+    );
+}
+
+#[test]
+fn test_list_global_empty_directory() {
+    let repo = TestRepo::new();
+
+    // Create an empty global worktree directory
+    let global_dir = repo.home_path().join("worktrees");
+    std::fs::create_dir_all(&global_dir).unwrap();
+
+    repo.write_test_config(&format!(
+        "global-worktree-dir = \"{}\"\n",
+        global_dir.display()
+    ));
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["list", "--global"]);
+
+    run_snapshot(
+        setup_snapshot_settings(&repo),
+        "list_global_empty_directory",
+        cmd,
+    );
+}
+
+/// End-to-end test: create worktree in global dir, list it, switch to it
+#[test]
+fn test_global_worktree_create_and_switch() {
+    let repo = TestRepo::new();
+
+    // Create global worktree directory and configure it
+    let global_dir = repo.home_path().join("worktrees");
+    std::fs::create_dir_all(&global_dir).unwrap();
+
+    repo.write_test_config(&format!(
+        "global-worktree-dir = \"{}\"\n",
+        global_dir.display()
+    ));
+
+    // Create a worktree using switch --create
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "test-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch --create failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify worktree was created in global directory (not sibling)
+    // Project name is derived from repo name (TestRepo creates "repo")
+    let expected_path = global_dir.join("repo.test-feature");
+    assert!(
+        expected_path.exists(),
+        "Worktree should be at {:?}, but it doesn't exist. Global dir contents: {:?}",
+        expected_path,
+        std::fs::read_dir(&global_dir)
+            .map(|entries| entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+
+    // Verify wt list --global shows the worktree
+    let output = repo
+        .wt_command()
+        .args(["list", "--global", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("test-feature"),
+        "list --global should show test-feature branch"
+    );
+
+    // Switch back to main worktree
+    let output = repo
+        .wt_command()
+        .args(["switch", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch main failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Switch to the global worktree (verifies switch finds it by branch name)
+    let output = repo
+        .wt_command()
+        .args(["switch", "test-feature"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "switch test-feature failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify the output mentions the global path
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("worktrees") || stderr.contains("test-feature"),
+        "switch output should reference the worktree"
+    );
+}

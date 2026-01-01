@@ -99,10 +99,20 @@ If the branch already has a worktree, [2mwt switch[0m changes directories to i
 
 When creating a worktree, worktrunk:
 
-1. Creates worktree at configured path
+1. Creates worktree at configured path (see below)
 2. Switches to new directory
 3. Runs post-create hooks (blocking)
 4. Spawns post-start hooks (background)
+
+[32mWorktree placement
+
+By default, worktrees are placed in sibling directories based on the [2mworktree-path[0m template. When [2mglobal-worktree-dir[0m is configured, new worktrees
+are placed there instead using [2m{project}.{branch}[0m naming:
+
+  [2m# ~/.config/worktrunk/config.toml
+  [2mglobal-worktree-dir = "~/worktrees"
+
+This creates worktrees like [2m~/worktrees/myrepo.feature-auth[0m.
 
   [2mwt switch feature                        # Existing branch → creates worktree
   [2mwt switch --create feature               # New branch and worktree
