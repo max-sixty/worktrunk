@@ -48,8 +48,6 @@ exclude = [
     # Pattern for file:// URLs and root-relative paths
     "file://.*wt-.*\\.gif",
     "/assets/.*\\.gif",
-    # Static assets fetched at deploy time
-    "/docs/static/",
 
     # Local build artifacts (not checked into git)
     "wt-demo/out/wt-demo\\.gif",

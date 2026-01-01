@@ -1846,7 +1846,6 @@ env = "cp {{ repo_root }}/.env.local .env"
     #[cfg(unix)]
     #[command(
         after_long_help = r#"Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
-
 <!-- demo: wt-select.gif 1600x800 -->
 
 ## Examples
@@ -1890,7 +1889,6 @@ Branches without worktrees are included — selecting one creates a worktree. (`
     /// List worktrees and optionally branches
     #[command(
         after_long_help = r#"Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
-
 <!-- demo: wt-list.gif 1600x900 -->
 
 The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete. With `--full`, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
@@ -2151,7 +2149,6 @@ Missing a field that would be generally useful? Open an issue at https://github.
     /// Switch to a worktree
     #[command(
         after_long_help = r#"Change directory to a worktree, creating one if needed. Creating a worktree runs [hooks](@/hook.md).
-
 <!-- demo: wt-switch.gif 1600x900 -->
 
 Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
@@ -2236,12 +2233,13 @@ wt switch --create fix --base=@  # Branch from current HEAD
         ///
         /// ```sh
         /// alias wsc='wt switch --create -x claude'
-        /// wsc feature-branch -- 'implement the login flow'
+        /// wsc feature-branch -- 'Fix GH #322'
         /// ```
         ///
         /// Then `wsc feature-branch` creates the worktree and launches Claude
         /// Code. Arguments after `--` are passed to the command, so
-        /// `wsc feature -- 'implement login'` works.
+        /// `wsc feature -- 'Fix GH #322'` runs `claude 'Fix GH #322'`,
+        /// starting Claude with a prompt.
         #[arg(short = 'x', long)]
         execute: Option<String>,
 
@@ -2366,7 +2364,6 @@ Removal runs in the background by default (returns immediately). Logs are writte
     /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
     #[command(
         after_long_help = r#"Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
-
 <!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples

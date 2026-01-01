@@ -548,6 +548,9 @@ fn format_subcommand_section(
 /// The HTML comment is invisible in terminal --help output, but expands to a styled figure
 /// for web docs generated via --help-page.
 ///
+/// The placeholder should be on its own line without surrounding blank lines in the source.
+/// This function adds blank lines around the figure for proper markdown paragraph separation.
+///
 /// Supports optional dimensions: `<!-- demo: filename.gif 1600x900 -->`
 fn expand_demo_placeholders(text: &str) -> String {
     const PREFIX: &str = "<!-- demo: ";
@@ -575,8 +578,9 @@ fn expand_demo_placeholders(text: &str) -> String {
             // Use figure.demo class for proper mobile styling (no shrink, horizontal scroll)
             // Generate <picture> element for light/dark theme switching
             // Assets are organized as: /assets/docs/{light,dark}/filename.gif
+            // Add blank line before the figure; blank line after is already in source
             let replacement = format!(
-                "<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>"
+                "\n<figure class=\"demo\">\n<picture>\n  <source srcset=\"/assets/docs/dark/{filename}\" media=\"(prefers-color-scheme: dark)\">\n  <img src=\"/assets/docs/light/{filename}\" alt=\"{alt_text} demo\"{dim_attrs}>\n</picture>\n</figure>"
             );
             let end = after_prefix + end_offset + SUFFIX.len();
             result.replace_range(start..end, &replacement);

@@ -34,11 +34,8 @@ repos:
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          # Provide base URL so lychee can build URIs from root-relative paths
-          # These paths are then excluded by lychee.toml patterns
-          - --base=https://worktrunk.dev
-          # Suppress warnings
-          - -q
+          # Root dir for resolving absolute paths like /assets/...
+          - --root-dir=docs/static
   - repo: local
     hooks:
       - id: cargo-lock

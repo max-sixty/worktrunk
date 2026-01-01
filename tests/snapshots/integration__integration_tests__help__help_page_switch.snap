@@ -119,11 +119,11 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
           Especially useful with shell aliases:[0m
           [0m
             [1m[1malias wsc='wt switch --create -x claude'[0m
-            [1mwsc feature-branch -- 'implement the login flow'[0m
+            [1mwsc feature-branch -- 'Fix GH #322'[0m
           [0m[0m
           Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code.
-          Arguments after [1m--[0m are passed to the command, so [1mwsc feature --
-          'implement login'[0m works.[0m
+          Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix
+          GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.[0m
 
   [1m[36m-y[0m, [1m[36m--yes[0m
           Skip approval prompts

@@ -69,7 +69,6 @@ Global Options:
           Show commands and debug info
 
 Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
-
 <!-- demo: wt-merge.gif 1600x900 -->
 
 ## Examples
