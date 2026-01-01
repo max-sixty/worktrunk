@@ -1068,12 +1068,18 @@ mod pty_tests {
         // Report findings for CI visibility
         let has_compinit_warning = output.contains("compinit") || output.contains("insecure");
         if has_compinit_warning {
-            eprintln!(">>> CONFIRMED: compinit warning appears in PTY even WITHOUT worktrunk <<<");
-            eprintln!(">>> This proves the warning is a pre-existing CI environment issue <<<");
+            panic!(
+                "CONFIRMED: compinit warning appears in PTY even WITHOUT worktrunk!\n\
+                 This proves the warning is a pre-existing CI environment issue.\n\
+                 Output: {}",
+                output
+            );
         } else {
-            eprintln!(">>> No compinit warning in raw zsh -ic output <<<");
-            eprintln!(
-                ">>> The warning must be triggered by something specific in worktrunk's probe <<<"
+            panic!(
+                "No compinit warning in raw zsh -ic output.\n\
+                 The warning must be triggered by something specific in worktrunk's probe.\n\
+                 Output: {}",
+                output
             );
         }
     }
