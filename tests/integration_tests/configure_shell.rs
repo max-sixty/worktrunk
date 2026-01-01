@@ -929,55 +929,7 @@ mod pty_tests {
     use rstest::rstest;
     use std::fs;
     use std::io::{Read, Write};
-    use std::sync::OnceLock;
     use tempfile::TempDir;
-
-    /// Cached result of whether the CI environment produces compinit warnings.
-    /// This is detected once per test run to avoid repeated subprocess spawning.
-    static ENV_NEEDS_SUPPRESSION: OnceLock<bool> = OnceLock::new();
-
-    /// Detect if this environment produces zsh compinit "insecure directories" warnings.
-    ///
-    /// Some CI environments (notably Ubuntu with certain global /etc/zsh/zshrc configs)
-    /// trigger compinit which produces warnings about insecure directories. This warning
-    /// goes to /dev/tty and leaks through PTYs even with stderr redirected.
-    ///
-    /// We run a plain `zsh -ic` command in a PTY with the same environment as our tests
-    /// to detect if this warning would appear. If so, we need to suppress it in worktrunk
-    /// commands to keep PTY output deterministic for snapshot testing.
-    ///
-    /// Note: temp_home is only used on first call (result is cached globally). This is
-    /// intentional - the warning comes from global /etc/zsh/zshrc, not from HOME. The
-    /// temp_home just ensures the probe matches test conditions.
-    fn env_needs_compinit_suppression(temp_home: &TempDir) -> bool {
-        *ENV_NEEDS_SUPPRESSION.get_or_init(|| {
-            let pair = open_pty();
-
-            let mut cmd = CommandBuilder::new("zsh");
-            cmd.args(["-ic", "echo __DETECTION_COMPLETE__"]);
-
-            // Match the test environment exactly
-            configure_pty_command(&mut cmd);
-            cmd.env("HOME", temp_home.path());
-            cmd.env("SHELL", "/bin/zsh");
-
-            let Ok(mut child) = pair.slave.spawn_command(cmd) else {
-                return false; // Can't detect, assume no suppression needed
-            };
-            drop(pair.slave);
-
-            let mut reader = pair.master.try_clone_reader().unwrap();
-            drop(pair.master.take_writer().unwrap());
-
-            let mut buf = String::new();
-            let _ = reader.read_to_string(&mut buf);
-            let _ = child.wait();
-
-            // If "insecure directories" appears in plain zsh output, the environment
-            // triggers this warning and we need to suppress it in worktrunk commands
-            buf.contains("insecure directories")
-        })
-    }
 
     /// Execute shell install command in a PTY with interactive input
     fn exec_install_in_pty(temp_home: &TempDir, repo: &TestRepo, input: &str) -> (String, i32) {
@@ -994,17 +946,11 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-
-        // Dynamic suppression: only add ZSH_DISABLE_COMPFIX if the environment
-        // would produce the "insecure directories" warning. This keeps tests
-        // working on both clean environments (no suppression needed) and CI
-        // environments with problematic global zshrc (suppression needed).
-        //
-        // See PR #358 for investigation proving this warning comes from the
-        // environment's global zsh config, not from worktrunk.
-        if env_needs_compinit_suppression(temp_home) {
-            cmd.env("ZSH_DISABLE_COMPFIX", "true");
-        }
+        // Suppress zsh's "insecure directories" warning that some CI environments
+        // produce. This warning comes from the environment's global zsh config
+        // (e.g., /etc/zsh/zshrc calling compinit), not from worktrunk - our shell
+        // init script doesn't modify fpath or call compinit. See shell.rs for details.
+        cmd.env("ZSH_DISABLE_COMPFIX", "true");
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -1073,38 +1019,6 @@ mod pty_tests {
         assert!(
             !content.contains("wt config shell init"),
             "File should not be modified when user declines"
-        );
-    }
-
-    /// Verify that dynamic suppression detection works correctly.
-    ///
-    /// This test validates that `env_needs_compinit_suppression()` can detect
-    /// whether the current environment produces the "insecure directories" warning.
-    /// The test passes regardless of whether suppression is needed - it just verifies
-    /// the detection mechanism works and logs the result for CI visibility.
-    #[rstest]
-    fn test_compinit_suppression_detection_works(temp_home: TempDir) {
-        // Create a .zshrc to match the test environment
-        fs::write(temp_home.path().join(".zshrc"), "# Existing config\n").unwrap();
-
-        let needs_suppression = env_needs_compinit_suppression(&temp_home);
-
-        // Log the result for CI visibility (helps debug environment-specific issues)
-        eprintln!(
-            "=== COMPINIT SUPPRESSION DETECTION ===\n\
-             Environment needs ZSH_DISABLE_COMPFIX suppression: {}\n\
-             This is expected on some CI environments (Ubuntu with global /etc/zsh/zshrc).\n\
-             See PR #358 for investigation details.\n\
-             =======================================",
-            needs_suppression
-        );
-
-        // The test passes either way - we're just verifying detection works
-        // and that the cached result is consistent
-        let cached_result = env_needs_compinit_suppression(&temp_home);
-        assert_eq!(
-            needs_suppression, cached_result,
-            "Cached result should match initial detection"
         );
     }
 }

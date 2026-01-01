@@ -386,15 +386,17 @@ pub fn detect_zsh_compinit() -> Option<bool> {
         //   "zsh compinit: insecure directories, run compaudit for list."
         //   "Ignore insecure directories and continue [y] or abort compinit [n]?"
         //
-        // This prompt goes to /dev/tty (not stderr), so it leaks through PTYs even with
-        // stderr redirected. We verified (PR #358) that this warning is triggered by the
-        // environment's global zsh config, not by worktrunk - running plain `zsh -ic`
-        // shows the same warning. It's safe to suppress because:
+        // This prompt goes to /dev/tty (not stderr), bypassing our stderr redirect.
         //
-        // 1. Users with insecure fpath directories already see this warning every time
-        //    they open a terminal - worktrunk is not introducing new warnings
-        // 2. We're only probing zsh's state, not doing anything security-sensitive
-        // 3. This only affects our subprocess, not the user's actual shell
+        // Worktrunk does NOT cause this warning - our shell init script doesn't modify
+        // fpath or call compinit. It only registers completions with `compdef` if the
+        // user has already set up compinit themselves. The warning appears because:
+        // 1. This probe runs `zsh -ic` which sources global configs like /etc/zsh/zshrc
+        // 2. Some environments (notably Ubuntu CI) have global configs that call compinit
+        // 3. Those environments may have insecure fpath directories
+        //
+        // Safe to suppress because we're only probing shell state, not doing anything
+        // security-sensitive, and this only affects our subprocess.
         .env("ZSH_DISABLE_COMPFIX", "true")
         // Prevent subprocesses from writing to the directive file
         .env_remove(crate::shell_exec::DIRECTIVE_FILE_ENV_VAR)
