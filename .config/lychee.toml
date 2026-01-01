@@ -38,6 +38,8 @@ exclude = [
     "stackoverflow\\.com",
     "npmjs\\.com",
     "incident\\.io",
+    "git-scm\\.com",
+    "worktrunk\\.dev",
 
     # Package registries and badges (frequently return 429 or block CI)
     "crates\\.io",
