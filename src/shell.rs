@@ -41,15 +41,79 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
     })
 }
 
-/// Check if a line contains shell integration for the given command.
+/// Detect if a line contains shell integration for a specific command.
 ///
-/// Returns true if the line:
-/// - Is not a comment (doesn't start with #)
-/// - Contains `{cmd} config shell init`
-/// - Contains an execution context (eval, source, Invoke-Expression, or conditional)
+/// # Detection Goal
 ///
-/// Used by both detection (is shell integration configured?) and
-/// uninstall (which lines to remove?).
+/// We need to answer: "Is shell integration configured for THIS binary?"
+///
+/// When running as `wt`, we should detect `wt` integration but NOT `git-wt` integration
+/// (and vice versa). This prevents misleading "restart shell to activate" messages when
+/// the user has integration for a different command name.
+///
+/// # Command Name Patterns
+///
+/// Users invoke worktrunk in several ways, each creating different command names:
+///
+/// | Invocation              | Binary name | Function created |
+/// |-------------------------|-------------|------------------|
+/// | `wt`                    | `wt`        | `wt()`           |
+/// | `git wt` (subcommand)   | `git-wt`    | `git-wt()`       |
+/// | `git-wt` (direct)       | `git-wt`    | `git-wt()`       |
+///
+/// Note: `git wt` dispatches to the `git-wt` binary, so both create the same function.
+///
+/// # Detection Strategy
+///
+/// We detect shell integration by looking for TWO types of patterns:
+///
+/// ## 1. Eval/source lines (user's shell config)
+///
+/// Lines like `eval "$(wt config shell init bash)"` in `.bashrc`/`.zshrc`.
+///
+/// **Challenge:** `wt config shell init` is a substring of `git wt config shell init`.
+///
+/// **Solution:** Use negative lookbehind to exclude `git ` and `git-` prefixes:
+/// - For `wt`: match `wt config shell init` NOT preceded by `git ` or `git-`
+/// - For `git-wt`: match `git-wt config shell init` OR `git wt config shell init`
+///
+/// ## 2. Generated function markers (sourced into shell)
+///
+/// The generated shell code contains unique patterns like `_wt_lazy_complete` and
+/// `${WORKTRUNK_BIN:-wt}`. These are detected in Fish's `conf.d/{cmd}.fish` files
+/// where we install the integration directly (not via eval).
+///
+/// # Pattern Details
+///
+/// **Eval line patterns** (for `wt`):
+/// ```text
+/// eval "$(wt config shell init bash)"           ✓ matches
+/// eval "$(command wt config shell init bash)"   ✓ matches
+/// eval "$(git wt config shell init bash)"       ✗ no match (git- prefix)
+/// eval "$(git-wt config shell init bash)"       ✗ no match (git- prefix)
+/// source <(wt config shell init zsh)            ✓ matches
+/// ```
+///
+/// **Generated function markers** (for `wt`):
+/// ```text
+/// wt() {                                        ✓ matches (function definition)
+/// _wt_lazy_complete()                           ✓ matches (completion helper)
+/// ${WORKTRUNK_BIN:-wt}                          ✓ matches (fallback pattern)
+/// git-wt() {                                    ✗ no match
+/// _git-wt_lazy_complete()                       ✗ no match
+/// ```
+///
+/// # Edge Cases Handled
+///
+/// - Quoted command names: `eval "$('wt' config shell init bash)"` - rare but matched
+/// - Comment lines: `# eval "$(wt config shell init bash)"` - skipped
+/// - Partial matches: `newt config shell init` - not matched (word boundary)
+///
+/// # Usage
+///
+/// Used by:
+/// - `is_integration_configured()` - detect "configured but not restarted" state
+/// - `uninstall` - identify lines to remove from shell config
 pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
     let trimmed = line.trim();
 
@@ -58,17 +122,181 @@ pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
         return false;
     }
 
-    // Must contain the init pattern for this command
+    // Check for eval/source line pattern
+    if has_init_invocation(trimmed, cmd) {
+        return true;
+    }
+
+    // Check for generated function markers (installed integration files)
+    if has_function_marker(trimmed, cmd) {
+        return true;
+    }
+
+    false
+}
+
+/// Check if line contains `{cmd} config shell init` as a command invocation.
+///
+/// For `wt`: matches `wt config shell init` but NOT `git wt` or `git-wt`.
+/// For `git-wt`: matches `git-wt config shell init` OR `git wt config shell init`.
+fn has_init_invocation(line: &str, cmd: &str) -> bool {
+    // For git-wt, we need to match both "git-wt config shell init" AND "git wt config shell init"
+    // because users invoke it both ways (and git dispatches "git wt" to "git-wt")
+    if cmd == "git-wt" {
+        // Match either form
+        return has_init_pattern(line, "git-wt") || has_init_pattern(line, "git wt");
+    }
+
+    // For other commands, use normal matching with prefix exclusion
+    has_init_pattern_with_prefix_check(line, cmd)
+}
+
+/// Check if line has the init pattern for a specific command string (no prefix checks).
+fn has_init_pattern(line: &str, cmd: &str) -> bool {
     let init_pattern = format!("{cmd} config shell init");
-    if !trimmed.contains(&init_pattern) {
+    if !line.contains(&init_pattern) {
         return false;
     }
 
     // Must be in an execution context
-    trimmed.contains("eval")
-        || trimmed.contains("source")
-        || trimmed.contains("Invoke-Expression")
-        || trimmed.contains("if ")
+    line.contains("eval")
+        || line.contains("source")
+        || line.contains("Invoke-Expression")
+        || line.contains("if ")
+}
+
+/// Check if line has the init pattern, with prefix exclusion for non-git-wt commands.
+fn has_init_pattern_with_prefix_check(line: &str, cmd: &str) -> bool {
+    let init_pattern = format!("{cmd} config shell init");
+
+    // Find all occurrences of the pattern
+    let mut search_start = 0;
+    while let Some(pos) = line[search_start..].find(&init_pattern) {
+        let absolute_pos = search_start + pos;
+
+        // Check what precedes the match
+        if is_valid_command_position(line, absolute_pos, cmd) {
+            // Must be in an execution context
+            if line.contains("eval")
+                || line.contains("source")
+                || line.contains("Invoke-Expression")
+                || line.contains("if ")
+            {
+                return true;
+            }
+        }
+
+        // Continue searching after this match
+        search_start = absolute_pos + 1;
+    }
+
+    false
+}
+
+/// Check if the command at `pos` is a valid standalone command, not part of another command.
+///
+/// For `wt` at position `pos`:
+/// - Valid: start of line, after `$(`, after whitespace, after `command `
+/// - Invalid: after `git ` (would be `git wt`), after `git-` (would be `git-wt`)
+///
+/// For `git-wt`: always valid (it's the full command name)
+fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
+    // git-wt is unambiguous - it's the full command name
+    if cmd == "git-wt" {
+        return true;
+    }
+
+    // For other commands (like `wt`), check for git prefix
+    if pos == 0 {
+        return true; // Start of line
+    }
+
+    let before = &line[..pos];
+
+    // Check for `git ` or `git-` immediately before the command
+    // This handles: `git wt config...` and `git-wt config...`
+    if before.ends_with("git ") || before.ends_with("git-") {
+        return false;
+    }
+
+    // Valid if preceded by: whitespace, $(, (, ", ', or `command `
+    let last_char = before.chars().last().unwrap();
+    matches!(last_char, ' ' | '\t' | '$' | '(' | '"' | '\'' | '`')
+}
+
+/// Check if line contains markers from generated shell integration code.
+///
+/// These patterns appear in the shell code itself (e.g., Fish's conf.d files),
+/// not in the eval line. They're unique to each command.
+fn has_function_marker(line: &str, cmd: &str) -> bool {
+    // Function definition patterns need word boundary checks to avoid:
+    // - "git-wt()" matching when looking for "wt()"
+    // - "newt()" matching when looking for "wt()"
+
+    // Bash/Zsh: `wt() {` or `wt () {`
+    if has_function_def_bash(line, cmd) {
+        return true;
+    }
+
+    // Fish: `function wt` (must be at word boundary)
+    if has_function_def_fish(line, cmd) {
+        return true;
+    }
+
+    // Completion helper function: `_wt_lazy_complete`
+    // This is unique enough that simple contains is fine
+    let completion_helper = format!("_{cmd}_lazy_complete");
+    if line.contains(&completion_helper) {
+        return true;
+    }
+
+    // Fallback pattern: `WORKTRUNK_BIN:-wt}` (unique per command)
+    let fallback = format!("WORKTRUNK_BIN:-{cmd}}}");
+    if line.contains(&fallback) {
+        return true;
+    }
+
+    false
+}
+
+/// Check for bash/zsh function definition: `cmd()` or `cmd ()`
+/// Must have word boundary before the command name.
+fn has_function_def_bash(line: &str, cmd: &str) -> bool {
+    let func_def = format!("{cmd}()");
+    let func_def_space = format!("{cmd} ()");
+
+    for pattern in [&func_def, &func_def_space] {
+        if let Some(pos) = line.find(pattern) {
+            // Check for word boundary before the command
+            if pos == 0
+                || !line[..pos].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '-')
+            {
+                // Must be a function definition (has `{` on same line)
+                if line.contains('{') {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check for fish function definition: `function cmd`
+/// Must be followed by end-of-line or whitespace (not more identifier chars).
+fn has_function_def_fish(line: &str, cmd: &str) -> bool {
+    let func_keyword = format!("function {cmd}");
+    if let Some(pos) = line.find(&func_keyword) {
+        let after_pos = pos + func_keyword.len();
+        // Check what follows: must be end of line, whitespace, or newline
+        if after_pos >= line.len() {
+            return true; // End of line
+        }
+        let next_char = line[after_pos..].chars().next().unwrap();
+        if next_char.is_whitespace() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Supported shells
@@ -606,6 +834,160 @@ mod tests {
         assert!(
             is_shell_integration_line(&line, prefix),
             "{shell} config_line({prefix:?}) not detected:\n  {line}"
+        );
+    }
+
+    // ==========================================================================
+    // Detection tests: eval/source lines
+    // ==========================================================================
+
+    /// Basic eval patterns that SHOULD match for `wt`
+    #[rstest]
+    #[case::basic_eval(r#"eval "$(wt config shell init bash)""#)]
+    #[case::with_command(r#"eval "$(command wt config shell init bash)""#)]
+    #[case::source_process_sub(r#"source <(wt config shell init zsh)"#)]
+    #[case::fish_source(r#"wt config shell init fish | source"#)]
+    #[case::with_if_check(
+        r#"if command -v wt >/dev/null; then eval "$(wt config shell init bash)"; fi"#
+    )]
+    #[case::single_quotes(r#"eval '$( wt config shell init bash )'"#)]
+    fn test_wt_eval_patterns_match(#[case] line: &str) {
+        assert!(
+            is_shell_integration_line(line, "wt"),
+            "Should match for 'wt': {line}"
+        );
+    }
+
+    /// Patterns that should NOT match for `wt` (they're for git-wt)
+    #[rstest]
+    #[case::git_space_wt(r#"eval "$(git wt config shell init bash)""#)]
+    #[case::git_hyphen_wt(r#"eval "$(git-wt config shell init bash)""#)]
+    #[case::command_git_wt(r#"eval "$(command git wt config shell init bash)""#)]
+    #[case::command_git_hyphen_wt(r#"eval "$(command git-wt config shell init bash)""#)]
+    fn test_git_wt_patterns_dont_match_wt(#[case] line: &str) {
+        assert!(
+            !is_shell_integration_line(line, "wt"),
+            "Should NOT match for 'wt' (this is git-wt integration): {line}"
+        );
+    }
+
+    /// Patterns that SHOULD match for `git-wt`
+    #[rstest]
+    #[case::git_hyphen_wt(r#"eval "$(git-wt config shell init bash)""#)]
+    #[case::git_space_wt(r#"eval "$(git wt config shell init bash)""#)]
+    #[case::command_git_wt(r#"eval "$(command git wt config shell init bash)""#)]
+    fn test_git_wt_eval_patterns_match(#[case] line: &str) {
+        assert!(
+            is_shell_integration_line(line, "git-wt"),
+            "Should match for 'git-wt': {line}"
+        );
+    }
+
+    /// Comment lines should never match
+    #[rstest]
+    #[case::bash_comment(r#"# eval "$(wt config shell init bash)""#)]
+    #[case::indented_comment(r#"  # eval "$(wt config shell init bash)""#)]
+    fn test_comments_dont_match(#[case] line: &str) {
+        assert!(
+            !is_shell_integration_line(line, "wt"),
+            "Comment should not match: {line}"
+        );
+    }
+
+    /// Lines without execution context should not match
+    #[rstest]
+    #[case::just_command("wt config shell init bash")]
+    #[case::echo(r#"echo "wt config shell init bash""#)]
+    fn test_no_execution_context_doesnt_match(#[case] line: &str) {
+        assert!(
+            !is_shell_integration_line(line, "wt"),
+            "Without eval/source should not match: {line}"
+        );
+    }
+
+    // ==========================================================================
+    // Detection tests: function markers (for installed integration files)
+    // ==========================================================================
+
+    /// Function definition patterns that SHOULD match
+    #[rstest]
+    #[case::bash_func_def("wt() {")]
+    #[case::bash_func_def_space("wt () {")]
+    #[case::fish_func_def("function wt")]
+    #[case::completion_helper("_wt_lazy_complete() {")]
+    #[case::fallback_pattern(r#"command "${WORKTRUNK_BIN:-wt}" "$@""#)]
+    fn test_function_markers_match(#[case] line: &str) {
+        assert!(
+            is_shell_integration_line(line, "wt"),
+            "Function marker should match for 'wt': {line}"
+        );
+    }
+
+    /// Function markers for git-wt should NOT match wt
+    #[rstest]
+    #[case::git_wt_func("git-wt() {")]
+    #[case::git_wt_completion("_git-wt_lazy_complete() {")]
+    #[case::git_wt_fallback(r#"command "${WORKTRUNK_BIN:-git-wt}" "$@""#)]
+    fn test_git_wt_markers_dont_match_wt(#[case] line: &str) {
+        assert!(
+            !is_shell_integration_line(line, "wt"),
+            "git-wt marker should NOT match 'wt': {line}"
+        );
+    }
+
+    /// Function markers for git-wt SHOULD match git-wt
+    #[rstest]
+    #[case::git_wt_func("git-wt() {")]
+    #[case::git_wt_completion("_git-wt_lazy_complete() {")]
+    #[case::git_wt_fallback(r#"command "${WORKTRUNK_BIN:-git-wt}" "$@""#)]
+    fn test_git_wt_markers_match_git_wt(#[case] line: &str) {
+        assert!(
+            is_shell_integration_line(line, "git-wt"),
+            "git-wt marker should match 'git-wt': {line}"
+        );
+    }
+
+    // ==========================================================================
+    // Edge cases and real-world patterns
+    // ==========================================================================
+
+    /// Real-world patterns from user dotfiles
+    #[rstest]
+    #[case::chezmoi_style(
+        r#"if command -v wt &>/dev/null; then eval "$(wt config shell init bash)"; fi"#,
+        "wt",
+        true
+    )]
+    #[case::nikiforov_style(r#"eval "$(command git wt config shell init bash)""#, "git-wt", true)]
+    #[case::nikiforov_not_wt(r#"eval "$(command git wt config shell init bash)""#, "wt", false)]
+    fn test_real_world_patterns(#[case] line: &str, #[case] cmd: &str, #[case] should_match: bool) {
+        assert_eq!(
+            is_shell_integration_line(line, cmd),
+            should_match,
+            "Line: {line}\nCommand: {cmd}\nExpected: {should_match}"
+        );
+    }
+
+    /// Word boundary: `newt` should not match `wt`
+    #[test]
+    fn test_word_boundary_newt() {
+        let line = r#"eval "$(newt config shell init bash)""#;
+        // This line contains "wt config shell init" as a substring
+        // but the command is "newt", not "wt"
+        assert!(
+            !is_shell_integration_line(line, "wt"),
+            "newt should not match wt"
+        );
+    }
+
+    /// Partial command names should not match
+    #[test]
+    fn test_partial_command_no_match() {
+        // "swt" contains "wt" but is not "wt"
+        let line = r#"eval "$(swt config shell init bash)""#;
+        assert!(
+            !is_shell_integration_line(line, "wt"),
+            "swt should not match wt"
         );
     }
 }
