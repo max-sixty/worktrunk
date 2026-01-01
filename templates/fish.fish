@@ -22,6 +22,12 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
         test -n "$WORKTRUNK_BIN"; or set -l WORKTRUNK_BIN (type -P {{ cmd }})
         set -l directive_file (mktemp)
 
+        # Note: On Windows (Git Bash/MSYS2), mktemp returns POSIX paths like /tmp/xxx.
+        # MSYS2 automatically converts these to Windows paths (C:\Users\...\Temp\xxx)
+        # when passing environment variables to native Windows binaries.
+        # See: https://www.msys2.org/docs/filesystem-paths/
+        # No explicit cygpath conversion is needed here.
+
         # --source: use cargo run (builds from source)
         if test $use_source = true
             WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args

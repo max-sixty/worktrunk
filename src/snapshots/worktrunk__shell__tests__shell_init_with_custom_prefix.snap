@@ -29,6 +29,12 @@ if command -v custom >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         local directive_file exit_code=0
         directive_file="$(mktemp)"
 
+        # Note: On Windows (Git Bash/MSYS2), mktemp returns POSIX paths like /tmp/xxx.
+        # MSYS2 automatically converts these to Windows paths (C:\Users\...\Temp\xxx)
+        # when passing environment variables to native Windows binaries.
+        # See: https://www.msys2.org/docs/filesystem-paths/
+        # No explicit cygpath conversion is needed here.
+
         # --source: use cargo run (builds from source)
         if [[ "$use_source" == true ]]; then
             WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin custom --quiet -- "${args[@]}" || exit_code=$?

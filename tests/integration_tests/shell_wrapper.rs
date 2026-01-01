@@ -622,29 +622,10 @@ fn exec_through_wrapper_with_env(
 ) -> ShellOutput {
     let script = build_shell_script(shell, repo, subcommand, args);
 
-    // Keep config path as owned String because:
-    // 1. repo.test_config_path() returns a PathBuf
-    // 2. .to_string_lossy() returns a Cow<str> that borrows from the PathBuf
-    // 3. We need to borrow a &str for the env_vars vector
-    // 4. The owned String lives long enough to satisfy the borrow in env_vars
     let config_path = repo.test_config_path().to_string_lossy().to_string();
 
-    // Same environment setup as exec_through_wrapper_from
-    let mut env_vars: Vec<(&str, &str)> = vec![
-        ("CLICOLOR_FORCE", "1"),
-        ("WORKTRUNK_CONFIG_PATH", &config_path),
-        ("TERM", "xterm"),
-        ("GIT_AUTHOR_NAME", "Test User"),
-        ("GIT_AUTHOR_EMAIL", "test@example.com"),
-        ("GIT_COMMITTER_NAME", "Test User"),
-        ("GIT_COMMITTER_EMAIL", "test@example.com"),
-        ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z"),
-        ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
-        ("LANG", "C"),
-        ("LC_ALL", "C"),
-        ("SOURCE_DATE_EPOCH", "1735776000"),
-    ];
-
+    let mut env_vars = build_test_env_vars(&config_path);
+    env_vars.push(("CLICOLOR_FORCE", "1"));
     // Add extra env vars (these can override defaults if needed)
     env_vars.extend(extra_env.iter().copied());
 
@@ -655,6 +636,34 @@ fn exec_through_wrapper_with_env(
         combined,
         exit_code,
     }
+}
+
+/// Standard test environment variables (static parts that don't depend on test state)
+///
+/// These are used by tests that build custom scripts and call `exec_in_pty_interactive` directly.
+/// For tests using `exec_through_wrapper*`, these are already applied.
+const STANDARD_TEST_ENV: &[(&str, &str)] = &[
+    ("TERM", "xterm"),
+    ("GIT_AUTHOR_NAME", "Test User"),
+    ("GIT_AUTHOR_EMAIL", "test@example.com"),
+    ("GIT_COMMITTER_NAME", "Test User"),
+    ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ("GIT_AUTHOR_DATE", "2025-01-01T00:00:00Z"),
+    ("GIT_COMMITTER_DATE", "2025-01-01T00:00:00Z"),
+    ("LANG", "C"),
+    ("LC_ALL", "C"),
+    ("SOURCE_DATE_EPOCH", "1735776000"),
+];
+
+/// Build standard test env vars with config path
+///
+/// Returns a Vec containing STANDARD_TEST_ENV plus WORKTRUNK_CONFIG_PATH.
+/// The caller must keep `config_path` alive for the duration of the returned Vec's use.
+#[cfg(test)]
+fn build_test_env_vars(config_path: &str) -> Vec<(&str, &str)> {
+    let mut env_vars: Vec<(&str, &str)> = vec![("WORKTRUNK_CONFIG_PATH", config_path)];
+    env_vars.extend_from_slice(STANDARD_TEST_ENV);
+    env_vars
 }
 
 mod tests {
@@ -1954,14 +1963,7 @@ approved-commands = ["echo 'bash background'"]
         };
 
         let config_path = repo.test_config_path().to_string_lossy().to_string();
-        let env_vars: Vec<(&str, &str)> = vec![
-            ("WORKTRUNK_CONFIG_PATH", &config_path),
-            ("TERM", "xterm"),
-            ("GIT_AUTHOR_NAME", "Test User"),
-            ("GIT_AUTHOR_EMAIL", "test@example.com"),
-            ("GIT_COMMITTER_NAME", "Test User"),
-            ("GIT_COMMITTER_EMAIL", "test@example.com"),
-        ];
+        let env_vars = build_test_env_vars(&config_path);
 
         let (combined, exit_code) =
             exec_in_pty_interactive(shell, &final_script, repo.root_path(), &env_vars, &[]);
