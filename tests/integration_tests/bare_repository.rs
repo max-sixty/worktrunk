@@ -574,19 +574,6 @@ impl NestedBareRepoTest {
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE");
     }
-
-    /// Create a commit in a worktree
-    fn commit(&self, worktree: &Path, message: &str) {
-        fs::write(worktree.join("file.txt"), message).unwrap();
-        self.git_command(worktree)
-            .args(["add", "."])
-            .output()
-            .unwrap();
-        self.git_command(worktree)
-            .args(["commit", "-m", message])
-            .output()
-            .unwrap();
-    }
 }
 
 impl TestRepoBase for NestedBareRepoTest {
@@ -651,7 +638,7 @@ fn test_nested_bare_repo_full_workflow() {
 
     let main_worktree = test.project_path().join("main");
     assert!(main_worktree.exists(), "Main worktree should exist");
-    test.commit(&main_worktree, "Initial");
+    test.commit_in(&main_worktree, "Initial");
 
     // Create feature worktree
     let (directive_path, _guard) = directive_file();
@@ -710,7 +697,7 @@ fn test_nested_bare_repo_list_snapshot() {
     cmd.output().unwrap();
 
     let main_worktree = test.project_path().join("main");
-    test.commit(&main_worktree, "Initial");
+    test.commit_in(&main_worktree, "Initial");
 
     // Create feature worktree
     let (directive_path, _guard) = directive_file();
