@@ -1183,7 +1183,7 @@ fn main() {
         Commands::Select => {
             output::print(error_message("wt select is not available on Windows"))?;
             output::print(hint_message(cformat!(
-                "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch <branch></>"
+                "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch <<branch>></>"
             )))?;
             std::process::exit(1);
         }
