@@ -156,7 +156,7 @@ Sleep 2s
 
 # Open new pane for git diff and merge (like original zellij demo)
 Ctrl+n
-Sleep 600ms
+Sleep 1.2s
 
 # Show what Claude changed
 Type "git diff"

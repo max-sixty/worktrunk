@@ -32,13 +32,8 @@ export NEXTEST_NO_INPUT_HANDLER=1
 # Run tests once with instrumentation, without generating a report yet.
 "${CARGO_BIN[@]}" llvm-cov --locked --workspace --no-report --features shell-integration-tests "$@"
 
-# Generate HTML (optionally open) and LCOV reports from the recorded data without rerunning tests.
-OPEN_FLAG=()
-if [ "${COVERAGE_OPEN:-1}" != "0" ]; then
-  OPEN_FLAG=(--open)
-fi
-
-"${CARGO_BIN[@]}" llvm-cov report --html --output-dir "${COVERAGE_DIR}/html" "${OPEN_FLAG[@]}"
+# Generate HTML and LCOV reports from the recorded data without rerunning tests.
+"${CARGO_BIN[@]}" llvm-cov report --html --output-dir "${COVERAGE_DIR}/html"
 "${CARGO_BIN[@]}" llvm-cov report --lcov --output-path "${LCOV_PATH}"
 
 echo "HTML report: ${COVERAGE_DIR}/html/index.html"

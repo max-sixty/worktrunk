@@ -142,6 +142,10 @@ pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
 ///
 /// Additionally, wrap_ansi may split between styled content and its reset code,
 /// leaving [0m at the start of continuation lines. We move these to line ends.
+///
+/// IMPORTANT: wrap_ansi only restores foreground colors on continuation lines,
+/// not text attributes like dim. We detect this and prepend dim (\x1b[2m) to
+/// continuation lines that start with a color code, ensuring consistent dimming.
 pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![styled.to_string()];
@@ -168,13 +172,32 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
     // Fix reset codes that got separated from their content by wrapping.
     // When wrap happens between styled text and its [0m reset, the reset
     // ends up at the start of the next line. Strip leading resets.
-    cleaned
-        .lines()
-        .map(|line| {
-            let trimmed = line.strip_prefix("\x1b[0m").unwrap_or(line);
-            trimmed.to_owned()
-        })
-        .collect()
+    //
+    // Also fix missing dim on continuation lines: wrap_ansi restores colors
+    // but not text attributes like dim. If a line starts with a color code
+    // (e.g., \x1b[32m) but no dim (\x1b[2m), prepend dim to maintain consistency.
+    let lines: Vec<_> = cleaned.lines().collect();
+    let mut result = Vec::with_capacity(lines.len());
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.strip_prefix("\x1b[0m").unwrap_or(line);
+
+        // For continuation lines (not first), check if we need to restore dim.
+        // wrap_ansi restores foreground colors (\x1b[3Xm where X is 0-7 or 8;...)
+        // but drops text attributes like dim (\x1b[2m).
+        //
+        // We restore dim for lines that start with a color code. This is safe
+        // because format_bash_with_gutter_impl always starts lines with dim,
+        // so any wrapped continuation should also be dimmed.
+        if i > 0 && trimmed.starts_with("\x1b[3") {
+            // Prepend dim before the color code
+            result.push(format!("\x1b[2m{trimmed}"));
+        } else {
+            result.push(trimmed.to_owned());
+        }
+    }
+
+    result
 }
 
 #[cfg(feature = "syntax-highlighting")]
@@ -476,6 +499,32 @@ mod tests {
         // Result should not contain the specific reset codes we strip
         assert!(!result[0].contains("\u{1b}[39m"));
         assert!(!result[0].contains("\u{1b}[49m"));
+    }
+
+    #[test]
+    fn test_wrap_styled_text_restores_dim_on_continuation() {
+        // When wrap_ansi wraps dim+color text, it restores the color but not dim.
+        // We fix this by prepending dim to continuation lines that start with a color.
+        let dim = "\x1b[2m";
+        let green = "\x1b[32m";
+        let reset = "\x1b[0m";
+
+        // Simulate what format_bash_with_gutter_impl produces for a string token
+        let styled = format!(
+            "{dim}{green}This is a very long string that definitely needs to wrap across multiple lines{reset}"
+        );
+
+        // Force wrapping at 30 chars - should produce multiple lines
+        let result = wrap_styled_text(&styled, 30);
+        assert!(result.len() > 1);
+
+        // First line should have dim+green (as input)
+        assert!(result[0].starts_with("\x1b[2m\x1b[32m"));
+
+        // Continuation lines should ALSO have dim before the color (restored by our fix)
+        for line in result.iter().skip(1) {
+            assert!(line.starts_with("\x1b[2m\x1b[32m") || line.starts_with("\x1b[2m"));
+        }
     }
 
     #[test]
