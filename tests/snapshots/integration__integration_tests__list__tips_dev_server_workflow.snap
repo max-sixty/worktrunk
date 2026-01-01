@@ -12,6 +12,7 @@ info:
     GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -27,7 +28,7 @@ success: true
 exit_code: 0
 ----- stdout -----
   [1mBranch[0m       [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mRemote⇅[0m  [1mURL[0m                     [1mCommit[0m    [1mAge
-@ main           [36m?[39m [2m^[22m[2m⇅[22m                         [32m⇡1[0m  [2m[31m⇣1[0m  http://localhost:12107  [2m6088adb3[0m  [2m4d
+@ main           [36m?[39m [2m^[22m[2m⇅[22m                         [32m⇡1[0m  [2m[31m⇣1[0m  [2mhttp://localhost:12107[0m  [2m6088adb3[0m  [2m4d
 + feature-api  [36m+[39m   [2m↕[22m[2m⇡[22m     [32m+54[0m   [31m-5[0m   [32m↑4[0m  [2m[31m↓1[0m   [32m⇡3[0m      [2mhttp://localhost:10703[0m  [2mec97decc[0m  [2m30m
 + fix-auth         [2m↕[22m[2m|[22m                [32m↑2[0m  [2m[31m↓1[0m     [2m|[0m     [2mhttp://localhost:16460[0m  [2m127407de[0m  [2m5h
 
