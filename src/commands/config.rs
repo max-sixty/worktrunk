@@ -219,7 +219,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                     "Commit generation working (<bold>{command_display}</>)"
                 ))
             )?;
-            write!(out, "{}", format_with_gutter(&message, None))?;
+            writeln!(out, "{}", format_with_gutter(&message, None))?;
         }
         Err(e) => {
             writeln!(
@@ -229,7 +229,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
                     "Commit generation failed (<bold>{command_display}</>)"
                 ))
             )?;
-            write!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+            writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
         }
     }
 
@@ -391,7 +391,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
                             "Completions won't work; add to ~/.zshrc before the wt line:"
                         )
                     )?;
-                    write!(
+                    writeln!(
                         out,
                         "{}",
                         format_with_gutter("autoload -Uz compinit && compinit", None)
@@ -520,6 +520,9 @@ fn check_zsh_compinit_missing() -> bool {
     // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
     let mut cmd = Command::new("zsh");
     cmd.args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"]);
+    // Suppress zsh's "insecure directories" warning from compinit.
+    // See detailed rationale in shell::detect_zsh_compinit().
+    cmd.env("ZSH_DISABLE_COMPFIX", "true");
     let Ok(output) = run(&mut cmd, None) else {
         return false; // Can't determine, don't warn
     };
@@ -610,7 +613,7 @@ fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
     )?;
 
     if !log_dir.exists() {
-        write!(out, "{}", format_with_gutter("(none)", None))?;
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
         return Ok(());
     }
 
@@ -620,7 +623,7 @@ fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
         .collect();
 
     if entries.is_empty() {
-        write!(out, "{}", format_with_gutter("(none)", None))?;
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
         return Ok(());
     }
 
@@ -1075,16 +1078,16 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show default branch cache
     writeln!(out, "{}", format_heading("DEFAULT BRANCH", None))?;
     match repo.default_branch() {
-        Ok(branch) => write!(out, "{}", format_with_gutter(&branch, None))?,
-        Err(_) => write!(out, "{}", format_with_gutter("(not cached)", None))?,
+        Ok(branch) => writeln!(out, "{}", format_with_gutter(&branch, None))?,
+        Err(_) => writeln!(out, "{}", format_with_gutter("(not cached)", None))?,
     }
     writeln!(out)?;
 
     // Show previous branch (for `wt switch -`)
     writeln!(out, "{}", format_heading("PREVIOUS BRANCH", None))?;
     match repo.get_switch_previous() {
-        Some(prev) => write!(out, "{}", format_with_gutter(&prev, None))?,
-        None => write!(out, "{}", format_with_gutter("(none)", None))?,
+        Some(prev) => writeln!(out, "{}", format_with_gutter(&prev, None))?,
+        None => writeln!(out, "{}", format_with_gutter("(none)", None))?,
     }
     writeln!(out)?;
 
@@ -1092,7 +1095,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out, "{}", format_heading("BRANCH MARKERS", None))?;
     let markers = get_all_markers(repo);
     if markers.is_empty() {
-        write!(out, "{}", format_with_gutter("(none)", None))?;
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
         let mut table = String::from("| Branch | Marker | Age |\n");
         table.push_str("|--------|--------|-----|\n");
@@ -1118,7 +1121,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
             .then_with(|| a.0.cmp(&b.0))
     });
     if entries.is_empty() {
-        write!(out, "{}", format_with_gutter("(none)", None))?;
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
     } else {
         // Build markdown table
         let mut table = String::from("| Branch | Status | Age | Head |\n");

@@ -35,7 +35,6 @@ output::change_directory(&path)?;  // Writes to directive file if set, else no-o
 |----------|-------------|---------|
 | `print(message)` | stderr | Status messages (use with formatting functions) |
 | `shell_integration_hint(message)` | stderr | Hints suppressed when shell integration active |
-| `gutter(content)` | stderr | Gutter-formatted quoted content |
 | `blank()` | stderr | Visual separation |
 | `table(content)` | stdout | Primary output (pipeable) |
 | `data(content)` | stdout | Structured data (JSON) |

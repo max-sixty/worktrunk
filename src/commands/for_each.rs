@@ -102,7 +102,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
                 output::print(error_message(cformat!(
                     "Failed in <bold>{display_name}</> (spawn failed)"
                 )))?;
-                output::gutter(format_with_gutter(&err, None))?;
+                output::print(format_with_gutter(&err, None))?;
                 failed.push(display_name.to_string());
             }
             Err(CommandError::ExitCode(exit_code)) => {
@@ -133,7 +133,7 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
             if total == 1 { "" } else { "s" }
         )))?;
         let failed_list = failed.join("\n");
-        output::gutter(format_with_gutter(&failed_list, None))?;
+        output::print(format_with_gutter(&failed_list, None))?;
         // Return silent error so main exits with code 1 without duplicate message
         Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into())
     }

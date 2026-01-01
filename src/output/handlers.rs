@@ -186,7 +186,7 @@ fn handle_branch_deletion_result(
             super::print(error_message(cformat!(
                 "Failed to delete branch <bold>{branch_name}</>"
             )))?;
-            super::gutter(format_with_gutter(&e.to_string(), None))?;
+            super::print(format_with_gutter(&e.to_string(), None))?;
             Err(e)
         }
     }
@@ -400,7 +400,7 @@ pub fn execute_user_command(command: &str) -> anyhow::Result<()> {
 
     // Show what command is being executed (section header + gutter content)
     super::print(progress_message("Executing (--execute):"))?;
-    super::gutter(format_bash_with_gutter(command))?;
+    super::print(format_bash_with_gutter(command))?;
 
     super::execute(command)?;
 

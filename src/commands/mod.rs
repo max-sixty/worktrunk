@@ -84,7 +84,7 @@ pub fn show_diffstat(repo: &worktrunk::git::Repository, range: &str) -> anyhow::
         .to_string();
 
     if !diff_stat.is_empty() {
-        crate::output::gutter(format_with_gutter(&diff_stat, None))?;
+        crate::output::print(format_with_gutter(&diff_stat, None))?;
     }
 
     Ok(())

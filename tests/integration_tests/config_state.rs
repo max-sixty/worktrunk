@@ -624,7 +624,7 @@ fn test_state_clear_all_nothing_to_clear(repo: TestRepo) {
 fn test_state_get_empty(repo: TestRepo) {
     let output = wt_state_get_cmd(&repo).output().unwrap();
     assert!(output.status.success());
-    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)), @r"
+    assert_snapshot!(normalize_log_path(&String::from_utf8_lossy(&output.stderr)), @"
     [36mDEFAULT BRANCH[39m
     [107m [0m main
 

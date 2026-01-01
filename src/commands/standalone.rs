@@ -402,7 +402,7 @@ pub fn handle_squash(
 
     // Display the generated commit message
     let formatted_message = generator.format_message_for_display(&commit_message);
-    crate::output::gutter(format_with_gutter(&formatted_message, None))?;
+    crate::output::print(format_with_gutter(&formatted_message, None))?;
 
     // Reset to merge base (soft reset stages all changes, including any already-staged uncommitted changes)
     repo.run_command(&["reset", "--soft", &merge_base])
@@ -890,7 +890,7 @@ fn render_hook_commands(
             cmd.template.clone()
         };
 
-        write!(out, "{}", format_bash_with_gutter(&command_text))?;
+        writeln!(out, "{}", format_bash_with_gutter(&command_text))?;
     }
 
     Ok(())

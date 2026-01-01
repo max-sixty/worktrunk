@@ -9,6 +9,8 @@ use worktrunk::styling::{
     hint_message, warning_message,
 };
 
+use crate::output;
+
 pub struct ConfigureResult {
     pub shell: Shell,
     pub path: PathBuf,
@@ -496,7 +498,6 @@ fn prompt_for_confirmation(
     cmd: &str,
 ) -> Result<bool, String> {
     use anstyle::Style;
-    use worktrunk::styling::{eprint, eprintln};
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
     // Flushes both stdout (for data output) and stderr (for messages)
@@ -520,15 +521,16 @@ fn prompt_for_confirmation(
             "shell extension & completions"
         };
 
-        eprintln!(
+        output::print(format!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        );
+        ))
+        .map_err(|e| e.to_string())?;
 
         // Show the config line that will be added with gutter
-        eprint!("{}", format_bash_with_gutter(&result.config_line));
-        eprintln!(); // Blank line after each shell block
+        output::print(format_bash_with_gutter(&result.config_line)).map_err(|e| e.to_string())?;
+        output::blank().map_err(|e| e.to_string())?; // Blank line after each shell block
     }
 
     // Show completion changes (only fish has separate completion files)
@@ -540,16 +542,18 @@ fn prompt_for_confirmation(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        eprintln!(
+        output::print(format!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        );
+        ))
+        .map_err(|e| e.to_string())?;
 
         // Show the completion content that will be written
         let fish_completion = fish_completion_content(cmd);
-        eprint!("{}", format_bash_with_gutter(fish_completion.trim()));
-        eprintln!(); // Blank line after
+        output::print(format_bash_with_gutter(fish_completion.trim()))
+            .map_err(|e| e.to_string())?;
+        output::blank().map_err(|e| e.to_string())?; // Blank line after
     }
 
     prompt_yes_no()
@@ -559,7 +563,7 @@ fn prompt_for_confirmation(
 fn prompt_yes_no() -> Result<bool, String> {
     use anstyle::Style;
     use std::io::Write;
-    use worktrunk::styling::{PROMPT_SYMBOL, eprint, eprintln};
+    use worktrunk::styling::{PROMPT_SYMBOL, eprint};
 
     let bold = Style::new().bold();
     eprint!("{PROMPT_SYMBOL} Proceed? {bold}[y/N]{bold:#} ");
@@ -570,7 +574,7 @@ fn prompt_yes_no() -> Result<bool, String> {
         .read_line(&mut input)
         .map_err(|e| e.to_string())?;
 
-    eprintln!();
+    crate::output::blank().map_err(|e| e.to_string())?;
 
     let response = input.trim().to_lowercase();
     Ok(response == "y" || response == "yes")
@@ -866,7 +870,6 @@ fn prompt_for_uninstall_confirmation(
     completion_results: &[CompletionUninstallResult],
 ) -> Result<bool, String> {
     use anstyle::Style;
-    use worktrunk::styling::eprintln;
 
     crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
 
@@ -881,11 +884,12 @@ fn prompt_for_uninstall_confirmation(
             "shell extension & completions"
         };
 
-        eprintln!(
+        crate::output::print(format!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        );
+        ))
+        .map_err(|e| e.to_string())?;
     }
 
     for result in completion_results {
@@ -893,11 +897,12 @@ fn prompt_for_uninstall_confirmation(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        eprintln!(
+        crate::output::print(format!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        );
+        ))
+        .map_err(|e| e.to_string())?;
     }
 
     prompt_yes_no()
@@ -947,7 +952,7 @@ pub fn handle_show_theme() -> Result<(), String> {
     // Gutter - quoted content
     crate::output::print(info_message("Gutter formatting (quoted content):"))
         .map_err(|e| e.to_string())?;
-    crate::output::gutter(format_with_gutter(
+    crate::output::print(format_with_gutter(
         "[commit-generation]\ncommand = \"llm --model claude\"",
         None,
     ))
@@ -958,7 +963,7 @@ pub fn handle_show_theme() -> Result<(), String> {
     // Gutter - bash code
     crate::output::print(info_message("Gutter formatting (shell code):"))
         .map_err(|e| e.to_string())?;
-    crate::output::gutter(format_bash_with_gutter(
+    crate::output::print(format_bash_with_gutter(
         "eval \"$(wt config shell init bash)\"",
     ))
     .map_err(|e| e.to_string())?;

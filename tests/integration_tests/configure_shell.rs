@@ -946,6 +946,11 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Skip compinit detection probe. The probe spawns `zsh -ic` which may trigger compinit's
+        // "insecure directories" warning on CI. That warning goes to /dev/tty (not stdout/stderr),
+        // so it leaks into PTY output despite ZSH_DISABLE_COMPFIX. This test is about install
+        // preview formatting, not compinit detection.
+        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -984,7 +989,6 @@ mod pty_tests {
 
     /// Test that `wt config shell install` shows preview with gutter-formatted config lines
     #[rstest]
-    #[ignore = "flaky on CI due to zsh compinit warnings about insecure directories"]
     fn test_install_preview_with_gutter(repo: TestRepo, temp_home: TempDir) {
         // Create zsh config file
         let zshrc_path = temp_home.path().join(".zshrc");
