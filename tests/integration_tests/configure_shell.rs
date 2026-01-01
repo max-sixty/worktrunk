@@ -946,11 +946,12 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        // Suppress zsh's "insecure directories" warning that some CI environments
-        // produce. This warning comes from the environment's global zsh config
-        // (e.g., /etc/zsh/zshrc calling compinit), not from worktrunk - our shell
-        // init script doesn't modify fpath or call compinit. See shell.rs for details.
-        cmd.env("ZSH_DISABLE_COMPFIX", "true");
+        // Skip the compinit probe and force the advisory to appear. The probe spawns
+        // `zsh -ic` which triggers global zshrc configs that can produce "insecure
+        // directories" warnings on some CI environments. These warnings go to /dev/tty
+        // and leak into PTY output despite our ZSH_DISABLE_COMPFIX suppression.
+        // Using MISSING=1 skips the probe while still showing the compinit advisory.
+        cmd.env("WORKTRUNK_TEST_COMPINIT_MISSING", "1");
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
