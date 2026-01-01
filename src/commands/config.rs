@@ -520,6 +520,9 @@ fn check_zsh_compinit_missing() -> bool {
     // The (( ... )) arithmetic returns exit 0 if true (compdef exists), 1 if false
     let mut cmd = Command::new("zsh");
     cmd.args(["--no-globalrcs", "-ic", "(( $+functions[compdef] ))"]);
+    // Suppress zsh's "insecure directories" warning from compinit.
+    // See detailed rationale in shell::detect_zsh_compinit().
+    cmd.env("ZSH_DISABLE_COMPFIX", "true");
     let Ok(output) = run(&mut cmd, None) else {
         return false; // Can't determine, don't warn
     };
