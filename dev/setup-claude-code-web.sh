@@ -76,53 +76,17 @@ if [ "$RUST_VERSION" != "$REQUIRED_VERSION" ]; then
     echo "  rustup should automatically use the correct version from rust-toolchain.toml"
 fi
 
-# Check and install shells
+# Install shells for integration tests
 echo ""
-echo "Checking shells for integration tests..."
-SHELLS_AVAILABLE=()
-SHELLS_MISSING=()
-
-for shell in bash zsh fish; do
-    if command -v "$shell" &> /dev/null; then
-        SHELLS_AVAILABLE+=("$shell")
-        print_status "$shell is available"
-    else
-        SHELLS_MISSING+=("$shell")
-    fi
-done
-
-# Install missing shells
-if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
-    echo ""
-    echo "Installing missing shells: ${SHELLS_MISSING[*]}"
-
-    # Check if we can use apt-get (Debian/Ubuntu)
-    if command -v apt-get &> /dev/null; then
-        # Install quietly
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq 2>&1 | grep -v "Failed to fetch" || true
-        apt-get install -y -qq "${SHELLS_MISSING[@]}" 2>&1 | tail -5 || {
-            print_warning "Could not install shells: ${SHELLS_MISSING[*]}"
-            echo "  Some integration tests will fail"
-        }
-    else
-        print_warning "Package manager not found, cannot install shells: ${SHELLS_MISSING[*]}"
-        echo "  Some integration tests will fail"
-    fi
-
-    # Re-check which shells are now available
-    SHELLS_AVAILABLE=()
-    SHELLS_MISSING=()
-    for shell in bash zsh fish; do
-        if command -v "$shell" &> /dev/null; then
-            SHELLS_AVAILABLE+=("$shell")
-            print_status "$shell is now available"
-        else
-            SHELLS_MISSING+=("$shell")
-            print_warning "$shell installation failed"
-        fi
-    done
+echo "Installing shells for integration tests..."
+if command -v apt-get &> /dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq 2>&1 | grep -v "Failed to fetch" || true
+    apt-get install -y -qq zsh fish 2>&1 | tail -3 || true
 fi
+for shell in bash zsh fish; do
+    command -v "$shell" &> /dev/null && print_status "$shell available" || print_warning "$shell missing"
+done
 
 # Install GitHub CLI (gh)
 echo ""
@@ -162,37 +126,5 @@ cargo install cargo-insta cargo-nextest --quiet
 cargo install --path . --quiet
 print_status "Installed cargo-insta, cargo-nextest, worktrunk"
 
-# Summary
 echo ""
-echo "========================================"
-echo "Setup Summary"
-echo "========================================"
-print_status "Environment is ready for development"
-print_status "Rust toolchain: $RUST_VERSION"
-print_status "Build: OK"
-print_status "Shells available: ${SHELLS_AVAILABLE[*]}"
-if command -v gh &> /dev/null; then
-    print_status "GitHub CLI (gh) installed"
-fi
-print_status "Dev tools: cargo-insta, cargo-nextest, worktrunk"
-
-if [ ${#SHELLS_MISSING[@]} -gt 0 ]; then
-    echo ""
-    print_warning "Some shells not installed: ${SHELLS_MISSING[*]}"
-    echo "  (Tests for these shells will fail)"
-fi
-
-echo ""
-echo "========================================"
-echo "Next Steps"
-echo "========================================"
-echo "Run tests:"
-echo "  cargo test --lib --bins                # Unit tests"
-echo "  cargo test --test integration          # Integration tests"
-echo "  cargo run -- beta run-hook pre-merge   # All tests (via pre-merge hook)"
-echo ""
-echo "Or start developing:"
-echo "  cargo run -- --help                    # Run worktrunk CLI"
-echo "  ./target/debug/wt list                 # Try a command"
-echo ""
-print_status "Setup complete!"
+print_status "Setup complete! Run 'wt --help' to get started."
