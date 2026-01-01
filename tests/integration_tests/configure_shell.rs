@@ -946,11 +946,8 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
-        // Skip compinit detection probe. The probe spawns `zsh -ic` which may trigger compinit's
-        // "insecure directories" warning on CI. That warning goes to /dev/tty (not stdout/stderr),
-        // so it leaks into PTY output despite ZSH_DISABLE_COMPFIX. This test is about install
-        // preview formatting, not compinit detection.
-        cmd.env("WORKTRUNK_TEST_COMPINIT_CONFIGURED", "1");
+        // Let the compinit probe run naturally - no bypass env vars
+        // This tests whether the probe itself causes any warnings to leak into PTY output
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
