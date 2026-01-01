@@ -946,6 +946,8 @@ mod pty_tests {
         configure_pty_command(&mut cmd);
         cmd.env("HOME", temp_home.path());
         cmd.env("SHELL", "/bin/zsh");
+        // Disable zsh compinit security check (avoids "insecure directories" warning on CI)
+        cmd.env("ZSH_DISABLE_COMPFIX", "true");
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
