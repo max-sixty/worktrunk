@@ -1034,9 +1034,7 @@ pub fn collect(
                 let footer_msg = format!(
                     "{INFO_SYMBOL} {dim}{footer_base} ({completed_results}/{total_results} loaded){dim:#}"
                 );
-                if let Err(e) = table.update_footer(footer_msg) {
-                    log::debug!("Progressive footer update failed: {}", e);
-                }
+                table.update_footer(footer_msg);
 
                 // Re-render the row with caching (now includes status if computed)
                 let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
@@ -1044,9 +1042,12 @@ pub fn collect(
                 // Compare using full line so changes beyond the clamp (e.g., CI) still refresh.
                 if rendered != last_rendered_lines[item_idx] {
                     last_rendered_lines[item_idx] = rendered.clone();
-                    if let Err(e) = table.update_row(item_idx, rendered) {
-                        log::debug!("Progressive row update failed: {}", e);
-                    }
+                    table.update_row(item_idx, rendered);
+                }
+
+                // Flush updates to terminal
+                if let Err(e) = table.flush() {
+                    log::debug!("Progressive table flush failed: {}", e);
                 }
             }
         },
@@ -1097,9 +1098,7 @@ pub fn collect(
             // Interactive: do final render pass and update footer to summary
             for (item_idx, item) in all_items.iter().enumerate() {
                 let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
-                if let Err(e) = table.update_row(item_idx, rendered) {
-                    log::debug!("Final row update failed: {}", e);
-                }
+                table.update_row(item_idx, rendered);
             }
             table.finalize_tty(final_msg)?;
         } else {
