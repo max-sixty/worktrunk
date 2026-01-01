@@ -76,6 +76,36 @@ impl ProgressiveTable {
         }
     }
 
+    /// Create a new progressive table that never writes to the terminal.
+    ///
+    /// Used in tests to avoid polluting test output even when running in a TTY.
+    #[cfg(test)]
+    fn new_non_tty(
+        header: String,
+        skeletons: Vec<String>,
+        initial_footer: String,
+        max_width: usize,
+    ) -> Self {
+        let row_count = skeletons.len();
+
+        let mut lines = Vec::with_capacity(row_count + 3);
+        lines.push(truncate_visible(&header, max_width));
+
+        for skeleton in skeletons {
+            lines.push(truncate_visible(&skeleton, max_width));
+        }
+
+        lines.push(String::new());
+        lines.push(truncate_visible(&initial_footer, max_width));
+
+        Self {
+            lines,
+            max_width,
+            row_count,
+            is_tty: false,
+        }
+    }
+
     /// Print the initial table to stderr (TTY only).
     pub fn render_initial(&self) -> std::io::Result<()> {
         if self.is_tty {
@@ -204,9 +234,9 @@ mod tests {
         let skeletons = vec!["row0".to_string(), "row1".to_string()];
         let footer = "loading".to_string();
 
-        // new() no longer has I/O side effects — render_initial() must be called explicitly
+        // Use new_non_tty to avoid writing to stderr during tests
         let mut table =
-            ProgressiveTable::new(header.clone(), skeletons.clone(), footer.clone(), 80);
+            ProgressiveTable::new_non_tty(header.clone(), skeletons.clone(), footer.clone(), 80);
 
         // header + 2 rows + spacer + footer
         assert_eq!(table.lines.len(), 5);
@@ -239,7 +269,7 @@ mod tests {
         let skeletons = vec!["short".to_string()];
         let footer = "loading...".to_string();
 
-        let table = ProgressiveTable::new(long_header.clone(), skeletons, footer, 20);
+        let table = ProgressiveTable::new_non_tty(long_header.clone(), skeletons, footer, 20);
 
         // Header should be truncated (shorter than original)
         assert!(
@@ -256,7 +286,7 @@ mod tests {
         let skeletons = vec!["row0".to_string()];
         let footer = "loading".to_string();
 
-        let mut table = ProgressiveTable::new(header, skeletons, footer.clone(), 80);
+        let mut table = ProgressiveTable::new_non_tty(header, skeletons, footer.clone(), 80);
 
         // First footer should match
         assert_eq!(table.lines.last().unwrap(), &footer);
@@ -268,21 +298,20 @@ mod tests {
 
     #[test]
     fn test_is_tty_returns_value() {
-        let table = ProgressiveTable::new(
+        let table = ProgressiveTable::new_non_tty(
             "header".to_string(),
             vec!["row".to_string()],
             "footer".to_string(),
             80,
         );
 
-        // In test environment, stderr is typically not a TTY
-        // Just ensure the method can be called without panicking
-        let _is_tty = table.is_tty();
+        // new_non_tty always sets is_tty to false
+        assert!(!table.is_tty());
     }
 
     #[test]
     fn test_row_count_tracking() {
-        let table = ProgressiveTable::new(
+        let table = ProgressiveTable::new_non_tty(
             "h".to_string(),
             vec!["a".to_string(), "b".to_string(), "c".to_string()],
             "f".to_string(),
@@ -294,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_update_row_bounds_check() {
-        let mut table = ProgressiveTable::new(
+        let mut table = ProgressiveTable::new_non_tty(
             "header".to_string(),
             vec!["row0".to_string(), "row1".to_string()],
             "footer".to_string(),
@@ -313,23 +342,23 @@ mod tests {
 
     #[test]
     fn test_finalize_tty_updates_footer() {
-        let mut table = ProgressiveTable::new(
+        let mut table = ProgressiveTable::new_non_tty(
             "header".to_string(),
             vec!["row".to_string()],
             "loading...".to_string(),
             80,
         );
 
-        // In non-TTY test environment, finalize_tty should still update footer internally
+        // In non-TTY mode, finalize_tty returns early without updating footer
         table.finalize_tty("Complete!".to_string()).unwrap();
 
-        // Note: In non-TTY mode, finalize_tty returns early, so footer won't change
-        // This tests that the method doesn't panic
+        // Footer unchanged because is_tty is false
+        assert_eq!(table.lines.last().unwrap(), "loading...");
     }
 
     #[test]
     fn test_render_initial_non_tty() {
-        let table = ProgressiveTable::new(
+        let table = ProgressiveTable::new_non_tty(
             "header".to_string(),
             vec!["row".to_string()],
             "footer".to_string(),
