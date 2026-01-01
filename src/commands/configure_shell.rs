@@ -5,8 +5,8 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
-    INFO_SYMBOL, PROGRESS_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter,
-    format_with_gutter, hint_message, warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter, format_with_gutter,
+    hint_message, warning_message,
 };
 
 pub struct ConfigureResult {
@@ -66,7 +66,7 @@ impl UninstallAction {
     pub fn symbol(&self) -> &'static str {
         match self {
             UninstallAction::Removed => SUCCESS_SYMBOL,
-            UninstallAction::WouldRemove => PROGRESS_SYMBOL,
+            UninstallAction::WouldRemove => INFO_SYMBOL,
         }
     }
 }
@@ -96,7 +96,7 @@ impl ConfigAction {
         match self {
             ConfigAction::Added | ConfigAction::Created => SUCCESS_SYMBOL,
             ConfigAction::AlreadyExists => INFO_SYMBOL,
-            ConfigAction::WouldAdd | ConfigAction::WouldCreate => PROGRESS_SYMBOL,
+            ConfigAction::WouldAdd | ConfigAction::WouldCreate => INFO_SYMBOL,
         }
     }
 }
@@ -987,7 +987,7 @@ mod tests {
     #[test]
     fn test_uninstall_action_emoji() {
         assert_eq!(UninstallAction::Removed.symbol(), SUCCESS_SYMBOL);
-        assert_eq!(UninstallAction::WouldRemove.symbol(), PROGRESS_SYMBOL);
+        assert_eq!(UninstallAction::WouldRemove.symbol(), INFO_SYMBOL);
     }
 
     #[test]
@@ -1007,8 +1007,8 @@ mod tests {
         assert_eq!(ConfigAction::Added.symbol(), SUCCESS_SYMBOL);
         assert_eq!(ConfigAction::Created.symbol(), SUCCESS_SYMBOL);
         assert_eq!(ConfigAction::AlreadyExists.symbol(), INFO_SYMBOL);
-        assert_eq!(ConfigAction::WouldAdd.symbol(), PROGRESS_SYMBOL);
-        assert_eq!(ConfigAction::WouldCreate.symbol(), PROGRESS_SYMBOL);
+        assert_eq!(ConfigAction::WouldAdd.symbol(), INFO_SYMBOL);
+        assert_eq!(ConfigAction::WouldCreate.symbol(), INFO_SYMBOL);
     }
 
     #[test]
@@ -1060,17 +1060,11 @@ mod tests {
 
     #[test]
     fn test_fish_completion_content() {
-        let content = fish_completion_content("wt");
-        assert!(content.contains("# worktrunk completions for fish"));
-        assert!(content.contains("--command wt"));
-        assert!(content.contains("COMPLETE=fish"));
-        assert!(content.contains("WORKTRUNK_BIN"));
+        insta::assert_snapshot!(fish_completion_content("wt"));
     }
 
     #[test]
     fn test_fish_completion_content_custom_cmd() {
-        let content = fish_completion_content("myapp");
-        assert!(content.contains("--command myapp"));
-        assert!(content.contains("type -P myapp"));
+        insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 }

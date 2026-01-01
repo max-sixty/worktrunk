@@ -1,0 +1,5 @@
+---
+source: src/shell.rs
+expression: "Shell::Fish.config_line(\"wt\")"
+---
+if type -q wt; command wt config shell init fish | source; end

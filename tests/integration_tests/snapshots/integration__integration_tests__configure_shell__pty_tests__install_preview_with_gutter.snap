@@ -1,0 +1,18 @@
+---
+source: tests/integration_tests/configure_shell.rs
+expression: normalized
+---
+y
+
+○ Will add shell extension & completions for zsh @ ~/.zshrc
+  if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+
+❯ Proceed? [y/N] 
+▲ Completions won't work; add to ~/.zshrc before the wt line:
+  autoload -Uz compinit && compinit
+✓ Added shell extension & completions for zsh @ ~/.zshrc
+↳ Skipped bash; ~/.bashrc not found
+↳ Skipped fish; ~/.config/fish/conf.d not found
+
+✓ Configured 1 shell
+↳ Restart shell or run: source ~/.zshrc

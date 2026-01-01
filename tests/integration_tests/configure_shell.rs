@@ -918,3 +918,102 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
         ");
     });
 }
+
+// PTY-based tests for interactive install preview
+#[cfg(all(unix, feature = "shell-integration-tests"))]
+mod pty_tests {
+    use crate::common::{TestRepo, configure_pty_command, open_pty, repo, temp_home};
+    use insta::assert_snapshot;
+    use insta_cmd::get_cargo_bin;
+    use portable_pty::CommandBuilder;
+    use rstest::rstest;
+    use std::fs;
+    use std::io::{Read, Write};
+    use tempfile::TempDir;
+
+    /// Execute shell install command in a PTY with interactive input
+    fn exec_install_in_pty(temp_home: &TempDir, repo: &TestRepo, input: &str) -> (String, i32) {
+        let pair = open_pty();
+
+        let mut cmd = CommandBuilder::new(get_cargo_bin("wt"));
+        cmd.arg("-C");
+        cmd.arg(repo.root_path());
+        cmd.arg("config");
+        cmd.arg("shell");
+        cmd.arg("install");
+        cmd.cwd(repo.root_path());
+
+        configure_pty_command(&mut cmd);
+        cmd.env("HOME", temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
+
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+
+        // Write input to the PTY (simulating user typing)
+        writer.write_all(input.as_bytes()).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).unwrap();
+
+        let exit_status = child.wait().unwrap();
+        let exit_code = exit_status.exit_code() as i32;
+
+        (buf, exit_code)
+    }
+
+    /// Normalize output for snapshot testing
+    fn normalize_output(output: &str, temp_home: &TempDir) -> String {
+        // PTYs use \r\n line endings, normalize to \n
+        let output = output.replace("\r\n", "\n");
+
+        // Remove ^D control sequence that appears on macOS
+        let output = regex::Regex::new(r"\^D\x08+")
+            .unwrap()
+            .replace_all(&output, "");
+
+        // Replace temp home path with ~/
+        let home_path = temp_home.path().to_string_lossy();
+        output.replace(&*home_path, "~").to_string()
+    }
+
+    /// Test that `wt config shell install` shows preview with gutter-formatted config lines
+    #[rstest]
+    fn test_install_preview_with_gutter(repo: TestRepo, temp_home: TempDir) {
+        // Create zsh config file
+        let zshrc_path = temp_home.path().join(".zshrc");
+        fs::write(&zshrc_path, "# Existing config\n").unwrap();
+
+        let (output, exit_code) = exec_install_in_pty(&temp_home, &repo, "y\n");
+        let normalized = normalize_output(&output, &temp_home);
+
+        assert_eq!(exit_code, 0);
+        assert_snapshot!(normalized);
+    }
+
+    /// Test that declining install shows preview but doesn't modify files
+    #[rstest]
+    fn test_install_preview_declined(repo: TestRepo, temp_home: TempDir) {
+        let zshrc_path = temp_home.path().join(".zshrc");
+        fs::write(&zshrc_path, "# Existing config\n").unwrap();
+
+        let (output, exit_code) = exec_install_in_pty(&temp_home, &repo, "n\n");
+        let normalized = normalize_output(&output, &temp_home);
+
+        // User declined, so exit code is 1
+        assert_eq!(exit_code, 1);
+        assert_snapshot!(normalized);
+
+        // Verify file was not modified
+        let content = fs::read_to_string(&zshrc_path).unwrap();
+        assert!(
+            !content.contains("wt config shell init"),
+            "File should not be modified when user declines"
+        );
+    }
+}

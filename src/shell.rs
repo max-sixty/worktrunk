@@ -453,33 +453,14 @@ mod tests {
     }
 
     #[test]
-    fn test_shell_config_line_bash() {
-        let line = Shell::Bash.config_line("wt");
-        assert!(line.contains("eval"));
-        assert!(line.contains("wt config shell init bash"));
-        assert!(line.contains("command -v wt"));
-    }
-
-    #[test]
-    fn test_shell_config_line_zsh() {
-        let line = Shell::Zsh.config_line("wt");
-        assert!(line.contains("eval"));
-        assert!(line.contains("wt config shell init zsh"));
-    }
-
-    #[test]
-    fn test_shell_config_line_fish() {
-        let line = Shell::Fish.config_line("wt");
-        assert!(line.contains("type -q wt"));
-        assert!(line.contains("wt config shell init fish"));
-        assert!(line.contains("source"));
-    }
-
-    #[test]
-    fn test_shell_config_line_powershell() {
-        let line = Shell::PowerShell.config_line("wt");
-        assert!(line.contains("Invoke-Expression"));
-        assert!(line.contains("wt config shell init powershell"));
+    fn test_shell_config_line() {
+        insta::assert_snapshot!("config_line_bash", Shell::Bash.config_line("wt"));
+        insta::assert_snapshot!("config_line_zsh", Shell::Zsh.config_line("wt"));
+        insta::assert_snapshot!("config_line_fish", Shell::Fish.config_line("wt"));
+        insta::assert_snapshot!(
+            "config_line_powershell",
+            Shell::PowerShell.config_line("wt")
+        );
     }
 
     #[test]
@@ -487,52 +468,21 @@ mod tests {
         // When using a custom prefix, the generated shell config line must use that prefix
         // throughout - both in the command check AND the command invocation.
         // This prevents the bug where we check for `git-wt` but then call `wt`.
-        let prefix = "git-wt";
-
-        // Bash/Zsh
-        let bash_line = Shell::Bash.config_line(prefix);
-        assert!(
-            bash_line.contains("command -v git-wt"),
-            "bash should check for git-wt"
-        );
-        assert!(
-            bash_line.contains("command git-wt config shell init"),
-            "bash should call git-wt, not wt"
-        );
-
-        // Fish
-        let fish_line = Shell::Fish.config_line(prefix);
-        assert!(
-            fish_line.contains("type -q git-wt"),
-            "fish should check for git-wt"
-        );
-        assert!(
-            fish_line.contains("command git-wt config shell init"),
-            "fish should call git-wt, not wt"
-        );
-
-        // PowerShell
-        let ps_line = Shell::PowerShell.config_line(prefix);
-        assert!(
-            ps_line.contains("Get-Command git-wt"),
-            "powershell should check for git-wt"
-        );
-        assert!(
-            ps_line.contains("& git-wt config shell init"),
-            "powershell should call git-wt, not wt"
+        insta::assert_snapshot!("config_line_bash_custom", Shell::Bash.config_line("git-wt"));
+        insta::assert_snapshot!("config_line_zsh_custom", Shell::Zsh.config_line("git-wt"));
+        insta::assert_snapshot!("config_line_fish_custom", Shell::Fish.config_line("git-wt"));
+        insta::assert_snapshot!(
+            "config_line_powershell_custom",
+            Shell::PowerShell.config_line("git-wt")
         );
     }
 
     #[test]
     fn test_shell_init_generate() {
-        // Test that shell init generates valid output for each shell
-        let shells = [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell];
-        for shell in shells {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
             let init = ShellInit::with_prefix(shell, "wt".to_string());
-            let result = init.generate();
-            assert!(result.is_ok(), "Failed to generate for {:?}", shell);
-            let output = result.unwrap();
-            assert!(!output.is_empty(), "Empty output for {:?}", shell);
+            let output = init.generate().expect("Failed to generate");
+            insta::assert_snapshot!(format!("init_{shell}"), output);
         }
     }
 
@@ -627,13 +577,7 @@ mod tests {
     #[test]
     fn test_shell_init_with_custom_prefix() {
         let init = ShellInit::with_prefix(Shell::Bash, "custom".to_string());
-        let result = init.generate();
-        assert!(result.is_ok(), "Should generate with custom prefix");
-        let output = result.unwrap();
-        assert!(
-            output.contains("custom"),
-            "Output should contain custom prefix"
-        );
+        insta::assert_snapshot!(init.generate().expect("Should generate with custom prefix"));
     }
 
     /// Verify that `config_line()` generates lines that

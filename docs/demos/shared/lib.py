@@ -723,22 +723,6 @@ def setup_demo_output(out_dir: Path) -> Path:
     return starship_config
 
 
-def is_interactive_tape(tape_path: Path) -> bool:
-    """Check if a tape contains interactive elements (TUI, Zellij, etc).
-
-    Interactive tapes have VHS commands like Down, Up, Ctrl+... that can't
-    be translated to shell commands for text output.
-    """
-    content = tape_path.read_text()
-    # Look for interactive VHS commands at start of line
-    # Also check for keystroke overlay which indicates visual TUI demo
-    interactive_pattern = re.compile(
-        r"^(Down|Up|Left|Right|Ctrl\+|Tab\s|Backspace|Escape|Set KeyStrokes)",
-        re.MULTILINE,
-    )
-    return bool(interactive_pattern.search(content))
-
-
 def record_text(
     demo_env: DemoEnv,
     tape_path: Path,

@@ -1,0 +1,5 @@
+---
+source: src/shell.rs
+expression: "Shell::PowerShell.config_line(\"git-wt\")"
+---
+if (Get-Command git-wt -ErrorAction SilentlyContinue) { Invoke-Expression (& git-wt config shell init powershell) }
