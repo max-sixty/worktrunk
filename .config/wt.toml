@@ -7,7 +7,7 @@ cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps
 cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build target/debug/
 """
 assets = "./dev/fetch-assets"
-docs = "cd {{ worktree }}/docs && zola serve -p {{ branch | hash_port }}"
+docs = "cd docs && zola serve -p {{ branch | hash_port }}"
 
 [post-merge]
 build = "cargo build --all-targets"

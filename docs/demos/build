@@ -26,13 +26,22 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from shared import (
+from shared import (  # noqa: E402
     VALIDATION_RS,
-    DemoEnv, DemoSize, git, prepare_demo_repo,
-    setup_claude_code_config, setup_zellij_config, setup_fish_config,
-    check_dependencies, setup_demo_output, record_all_themes,
-    SIZE_DOCS, SIZE_SOCIAL,
-    record_text, build_tape_replacements,
+    DemoEnv,
+    DemoSize,
+    git,
+    prepare_demo_repo,
+    setup_claude_code_config,
+    setup_zellij_config,
+    setup_fish_config,
+    check_dependencies,
+    setup_demo_output,
+    record_all_themes,
+    SIZE_DOCS,
+    SIZE_SOCIAL,
+    record_text,
+    build_tape_replacements,
 )
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -41,14 +50,14 @@ TAPES_DIR = SCRIPT_DIR / "tapes"
 
 # Custom VHS binary with keystroke overlay
 VHS_KEYSTROKES = os.environ.get(
-    "VHS_KEYSTROKES",
-    str(SCRIPT_DIR / "vhs-keystrokes" / "vhs-keystrokes")
+    "VHS_KEYSTROKES", str(SCRIPT_DIR / "vhs-keystrokes" / "vhs-keystrokes")
 )
 
 
 # =============================================================================
 # Setup Helpers
 # =============================================================================
+
 
 def _add_billing_branch(env: DemoEnv):
     """Add a billing branch at same commit as main (merged state)."""
@@ -67,20 +76,22 @@ def _add_staged_validation(env: DemoEnv):
         git(["-C", str(hooks_path), "add", "src/validation.rs"])
 
 
-def _write_user_config(env: DemoEnv, approved_commands: list[str], commit_generation: bool = False):
+def _write_user_config(
+    env: DemoEnv, approved_commands: list[str], commit_generation: bool = False
+):
     """Write worktrunk user config."""
     config_dir = env.home / ".config" / "worktrunk"
     project_id = str(env.bare_remote).removesuffix(".git")
 
     content = ""
     if commit_generation:
-        content += '''[commit-generation]
+        content += """[commit-generation]
 command = "llm"
 args = ["-m", "claude-haiku-4.5"]
 
-'''
+"""
     content += f'[projects."{project_id}"]\n'
-    content += f'approved-commands = {approved_commands!r}\n'
+    content += f"approved-commands = {approved_commands!r}\n"
 
     (config_dir / "config.toml").write_text(content)
 
@@ -88,6 +99,7 @@ args = ["-m", "claude-haiku-4.5"]
 # =============================================================================
 # Demo Setup Functions
 # =============================================================================
+
 
 def prepare_basic(env: DemoEnv):
     """Basic repo setup - no hooks, no extras."""
@@ -122,7 +134,9 @@ cleanup = "{cleanup_cmd}"
     _add_billing_branch(env)
 
 
-def prepare_merge_demo(env: DemoEnv, commit_generation: bool = True, staged_changes: bool = True):
+def prepare_merge_demo(
+    env: DemoEnv, commit_generation: bool = True, staged_changes: bool = True
+):
     """Merge demo setup. Use commit_generation=False for social (no LLM in GIF)."""
     prepare_demo_repo(env, REPO_ROOT)
     _write_user_config(env, ["cargo nextest run"], commit_generation=commit_generation)
@@ -136,11 +150,14 @@ def prepare_switch(env: DemoEnv):
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
     _write_user_config(env, ["npm install"])
 
-    setup_claude_code_config(env, [
-        str(env.repo),
-        str(env.work_base / "acme.alpha"),
-        str(env.work_base / "acme.dashboard"),
-    ])
+    setup_claude_code_config(
+        env,
+        [
+            str(env.repo),
+            str(env.work_base / "acme.alpha"),
+            str(env.work_base / "acme.dashboard"),
+        ],
+    )
 
 
 def prepare_devserver(env: DemoEnv):
@@ -156,7 +173,7 @@ url = "http://localhost:{{{{ branch | hash_port }}}}"
     _write_user_config(env, [dev_cmd])
 
     # Override npm mock to start nc listener so URL appears active
-    npm_mock = env.home / "bin" / "npm"
+    npm_mock = env.home / ".local" / "bin" / "npm"
     npm_mock.write_text("""#!/bin/bash
 if [[ "$1" == "run" && "$2" == "dev" ]]; then
     PORT="$5"
@@ -173,7 +190,7 @@ fi
 
 def prepare_zellij_omnibus(env: DemoEnv):
     """Setup for wt-zellij-omnibus demo - comprehensive showcase."""
-    hooks_config = '''[post-start]
+    hooks_config = """[post-start]
 dev = "npm run dev -- --port {{ branch | hash_port }}"
 
 [pre-merge]
@@ -181,7 +198,7 @@ test = "cargo nextest run"
 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
-'''
+"""
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
 
     # Clean up branches that might exist from previous runs (billing, feature created during demo)
@@ -189,15 +206,14 @@ url = "http://localhost:{{ branch | hash_port }}"
     for branch in ["billing", "feature"]:
         # Delete from origin if exists (ignore errors if not)
         subprocess.run(
-            ["git", "-C", str(origin), "branch", "-D", branch],
-            capture_output=True
+            ["git", "-C", str(origin), "branch", "-D", branch], capture_output=True
         )
 
     # Enable git colors for non-TTY environments (VHS)
     git(["-C", str(env.repo), "config", "color.ui", "always"])
 
     # Override llm mock with different commit message for this demo
-    llm_mock = env.home / "bin" / "llm"
+    llm_mock = env.home / ".local" / "bin" / "llm"
     llm_mock.write_text("""#!/bin/bash
 sleep 0.5
 echo "feat: add user settings module"
@@ -210,7 +226,7 @@ echo "Add placeholder module for user profile settings."
     _write_user_config(
         env,
         ["npm run dev -- --port {{ branch | hash_port }} &", "cargo nextest run"],
-        commit_generation=True
+        commit_generation=True,
     )
 
     # Zellij + Fish configs (with --create in wsl abbreviation)
@@ -222,18 +238,29 @@ echo "Add placeholder module for user profile settings."
     worktree_paths = [str(env.repo)] + [
         str(env.work_base / f"acme.{branch}") for branch in worktree_branches
     ]
-    allowed_tools = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Task", "TodoWrite"]
+    allowed_tools = [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Task",
+        "TodoWrite",
+    ]
     setup_claude_code_config(env, worktree_paths, allowed_tools)
 
     # Pre-create worktrees (api and auth only - billing created during demo)
     demo_env = {
         **os.environ,
         "HOME": str(env.home),
-        "PATH": f"{REPO_ROOT}/target/debug:{env.home}/bin:{os.environ.get('PATH', '')}"
+        "PATH": f"{REPO_ROOT}/target/debug:{env.home}/.local/bin:{os.environ.get('PATH', '')}",
     }
 
     def run_wt(args, cwd):
-        result = subprocess.run(["wt"] + args, cwd=str(cwd), env=demo_env, capture_output=True, text=True)
+        result = subprocess.run(
+            ["wt"] + args, cwd=str(cwd), env=demo_env, capture_output=True, text=True
+        )
         if result.returncode != 0:
             raise RuntimeError(f"wt {' '.join(args)} failed: {result.stderr}")
 
@@ -271,10 +298,20 @@ SOCIAL_DEMOS = [
     ("wt-statusline.tape", "wt-statusline", prepare_switch, "vhs"),
     ("wt-list.tape", "wt-list", prepare_with_hooks, "vhs"),
     ("wt-list-remove.tape", "wt-list-remove", prepare_with_hooks, "vhs"),
-    ("wt-hooks.tape", "wt-hooks", partial(prepare_with_hooks, include_deps=True), "vhs"),
+    (
+        "wt-hooks.tape",
+        "wt-hooks",
+        partial(prepare_with_hooks, include_deps=True),
+        "vhs",
+    ),
     ("wt-devserver.tape", "wt-devserver", prepare_devserver, "vhs"),
     ("wt-commit.tape", "wt-commit", prepare_merge_demo, "vhs"),
-    ("wt-merge.tape", "wt-merge", partial(prepare_merge_demo, commit_generation=False, staged_changes=False), "vhs"),
+    (
+        "wt-merge.tape",
+        "wt-merge",
+        partial(prepare_merge_demo, commit_generation=False, staged_changes=False),
+        "vhs",
+    ),
     ("wt-select-short.tape", "wt-select-short", prepare_basic, "vhs-keystrokes"),
     ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
     ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),
@@ -298,6 +335,7 @@ TARGETS = {
 # Parallel Recording
 # =============================================================================
 
+
 def record_demo(
     tape_file: str,
     output_name: str,
@@ -312,7 +350,6 @@ def record_demo(
     tape_path = TAPES_DIR / tape_file
     if not tape_path.exists():
         raise FileNotFoundError(f"{tape_file} not found")
-
 
     vhs_binary = VHS_KEYSTROKES if vhs_type == "vhs-keystrokes" else "vhs"
 
@@ -335,7 +372,14 @@ def record_demo(
             theme_dir.mkdir(parents=True, exist_ok=True)
             output_gifs[theme] = theme_dir / f"{output_name}.gif"
 
-        record_all_themes(env, tape_path, output_gifs, REPO_ROOT, vhs_binary=vhs_binary, size=demo_size)
+        record_all_themes(
+            env,
+            tape_path,
+            output_gifs,
+            REPO_ROOT,
+            vhs_binary=vhs_binary,
+            size=demo_size,
+        )
         print(f"✓ {output_name}: GIFs saved: {', '.join(themes)}")
 
 
@@ -343,20 +387,23 @@ def record_demo(
 # Main
 # =============================================================================
 
+
 def spawn_debug_shell(env: DemoEnv, starship_config: Path):
     """Spawn an interactive fish shell with the demo environment set up."""
     shell_env = os.environ.copy()
-    shell_env.update({
-        "HOME": str(env.home),
-        "XDG_CONFIG_HOME": str(env.home / ".config"),
-        "STARSHIP_CONFIG": str(starship_config),
-        "PATH": f"{REPO_ROOT / 'target' / 'debug'}:{env.home / 'bin'}:{os.environ.get('PATH', '')}",
-        # Keep real rustup/cargo for any rust tools
-        "RUSTUP_HOME": str(Path.home() / ".rustup"),
-        "CARGO_HOME": str(Path.home() / ".cargo"),
-    })
+    shell_env.update(
+        {
+            "HOME": str(env.home),
+            "XDG_CONFIG_HOME": str(env.home / ".config"),
+            "STARSHIP_CONFIG": str(starship_config),
+            "PATH": f"{REPO_ROOT / 'target' / 'debug'}:{env.home / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
+            # Keep real rustup/cargo for any rust tools
+            "RUSTUP_HOME": str(Path.home() / ".rustup"),
+            "CARGO_HOME": str(Path.home() / ".cargo"),
+        }
+    )
 
-    print(f"\nSpawning fish shell in demo environment...")
+    print("\nSpawning fish shell in demo environment...")
     print(f"  HOME={env.home}")
     print(f"  Demo repo: {env.repo}\n")
 
@@ -375,17 +422,25 @@ Examples:
   ./build docs --only wt-merge    Build specific demo for docs
   ./build docs --text             Build text output instead of GIFs
   ./build social --only wt-zellij-omnibus --shell   Debug shell for demo
-"""
+""",
     )
-    parser.add_argument("target", choices=["docs", "social"],
-                        help="Target to build demos for")
+    parser.add_argument(
+        "target", choices=["docs", "social"], help="Target to build demos for"
+    )
     parser.add_argument("--only", help="Only record specific demo (e.g., wt-switch)")
-    parser.add_argument("--shell", action="store_true",
-                        help="Build demo and spawn interactive shell for debugging (requires --only)")
-    parser.add_argument("--text", action="store_true",
-                        help="Record text output instead of GIFs")
-    parser.add_argument("--sequential", action="store_true",
-                        help="Record demos sequentially instead of in parallel")
+    parser.add_argument(
+        "--shell",
+        action="store_true",
+        help="Build demo and spawn interactive shell for debugging (requires --only)",
+    )
+    parser.add_argument(
+        "--text", action="store_true", help="Record text output instead of GIFs"
+    )
+    parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Record demos sequentially instead of in parallel",
+    )
     args = parser.parse_args()
 
     if args.shell and not args.only:
@@ -423,7 +478,7 @@ Examples:
     needs_keystrokes = any(vhs_type == "vhs-keystrokes" for _, _, _, vhs_type in demos)
 
     if needs_keystrokes and not vhs_keystrokes_available:
-        print(f"Error: vhs-keystrokes required but not found", file=sys.stderr)
+        print("Error: vhs-keystrokes required but not found", file=sys.stderr)
         print(f"Not found at: {VHS_KEYSTROKES}", file=sys.stderr)
         print("See docs/demos/CLAUDE.md for build instructions", file=sys.stderr)
         sys.exit(1)
@@ -446,8 +501,14 @@ Examples:
         for tape_file, output_name, setup_func, vhs_type in demos:
             try:
                 record_demo(
-                    tape_file, output_name, setup_func, vhs_type,
-                    mode_out_dir, themes, demo_size, args.text,
+                    tape_file,
+                    output_name,
+                    setup_func,
+                    vhs_type,
+                    mode_out_dir,
+                    themes,
+                    demo_size,
+                    args.text,
                 )
             except Exception as e:
                 print(f"✗ {output_name}: {e}")
@@ -459,8 +520,15 @@ Examples:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
-                    record_demo, tape_file, output_name, setup_func, vhs_type,
-                    mode_out_dir, themes, demo_size, args.text,
+                    record_demo,
+                    tape_file,
+                    output_name,
+                    setup_func,
+                    vhs_type,
+                    mode_out_dir,
+                    themes,
+                    demo_size,
+                    args.text,
                 ): output_name
                 for tape_file, output_name, setup_func, vhs_type in demos
             }
@@ -475,7 +543,7 @@ Examples:
                     failed.append(output_name)
 
     if failed:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Failed: {', '.join(failed)}")
         sys.exit(1)
 

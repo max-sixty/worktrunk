@@ -15,7 +15,7 @@ Type "set -g fish_autosuggestion_enabled 0"
 Enter
 Type "set -gx LANG en_US.UTF-8; set -gx LC_ALL en_US.UTF-8"
 Enter
-Type "set -gx PATH {{TARGET_DEBUG}} $HOME/bin $PATH"
+Type "set -gx PATH {{TARGET_DEBUG}} $HOME/.local/bin $PATH"
 Enter
 Type "starship init fish | source"
 Enter
