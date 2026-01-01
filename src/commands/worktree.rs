@@ -984,7 +984,7 @@ pub fn handle_push(
             "--oneline",
             &format!("{}..HEAD", target_branch),
         ])?;
-        crate::output::gutter(format_with_gutter(&log_output, None))?;
+        crate::output::print(format_with_gutter(&log_output, None))?;
 
         // Show diff statistics
         super::show_diffstat(&repo, &format!("{}..HEAD", target_branch))?;

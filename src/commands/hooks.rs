@@ -47,7 +47,7 @@ impl SourcedCommand {
             None => format!("{full_label}:"),
         };
         crate::output::print(progress_message(message))?;
-        crate::output::gutter(format_bash_with_gutter(&self.prepared.expanded))?;
+        crate::output::print(format_bash_with_gutter(&self.prepared.expanded))?;
         Ok(())
     }
 }

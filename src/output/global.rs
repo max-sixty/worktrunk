@@ -112,17 +112,6 @@ pub fn print(message: impl Into<String>) -> io::Result<()> {
     stderr().flush()
 }
 
-/// Emit gutter-formatted content to stderr
-///
-/// Gutter content has its own visual structure (column 0 gutter + content),
-/// so no additional emoji is added. Use with `format_with_gutter()` or `format_bash_with_gutter()`.
-///
-/// Note: Gutter content is pre-formatted with its own newlines, so we use write! not writeln!.
-pub fn gutter(content: impl Into<String>) -> io::Result<()> {
-    write!(stderr(), "{}", content.into())?;
-    stderr().flush()
-}
-
 /// Emit a blank line for visual separation
 pub fn blank() -> io::Result<()> {
     eprintln!();

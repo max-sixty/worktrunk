@@ -123,7 +123,7 @@ impl<'a> CommitGenerator<'a> {
         let commit_message = crate::llm::generate_commit_message(self.config)?;
 
         let formatted_message = self.format_message_for_display(&commit_message);
-        crate::output::gutter(format_with_gutter(&formatted_message, None))?;
+        crate::output::print(format_with_gutter(&formatted_message, None))?;
 
         repo.run_command(&["commit", "-m", &commit_message])
             .context("Failed to commit")?;

@@ -110,7 +110,6 @@ pub(super) fn wrap_text_at_width(text: &str, max_width: usize) -> Vec<String> {
 /// ```
 pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
     let gutter = super::GUTTER;
-    let mut output = String::new();
 
     // Use provided width or detect terminal width (respects COLUMNS env var)
     let term_width = max_width.unwrap_or_else(get_terminal_width);
@@ -118,16 +117,17 @@ pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
     // Account for gutter (1) + space (1)
     let available_width = term_width.saturating_sub(2);
 
-    for line in content.lines() {
-        // Wrap the line at word boundaries
-        let wrapped_lines = wrap_text_at_width(line, available_width);
+    // Build lines without trailing newline - caller is responsible for element separation
+    let lines: Vec<String> = content
+        .lines()
+        .flat_map(|line| {
+            wrap_text_at_width(line, available_width)
+                .into_iter()
+                .map(|wrapped_line| format!("{gutter} {gutter:#} {wrapped_line}"))
+        })
+        .collect();
 
-        for wrapped_line in wrapped_lines {
-            output.push_str(&format!("{gutter} {gutter:#} {wrapped_line}\n"));
-        }
-    }
-
-    output
+    lines.join("\n")
 }
 
 /// Wrap ANSI-styled text at word boundaries, preserving styles across line breaks
@@ -184,7 +184,6 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
     let gutter = super::GUTTER;
     let reset = anstyle::Reset;
     let dim = anstyle::Style::new().dimmed();
-    let mut output = String::new();
 
     // Calculate available width for content
     let term_width = width_override.unwrap_or_else(get_terminal_width);
@@ -230,6 +229,9 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
 
     let mut highlighter = Highlighter::new();
 
+    // Build lines without trailing newline - caller is responsible for element separation
+    let mut output_lines: Vec<String> = Vec::new();
+
     // Process each line separately - this is required because tree-sitter's bash
     // grammar fails to highlight multi-line commands when `&&` appears at line ends.
     // Per-line processing gives proper highlighting for each line's content.
@@ -240,7 +242,7 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
             // Fallback: if highlighting fails, use plain dim
             styled_line.push_str(line);
             for wrapped in wrap_styled_text(&styled_line, available_width) {
-                output.push_str(&format!("{gutter} {gutter:#} {wrapped}{reset}\n"));
+                output_lines.push(format!("{gutter} {gutter:#} {wrapped}{reset}"));
             }
             continue;
         };
@@ -291,13 +293,13 @@ fn format_bash_with_gutter_impl(content: &str, width_override: Option<usize>) ->
             }
         }
 
-        // Wrap and output with gutter
+        // Wrap and collect gutter lines
         for wrapped in wrap_styled_text(&styled_line, available_width) {
-            output.push_str(&format!("{gutter} {gutter:#} {wrapped}{reset}\n"));
+            output_lines.push(format!("{gutter} {gutter:#} {wrapped}{reset}"));
         }
     }
 
-    output
+    output_lines.join("\n")
 }
 
 /// Formats bash/shell commands with syntax highlighting and gutter
@@ -403,9 +405,9 @@ mod tests {
     #[test]
     fn test_format_with_gutter_basic() {
         let result = format_with_gutter("hello", Some(80));
-        // Should have gutter formatting
+        // Should have gutter formatting, no trailing newline (caller adds it)
         assert!(result.contains("hello"));
-        assert!(result.ends_with('\n'));
+        assert!(!result.ends_with('\n'));
     }
 
     #[test]
@@ -414,8 +416,8 @@ mod tests {
         // Each line should be formatted separately
         assert!(result.contains("line1"));
         assert!(result.contains("line2"));
-        // Should have 2 newlines (one per line)
-        assert_eq!(result.matches('\n').count(), 2);
+        // Should have 1 newline (between lines, not trailing)
+        assert_eq!(result.matches('\n').count(), 1);
     }
 
     #[test]
@@ -435,11 +437,11 @@ mod tests {
     fn test_format_with_gutter_wrapping() {
         // Use a very narrow width to force wrapping
         let result = format_with_gutter("word1 word2 word3 word4", Some(15));
-        // Content should be wrapped to multiple lines
+        // Content should be wrapped to multiple lines (newlines between, not trailing)
         let line_count = result.matches('\n').count();
         assert!(
-            line_count > 1,
-            "Expected multiple lines, got {}",
+            line_count >= 1,
+            "Expected at least one newline (between wrapped lines), got {}",
             line_count
         );
     }
@@ -482,7 +484,8 @@ mod tests {
         let result = format_bash_with_gutter_at_width("echo hello", 80);
         assert!(result.contains("echo"));
         assert!(result.contains("hello"));
-        assert!(result.ends_with('\n'));
+        // No trailing newline - caller is responsible for element separation
+        assert!(!result.ends_with('\n'));
     }
 
     #[test]
@@ -491,8 +494,8 @@ mod tests {
         let result = format_bash_with_gutter_at_width("echo line1\necho line2", 80);
         assert!(result.contains("line1"));
         assert!(result.contains("line2"));
-        // Two lines should have two newlines
-        assert_eq!(result.matches('\n').count(), 2);
+        // Two lines should have one newline (between, not trailing)
+        assert_eq!(result.matches('\n').count(), 1);
     }
 
     #[test]

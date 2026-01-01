@@ -345,12 +345,16 @@ command = "npm install"
         let command = "pre-commit run --all-files";
         let result = format_bash_with_gutter(command);
 
-        // The output should end with ANSI reset code followed by newline
+        // The output should end with ANSI reset code (no trailing newline - caller adds it)
         // ANSI reset is \x1b[0m (ESC[0m)
         assert!(
-            result.ends_with("\x1b[0m\n"),
-            "Bash gutter formatting should end with ANSI reset code followed by newline, got: {:?}",
+            result.ends_with("\x1b[0m"),
+            "Bash gutter formatting should end with ANSI reset code, got: {:?}",
             result.chars().rev().take(20).collect::<String>()
+        );
+        assert!(
+            !result.ends_with('\n'),
+            "Bash gutter formatting should not have trailing newline"
         );
 
         // Verify the reset appears at the end of EVERY line (for multi-line commands)
@@ -370,10 +374,10 @@ command = "npm install"
             }
         }
 
-        // Most importantly: the final output should end with reset + newline
+        // Most importantly: the final output should end with reset (no trailing newline)
         assert!(
-            multi_result.ends_with("\x1b[0m\n"),
-            "Multi-line bash gutter formatting should end with ANSI reset + newline"
+            multi_result.ends_with("\x1b[0m"),
+            "Multi-line bash gutter formatting should end with ANSI reset"
         );
     }
 

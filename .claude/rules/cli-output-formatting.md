@@ -220,9 +220,13 @@ Use `suggest_command()` from `worktrunk::styling` for proper shell escaping.
 
 ## Blank Line Principles
 
+**Core principle:** When presenting the user with text to read and consider, add
+spacing for readability. When piping output (stdout), keep output dense for
+parsing.
+
+Specific rules:
+
 - **No leading/trailing blanks** — Start immediately, end cleanly
-- **One blank after blocks** — Separate multi-line content (gutter blocks,
-  sections)
 - **One blank after prompts** — Separate user input from results
 - **Never double blanks** — One blank line maximum between elements
 
@@ -376,14 +380,42 @@ Use gutter for **quoted content** (git output, commit messages, shell commands):
 **Gutter vs Table:** Tables for structured app data; gutter for quoting external
 content.
 
-**No trailing `\n`:** `output::print()` adds newlines automatically:
+## Newline Convention
+
+**Core principle:** All formatting functions return content WITHOUT trailing
+newlines. Callers handle element separation.
+
+This applies to:
+- Message functions: `error_message()`, `success_message()`, `hint_message()`, etc.
+- Gutter functions: `format_with_gutter()`, `format_bash_with_gutter()`
+
+**With `output::print()`:** Adds trailing newline automatically (uses `eprintln!`).
 
 ```rust
-// GOOD - no trailing \n
 output::print(progress_message("Merging..."))?;
-output::gutter(format_with_gutter(&log, "", None))?;
+output::print(format_with_gutter(&log, None))?;
+```
 
-// BAD - trailing \n creates blank line
+**In Display impls:** Use explicit newlines for element separation.
+
+```rust
+// Pattern: leading \n separates from previous element
+write!(f, "{}", error_message(...))?;           // first element, no leading \n
+write!(f, "\n{}", format_with_gutter(...))?;    // gutter, separated by \n
+write!(f, "\n{}", hint_message(...))            // hint, separated by \n
+
+// For blank line between elements, add extra \n
+write!(f, "\n{}\n", format_with_gutter(...))?;  // trailing \n creates blank line
+write!(f, "\n{}", hint_message(...))            // hint after blank line
+```
+
+**Don't add trailing `\n` to content:**
+
+```rust
+// GOOD - output::print adds newline
+output::print(progress_message("Merging..."))?;
+
+// BAD - double newline
 output::print(progress_message("Merging...\n"))?;
 ```
 
@@ -404,7 +436,7 @@ let error_lines: Vec<String> = errors
     .collect();
 let warning = format!(
     "Some git operations failed:\n{}",
-    format_with_gutter(&error_lines.join("\n"), "", None)
+    format_with_gutter(&error_lines.join("\n"), None)
 );
 output::print(warning_message(warning))?;
 ```

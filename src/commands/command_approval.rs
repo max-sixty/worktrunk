@@ -26,8 +26,8 @@ use color_print::cformat;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{GitError, HookType};
 use worktrunk::styling::{
-    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, eprintln, format_bash_with_gutter,
-    hint_message, stderr, warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, WARNING_SYMBOL, eprint, format_bash_with_gutter, hint_message,
+    stderr, warning_message,
 };
 
 /// Batch approval helper used when multiple commands are queued for execution.
@@ -112,13 +112,10 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     // Flushes both stdout (for data output) and stderr (for messages)
     crate::output::flush_for_stderr_prompt()?;
 
-    eprintln!(
-        "{}",
-        cformat!(
-            "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
-        )
-    );
-    eprintln!();
+    output::print(cformat!(
+        "{WARNING_SYMBOL} <yellow><bold>{project_name}</> needs approval to execute <bold>{count}</> command{plural}:</>"
+    ))?;
+    output::blank()?;
 
     for cmd in commands {
         // Format as: {phase} {bold}{name}{bold:#}:
@@ -129,8 +126,8 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
             Some(name) => cformat!("{INFO_SYMBOL} {phase} <bold>{name}</>:"),
             None => format!("{INFO_SYMBOL} {phase}:"),
         };
-        eprintln!("{label}");
-        eprint!("{}", format_bash_with_gutter(&cmd.command.template));
+        output::print(label)?;
+        output::print(format_bash_with_gutter(&cmd.command.template))?;
     }
 
     // Check if stdin is a TTY before attempting to prompt
@@ -152,7 +149,7 @@ fn prompt_for_batch_approval(commands: &[&HookCommand], project_id: &str) -> any
     let mut response = String::new();
     io::stdin().read_line(&mut response)?;
 
-    eprintln!();
+    output::blank()?;
 
     Ok(response.trim().eq_ignore_ascii_case("y"))
 }

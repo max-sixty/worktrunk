@@ -325,7 +325,7 @@ impl std::fmt::Display for GitError {
                 files,
                 worktree_path,
             } => {
-                writeln!(
+                write!(
                     f,
                     "{}",
                     error_message(cformat!(
@@ -334,7 +334,7 @@ impl std::fmt::Display for GitError {
                 )?;
                 if !files.is_empty() {
                     let joined_files = files.join("\n");
-                    write!(f, "{}", format_with_gutter(&joined_files, None))?;
+                    write!(f, "\n{}\n", format_with_gutter(&joined_files, None))?;
                 }
                 let path_display = format_path_for_display(worktree_path);
                 write!(
@@ -359,7 +359,7 @@ impl std::fmt::Display for GitError {
                     ))
                 )?;
                 if !commits_formatted.is_empty() {
-                    write!(f, "\n{}", format_with_gutter(commits_formatted, None))?;
+                    write!(f, "\n{}\n", format_with_gutter(commits_formatted, None))?;
                 }
                 // Context-appropriate hint
                 let merge_cmd = suggest_command("merge", &[target_branch], &[]);
@@ -480,9 +480,9 @@ impl std::fmt::Display for GitError {
                 write!(
                     f,
                     "{}\n{}\n{}",
-                    error_block.trim_end(),
+                    error_block,
                     info_message("Ran command:"),
-                    command_gutter.trim_end()
+                    command_gutter
                 )
             }
 

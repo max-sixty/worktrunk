@@ -391,7 +391,7 @@ fn warn_about_untracked_files(status_output: &str) -> anyhow::Result<()> {
     )))?;
 
     let joined_files = files.join("\n");
-    crate::output::gutter(format_with_gutter(&joined_files, None))?;
+    crate::output::print(format_with_gutter(&joined_files, None))?;
 
     Ok(())
 }
