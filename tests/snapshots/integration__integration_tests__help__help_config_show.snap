@@ -10,8 +10,10 @@ info:
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -24,7 +26,7 @@ Usage: [1m[36mwt config show[0m [36m[OPTIONS]
 
 [1m[32mOptions:
       [1m[36m--full
-          Test commit generation pipeline
+          Run diagnostic checks (CI tools, commit generation)
 
   [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
@@ -46,9 +48,10 @@ If a config file doesn't exist, shows defaults that would be used.
 
 [32mFull diagnostics
 
-Use [2m--full[0m to test commit generation with a synthetic diff:
+Use [2m--full[0m to run diagnostic checks:
 
   [2mwt config show --full
 
-This verifies that the LLM command is configured correctly and can generate
-commit messages.
+This tests:
+- [1mCI tool status[0m — Whether [2mgh[0m (GitHub) or [2mglab[0m (GitLab) is installed and authenticated
+- [1mCommit generation[0m — Whether the LLM command can generate commit messages
