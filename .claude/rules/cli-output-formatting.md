@@ -334,8 +334,9 @@ cformat!("{ERROR_SYMBOL} <red>Branch <bold>{branch}</> not found</>")
 Never quote commands or branch names. Use styling to make them stand out:
 
 - **In normal font context**: Use `<bold>` for commands and branches
-- **In hints**: Use `<bright-black>` for commands (hint() already applies
-  dimming — no explicit `<dim>` needed)
+- **In hints**: Use `<bright-black>` for commands and data values (paths,
+  branches). Avoid `<bold>` inside hints — the closing `[22m` resets both bold
+  AND dim, so text after `</bold>` loses dim styling.
 
 ```rust
 // GOOD - bold in normal context
@@ -376,13 +377,18 @@ See `src/commands/list/render.rs` for advanced usage.
 
 ## Gutter Formatting
 
-Use gutter for **quoted content** (git output, commit messages, shell commands):
+Use gutter for **quoted content** (git output, commit messages, config to copy,
+hook commands being displayed):
 
 - `format_bash_with_gutter()` — shell commands (dimmed + syntax highlighting)
 - `format_with_gutter()` — other content
 
 **Gutter vs Table:** Tables for structured app data; gutter for quoting external
 content.
+
+**Gutter vs Hints:** Command suggestions in hints use inline `<bright-black>`,
+not gutter. Gutter is for displaying content (what will execute, config to
+copy); hints suggest what the user should run.
 
 ## Newline Convention
 

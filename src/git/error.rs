@@ -18,8 +18,8 @@ use shell_escape::escape;
 use super::HookType;
 use crate::path::format_path_for_display;
 use crate::styling::{
-    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_bash_with_gutter, format_with_gutter,
-    hint_message, info_message, suggest_command,
+    ERROR_SYMBOL, HINT_SYMBOL, error_message, format_with_gutter, hint_message, info_message,
+    suggest_command,
 };
 
 /// Domain errors for git and worktree operations.
@@ -244,18 +244,17 @@ impl std::fmt::Display for GitError {
                         "there's a detached worktree at the expected path <bold>{path_display}</>"
                     )
                 };
-                // Hint leads into the command in the gutter block
-                let hint = hint_message(cformat!(
-                    "To switch the worktree at <bold>{path_display}</> to branch <bold>{branch}</>:"
-                ));
-                let path_escaped = escape(Cow::Borrowed(path_display.as_ref()));
+                // Use actual path for command (not display path with ~, which won't expand in single quotes)
+                let path_str = path.to_string_lossy();
+                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
                 let command = format!("cd {path_escaped} && git switch {branch}");
                 write!(
                     f,
-                    "{}\n{}\n{}",
+                    "{}\n{}",
                     error_message(cformat!("Cannot switch to <bold>{branch}</> — {reason}")),
-                    hint,
-                    format_bash_with_gutter(&command)
+                    hint_message(cformat!(
+                        "To switch the worktree at <bright-black>{path_display}</> to <bright-black>{branch}</>, run <bright-black>{command}</>"
+                    ))
                 )
             }
 
@@ -919,7 +918,8 @@ mod tests {
         assert!(display.contains("on branch"));
         assert!(display.contains("main"));
         assert!(display.contains("To switch the worktree at"));
-        assert!(display.contains("to branch"));
+        assert!(display.contains(", run ")); // ANSI codes follow, then command
+        assert!(display.contains("cd /tmp/repo && git switch feature"));
 
         // Without occupant (detached)
         let err = GitError::WorktreePathOccupied {
