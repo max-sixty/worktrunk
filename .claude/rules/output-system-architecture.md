@@ -73,6 +73,23 @@ Examples:
 (via `shell_exec::run()`). This prevents hooks from writing to the directive
 file.
 
+## Windows Compatibility (Git Bash / MSYS2)
+
+On Windows with Git Bash, `mktemp` returns POSIX-style paths like `/tmp/tmp.xxx`.
+The native Windows binary (`wt.exe`) needs a Windows path to write to the
+directive file.
+
+**No explicit path conversion is needed.** MSYS2 (which Git Bash uses)
+automatically converts POSIX paths in environment variables when spawning native
+Windows binaries. When the shell wrapper sets `WORKTRUNK_DIRECTIVE_FILE=/tmp/...`
+and runs `wt.exe`, MSYS2 translates this to `C:\Users\...\Temp\...` before the
+binary sees it.
+
+See: https://www.msys2.org/docs/filesystem-paths/
+
+This means the shell wrapper templates can use `$directive_file` directly without
+calling `cygpath -w`. The conversion happens automatically in the MSYS2 runtime.
+
 ## Simplification Notes
 
 The output system was originally more complex to handle shell integration
