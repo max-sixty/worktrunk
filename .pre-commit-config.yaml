@@ -34,8 +34,10 @@ repos:
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          # Suppress warnings about root-relative paths (e.g., /assets/wt-demo.gif)
-          # These are valid web paths validated by zola, not lychee
+          # Provide base URL so lychee can build URIs from root-relative paths
+          # These paths are then excluded by lychee.toml patterns
+          - --base=https://worktrunk.dev
+          # Suppress warnings
           - -q
   - repo: local
     hooks:
