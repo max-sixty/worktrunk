@@ -1181,10 +1181,10 @@ fn main() {
         Commands::Select => handle_select(),
         #[cfg(not(unix))]
         Commands::Select => {
-            output::print(error_message("wt select is not available on Windows"))?;
-            output::print(hint_message(cformat!(
-                "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch <branch></>"
-            )))?;
+            let _ = output::print(error_message("wt select is not available on Windows"));
+            let _ = output::print(hint_message(cformat!(
+                "To see all worktrees, run <bright-black>wt list</>; to switch directly, run <bright-black>wt switch BRANCH</>"
+            )));
             std::process::exit(1);
         }
         Commands::List {
