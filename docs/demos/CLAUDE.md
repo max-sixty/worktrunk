@@ -232,14 +232,38 @@ qlmanage -p docs/static/assets/docs/light/wt-select.gif
 imgcat docs/static/assets/docs/light/wt-select.gif
 ```
 
-## Extracting frames from a GIF for inspection
+## Reviewing demo GIFs
 
+After building demos, use a subagent to review for visual errors before publishing.
+
+**Extract frames and review:**
 ```bash
-mkdir -p /tmp/frames
-magick docs/static/assets/social/light/wt-switch.gif -coalesce /tmp/frames/frame_%03d.png
+rm -rf /tmp/frames && mkdir -p /tmp/frames
+magick path/to/demo.gif -coalesce /tmp/frames/frame_%04d.png
+```
 
-# View a specific frame
-open /tmp/frames/frame_200.png
+Then spawn a haiku subagent with these instructions:
+
+```
+Review this demo GIF for visual errors.
+
+Read frames sampled throughout the recording — every 50th frame covers a
+~2000 frame GIF in ~40 images. Use the Read tool on:
+/tmp/frames/frame_0050.png, frame_0100.png, frame_0150.png, ... etc.
+
+Look for:
+1. SPLIT COMMANDS: Text split across panes (e.g., "gi" in one pane, "t diff" in another)
+2. ERRORS/WARNINGS: Shell errors like "Unknown command", red error text, warning messages
+3. WRONG LOCATION: Commands or output appearing in unexpected pane/tab
+4. VISUAL GLITCHES: Partial characters, cursor artifacts, broken layouts
+
+Report each issue with:
+- Frame number(s)
+- Description
+- Affected text
+
+If a frame shows an error like "Unknown command: t", examine nearby frames
+(±5) to understand the cause — likely a timing bug where a command was split.
 ```
 
 ## Cleaning up stale demo processes

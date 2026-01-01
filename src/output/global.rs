@@ -118,35 +118,18 @@ pub fn blank() -> io::Result<()> {
     stderr().flush()
 }
 
-/// Emit structured data output without emoji decoration
+/// Write to stdout (pipeable output)
 ///
-/// Used for JSON, prompts, statuslines, and other pipeable data. Always writes to stdout.
-/// With WORKTRUNK_DIRECTIVE_FILE, stdout is never used for directives, so it's always
-/// available for data output.
-///
-/// Example:
-/// ```rust,ignore
-/// output::data(json_string)?;
-/// ```
-pub fn data(content: impl Into<String>) -> io::Result<()> {
-    println!("{}", content.into());
-    io::stdout().flush()
-}
-
-/// Emit primary output to stdout
-///
-/// Used for the main data a command produces (table rows, formatted output).
-/// This is pipeable — `wt list | grep feature` works because table data
+/// Used for primary command output: table rows, JSON, prompts, statuslines.
+/// This is pipeable — `wt list | grep feature` works because stdout data
 /// goes to stdout while progress/warnings go to stderr.
 ///
 /// Example:
 /// ```rust,ignore
-/// output::table(layout.format_header_line())?;
-/// for item in items {
-///     output::table(layout.format_item_line(item))?;
-/// }
+/// output::stdout(json_string)?;
+/// output::stdout(layout.format_header_line())?;
 /// ```
-pub fn table(content: impl Into<String>) -> io::Result<()> {
+pub fn stdout(content: impl Into<String>) -> io::Result<()> {
     println!("{}", content.into());
     io::stdout().flush()
 }
@@ -274,17 +257,10 @@ fn execute_command(command: String, target_dir: Option<&Path>) -> anyhow::Result
     Ok(())
 }
 
-/// Flush any buffered output
-pub fn flush() -> io::Result<()> {
-    io::stdout().flush()?;
-    io::stderr().flush()
-}
-
-/// Flush streams before showing stderr prompt
+/// Flush any buffered output (both stdout and stderr)
 ///
-/// This prevents stream interleaving. Interactive prompts write to stderr, so we must
-/// ensure all previous output is flushed first.
-pub fn flush_for_stderr_prompt() -> io::Result<()> {
+/// Call before interactive prompts to prevent stream interleaving.
+pub fn flush() -> io::Result<()> {
     io::stdout().flush()?;
     io::stderr().flush()
 }

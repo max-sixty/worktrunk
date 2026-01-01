@@ -630,6 +630,51 @@ Usage: <b><span class=c>wt config create</span></b> <span class=c>[OPTIONS]</spa
 {% end %}
 
 
+## wt config show
+
+Shows location and contents of user config (`~/.config/worktrunk/config.toml`)
+and project config (`.config/wt.toml`).
+
+If a config file doesn't exist, shows defaults that would be used.
+
+### Full diagnostics
+
+Use `--full` to run diagnostic checks:
+
+```bash
+wt config show --full
+```
+
+This tests:
+- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **Commit generation** — Whether the LLM command can generate commit messages
+
+### Command reference
+
+{% terminal() %}
+wt config show - Show configuration files &amp; locations
+
+Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--full</span></b>
+          Run diagnostic checks (CI tools, commit generation)
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
+          Show commands and debug info
+{% end %}
+
+
 ## wt config state
 
 State is stored in `.git/` (config entries and log files), separate from configuration files.

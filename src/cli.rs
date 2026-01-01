@@ -359,17 +359,18 @@ If a config file doesn't exist, shows defaults that would be used.
 
 ## Full diagnostics
 
-Use `--full` to test commit generation with a synthetic diff:
+Use `--full` to run diagnostic checks:
 
 ```console
 wt config show --full
 ```
 
-This verifies that the LLM command is configured correctly and can generate
-commit messages."#
+This tests:
+- **CI tool status** — Whether `gh` (GitHub) or `glab` (GitLab) is installed and authenticated
+- **Commit generation** — Whether the LLM command can generate commit messages"#
     )]
     Show {
-        /// Test commit generation pipeline
+        /// Run diagnostic checks (CI tools, commit generation)
         #[arg(long)]
         full: bool,
     },
@@ -1398,6 +1399,8 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 
 <!-- subdoc: create -->
+
+<!-- subdoc: show -->
 
 <!-- subdoc: state -->
 "#

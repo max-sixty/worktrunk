@@ -501,7 +501,7 @@ fn prompt_for_confirmation(
 
     // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
     // Flushes both stdout (for data output) and stderr (for messages)
-    crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
+    crate::output::flush().map_err(|e| e.to_string())?;
 
     let bold = Style::new().bold();
 
@@ -871,7 +871,7 @@ fn prompt_for_uninstall_confirmation(
 ) -> Result<bool, String> {
     use anstyle::Style;
 
-    crate::output::flush_for_stderr_prompt().map_err(|e| e.to_string())?;
+    crate::output::flush().map_err(|e| e.to_string())?;
 
     for result in results {
         let bold = Style::new().bold();

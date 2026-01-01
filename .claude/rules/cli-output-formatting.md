@@ -232,16 +232,20 @@ Specific rules:
 
 ## Output System
 
-Use `output::` functions, never direct `println!`. See `output-system-architecture.md`
-for stdout vs stderr decisions.
+Use `output::` functions for consistency. See `output-system-architecture.md`
+for stdout vs stderr decisions and simplification notes.
 
 ```rust
-// GOOD
+// Preferred - consistent routing and flushing
 output::print(success_message("Branch created"))?;
 
-// BAD - bypasses output system
-println!("Branch created");
+// Acceptable for simple cases - just remember to flush if needed
+eprintln!("{}", success_message("Branch created"));
 ```
+
+**Note:** The output wrappers are thin (`eprintln!` + flush). The main value is
+consistency, not complex logic. See "Simplification Notes" in
+`output-system-architecture.md`.
 
 **Interactive prompts** must flush stderr before blocking on stdin:
 
@@ -330,8 +334,9 @@ cformat!("{ERROR_SYMBOL} <red>Branch <bold>{branch}</> not found</>")
 Never quote commands or branch names. Use styling to make them stand out:
 
 - **In normal font context**: Use `<bold>` for commands and branches
-- **In hints**: Use `<bright-black>` for commands (hint() already applies
-  dimming — no explicit `<dim>` needed)
+- **In hints**: Use `<bright-black>` for commands and data values (paths,
+  branches). Avoid `<bold>` inside hints — the closing `[22m` resets both bold
+  AND dim, so text after `</bold>` loses dim styling.
 
 ```rust
 // GOOD - bold in normal context
@@ -350,7 +355,7 @@ output::print(hint_message("Run 'wt list' to see worktrees"))?;
 ## Design Principles
 
 - **`cformat!` for styling** — Never manual escape codes (`\x1b[...`)
-- **`output::` for printing** — Never direct `println!`/`eprintln!`
+- **`output::` for printing** — Preferred for consistency; direct `println!`/`eprintln!` acceptable
 - **YAGNI** — Most output needs no styling
 - **Graceful degradation** — Colors auto-adjust (NO_COLOR, TTY detection)
 - **Unicode-aware** — Width calculations respect symbols and CJK (via `StyledLine`)
@@ -372,13 +377,18 @@ See `src/commands/list/render.rs` for advanced usage.
 
 ## Gutter Formatting
 
-Use gutter for **quoted content** (git output, commit messages, shell commands):
+Use gutter for **quoted content** (git output, commit messages, config to copy,
+hook commands being displayed):
 
 - `format_bash_with_gutter()` — shell commands (dimmed + syntax highlighting)
 - `format_with_gutter()` — other content
 
 **Gutter vs Table:** Tables for structured app data; gutter for quoting external
 content.
+
+**Gutter vs Hints:** Command suggestions in hints use inline `<bright-black>`,
+not gutter. Gutter is for displaying content (what will execute, config to
+copy); hints suggest what the user should run.
 
 ## Newline Convention
 
