@@ -35,8 +35,8 @@ repos:
         types: [markdown]
         args:
           - --config=.config/lychee.toml
-          # Suppress warnings about root-relative paths (e.g., /assets/wt-demo.gif)
-          # These are valid web paths validated by zola, not lychee
+          # Root dir for resolving absolute paths like /assets/...
+          - --root-dir=docs/static
           - -q
   - repo: local
     hooks:
