@@ -111,23 +111,18 @@ def prepare_with_hooks(env: DemoEnv, include_deps: bool = False):
     dev_cmd = "npm run dev -- --port {{ branch | hash_port }}"
     cleanup_cmd = "flyctl scale count 0"
 
+    post_start = ["[post-start]"]
+    approved = []
     if include_deps:
-        hooks_config = f'''[post-start]
-deps = "npm install"
-dev = "{dev_cmd}"
+        post_start.append('deps = "npm install"')
+        approved.append("npm install")
+    post_start.append(f'dev = "{dev_cmd}"')
+    approved.append(dev_cmd)
+    approved.append(cleanup_cmd)
 
-[pre-remove]
-cleanup = "{cleanup_cmd}"
-'''
-        approved = ["npm install", dev_cmd, cleanup_cmd]
-    else:
-        hooks_config = f'''[post-start]
-dev = "{dev_cmd}"
-
-[pre-remove]
-cleanup = "{cleanup_cmd}"
-'''
-        approved = [dev_cmd, cleanup_cmd]
+    hooks_config = (
+        "\n".join(post_start) + f'\n\n[pre-remove]\ncleanup = "{cleanup_cmd}"\n'
+    )
 
     prepare_demo_repo(env, REPO_ROOT, hooks_config=hooks_config)
     _write_user_config(env, approved)
@@ -225,7 +220,7 @@ echo "Add placeholder module for user profile settings."
     # User config with LLM commit generation
     _write_user_config(
         env,
-        ["npm run dev -- --port {{ branch | hash_port }} &", "cargo nextest run"],
+        ["npm run dev -- --port {{ branch | hash_port }}", "cargo nextest run"],
         commit_generation=True,
     )
 

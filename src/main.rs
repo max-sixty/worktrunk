@@ -830,6 +830,18 @@ fn main() {
                                 crate::output::print(success_message("All shells already configured"))?;
                             }
 
+                            // Zsh compinit advisory: shown after success, before restart hint
+                            if scan_result.zsh_needs_compinit {
+                                crate::output::print(warning_message(
+                                    "Completions require compinit; add to ~/.zshrc before the wt line:",
+                                ))?;
+                                crate::output::gutter(
+                                    worktrunk::styling::format_bash_with_gutter(
+                                        "autoload -Uz compinit && compinit",
+                                    ),
+                                )?;
+                            }
+
                             // Restart hint: only shown if the current shell's extension changed
                             // Fish completions are lazily loaded from ~/.config/fish/completions/
                             // so no restart needed. Bash/Zsh completions are inline in the init script.

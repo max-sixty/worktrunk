@@ -1,0 +1,5 @@
+---
+source: src/shell.rs
+expression: "Shell::Fish.config_line(\"git-wt\")"
+---
+if type -q git-wt; command git-wt config shell init fish | source; end

@@ -25,7 +25,6 @@ from .lib import (
     setup_demo_output,
     record_all_themes,
     # Text output recording
-    is_interactive_tape,
     record_text,
     build_tape_replacements,
 )
@@ -58,7 +57,6 @@ __all__ = [
     "setup_demo_output",
     "record_all_themes",
     # Text output recording
-    "is_interactive_tape",
     "record_text",
     "build_tape_replacements",
 ]

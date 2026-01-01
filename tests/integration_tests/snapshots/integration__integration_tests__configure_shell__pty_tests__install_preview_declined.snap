@@ -1,0 +1,11 @@
+---
+source: tests/integration_tests/configure_shell.rs
+expression: normalized
+---
+n
+
+○ Will add shell extension & completions for zsh @ ~/.zshrc
+  if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
+
+❯ Proceed? [y/N] 
+✗ Cancelled by user

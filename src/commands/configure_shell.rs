@@ -5,8 +5,8 @@ use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
 use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
-    INFO_SYMBOL, PROGRESS_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter,
-    format_with_gutter, hint_message, warning_message,
+    INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter, format_with_gutter,
+    hint_message, warning_message,
 };
 
 pub struct ConfigureResult {
@@ -41,6 +41,8 @@ pub struct ScanResult {
     pub configured: Vec<ConfigureResult>,
     pub completion_results: Vec<CompletionResult>,
     pub skipped: Vec<(Shell, PathBuf)>, // Shell + first path that was checked
+    /// Zsh was configured but compinit is missing (completions won't work without it)
+    pub zsh_needs_compinit: bool,
 }
 
 pub struct CompletionResult {
@@ -66,7 +68,7 @@ impl UninstallAction {
     pub fn symbol(&self) -> &'static str {
         match self {
             UninstallAction::Removed => SUCCESS_SYMBOL,
-            UninstallAction::WouldRemove => PROGRESS_SYMBOL,
+            UninstallAction::WouldRemove => INFO_SYMBOL,
         }
     }
 }
@@ -96,7 +98,7 @@ impl ConfigAction {
         match self {
             ConfigAction::Added | ConfigAction::Created => SUCCESS_SYMBOL,
             ConfigAction::AlreadyExists => INFO_SYMBOL,
-            ConfigAction::WouldAdd | ConfigAction::WouldCreate => PROGRESS_SYMBOL,
+            ConfigAction::WouldAdd | ConfigAction::WouldCreate => INFO_SYMBOL,
         }
     }
 }
@@ -119,6 +121,7 @@ pub fn handle_configure_shell(
             configured: preview.configured,
             completion_results: completion_preview,
             skipped: preview.skipped,
+            zsh_needs_compinit: false,
         });
     }
 
@@ -137,6 +140,7 @@ pub fn handle_configure_shell(
             configured: preview.configured,
             completion_results: completion_preview,
             skipped: preview.skipped,
+            zsh_needs_compinit: false,
         });
     }
 
@@ -153,13 +157,13 @@ pub fn handle_configure_shell(
 
     // Zsh completions require compinit to be enabled. Unlike bash/fish, zsh doesn't
     // enable its completion system by default - users must explicitly call compinit.
-    // We detect this and show an advisory hint to help users get completions working.
+    // We detect this and return a flag so the caller can show an appropriate advisory.
     //
-    // We only show this advisory during `install`, not `init`, because:
+    // We only check this during `install`, not `init`, because:
     // - `init` outputs a script that gets eval'd - advisory would pollute that
     // - `install` is the user-facing command where hints are appropriate
     //
-    // We show the advisory when:
+    // We check when:
     // - User explicitly runs `install zsh` (they clearly want zsh integration)
     // - User runs `install` (all shells) AND their $SHELL is zsh (they use zsh daily)
     //
@@ -175,18 +179,10 @@ pub fn handle_configure_shell(
         && (shell_filter == Some(Shell::Zsh)
             || (shell_filter.is_none() && shell::is_current_shell_zsh()));
 
-    if should_check_compinit {
-        // Probe user's zsh to check if compinit is enabled.
-        // Only show advisory if we positively detect it's missing (Some(false)).
-        // If detection fails (None), stay silent - we can't be sure.
-        if shell::detect_zsh_compinit() == Some(false) {
-            let _ = crate::output::print(warning_message(
-                "Completions won't work; add to ~/.zshrc before the wt line:",
-            ));
-            let _ =
-                crate::output::gutter(format_bash_with_gutter("autoload -Uz compinit && compinit"));
-        }
-    }
+    // Probe user's zsh to check if compinit is enabled.
+    // Only flag if we positively detect it's missing (Some(false)).
+    // If detection fails (None), stay silent - we can't be sure.
+    let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
 
     // On Windows without Git Bash, show advisory about PowerShell limitations
     let powershell_was_configured = result
@@ -208,6 +204,7 @@ pub fn handle_configure_shell(
         configured: result.configured,
         completion_results,
         skipped: result.skipped,
+        zsh_needs_compinit,
     })
 }
 
@@ -289,6 +286,7 @@ pub fn scan_shell_configs(
         configured: results,
         completion_results: Vec::new(), // Completions handled separately in handle_configure_shell
         skipped,
+        zsh_needs_compinit: false, // Caller handles compinit detection
     })
 }
 
@@ -987,7 +985,7 @@ mod tests {
     #[test]
     fn test_uninstall_action_emoji() {
         assert_eq!(UninstallAction::Removed.symbol(), SUCCESS_SYMBOL);
-        assert_eq!(UninstallAction::WouldRemove.symbol(), PROGRESS_SYMBOL);
+        assert_eq!(UninstallAction::WouldRemove.symbol(), INFO_SYMBOL);
     }
 
     #[test]
@@ -1007,8 +1005,8 @@ mod tests {
         assert_eq!(ConfigAction::Added.symbol(), SUCCESS_SYMBOL);
         assert_eq!(ConfigAction::Created.symbol(), SUCCESS_SYMBOL);
         assert_eq!(ConfigAction::AlreadyExists.symbol(), INFO_SYMBOL);
-        assert_eq!(ConfigAction::WouldAdd.symbol(), PROGRESS_SYMBOL);
-        assert_eq!(ConfigAction::WouldCreate.symbol(), PROGRESS_SYMBOL);
+        assert_eq!(ConfigAction::WouldAdd.symbol(), INFO_SYMBOL);
+        assert_eq!(ConfigAction::WouldCreate.symbol(), INFO_SYMBOL);
     }
 
     #[test]
@@ -1060,17 +1058,11 @@ mod tests {
 
     #[test]
     fn test_fish_completion_content() {
-        let content = fish_completion_content("wt");
-        assert!(content.contains("# worktrunk completions for fish"));
-        assert!(content.contains("--command wt"));
-        assert!(content.contains("COMPLETE=fish"));
-        assert!(content.contains("WORKTRUNK_BIN"));
+        insta::assert_snapshot!(fish_completion_content("wt"));
     }
 
     #[test]
     fn test_fish_completion_content_custom_cmd() {
-        let content = fish_completion_content("myapp");
-        assert!(content.contains("--command myapp"));
-        assert!(content.contains("type -P myapp"));
+        insta::assert_snapshot!(fish_completion_content("myapp"));
     }
 }
