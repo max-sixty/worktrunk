@@ -1019,25 +1019,27 @@ mod pty_tests {
         );
     }
 
-    /// Diagnostic test: Run `zsh -ic` directly in PTY (no worktrunk) to prove that
-    /// the "insecure directories" warning is a pre-existing CI environment issue.
-    ///
-    /// If this test shows the warning, it confirms that the CI environment's zsh
-    /// configuration triggers compinit's insecure directories check on ANY `zsh -ic`
-    /// command - not something worktrunk specifically causes.
+    /// Diagnostic test: Run `zsh -ic` directly in PTY with same environment as worktrunk test
+    /// to understand if the "insecure directories" warning is pre-existing or caused by worktrunk.
     #[test]
     fn test_zsh_compinit_warning_is_preexisting_ci_issue() {
         use std::io::Read;
+        use tempfile::TempDir;
+
+        // Create a temp home with a .zshrc (matching worktrunk test environment)
+        let temp_home = TempDir::new().unwrap();
+        fs::write(temp_home.path().join(".zshrc"), "# Existing config\n").unwrap();
 
         let pair = open_pty();
 
-        // Run zsh -ic directly - NO worktrunk, NO custom HOME, NO environment changes
-        // This uses the exact same zsh that worktrunk's probe would use
+        // Run zsh -ic with the SAME environment as the worktrunk test
         let mut cmd = CommandBuilder::new("zsh");
-        cmd.args(["-ic", "echo DIAGNOSTIC_MARKER_NO_WORKTRUNK_INVOLVED"]);
+        cmd.args(["-ic", "echo DIAGNOSTIC_MARKER"]);
 
-        // Use system environment (same as what detect_zsh_compinit() sees)
-        // We explicitly do NOT clear the environment or set a custom HOME
+        // Match worktrunk test environment
+        configure_pty_command(&mut cmd);
+        cmd.env("HOME", temp_home.path());
+        cmd.env("SHELL", "/bin/zsh");
 
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         drop(pair.slave);
@@ -1051,32 +1053,32 @@ mod pty_tests {
         let exit_status = child.wait().unwrap();
         let output = buf.replace("\r\n", "\n");
 
-        // Print diagnostic info for CI logs
-        eprintln!("=== DIAGNOSTIC: zsh -ic in PTY (no worktrunk) ===");
+        // Print diagnostic info
+        eprintln!("=== DIAGNOSTIC: zsh -ic in PTY (same env as worktrunk test) ===");
+        eprintln!("HOME: {:?}", temp_home.path());
         eprintln!("Exit code: {}", exit_status.exit_code());
-        eprintln!("Output length: {} chars", output.len());
         eprintln!("Output:\n{}", output);
-        eprintln!("================================================");
+        eprintln!("================================================================");
 
-        // The test passes regardless - it's diagnostic
         assert!(
-            output.contains("DIAGNOSTIC_MARKER_NO_WORKTRUNK_INVOLVED"),
-            "zsh should have run and echoed our marker. Output: {}",
+            output.contains("DIAGNOSTIC_MARKER"),
+            "zsh should have run. Output: {}",
             output
         );
 
-        // Report findings for CI visibility
-        let has_compinit_warning = output.contains("compinit") || output.contains("insecure");
-        if has_compinit_warning {
+        // Check specifically for the compinit insecure directories warning
+        let has_insecure_warning = output.contains("insecure directories");
+        if has_insecure_warning {
             panic!(
-                "CONFIRMED: compinit warning appears in PTY even WITHOUT worktrunk!\n\
-                 This proves the warning is a pre-existing CI environment issue.\n\
+                "CONFIRMED: 'insecure directories' warning appears even WITHOUT worktrunk!\n\
+                 The CI environment's global zshrc triggers compinit which shows this warning.\n\
+                 This is a pre-existing CI issue, not caused by worktrunk.\n\
                  Output: {}",
                 output
             );
         } else {
             panic!(
-                "No compinit warning in raw zsh -ic output.\n\
+                "No 'insecure directories' warning in raw zsh -ic output.\n\
                  The warning must be triggered by something specific in worktrunk's probe.\n\
                  Output: {}",
                 output
