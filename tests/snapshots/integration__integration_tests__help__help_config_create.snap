@@ -13,6 +13,7 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -246,10 +247,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# developers working on the project.
   [2m
   [2m# Available template variables (all hooks):
-  [2m#   {{ repo }}      - Repository name (e.g., "my-project")
-  [2m#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
-  [2m#   {{ worktree }}  - Absolute path to the worktree
-  [2m#   {{ repo_root }} - Absolute path to the repository root
+  [2m#   {{ repo }}           - Repository name (e.g., "my-project")
+  [2m#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
+  [2m#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
+  [2m#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
   [2m#
   [2m# Merge-related hooks also support:
   [2m#   {{ target }}    - Target branch for the merge (e.g., "main" default branch)

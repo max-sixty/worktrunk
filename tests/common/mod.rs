@@ -1210,7 +1210,7 @@ impl TestRepo {
     /// (sanitized, with slashes replaced by dashes).
     pub fn add_worktree(&mut self, branch: &str) -> PathBuf {
         let safe_branch = sanitize_branch_name(branch);
-        // Use default template path format: ../{{ main_worktree }}.{{ branch }}
+        // Use default template path format: ../{{ repo }}.{{ branch }}
         // From {temp_dir}/repo, this resolves to {temp_dir}/repo.{branch}
         let worktree_path = self.temp_dir.path().join(format!("repo.{}", safe_branch));
         let worktree_str = worktree_path.to_str().unwrap();
@@ -2010,10 +2010,20 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
     // (metadata is handled via redactions below)
     // IMPORTANT: These specific filters must come BEFORE the generic [PROJECT_ID] filters
-    settings.add_filter(r".*/\.tmp[^/]+/test-config\.toml", "[TEST_CONFIG]");
+    // Note: Use /[^\s]+ instead of .* to avoid greedy matching that eats entire lines
+    // Match both config.toml and config.toml.new (migration file)
+    // (?:[A-Z]:)? handles Windows drive letters (C:/Users/...)
+    settings.add_filter(
+        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-config\.toml(?:\.new)?",
+        "[TEST_CONFIG]",
+    );
 
     // Normalize GIT_CONFIG_GLOBAL temp paths
-    settings.add_filter(r".*/\.tmp[^/]+/test-gitconfig", "[TEST_GIT_CONFIG]");
+    // (?:[A-Z]:)? handles Windows drive letters
+    settings.add_filter(
+        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-gitconfig",
+        "[TEST_GIT_CONFIG]",
+    );
 
     // Normalize temp directory paths in project identifiers (approval prompts)
     // Example: /private/var/folders/wf/.../T/.tmpABC123/origin -> [PROJECT_ID]

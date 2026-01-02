@@ -489,10 +489,10 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}      - Repository name (e.g., "my-project")
-#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
-#   {{ worktree }}  - Absolute path to the worktree
-#   {{ repo_root }} - Absolute path to the repository root
+#   {{ repo }}           - Repository name (e.g., "my-project")
+#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
+#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
+#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main" default branch)

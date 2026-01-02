@@ -36,9 +36,7 @@ fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
 fn test_user_post_create_hook_executes(repo: TestRepo) {
     // Write user config with post-create hook (no project config)
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-create]
+        r#"[post-create]
 log = "echo 'USER_POST_CREATE_RAN' > user_hook_marker.txt"
 "#,
     );
@@ -68,9 +66,7 @@ fn test_user_hooks_run_before_project_hooks(repo: TestRepo) {
 
     // Write user config with user hook AND pre-approve project command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-create]
+        r#"[post-create]
 log = "echo 'USER_HOOK' >> hook_order.txt"
 
 [projects."repo"]
@@ -98,9 +94,7 @@ fn test_user_hooks_no_approval_required(repo: TestRepo) {
     // Write user config with hook but NO pre-approved commands
     // (unlike project hooks, user hooks don't require approval)
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-create]
+        r#"[post-create]
 setup = "echo 'NO_APPROVAL_NEEDED' > no_approval.txt"
 "#,
     );
@@ -124,9 +118,7 @@ fn test_no_verify_flag_skips_all_hooks(repo: TestRepo) {
 
     // Write user config with both user hook and pre-approved project command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-create]
+        r#"[post-create]
 log = "echo 'USER_HOOK' > user_marker.txt"
 
 [projects."repo"]
@@ -162,9 +154,7 @@ approved-commands = ["echo 'PROJECT_HOOK' > project_marker.txt"]
 fn test_user_post_create_hook_failure(repo: TestRepo) {
     // Write user config with failing hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-create]
+        r#"[post-create]
 failing = "exit 1"
 "#,
     );
@@ -188,9 +178,7 @@ failing = "exit 1"
 fn test_user_post_start_hook_executes(repo: TestRepo) {
     // Write user config with post-start hook (background)
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-start]
+        r#"[post-start]
 bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 "#,
     );
@@ -213,9 +201,7 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
 fn test_user_post_start_skipped_with_no_verify(repo: TestRepo) {
     // Write user config with post-start hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-start]
+        r#"[post-start]
 bg = "echo 'USER_BG' > user_bg_marker.txt"
 "#,
     );
@@ -258,9 +244,7 @@ fn test_user_pre_merge_hook_executes(mut repo: TestRepo) {
 
     // Write user config with pre-merge hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-merge]
+        r#"[pre-merge]
 check = "echo 'USER_PRE_MERGE_RAN' > user_premerge.txt"
 "#,
     );
@@ -285,9 +269,7 @@ fn test_user_pre_merge_hook_failure_blocks_merge(mut repo: TestRepo) {
 
     // Write user config with failing pre-merge hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-merge]
+        r#"[pre-merge]
 check = "exit 1"
 "#,
     );
@@ -309,9 +291,7 @@ fn test_user_pre_merge_skipped_with_no_verify(mut repo: TestRepo) {
 
     // Write user config with pre-merge hook that creates a marker
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-merge]
+        r#"[pre-merge]
 check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
 "#,
     );
@@ -469,9 +449,7 @@ fn test_user_post_merge_hook_executes(mut repo: TestRepo) {
 
     // Write user config with post-merge hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-merge]
+        r#"[post-merge]
 notify = "echo 'USER_POST_MERGE_RAN' > user_postmerge.txt"
 "#,
     );
@@ -513,9 +491,7 @@ fn test_user_pre_remove_hook_executes(mut repo: TestRepo) {
     // Write user config with pre-remove hook
     // Hook writes to parent dir (temp dir) since the worktree itself gets removed
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-remove]
+        r#"[pre-remove]
 cleanup = "echo 'USER_PRE_REMOVE_RAN' > ../user_preremove_marker.txt"
 "#,
     );
@@ -543,9 +519,7 @@ fn test_user_pre_remove_failure_blocks_removal(mut repo: TestRepo) {
 
     // Write user config with failing pre-remove hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-remove]
+        r#"[pre-remove]
 block = "exit 1"
 "#,
     );
@@ -571,9 +545,7 @@ fn test_user_pre_remove_skipped_with_no_verify(mut repo: TestRepo) {
 
     // Write user config with pre-remove hook that would block
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-remove]
+        r#"[pre-remove]
 block = "exit 1"
 "#,
     );
@@ -614,9 +586,7 @@ fn test_user_pre_commit_hook_executes(mut repo: TestRepo) {
 
     // Write user config with pre-commit hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-commit]
+        r#"[pre-commit]
 lint = "echo 'USER_PRE_COMMIT_RAN' > user_precommit.txt"
 "#,
     );
@@ -643,9 +613,7 @@ fn test_user_pre_commit_failure_blocks_commit(mut repo: TestRepo) {
 
     // Write user config with failing pre-commit hook
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[pre-commit]
+        r#"[pre-commit]
 lint = "exit 1"
 "#,
     );
@@ -667,9 +635,7 @@ lint = "exit 1"
 fn test_user_hook_template_variables(repo: TestRepo) {
     // Write user config with hook using template variables
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-create]
+        r#"[post-create]
 vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
 "#,
     );
@@ -706,9 +672,7 @@ fn test_user_and_project_post_start_both_run(repo: TestRepo) {
 
     // Write user config with user hook AND pre-approve project command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[post-start]
+        r#"[post-start]
 bg = "echo 'USER_POST_START' > user_bg.txt"
 
 [projects."repo"]

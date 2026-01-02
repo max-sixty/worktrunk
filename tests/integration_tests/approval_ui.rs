@@ -43,7 +43,7 @@ fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: b
 
 #[rstest]
 fn test_approval_single_command(repo: TestRepo) {
-    repo.write_project_config(r#"post-create = "echo 'Worktree path: {{ worktree }}'""#);
+    repo.write_project_config(r#"post-create = "echo 'Worktree path: {{ worktree_path }}'""#);
 
     repo.commit("Add config");
 
@@ -60,9 +60,9 @@ fn test_approval_multiple_commands(repo: TestRepo) {
     repo.write_project_config(
         r#"[post-create]
 branch = "echo 'Branch: {{ branch }}'"
-worktree = "echo 'Worktree: {{ worktree }}'"
-repo = "echo 'Repo: {{ main_worktree }}'"
-pwd = "cd {{ worktree }} && pwd"
+worktree = "echo 'Worktree: {{ worktree_path }}'"
+repo = "echo 'Repo: {{ repo }}'"
+pwd = "cd {{ worktree_path }} && pwd"
 "#,
     );
 

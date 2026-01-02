@@ -71,19 +71,36 @@ pub fn build_hook_context(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
+    let repo_path = to_posix_path(&repo_root.to_string_lossy());
+
     let mut map = HashMap::new();
     map.insert("repo".into(), repo_name.into());
-    map.insert("main_worktree".into(), repo_name.into()); // Alias for repo
     map.insert("branch".into(), ctx.branch_or_head().into());
-    map.insert("worktree".into(), worktree);
     map.insert("worktree_name".into(), worktree_name.into());
-    map.insert(
-        "repo_root".into(),
-        to_posix_path(&repo_root.to_string_lossy()),
-    );
 
+    // Canonical path variables
+    map.insert("repo_path".into(), repo_path.clone());
+    map.insert("worktree_path".into(), worktree.clone());
+
+    // TODO: Add `base` (branch) and `base_worktree_path` for post-create/post-switch hooks.
+    // Requires tracking source worktree before switch and passing via extra_vars.
+
+    // Deprecated aliases (kept for backward compatibility)
+    map.insert("main_worktree".into(), repo_name.into());
+    map.insert("repo_root".into(), repo_path);
+    map.insert("worktree".into(), worktree);
+
+    // Default branch and main worktree path
     if let Ok(default_branch) = ctx.repo.default_branch() {
-        map.insert("default_branch".into(), default_branch);
+        map.insert("default_branch".into(), default_branch.clone());
+
+        // main_worktree_path: path to the worktree on the default branch
+        if let Ok(Some(path)) = ctx.repo.worktree_for_branch(&default_branch) {
+            map.insert(
+                "main_worktree_path".into(),
+                to_posix_path(&path.to_string_lossy()),
+            );
+        }
     }
 
     if let Ok(commit) = ctx.repo.run_command(&["rev-parse", "HEAD"]) {

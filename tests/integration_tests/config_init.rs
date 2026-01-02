@@ -15,7 +15,7 @@ fn test_config_init_already_exists(temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
