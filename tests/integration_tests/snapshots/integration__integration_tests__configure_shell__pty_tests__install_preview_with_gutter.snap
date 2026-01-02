@@ -12,4 +12,4 @@ y
 ✓ Configured 1 shell
 ▲ Completions require compinit; add to ~/.zshrc before the wt line:
   autoload -Uz compinit && compinit
-↳ Restart shell to activate
+↳ Restart shell to activate shell integration

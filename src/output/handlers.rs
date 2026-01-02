@@ -437,7 +437,7 @@ pub fn print_shell_install_result(
         });
 
         if current_shell_result.is_some() {
-            super::print(hint_message("Restart shell to activate"))?;
+            super::print(hint_message("Restart shell to activate shell integration"))?;
         }
     }
 
@@ -454,7 +454,7 @@ pub fn print_shell_install_result(
 /// |-----------|--------|
 /// | Unsupported shell | Hint: `Shell integration not yet supported for <shell> (supports bash, zsh, fish, PowerShell)` |
 /// | $SHELL not set | Hint: `To enable automatic cd, run wt config shell install` |
-/// | Current shell already installed | Hint: `Restart shell to activate` |
+/// | Current shell already installed | Hint: `Restart shell to activate shell integration` |
 /// | `skip-shell-integration-prompt` / Non-TTY / `--execute` | Hint: `To enable automatic cd, run wt config shell install` |
 /// | TTY | Prompt: `❯ Install shell integration? [y/N/?]` |
 ///
@@ -523,7 +523,7 @@ pub fn prompt_shell_integration(
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     if current_shell_installed {
-        super::print(hint_message("Restart shell to activate"))?;
+        super::print(hint_message("Restart shell to activate shell integration"))?;
         return Ok(false);
     }
 
