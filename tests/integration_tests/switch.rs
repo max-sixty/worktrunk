@@ -463,7 +463,11 @@ fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
 #[rstest]
 fn test_switch_path_mismatch_without_shell_integration(repo: TestRepo) {
     // Create a worktree at a non-standard path
-    let wrong_path = repo.root_path().parent().unwrap().join("wrong-path-no-shell");
+    let wrong_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("wrong-path-no-shell");
     repo.run_git(&[
         "worktree",
         "add",
@@ -473,7 +477,11 @@ fn test_switch_path_mismatch_without_shell_integration(repo: TestRepo) {
     ]);
 
     // Switch without directive file (no shell integration) - should show both warnings
-    snapshot_switch("switch_path_mismatch_no_shell", &repo, &["feature-mismatch"]);
+    snapshot_switch(
+        "switch_path_mismatch_no_shell",
+        &repo,
+        &["feature-mismatch"],
+    );
 }
 
 /// Test AlreadyAt with path mismatch.
@@ -483,7 +491,11 @@ fn test_switch_path_mismatch_without_shell_integration(repo: TestRepo) {
 #[rstest]
 fn test_switch_already_at_with_path_mismatch(repo: TestRepo) {
     // Create a worktree at a non-standard path
-    let wrong_path = repo.root_path().parent().unwrap().join("wrong-path-already");
+    let wrong_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("wrong-path-already");
     repo.run_git(&[
         "worktree",
         "add",
