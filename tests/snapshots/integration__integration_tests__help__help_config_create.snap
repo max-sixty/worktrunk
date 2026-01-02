@@ -54,11 +54,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m
   [2m# Commit Message Generation (Optional)
   [2m# For generating commit messages during merge operations (wt merge)
-  [2m[commit-generation]
+  [2m# [commit-generation]
   [2m# Example: Simon Willison's llm CLI (https://github.com/simonw/llm)
   [2m# Install: pip install llm llm-anthropic
-  [2mcommand = "llm"
-  [2margs = ["-m", "claude-haiku-4.5"]
+  [2m# command = "llm"
+  [2m# args = ["-m", "claude-haiku-4.5"]
   [2m
   [2m# Alternative: AIChat - Rust-based, supports 20+ providers
   [2m# Install from: https://github.com/sigoden/aichat
