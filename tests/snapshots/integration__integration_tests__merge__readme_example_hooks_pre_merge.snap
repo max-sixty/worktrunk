@@ -63,5 +63,5 @@ All checks passed!
 [107m [0m  2 files changed, 45 insertions(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 2 files, [32m+45[39m[39m[90m)[39m[39m
 [36m◎ Removing [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[33m▲[39m [33mRun [90mcd _REPO_[39m — shell integration not installed[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

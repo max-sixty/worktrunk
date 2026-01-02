@@ -575,10 +575,15 @@ fn git_subcommand_warning() -> String {
     cformat!("Use <bright-black>git-wt</> directly (via shell function) for automatic cd")
 }
 
-/// Show switch message when changing directory after worktree removal
+/// Show switch message when changing directory after worktree removal.
 ///
 /// When shell integration is not active, warns that cd cannot happen.
 /// This is important for remove/merge since the user would be left in a deleted directory.
+///
+/// # Warning Message Format
+///
+/// Uses the standard "Cannot change directory — {reason}" pattern.
+/// See [`compute_shell_warning_reason`] for the full list of reasons.
 fn print_switch_message_if_changed(
     changed_directory: bool,
     main_path: &Path,
@@ -593,7 +598,6 @@ fn print_switch_message_if_changed(
     };
 
     let path_display = format_path_for_display(main_path);
-    let path_escaped = shell_escape::escape(std::borrow::Cow::Borrowed(path_display.as_str()));
 
     if super::is_shell_integration_active() {
         // Shell integration active - cd will work
@@ -602,15 +606,15 @@ fn print_switch_message_if_changed(
         )))?;
     } else if crate::is_git_subcommand() {
         // Running as `git wt` - explain why cd can't work
-        super::print(warning_message(cformat!(
-            "Run <bright-black>cd {path_escaped}</> — git runs subcommands as subprocesses"
-        )))?;
+        super::print(warning_message(
+            "Cannot change directory — git runs subcommands as subprocesses",
+        ))?;
         super::print(hint_message(git_subcommand_warning()))?;
     } else {
         // Shell integration not active - compute specific reason
         let reason = compute_shell_warning_reason();
         super::print(warning_message(cformat!(
-            "Run <bright-black>cd {path_escaped}</> — {reason}"
+            "Cannot change directory — {reason}"
         )))?;
         super::print(hint_message(shell_integration_hint()))?;
     }
@@ -619,10 +623,16 @@ fn print_switch_message_if_changed(
 
 /// Compute the shell warning reason for display in messages.
 ///
-/// Returns a specific reason why shell integration isn't working:
-/// - "shell requires restart" — shell config has `eval` line but wrapper not active
-/// - "shell integration not installed" — shell config doesn't have `eval` line
-/// - "ran X; shell integration wraps Y" — invoked with explicit path
+/// Used in the standard warning pattern: `Cannot change directory — {reason}`
+///
+/// # Reasons
+///
+/// | Reason | Meaning |
+/// |--------|---------|
+/// | `shell integration not installed` | Shell config doesn't have the `eval` line |
+/// | `shell requires restart` | Shell config has `eval` line but wrapper not active |
+/// | `ran X; shell integration wraps Y` | Invoked with explicit path (e.g., `./target/debug/wt`) |
+/// | `git runs subcommands as subprocesses` | Running as `git wt` (handled separately, not by this fn) |
 fn compute_shell_warning_reason() -> String {
     use worktrunk::shell::Shell;
 
@@ -658,9 +668,9 @@ fn compute_shell_warning_reason() -> String {
 /// - `AlreadyAt` — user is already in the target directory
 /// - Shell integration IS active — cd will happen automatically
 ///
-/// **Warning reasons:**
-/// - "shell requires restart" — shell config has `eval` line but wrapper not active
-/// - "shell integration not installed" — shell config doesn't have `eval` line
+/// **Warning format:** `Cannot change directory — {reason}`
+///
+/// See [`compute_shell_warning_reason`] for the full list of reasons.
 ///
 /// **Message order for Created:** Success message first, then warning. Creation
 /// is a real accomplishment, but users still need to know they won't cd there.
