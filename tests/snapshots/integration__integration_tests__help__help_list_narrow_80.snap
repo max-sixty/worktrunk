@@ -12,6 +12,7 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -153,7 +154,7 @@ branch or target |
            ↕  Diverged from the default branch 
            ↑    Ahead of the default branch    
            ↓     Behind the default branch     
-   Remote \|        In sync with remote        
+   Remote  |        In sync with remote        
            ⇅        Diverged from remote       
            ⇡          Ahead of remote          
            ⇣           Behind remote           

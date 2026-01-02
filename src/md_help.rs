@@ -143,10 +143,11 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
         return String::new();
     }
 
-    // Preprocess lines to strip markdown links (termimad doesn't handle them)
+    // Preprocess lines to strip markdown links and unescape pipes
+    // (termimad doesn't handle either)
     let processed: Vec<String> = lines
         .iter()
-        .map(|line| strip_markdown_links(line))
+        .map(|line| unescape_table_pipes(&strip_markdown_links(line)))
         .collect();
     let markdown = processed.join("\n");
 
@@ -169,6 +170,15 @@ fn render_table_with_termimad(lines: &[&str], indent: &str, max_width: Option<us
             .join("\n")
             + "\n"
     }
+}
+
+/// Unescape pipe characters in markdown table cells: `\|` -> `|`
+///
+/// In markdown tables, `|` is the column delimiter. To include a literal pipe
+/// character inside a cell, you escape it as `\|`. Termimad doesn't handle this
+/// escape sequence, so we preprocess it.
+fn unescape_table_pipes(line: &str) -> String {
+    line.replace(r"\|", "|")
 }
 
 /// Strip markdown links, keeping only the link text: `[text](url)` -> `text`
@@ -413,13 +423,28 @@ mod tests {
     }
 
     #[test]
+    fn test_unescape_table_pipes() {
+        // Basic conversion
+        assert_eq!(unescape_table_pipes(r"a \| b"), "a | b");
+        // Multiple escapes
+        assert_eq!(
+            unescape_table_pipes(r"\| start \| end \|"),
+            "| start | end |"
+        );
+        // No escapes - unchanged
+        assert_eq!(unescape_table_pipes("no pipes here"), "no pipes here");
+        // Regular pipe - unchanged
+        assert_eq!(unescape_table_pipes("a | b"), "a | b");
+    }
+
+    #[test]
     fn test_render_table_escaped_pipe() {
         // In markdown tables, \| represents a literal pipe character
-        // Note: termimad keeps \| as-is rather than converting to |
+        // We preprocess to convert \| to | before sending to termimad
         let lines = vec![
             "| Category | Symbol | Meaning |",
             "| --- | --- | --- |",
-            "| Remote | `\\|` | In sync |",
+            r"| Remote | `\|` | In sync |",
         ];
         let result = render_table(&lines, None);
         // Table should render with the content
@@ -431,6 +456,9 @@ mod tests {
             result.contains("In sync"),
             "Table should contain cell content"
         );
+        // The escaped pipe should be converted to a literal pipe
+        assert!(result.contains('|'));
+        assert!(!result.contains(r"\|"));
     }
 
     // ============================================================================

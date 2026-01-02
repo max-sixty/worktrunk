@@ -1629,8 +1629,8 @@ Templates support Jinja2 filters for transforming values:
 
 | Filter | Example | Description |
 |--------|---------|-------------|
-| `sanitize` | `{{ branch \| sanitize }}` → feature-foo | Replace `/` and `\` with `-` |
-| `hash_port` | `{{ branch \| hash_port }}` → 12472 | Hash string to port (10000-19999) |
+| `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |
+| `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 
 The `sanitize` filter makes branch names safe for filesystem paths. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
