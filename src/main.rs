@@ -1174,7 +1174,7 @@ fn main() {
                 // Show success message (temporal locality: immediately after worktree operation)
                 // Returns path to display in hooks when user's shell won't be in the worktree
                 let hooks_display_path =
-                    handle_switch_output(&result, &branch_info, execute.is_some())?;
+                    handle_switch_output(&result, &branch_info, execute.as_deref())?;
 
                 // Offer shell integration if not already installed/active
                 // (only shows prompt/hint when shell integration isn't working)

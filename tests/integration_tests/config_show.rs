@@ -628,3 +628,37 @@ alias wt="git worktree"
         assert_cmd_snapshot!(cmd);
     });
 }
+
+/// Test `wt config show` with shell integration active (WORKTRUNK_DIRECTIVE_FILE set)
+#[rstest]
+fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Create global config
+    let global_config_dir = temp_home.path().join(".config").join("worktrunk");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Create a temp file for the directive file
+    let directive_file = temp_home.path().join("directive");
+    fs::write(&directive_file, "").unwrap();
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        // Set WORKTRUNK_DIRECTIVE_FILE to simulate shell integration being active
+        cmd.env("WORKTRUNK_DIRECTIVE_FILE", &directive_file);
+
+        assert_cmd_snapshot!(cmd);
+    });
+}

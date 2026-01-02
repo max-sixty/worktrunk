@@ -88,39 +88,23 @@ pub(super) fn bash_token_style(kind: &str) -> Option<Style> {
 
 /// Formats TOML content with syntax highlighting using synoptic
 pub fn format_toml(content: &str) -> String {
+    // synoptic has built-in TOML support, so this always succeeds
+    let mut highlighter = from_extension("toml", 4).expect("synoptic supports TOML");
     let gutter = super::GUTTER;
-
-    // Get TOML highlighter from synoptic's built-in rules (tab_width = 4)
-    let mut highlighter = match from_extension("toml", 4) {
-        Some(h) => h,
-        None => {
-            // Fallback: return dimmed content if TOML highlighter not available
-            let dim = Style::new().dimmed();
-            let mut output = String::new();
-            for line in content.lines() {
-                output.push_str(&format!("{gutter} {gutter:#}  {dim}{line}{dim:#}\n"));
-            }
-            return output;
-        }
-    };
-
-    let mut output = String::new();
     let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
     // Process all lines through the highlighter
     highlighter.run(&lines);
 
-    // Render each line with appropriate styling
+    // Render each line with gutter and appropriate styling
+    let mut output = String::new();
     for (y, line) in lines.iter().enumerate() {
-        // Add gutter and spacing
-        output.push_str(&format!("{gutter} {gutter:#}  "));
+        output.push_str(&format!("{gutter} {gutter:#} "));
 
-        // Render each token with appropriate styling
         for token in highlighter.line(y, line) {
             match token {
                 TokOpt::Some(text, kind) => {
-                    let style = toml_token_style(&kind);
-                    if let Some(s) = style {
+                    if let Some(s) = toml_token_style(&kind) {
                         output.push_str(&format!("{s}{text}{s:#}"));
                     } else {
                         output.push_str(&text);

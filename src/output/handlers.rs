@@ -592,8 +592,13 @@ fn print_switch_message_if_changed(
 
 /// Handle output for a switch operation
 ///
-/// When shell integration is not active, we show warnings for operations that
-/// can't complete without shell integration.
+/// For existing worktrees: when shell integration is not active, we show
+/// warnings that the shell's directory won't change. This includes when
+/// `--execute` is used — the command runs in the target directory, but the
+/// shell stays put.
+///
+/// For created worktrees: success message only (creation success trumps the
+/// shell warning, and post-create hooks provide value even without cd).
 ///
 /// Returns `Some(path)` when post-switch hooks should show "@ path" in their
 /// announcements (because the user's shell won't be in that directory). This happens when:
@@ -604,7 +609,7 @@ fn print_switch_message_if_changed(
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
-    _has_execute_command: bool,
+    execute_command: Option<&str>,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     // Set target directory for command execution
     super::change_directory(result.path())?;
@@ -642,6 +647,7 @@ pub fn handle_switch_output(
         }
         SwitchResult::Existing(_) => {
             if user_will_be_there {
+                // Shell integration active — cd will happen automatically
                 super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
@@ -650,24 +656,29 @@ pub fn handle_switch_output(
                 }
                 // cd will happen - no path annotation needed
                 None
-            } else if Shell::is_integration_configured(&crate::binary_name())
-                .ok()
-                .flatten()
-                .is_some()
-            {
-                // Shell wrapper is configured but user ran binary directly
-                super::print(warning_message(cformat!(
-                    "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — restart the shell to activate"
-                )))?;
-                if let Some(warning) = path_mismatch_warning {
-                    super::print(warning)?;
-                }
-                // User won't be there - show path in hook announcements
-                Some(path.clone())
             } else {
-                super::print(warning_message(cformat!(
-                    "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — shell integration not installed"
-                )))?;
+                // Shell integration not active — warn that shell won't cd
+                let reason = if Shell::is_integration_configured(&crate::binary_name())
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    "restart the shell to activate"
+                } else {
+                    "shell integration not installed"
+                };
+
+                if let Some(cmd) = execute_command {
+                    // --execute: command will run in target dir, but shell stays put
+                    super::print(warning_message(cformat!(
+                        "Executing <bold>{cmd}</> @ <bold>{path_display}</>, but shell directory unchanged — {reason}"
+                    )))?;
+                } else {
+                    // No --execute: user expected to cd but won't
+                    super::print(warning_message(cformat!(
+                        "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
+                    )))?;
+                }
                 if let Some(warning) = path_mismatch_warning {
                     super::print(warning)?;
                 }

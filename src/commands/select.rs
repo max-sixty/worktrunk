@@ -992,7 +992,7 @@ pub fn handle_select() -> anyhow::Result<()> {
         execute!(stderr(), crossterm::cursor::MoveTo(0, 0))?;
 
         // Show success message; emit cd directive if shell integration is active
-        handle_switch_output(&result, &branch_info, false)?;
+        handle_switch_output(&result, &branch_info, None)?;
     }
 
     Ok(())
