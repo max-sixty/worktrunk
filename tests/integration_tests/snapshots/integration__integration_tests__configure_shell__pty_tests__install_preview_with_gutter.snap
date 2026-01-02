@@ -12,10 +12,4 @@ y
 ✓ Configured 1 shell
 ▲ Completions require compinit; add to ~/.zshrc before the wt line:
   autoload -Uz compinit && compinit
-<<<<<<< HEAD
-↳ Restart shell to activate
-||||||| 3dc28b212
-↳ Restart shell or run: source ~/.zshrc
-=======
 ↳ Restart shell to activate shell integration
->>>>>>> main

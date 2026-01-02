@@ -1944,6 +1944,8 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     if let Some(root) = project_root {
         settings.add_filter(&regex::escape(root.to_str().unwrap()), "[PROJECT_ROOT]");
     }
+    // Normalize llvm-cov-target to target for coverage builds (cargo-llvm-cov)
+    settings.add_filter(r"/target/llvm-cov-target/", "/target/");
 
     // Normalize backslashes FIRST so all subsequent path filters only need forward-slash versions.
     // This must come before any path replacement filters.

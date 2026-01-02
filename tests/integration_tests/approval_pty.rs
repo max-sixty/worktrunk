@@ -102,6 +102,13 @@ fn normalize_output(output: &str) -> String {
         .unwrap()
         .replace_all(&output, "[CONFIG]");
 
+    // Normalize binary path in shell integration hint (e.g., /path/to/target/debug/wt -> [BIN])
+    // Also handles llvm-cov-target used by cargo-llvm-cov in coverage builds
+    // The path may contain ANSI codes (bold), so match any non-whitespace before /target
+    let output = regex::Regex::new(r"[^\s]+/target/(llvm-cov-target/)?debug/wt")
+        .unwrap()
+        .replace_all(&output, "[BIN]");
+
     // Normalize blank lines due to PTY timing variations
     // Different environments (local, CI, Claude Code web) may have blank lines
     // in different positions due to timing-dependent buffering.

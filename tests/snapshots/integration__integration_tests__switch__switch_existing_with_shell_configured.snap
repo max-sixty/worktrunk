@@ -32,5 +32,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — shell requires restart[39m
-[2m↳[22m [2mRestart shell to activate shell integration[22m
+[33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — ran [1m[PROJECT_ROOT]/target/debug/wt[22m; shell integration wraps [1mwt[22m[39m

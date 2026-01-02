@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/shell_integration_prompt.rs
+assertion_line: 465
 expression: normalized
 ---
 y
@@ -13,10 +14,4 @@ y
 [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
 
 [32m✓[39m [32mConfigured 1 shell[39m
-<<<<<<< HEAD
-[2m↳[22m [2mRestart shell to activate[22m
-||||||| 3dc28b212
-[2m↳[22m [2mRestart shell or run: [90msource ~/.bashrc[39m[22m
-=======
 [2m↳[22m [2mRestart shell to activate shell integration[22m
->>>>>>> main
