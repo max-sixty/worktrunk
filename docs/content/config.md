@@ -52,7 +52,7 @@ The user config stores personal preferences that apply across all repositories. 
 Controls where new worktrees are created. The template is relative to the repository root.
 
 **Available variables:**
-- `{{ repo }}` — repository directory name
+- `{{ main_worktree }}` — main worktree directory name
 - `{{ branch }}` — raw branch name (e.g., `feature/foo`)
 - `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
@@ -61,7 +61,7 @@ Controls where new worktrees are created. The template is relative to the reposi
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
@@ -69,7 +69,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
+worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
 
 # Nested bare repo (git clone --bare <url> project/.git)
 # Creates: ~/code/project/feature-login (sibling to .git)
@@ -294,11 +294,11 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 
 # Commit Message Generation (Optional)
 # For generating commit messages during merge operations (wt merge)
-[commit-generation]
+# [commit-generation]
 # Example: Simon Willison's llm CLI (https://github.com/simonw/llm)
 # Install: pip install llm llm-anthropic
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+# command = "llm"
+# args = ["-m", "claude-haiku-4.5"]
 
 # Alternative: AIChat - Rust-based, supports 20+ providers
 # Install from: https://github.com/sigoden/aichat

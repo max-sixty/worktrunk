@@ -1172,7 +1172,9 @@ fn main() {
                 )?;
 
                 // Show success message (temporal locality: immediately after worktree operation)
-                handle_switch_output(&result, &branch_info, execute.as_deref())?;
+                // Returns path to display in hooks when user's shell won't be in the worktree
+                let hooks_display_path =
+                    handle_switch_output(&result, &branch_info, execute.as_deref())?;
 
                 // Offer shell integration if not already installed/active
                 // (only shows prompt/hint when shell integration isn't working)
@@ -1185,7 +1187,7 @@ fn main() {
                 }
 
                 // Spawn background hooks after success message
-                // - post-switch: runs on ALL switches (Created, Existing, AlreadyAt)
+                // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
                 // - post-start: runs only when creating a NEW worktree
                 if !skip_hooks {
                     let repo = Repository::current();
@@ -1200,7 +1202,7 @@ fn main() {
                     );
 
                     // Post-switch runs first (immediate "I'm here" signal)
-                    ctx.spawn_post_switch_commands()?;
+                    ctx.spawn_post_switch_commands(hooks_display_path.as_deref())?;
 
                     // Post-start runs only on creation (setup tasks)
                     if matches!(&result, SwitchResult::Created { .. }) {
