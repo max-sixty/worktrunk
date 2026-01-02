@@ -83,28 +83,23 @@ fn collect_strings_from_value(value: &toml::Value, strings: &mut Vec<String>) {
 
 /// Replace all deprecated variables with their new names
 pub fn replace_deprecated_vars(content: &str) -> String {
+    use regex::Regex;
+
+    let strings = extract_template_strings(content);
     let mut result = content.to_string();
 
-    for &(deprecated, replacement) in DEPRECATED_VARS {
-        result = replace_template_var(&result, deprecated, replacement);
+    for original in strings {
+        let mut modified = original.clone();
+        for &(old, new) in DEPRECATED_VARS {
+            let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
+            modified = re.replace_all(&modified, new).into_owned();
+        }
+        if modified != original {
+            result = result.replace(&original, &modified);
+        }
     }
 
     result
-}
-
-/// Replace a single template variable within Jinja blocks ({{ }} and {% %})
-fn replace_template_var(content: &str, old_var: &str, new_var: &str) -> String {
-    use regex::Regex;
-
-    // Match Jinja blocks: {{ ... }} or {% ... %} (non-greedy, dotall for multiline)
-    let block_re = Regex::new(r"(?s)\{\{.*?\}\}|\{%.*?%\}").unwrap();
-    let var_re = Regex::new(&format!(r"\b{}\b", regex::escape(old_var))).unwrap();
-
-    block_re
-        .replace_all(content, |caps: &regex::Captures| {
-            var_re.replace_all(&caps[0], new_var).into_owned()
-        })
-        .into_owned()
 }
 
 /// Check config content for deprecated variables and optionally create migration file
@@ -301,30 +296,30 @@ post-create = "cd {{ worktree_path }} && npm install"
 
     #[test]
     fn test_replace_deprecated_vars_simple() {
-        let content = "{{ repo_root }}";
+        let content = r#"cmd = "{{ repo_root }}""#;
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{ repo_path }}");
+        assert_eq!(result, r#"cmd = "{{ repo_path }}""#);
     }
 
     #[test]
     fn test_replace_deprecated_vars_with_filter() {
-        let content = "{{ repo_root | sanitize }}";
+        let content = r#"cmd = "{{ repo_root | sanitize }}""#;
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{ repo_path | sanitize }}");
+        assert_eq!(result, r#"cmd = "{{ repo_path | sanitize }}""#);
     }
 
     #[test]
     fn test_replace_deprecated_vars_no_spaces() {
-        let content = "{{repo_root}}";
+        let content = r#"cmd = "{{repo_root}}""#;
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{repo_path}}"); // Preserves original formatting
+        assert_eq!(result, r#"cmd = "{{repo_path}}""#); // Preserves original formatting
     }
 
     #[test]
     fn test_replace_deprecated_vars_filter_no_spaces() {
-        let content = "{{repo_root|sanitize}}";
+        let content = r#"cmd = "{{repo_root|sanitize}}""#;
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{repo_path|sanitize}}"); // Preserves original formatting
+        assert_eq!(result, r#"cmd = "{{repo_path|sanitize}}""#); // Preserves original formatting
     }
 
     #[test]
@@ -358,18 +353,18 @@ post-create = "echo hello"
 
     #[test]
     fn test_replace_deprecated_vars_preserves_whitespace() {
-        let content = "{{  repo_root  }}";
+        let content = r#"cmd = "{{  repo_root  }}""#;
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{  repo_path  }}"); // Preserves original formatting
+        assert_eq!(result, r#"cmd = "{{  repo_path  }}""#); // Preserves original formatting
     }
 
     #[test]
     fn test_replace_does_not_match_suffix() {
         // Should NOT replace "worktree_path" when looking for "worktree"
-        let content = "{{ worktree_path }}";
+        let content = r#"cmd = "{{ worktree_path }}""#;
         let result = replace_deprecated_vars(content);
         assert_eq!(
-            result, "{{ worktree_path }}",
+            result, r#"cmd = "{{ worktree_path }}""#,
             "Should not modify worktree_path"
         );
     }
@@ -377,11 +372,11 @@ post-create = "echo hello"
     #[test]
     fn test_replace_in_statement_blocks() {
         // Word boundary replacement handles {% %} blocks too
-        let content = r#"{% if repo_root %}echo {{ repo_root }}{% endif %}"#;
+        let content = r#"cmd = "{% if repo_root %}echo {{ repo_root }}{% endif %}""#;
         let result = replace_deprecated_vars(content);
         assert_eq!(
             result,
-            r#"{% if repo_path %}echo {{ repo_path }}{% endif %}"#
+            r#"cmd = "{% if repo_path %}echo {{ repo_path }}{% endif %}""#
         );
     }
 }
