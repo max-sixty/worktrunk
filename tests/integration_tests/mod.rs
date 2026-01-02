@@ -22,6 +22,7 @@ pub mod config_state;
 pub mod configure_shell;
 pub mod default_branch;
 pub mod directives;
+pub mod doc_templates;
 pub mod e2e_shell;
 pub mod e2e_shell_post_start;
 pub mod for_each;
