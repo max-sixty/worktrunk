@@ -436,17 +436,8 @@ pub fn print_shell_install_result(
                 .find(|r| r.shell.to_string().eq_ignore_ascii_case(shell_name))
         });
 
-        if let Some(result) = current_shell_result {
-            // Fish auto-sources from conf.d, so just say "Restart shell"
-            // Bash/Zsh can source directly for immediate activation
-            if matches!(result.shell, Shell::Fish) {
-                super::print(hint_message("Restart shell to activate"))?;
-            } else {
-                let path = format_path_for_display(&result.path);
-                super::print(hint_message(cformat!(
-                    "Restart shell or run: <bright-black>source {path}</>"
-                )))?;
-            }
+        if current_shell_result.is_some() {
+            super::print(hint_message("Restart shell to activate"))?;
         }
     }
 
@@ -463,10 +454,9 @@ pub fn print_shell_install_result(
 /// |-----------|--------|
 /// | Unsupported shell | Hint: `Shell integration not yet supported for <shell> (supports bash, zsh, fish, PowerShell)` |
 /// | $SHELL not set | Hint: `To enable automatic cd, run wt config shell install` |
-/// | Current shell already installed | Hint: `Restart shell to activate shell integration` |
-/// | `skip-shell-integration-prompt` | Hint: `To enable automatic cd, run wt config shell install` |
+/// | Current shell already installed | Hint: `Restart shell to activate` |
+/// | `skip-shell-integration-prompt` / Non-TTY / `--execute` | Hint: `To enable automatic cd, run wt config shell install` |
 /// | TTY | Prompt: `❯ Install shell integration? [y/N/?]` |
-/// | Non-TTY / `--execute` | Hint: `To enable automatic cd, run wt config shell install` |
 ///
 /// When prompting:
 /// 1. Show prompt with preview of ALL shells that would be configured
@@ -533,18 +523,12 @@ pub fn prompt_shell_integration(
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     if current_shell_installed {
-        super::print(hint_message("Restart shell to activate shell integration"))?;
+        super::print(hint_message("Restart shell to activate"))?;
         return Ok(false);
     }
 
-    // Already prompted before (they declined) - show install hint
-    if config.skip_shell_integration_prompt {
-        super::print(hint_message(shell_integration_hint()))?;
-        return Ok(false);
-    }
-
-    // Non-TTY or skip_prompt: Show hint (can't or shouldn't prompt interactively)
-    if !is_tty || skip_prompt {
+    // Can't or shouldn't prompt - show install hint
+    if config.skip_shell_integration_prompt || !is_tty || skip_prompt {
         super::print(hint_message(shell_integration_hint()))?;
         return Ok(false);
     }
