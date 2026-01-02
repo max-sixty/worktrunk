@@ -104,6 +104,10 @@ fn test_switch_existing_branch(mut repo: TestRepo) {
 /// runs `wt` binary directly (not through the shell wrapper), show a warning that explains
 /// the actual situation: shell IS configured, but cd can't happen because we're not
 /// running through the shell function.
+///
+/// Since tests run via `cargo test`, argv[0] contains a path (`target/debug/wt`), which
+/// triggers the "explicit path" code path. The warning explains that shell integration
+/// won't intercept explicit paths.
 #[rstest]
 fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
     use std::fs;

@@ -290,13 +290,17 @@ mod pty_tests {
         output.replace("\r\n", "\n")
     }
 
-    /// Test: Already installed (config line exists) → skip prompt, show restart hint
+    /// Test: Already installed (config line exists) → skip prompt
     ///
     /// This covers the "installed but shell not restarted" scenario where:
     /// - Shell integration is not active (no WORKTRUNK_DIRECTIVE_FILE)
     /// - But the config line is already in shell config files
-    /// - We should detect this and show a restart hint (not prompt)
+    /// - We should detect this and skip the prompt (not show interactive prompt)
     /// - We should NOT mark as prompted (no interactive prompt shown)
+    ///
+    /// Note: Since tests run via `cargo test`, argv[0] contains a path (`target/debug/wt`),
+    /// so the "restart shell" hint is suppressed. Shell integration won't intercept explicit
+    /// paths, so restarting wouldn't help. In production (PATH lookup), users see a restart hint.
     #[rstest]
     fn test_already_installed_skips_prompt(repo: TestRepo) {
         // Create isolated HOME with shell config that already has integration
@@ -326,12 +330,6 @@ mod pty_tests {
         assert!(
             !output.contains("Install shell integration"),
             "Should not prompt when already installed: {output}"
-        );
-
-        // Should show restart hint
-        assert!(
-            output.contains("Restart") && output.contains("shell"),
-            "Should show restart hint: {output}"
         );
 
         // Should have created the worktree

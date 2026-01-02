@@ -533,7 +533,12 @@ pub fn prompt_shell_integration(
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     if current_shell_installed {
-        super::print(hint_message("Restart shell to activate shell integration"))?;
+        // Shell integration is configured but not active for this invocation
+        if !crate::was_invoked_with_explicit_path() {
+            // Invoked via PATH but wrapper isn't active - needs shell restart
+            super::print(hint_message("Restart shell to activate shell integration"))?;
+        }
+        // For explicit paths: no hint needed - handle_switch_output() warning already explains
         return Ok(false);
     }
 
@@ -635,16 +640,25 @@ pub fn handle_switch_output(
     let is_shell_integration_active = super::is_shell_integration_active();
 
     // Compute shell warning reason once (only if we'll need it)
-    let shell_warning_reason = if is_shell_integration_active {
+    let shell_warning_reason: Option<String> = if is_shell_integration_active {
         None
     } else if Shell::is_integration_configured(&crate::binary_name())
         .ok()
         .flatten()
         .is_some()
     {
-        Some("shell requires restart")
+        if crate::was_invoked_with_explicit_path() {
+            // Invoked with explicit path - shell wrapper won't intercept this binary
+            let invoked = crate::invocation_path();
+            let wraps = crate::binary_name();
+            Some(cformat!(
+                "ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>"
+            ))
+        } else {
+            Some("shell requires restart".to_string())
+        }
     } else {
-        Some("shell integration not installed")
+        Some("shell integration not installed".to_string())
     };
 
     // Show path mismatch warning after the main message
@@ -668,7 +682,7 @@ pub fn handle_switch_output(
             None
         }
         SwitchResult::Existing(_) => {
-            if let Some(reason) = shell_warning_reason {
+            if let Some(reason) = &shell_warning_reason {
                 // Shell integration not active — warn that shell won't cd
                 if let Some(cmd) = execute_command {
                     // --execute: command will run in target dir, but shell stays put
