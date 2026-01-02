@@ -2093,6 +2093,14 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // On Windows, clap shows "wt.exe" instead of "wt"
     settings.add_filter(r"wt\.exe", "wt");
 
+    // Normalize version strings in `wt config show` output
+    // Version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, v0.8.5-2-gabcdef-dirty
+    // Match the ANSI dim sequence around the version for exact context
+    settings.add_filter(
+        r"\x1b\[2mv[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?\x1b\[22m",
+        "\x1b[2m[VERSION]\x1b[22m",
+    );
+
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
     // Windows terminal strips these trailing resets that Unix includes
     settings.add_filter(r"\x1b\[0m$", "");

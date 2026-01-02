@@ -101,7 +101,11 @@ fn apply_help_template_recursive(mut cmd: Command, path: &str) -> Command {
     cmd
 }
 
-fn version_str() -> &'static str {
+/// Get the version string for display.
+///
+/// Returns the git describe version if available (e.g., "v0.8.5-3-gabcdef"),
+/// otherwise falls back to the cargo package version (e.g., "0.8.5").
+pub fn version_str() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
         let git_version = env!("VERGEN_GIT_DESCRIBE");
