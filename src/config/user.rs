@@ -129,6 +129,16 @@ pub struct WorktrunkConfig {
     #[serde(rename = "worktree-path", default = "default_worktree_path")]
     pub worktree_path: String,
 
+    /// Global directory where all worktrees are placed (when configured).
+    /// Supports `~` and environment variable expansion.
+    /// Example: `~/worktrees`
+    #[serde(
+        default,
+        rename = "global-worktree-dir",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub global_worktree_dir: Option<String>,
+
     #[serde(default, rename = "commit-generation")]
     pub commit_generation: CommitGenerationConfig,
 
@@ -294,6 +304,7 @@ impl Default for WorktrunkConfig {
     fn default() -> Self {
         Self {
             worktree_path: default_worktree_path(),
+            global_worktree_dir: None,
             commit_generation: CommitGenerationConfig::default(),
             projects: std::collections::BTreeMap::new(),
             list: None,
@@ -396,6 +407,24 @@ impl WorktrunkConfig {
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
         expand_template(&self.worktree_path, &vars, false)
+    }
+
+    /// Get the expanded global worktree directory path, if configured.
+    ///
+    /// Expands `~` to the user's home directory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use worktrunk::config::WorktrunkConfig;
+    ///
+    /// let config = WorktrunkConfig::default();
+    /// assert!(config.global_worktree_dir_path().is_none());
+    /// ```
+    pub fn global_worktree_dir_path(&self) -> Option<PathBuf> {
+        self.global_worktree_dir
+            .as_ref()
+            .map(|path| PathBuf::from(shellexpand::tilde(path).as_ref()))
     }
 
     /// Check if a command is approved for the given project
@@ -861,6 +890,7 @@ rename-tab = "echo 'switched'"
             config.worktree_path,
             "../{{ main_worktree }}.{{ branch | sanitize }}"
         );
+        assert!(config.global_worktree_dir.is_none());
         assert!(config.projects.is_empty());
         assert!(config.list.is_none());
         assert!(config.commit.is_none());

@@ -1193,6 +1193,7 @@ fn main() {
             branches,
             remotes,
             full,
+            global,
             progressive,
             no_progressive,
         } => match subcommand {
@@ -1206,6 +1207,11 @@ fn main() {
                 WorktrunkConfig::load()
                     .context("Failed to load config")
                     .and_then(|config| {
+                        // Handle --global flag for cross-project listing
+                        if global {
+                            return commands::list::global::handle_list_global(format, full, &config);
+                        }
+
                         // Get config values from global list config
                         let (show_branches_config, show_remotes_config, show_full_config) = config
                             .list

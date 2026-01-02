@@ -84,7 +84,7 @@ use dunce::canonicalize;
 use normalize_path::NormalizePath;
 use std::path::PathBuf;
 use worktrunk::HookType;
-use worktrunk::config::WorktrunkConfig;
+use worktrunk::config::{WorktrunkConfig, sanitize_branch_name};
 use worktrunk::git::{GitError, Repository, ResolvedWorktree};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
@@ -272,6 +272,14 @@ fn compute_worktree_path_with(
     // Exception: bare repos have no main worktree, so all branches use templated paths.
     if !is_bare && branch == default_branch {
         return Ok(repo_root);
+    }
+
+    // Check for global worktree directory first
+    if let Some(global_dir) = config.global_worktree_dir_path() {
+        let project = repo.project_identifier()?;
+        // Use just repo name for cleaner directory names (e.g., "worktrunk" not "github.com/user/worktrunk")
+        let project_name = project.rsplit('/').next().unwrap_or(&project);
+        return Ok(global_dir.join(format!("{}.{}", project_name, sanitize_branch_name(branch))));
     }
 
     let repo_name = repo_root
@@ -604,6 +612,14 @@ pub fn handle_switch(
                 create,
             }
             .into());
+        }
+    }
+
+    // Ensure parent directory exists (needed for global worktree directory)
+    if let Some(parent) = worktree_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         }
     }
 

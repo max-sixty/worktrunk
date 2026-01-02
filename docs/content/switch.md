@@ -38,10 +38,21 @@ If the branch already has a worktree, `wt switch` changes directories to it. Oth
 
 When creating a worktree, worktrunk:
 
-1. Creates worktree at configured path
+1. Creates worktree at configured path (see below)
 2. Switches to new directory
 3. Runs [post-create hooks](@/hook.md#post-create) (blocking)
 4. Spawns [post-start hooks](@/hook.md#post-start) (background)
+
+## Worktree placement
+
+By default, worktrees are placed in sibling directories based on the `worktree-path` template. When `global-worktree-dir` is configured, new worktrees are placed there instead using `{project}.{branch}` naming:
+
+```toml
+# ~/.config/worktrunk/config.toml
+global-worktree-dir = "~/worktrees"
+```
+
+This creates worktrees like `~/worktrees/myrepo.feature-auth`.
 
 ```bash
 wt switch feature                        # Existing branch → creates worktree
