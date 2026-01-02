@@ -42,16 +42,12 @@ from shared import (  # noqa: E402
     SIZE_SOCIAL,
     record_text,
     build_tape_replacements,
+    ensure_vhs_binary,
 )
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
 OUT_DIR = SCRIPT_DIR.parent / "static" / "assets"
 TAPES_DIR = SCRIPT_DIR / "tapes"
-
-# Custom VHS binary with keystroke overlay
-VHS_KEYSTROKES = os.environ.get(
-    "VHS_KEYSTROKES", str(SCRIPT_DIR / "vhs-keystrokes" / "vhs-keystrokes")
-)
 
 
 # =============================================================================
@@ -273,43 +269,37 @@ echo "Add placeholder module for user profile settings."
 # Demo Registrations
 # =============================================================================
 
-# Format: (tape_file, output_name, setup_func, vhs_type)
+# Format: (tape_file, output_name, setup_func)
 # All demos in a mode use that mode's default size.
 # Note: setup_func must be a named function (not lambda) for multiprocessing.
 
 DOCS_DEMOS = [
-    ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
-    ("wt-switch.tape", "wt-switch", prepare_switch, "vhs"),
-    ("wt-list.tape", "wt-list", prepare_with_hooks, "vhs"),
-    ("wt-commit.tape", "wt-commit", prepare_merge_demo, "vhs"),
-    ("wt-statusline.tape", "wt-statusline", prepare_switch, "vhs"),
-    ("wt-merge.tape", "wt-merge", prepare_merge_demo, "vhs"),
-    ("wt-select.tape", "wt-select", prepare_basic, "vhs-keystrokes"),
-    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),
+    ("wt-core.tape", "wt-core", prepare_with_hooks),
+    ("wt-switch.tape", "wt-switch", prepare_switch),
+    ("wt-list.tape", "wt-list", prepare_with_hooks),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo),
+    ("wt-statusline.tape", "wt-statusline", prepare_switch),
+    ("wt-merge.tape", "wt-merge", prepare_merge_demo),
+    ("wt-select.tape", "wt-select", prepare_basic),
+    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
 ]
 
 SOCIAL_DEMOS = [
-    ("wt-switch.tape", "wt-switch", prepare_switch, "vhs"),
-    ("wt-statusline.tape", "wt-statusline", prepare_switch, "vhs"),
-    ("wt-list.tape", "wt-list", prepare_with_hooks, "vhs"),
-    ("wt-list-remove.tape", "wt-list-remove", prepare_with_hooks, "vhs"),
-    (
-        "wt-hooks.tape",
-        "wt-hooks",
-        partial(prepare_with_hooks, include_deps=True),
-        "vhs",
-    ),
-    ("wt-devserver.tape", "wt-devserver", prepare_devserver, "vhs"),
-    ("wt-commit.tape", "wt-commit", prepare_merge_demo, "vhs"),
+    ("wt-switch.tape", "wt-switch", prepare_switch),
+    ("wt-statusline.tape", "wt-statusline", prepare_switch),
+    ("wt-list.tape", "wt-list", prepare_with_hooks),
+    ("wt-list-remove.tape", "wt-list-remove", prepare_with_hooks),
+    ("wt-hooks.tape", "wt-hooks", partial(prepare_with_hooks, include_deps=True)),
+    ("wt-devserver.tape", "wt-devserver", prepare_devserver),
+    ("wt-commit.tape", "wt-commit", prepare_merge_demo),
     (
         "wt-merge.tape",
         "wt-merge",
         partial(prepare_merge_demo, commit_generation=False, staged_changes=False),
-        "vhs",
     ),
-    ("wt-select.tape", "wt-select", prepare_basic, "vhs-keystrokes"),
-    ("wt-core.tape", "wt-core", prepare_with_hooks, "vhs"),
-    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus, "vhs"),
+    ("wt-select.tape", "wt-select", prepare_basic),
+    ("wt-core.tape", "wt-core", prepare_with_hooks),
+    ("wt-zellij-omnibus.tape", "wt-zellij-omnibus", prepare_zellij_omnibus),
 ]
 
 TARGETS = {
@@ -335,18 +325,16 @@ def record_demo(
     tape_file: str,
     output_name: str,
     setup_func,
-    vhs_type: str,
     mode_out_dir: Path,
     themes: list[str],
     demo_size: DemoSize,
+    vhs_binary: str,
     text_mode: bool = False,
 ):
     """Record a single demo (runs in subprocess for parallel execution)."""
     tape_path = TAPES_DIR / tape_file
     if not tape_path.exists():
         raise FileNotFoundError(f"{tape_file} not found")
-
-    vhs_binary = VHS_KEYSTROKES if vhs_type == "vhs-keystrokes" else "vhs"
 
     # Create fresh environment in temp directory
     demo_env_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
@@ -446,9 +434,12 @@ Examples:
         print("--shell and --text are mutually exclusive")
         return
 
-    # Check dependencies
-    deps = ["wt", "vhs", "starship", "zellij"]
+    # Check dependencies (VHS is built from source, not required in PATH)
+    deps = ["wt", "starship", "zellij"]
     check_dependencies(deps)
+
+    # Ensure VHS is built (requires Go)
+    vhs_binary = str(ensure_vhs_binary())
 
     # Output goes to mode/theme subdirectories
     mode_out_dir = OUT_DIR / args.target
@@ -461,26 +452,16 @@ Examples:
 
     # Filter demos if --only specified
     if args.only:
-        demos = [(t, n, s, v) for t, n, s, v in demos if n == args.only]
+        demos = [(t, n, s) for t, n, s in demos if n == args.only]
         if not demos:
-            all_names = [n for _, n, _, _ in target_config["demos"]]
+            all_names = [n for _, n, _ in target_config["demos"]]
             print(f"Unknown demo: {args.only}")
             print(f"Available for {args.target}: {', '.join(all_names)}")
             return
 
-    # Check vhs-keystrokes availability
-    vhs_keystrokes_available = Path(VHS_KEYSTROKES).exists()
-    needs_keystrokes = any(vhs_type == "vhs-keystrokes" for _, _, _, vhs_type in demos)
-
-    if needs_keystrokes and not vhs_keystrokes_available:
-        print("Error: vhs-keystrokes required but not found", file=sys.stderr)
-        print(f"Not found at: {VHS_KEYSTROKES}", file=sys.stderr)
-        print("See docs/demos/CLAUDE.md for build instructions", file=sys.stderr)
-        sys.exit(1)
-
     # Handle --shell mode (interactive, must be sequential)
     if args.shell:
-        tape_file, output_name, setup_func, vhs_type = demos[0]
+        tape_file, output_name, setup_func = demos[0]
         demo_env_dir = Path(tempfile.mkdtemp(prefix="wt-demo-"))
         setup_demo_output(demo_env_dir)
         env = DemoEnv(name=output_name, out_dir=demo_env_dir, repo_name="acme")
@@ -493,16 +474,16 @@ Examples:
     if args.sequential or len(demos) == 1:
         print(f"\nRecording {len(demos)} demo(s) sequentially...")
         failed = []
-        for tape_file, output_name, setup_func, vhs_type in demos:
+        for tape_file, output_name, setup_func in demos:
             try:
                 record_demo(
                     tape_file,
                     output_name,
                     setup_func,
-                    vhs_type,
                     mode_out_dir,
                     themes,
                     demo_size,
+                    vhs_binary,
                     args.text,
                 )
             except Exception as e:
@@ -519,13 +500,13 @@ Examples:
                     tape_file,
                     output_name,
                     setup_func,
-                    vhs_type,
                     mode_out_dir,
                     themes,
                     demo_size,
+                    vhs_binary,
                     args.text,
                 ): output_name
-                for tape_file, output_name, setup_func, vhs_type in demos
+                for tape_file, output_name, setup_func in demos
             }
 
             failed = []

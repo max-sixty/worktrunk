@@ -2,9 +2,11 @@
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,6 +15,157 @@ from .themes import THEMES, format_theme_for_vhs
 
 REAL_HOME = Path.home()
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+DEPS_DIR = Path(__file__).parent.parent / ".deps"  # Downloaded dependencies
+
+# External dependency URLs
+_GCS_BUCKET = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
+_ZELLIJ_PLUGIN_URL = "https://github.com/Cynary/zellij-tab-name/releases/download/v0.4.1/zellij-tab-name.wasm"
+_VHS_FORK_REPO = "https://github.com/max-sixty/vhs.git"
+_VHS_FORK_BRANCH = "keypress-overlay"
+
+
+def _detect_platform() -> str:
+    """Detect platform for Claude Code binary download."""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "darwin":
+        os_name = "darwin"
+    elif system == "linux":
+        os_name = "linux"
+    else:
+        raise RuntimeError(f"Unsupported OS: {system}")
+
+    if machine in ("x86_64", "amd64"):
+        arch = "x64"
+    elif machine in ("arm64", "aarch64"):
+        arch = "arm64"
+    else:
+        raise RuntimeError(f"Unsupported architecture: {machine}")
+
+    # Check for musl on Linux x64
+    if os_name == "linux" and arch == "x64":
+        try:
+            result = subprocess.run(
+                ["ldd", "--version"], capture_output=True, text=True, check=False
+            )
+            if "musl" in result.stderr.lower() or "musl" in result.stdout.lower():
+                return "linux-x64-musl"
+        except FileNotFoundError:
+            pass
+
+    return f"{os_name}-{arch}"
+
+
+def _download_file(url: str, dest: Path) -> None:
+    """Download a file from URL to destination (atomic)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading {dest.name}...")
+    temp = dest.with_suffix(".tmp")
+    try:
+        urllib.request.urlretrieve(url, temp)
+        temp.rename(dest)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def _ensure_claude_binary() -> Path:
+    """Ensure Claude Code binary is downloaded, return path."""
+    claude_binary = DEPS_DIR / "claude"
+    if claude_binary.exists():
+        return claude_binary
+
+    plat = _detect_platform()
+    print(f"Fetching Claude Code for {plat}...")
+
+    # Get stable version
+    with urllib.request.urlopen(f"{_GCS_BUCKET}/stable") as resp:
+        version = resp.read().decode().strip()
+    print(f"Claude Code version: {version}")
+
+    # Download binary
+    _download_file(f"{_GCS_BUCKET}/{version}/{plat}/claude", claude_binary)
+    claude_binary.chmod(0o755)
+
+    # Verify
+    result = subprocess.run(
+        [str(claude_binary), "--version"], capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Claude binary downloaded but --version failed: {result.stderr or result.stdout}"
+        )
+
+    print(f"✓ Claude Code {version} ready")
+    return claude_binary
+
+
+def _ensure_zellij_plugin() -> Path:
+    """Ensure Zellij tab-name plugin is downloaded, return path."""
+    plugin_path = DEPS_DIR / "zellij-tab-name.wasm"
+    if plugin_path.exists():
+        return plugin_path
+
+    _download_file(_ZELLIJ_PLUGIN_URL, plugin_path)
+    print(f"✓ Zellij plugin ready")
+    return plugin_path
+
+
+def ensure_vhs_binary() -> Path:
+    """Ensure VHS binary is cloned and built, return path.
+
+    Uses a custom VHS fork with keystroke overlay support.
+    Requires Go to be installed.
+    """
+    vhs_dir = DEPS_DIR / "vhs"
+    vhs_binary = vhs_dir / "vhs"
+
+    if vhs_binary.exists():
+        return vhs_binary
+
+    # Check Go is available
+    if not shutil.which("go"):
+        raise RuntimeError(
+            "Go is required to build VHS. Install from https://go.dev/dl/"
+        )
+
+    # Clone if needed
+    if not vhs_dir.exists():
+        print(f"Cloning VHS fork...")
+        DEPS_DIR.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["git", "clone", "-b", _VHS_FORK_BRANCH, "--depth=1", _VHS_FORK_REPO, str(vhs_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to clone VHS fork: {result.stderr}")
+
+    # Build
+    print(f"Building VHS...")
+    result = subprocess.run(
+        ["go", "build", "-o", "vhs", "."],
+        cwd=vhs_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to build VHS: {result.stderr}")
+
+    # Verify
+    result = subprocess.run(
+        [str(vhs_binary), "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"VHS built but --version failed: {result.stderr}")
+
+    print(f"✓ VHS ready")
+    return vhs_binary
+
 
 # Shared content for demos
 VALIDATION_RS = """//! Input validation utilities.
@@ -302,13 +455,12 @@ def setup_claude_code_config(
         )
     )
 
-    # Copy claude binary to prevent "installMethod is native" warnings
+    # Copy claude binary (downloaded automatically if missing)
     # Claude Code detects native install by checking if ~/.local/bin/claude exists
     local_bin = env.home / ".local" / "bin"
     local_bin.mkdir(parents=True, exist_ok=True)
-    real_claude = REAL_HOME / ".local" / "bin" / "claude"
-    if real_claude.exists():
-        shutil.copy(real_claude.resolve(), local_bin / "claude")
+    claude_binary = _ensure_claude_binary()
+    shutil.copy(claude_binary, local_bin / "claude")
 
     # Claude settings.json
     claude_dir = env.home / ".claude"
@@ -328,23 +480,20 @@ def setup_zellij_config(env: DemoEnv, default_cwd: str = None) -> None:
     """Set up Zellij configuration for demo recording.
 
     Creates config with warm-gold theme, minimal keybinds, and tab-rename plugin.
-    Copies plugins from real HOME if available.
+    Plugin is downloaded automatically if missing.
 
     Args:
         env: Demo environment
         default_cwd: Optional default working directory for new panes
     """
-    real_zellij_plugins = REAL_HOME / ".config" / "zellij" / "plugins"
-
     zellij_config_dir = env.home / ".config" / "zellij"
     zellij_config_dir.mkdir(parents=True, exist_ok=True)
     zellij_plugins_dir = zellij_config_dir / "plugins"
     zellij_plugins_dir.mkdir(exist_ok=True)
 
-    # Copy Zellij plugins from real HOME
-    if real_zellij_plugins.exists():
-        for plugin in real_zellij_plugins.glob("*.wasm"):
-            shutil.copy(plugin, zellij_plugins_dir / plugin.name)
+    # Copy Zellij plugin (downloaded automatically if missing)
+    plugin_path = _ensure_zellij_plugin()
+    shutil.copy(plugin_path, zellij_plugins_dir / "zellij-tab-name.wasm")
 
     default_cwd_line = f'default_cwd "{default_cwd}"' if default_cwd else ""
 

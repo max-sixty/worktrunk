@@ -27,6 +27,8 @@ from .lib import (
     # Text output recording
     record_text,
     build_tape_replacements,
+    # External dependencies
+    ensure_vhs_binary,
 )
 from .themes import THEMES, format_theme_for_vhs
 
@@ -59,4 +61,6 @@ __all__ = [
     # Text output recording
     "record_text",
     "build_tape_replacements",
+    # External dependencies
+    "ensure_vhs_binary",
 ]

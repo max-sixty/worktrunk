@@ -1,2 +1,2 @@
-# Built VHS binary with keystroke overlay
-vhs-keystrokes/
+# Auto-built/downloaded dependencies
+.deps/

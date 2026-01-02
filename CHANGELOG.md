@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.5
+
+### Improved
+
+- **Windows `git-wt` command**: Winget now ships with `git-wt` as a workaround to the Windows Terminal `wt` naming conflict. We're still considering better options — see [#133](https://github.com/max-sixty/worktrunk/issues/133).
+
 ## 0.8.4
 
 ### Improved

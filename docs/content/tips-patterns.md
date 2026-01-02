@@ -77,7 +77,7 @@ Each worktree can have its own isolated database. Docker containers get unique n
 db = """
 docker run -d --rm \
   --name {{ repo }}-{{ branch | sanitize }}-postgres \
-  -p {{ 'db-' ~ branch | hash_port }}:5432 \
+  -p {{ ('db-' ~ branch) | hash_port }}:5432 \
   -e POSTGRES_DB={{ repo }} \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
@@ -87,7 +87,8 @@ docker run -d --rm \
 db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
 ```
 
-The `'db-' ~ branch` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
+The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
+Jinja2's operator precedence has pipe `|` with higher precedence than concatenation `~`, meaning expressions need parentheses to filter concatenated values.
 
 Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
 
@@ -95,7 +96,7 @@ Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook
 [post-create]
 env = """
 cat > .env.local << EOF
-DATABASE_URL=postgres://postgres:dev@localhost:{{ 'db-' ~ branch | hash_port }}/{{ repo }}
+DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
 DEV_PORT={{ branch | hash_port }}
 EOF
 """
