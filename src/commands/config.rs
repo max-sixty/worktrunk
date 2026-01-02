@@ -378,21 +378,34 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
 
         match result.action {
             ConfigAction::AlreadyExists => {
+                // Show the matched lines directly under this status
+                let detection = detection_results
+                    .iter()
+                    .find(|d| d.path == result.path && !d.matched_lines.is_empty());
+
+                // Build file:line location (clickable in terminals)
+                let location = if let Some(det) = detection {
+                    let line_nums: Vec<_> = det
+                        .matched_lines
+                        .iter()
+                        .map(|d| d.line_number.to_string())
+                        .collect();
+                    format!("{}:{}", path, line_nums.join(","))
+                } else {
+                    path.to_string()
+                };
+
                 writeln!(
                     out,
                     "{}",
                     info_message(cformat!(
-                        "Already configured {what} for <bold>{shell}</> @ {path}"
+                        "Already configured {what} for <bold>{shell}</> @ {location}"
                     ))
                 )?;
 
-                // Show the matched lines directly under this status
-                if let Some(detection) = detection_results
-                    .iter()
-                    .find(|d| d.path == result.path && !d.matched_lines.is_empty())
-                {
-                    for line in &detection.matched_lines {
-                        writeln!(out, "{}", format_bash_with_gutter(line.trim()))?;
+                if let Some(det) = detection {
+                    for detected in &det.matched_lines {
+                        writeln!(out, "{}", format_bash_with_gutter(detected.content.trim()))?;
                     }
                 }
 
@@ -476,15 +489,22 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         if !detection.unmatched_candidates.is_empty() {
             has_any_unmatched = true;
             let path = format_path_for_display(&detection.path);
+            // Build file:line location (clickable in terminals)
+            let line_nums: Vec<_> = detection
+                .unmatched_candidates
+                .iter()
+                .map(|d| d.line_number.to_string())
+                .collect();
+            let location = format!("{}:{}", path, line_nums.join(","));
             writeln!(
                 out,
                 "{}",
                 warning_message(cformat!(
-                    "Found <bold>{cmd}</> in <bold>{path}</> but not detected as integration:"
+                    "Found <bold>{cmd}</> in <bold>{location}</> but not detected as integration:"
                 ))
             )?;
-            for line in &detection.unmatched_candidates {
-                writeln!(out, "{}", format_bash_with_gutter(line.trim()))?;
+            for detected in &detection.unmatched_candidates {
+                writeln!(out, "{}", format_bash_with_gutter(detected.content.trim()))?;
             }
         }
     }
@@ -498,7 +518,11 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         let unmatched_summary: Vec<_> = detection_results
             .iter()
             .filter(|r| !r.unmatched_candidates.is_empty())
-            .flat_map(|r| r.unmatched_candidates.iter().map(|l| l.trim().to_string()))
+            .flat_map(|r| {
+                r.unmatched_candidates
+                    .iter()
+                    .map(|d| d.content.trim().to_string())
+            })
             .collect();
         let body = format!(
             "Shell integration not detected despite config containing `{cmd}`.\n\n\

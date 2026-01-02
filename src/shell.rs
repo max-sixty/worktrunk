@@ -65,9 +65,7 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 ///
 /// # Detection Strategy
 ///
-/// We detect shell integration by looking for TWO types of patterns:
-///
-/// ## 1. Eval/source lines (user's shell config)
+/// We detect shell integration by looking for eval/source lines in shell config files.
 ///
 /// Lines like `eval "$(wt config shell init bash)"` in `.bashrc`/`.zshrc`.
 ///
@@ -76,12 +74,6 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 /// **Solution:** Use negative lookbehind to exclude `git ` and `git-` prefixes:
 /// - For `wt`: match `wt config shell init` NOT preceded by `git ` or `git-`
 /// - For `git-wt`: match `git-wt config shell init` OR `git wt config shell init`
-///
-/// ## 2. Generated function markers (sourced into shell)
-///
-/// The generated shell code contains unique patterns like `_wt_lazy_complete` and
-/// `${WORKTRUNK_BIN:-wt}`. These are detected in Fish's `conf.d/{cmd}.fish` files
-/// where we install the integration directly (not via eval).
 ///
 /// # Pattern Details
 ///
@@ -92,15 +84,6 @@ fn home_dir_required() -> Result<PathBuf, std::io::Error> {
 /// eval "$(git wt config shell init bash)"       ✗ no match (git- prefix)
 /// eval "$(git-wt config shell init bash)"       ✗ no match (git- prefix)
 /// source <(wt config shell init zsh)            ✓ matches
-/// ```
-///
-/// **Generated function markers** (for `wt`):
-/// ```text
-/// wt() {                                        ✓ matches (function definition)
-/// _wt_lazy_complete()                           ✓ matches (completion helper)
-/// ${WORKTRUNK_BIN:-wt}                          ✓ matches (fallback pattern)
-/// git-wt() {                                    ✗ no match
-/// _git-wt_lazy_complete()                       ✗ no match
 /// ```
 ///
 /// # Edge Cases Handled
@@ -140,16 +123,7 @@ pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
     }
 
     // Check for eval/source line pattern
-    if has_init_invocation(trimmed, cmd) {
-        return true;
-    }
-
-    // Check for generated function markers (installed integration files)
-    if has_function_marker(trimmed, cmd) {
-        return true;
-    }
-
-    false
+    has_init_invocation(trimmed, cmd)
 }
 
 /// Check if line contains `{cmd} config shell init` as a command invocation.
@@ -230,102 +204,6 @@ fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
     matches!(last_char, ' ' | '\t' | '$' | '(' | '"' | '\'' | '`')
 }
 
-/// Check if line contains markers from generated shell integration code.
-///
-/// These patterns appear in the shell code itself (e.g., Fish's conf.d files),
-/// not in the eval line. They're unique to each command.
-fn has_function_marker(line: &str, cmd: &str) -> bool {
-    // Function definition patterns need word boundary checks to avoid:
-    // - "git-wt()" matching when looking for "wt()"
-    // - "newt()" matching when looking for "wt()"
-
-    // Bash/Zsh: `wt() {` or `wt () {`
-    if has_function_def_bash(line, cmd) {
-        return true;
-    }
-
-    // Fish: `function wt` (must be at word boundary)
-    if has_function_def_fish(line, cmd) {
-        return true;
-    }
-
-    // Completion helper function: `_wt_lazy_complete`
-    // Must check word boundary - `my_wt_lazy_complete` should not match
-    if has_completion_helper(line, cmd) {
-        return true;
-    }
-
-    // Fallback pattern: `${WORKTRUNK_BIN:-wt}` (unique per command)
-    // Require the `${` prefix to avoid matching `MY_WORKTRUNK_BIN:-wt}`
-    if has_worktrunk_bin_fallback(line, cmd) {
-        return true;
-    }
-
-    false
-}
-
-/// Check for completion helper pattern `_cmd_lazy_complete` with word boundary.
-fn has_completion_helper(line: &str, cmd: &str) -> bool {
-    let pattern = format!("_{cmd}_lazy_complete");
-    if let Some(pos) = line.find(&pattern) {
-        // Must not be preceded by alphanumeric or underscore
-        if pos == 0 {
-            return true;
-        }
-        let prev_char = line[..pos].chars().last().unwrap();
-        return !prev_char.is_alphanumeric() && prev_char != '_';
-    }
-    false
-}
-
-/// Check for WORKTRUNK_BIN fallback pattern `${WORKTRUNK_BIN:-cmd}`.
-fn has_worktrunk_bin_fallback(line: &str, cmd: &str) -> bool {
-    // Require the full `${WORKTRUNK_BIN:-cmd}` pattern to avoid false positives
-    // from prefixed variable names like `MY_WORKTRUNK_BIN:-wt}`
-    let pattern = format!("${{WORKTRUNK_BIN:-{cmd}}}");
-    line.contains(&pattern)
-}
-
-/// Check for bash/zsh function definition: `cmd()` or `cmd ()`
-/// Must have word boundary before the command name.
-fn has_function_def_bash(line: &str, cmd: &str) -> bool {
-    let func_def = format!("{cmd}()");
-    let func_def_space = format!("{cmd} ()");
-
-    for pattern in [&func_def, &func_def_space] {
-        if let Some(pos) = line.find(pattern) {
-            // Check for word boundary before the command
-            if pos == 0
-                || !line[..pos].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '-')
-            {
-                // Must be a function definition (has `{` on same line)
-                if line.contains('{') {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Check for fish function definition: `function cmd`
-/// Must be followed by end-of-line or whitespace (not more identifier chars).
-fn has_function_def_fish(line: &str, cmd: &str) -> bool {
-    let func_keyword = format!("function {cmd}");
-    if let Some(pos) = line.find(&func_keyword) {
-        let after_pos = pos + func_keyword.len();
-        // Check what follows: must be end of line, whitespace, or newline
-        if after_pos >= line.len() {
-            return true; // End of line
-        }
-        let next_char = line[after_pos..].chars().next().unwrap();
-        if next_char.is_whitespace() {
-            return true;
-        }
-    }
-    false
-}
-
 /// Check if a line contains the command name at a word boundary.
 ///
 /// Used to identify potential false negatives - lines that contain the command
@@ -361,16 +239,66 @@ fn contains_cmd_at_word_boundary(line: &str, cmd: &str) -> bool {
     false
 }
 
+/// A detected line with its 1-based line number.
+#[derive(Debug, Clone)]
+pub struct DetectedLine {
+    pub line_number: usize,
+    pub content: String,
+}
+
 /// Result of scanning a shell config file for integration detection.
 #[derive(Debug, Clone)]
 pub struct FileDetectionResult {
     /// Path to the config file that was scanned.
     pub path: PathBuf,
     /// Lines that matched as shell integration (detected).
-    pub matched_lines: Vec<String>,
+    pub matched_lines: Vec<DetectedLine>,
     /// Lines containing the command at word boundary but NOT detected.
     /// These are potential false negatives.
-    pub unmatched_candidates: Vec<String>,
+    pub unmatched_candidates: Vec<DetectedLine>,
+}
+
+/// Scan a single file for shell integration lines and potential false negatives.
+fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
+    use std::fs;
+    use std::io::{BufRead, BufReader};
+
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut matched_lines = Vec::new();
+    let mut unmatched_candidates = Vec::new();
+
+    for (line_number, line) in reader.lines().map_while(Result::ok).enumerate() {
+        let line_number = line_number + 1; // 1-based
+        let trimmed = line.trim();
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if is_shell_integration_line(&line, cmd) {
+            matched_lines.push(DetectedLine {
+                line_number,
+                content: line.clone(),
+            });
+        } else if contains_cmd_at_word_boundary(&line, cmd) {
+            unmatched_candidates.push(DetectedLine {
+                line_number,
+                content: line.clone(),
+            });
+        }
+    }
+
+    // Only return if we found something interesting
+    if matched_lines.is_empty() && unmatched_candidates.is_empty() {
+        return None;
+    }
+
+    Some(FileDetectionResult {
+        path: path.to_path_buf(),
+        matched_lines,
+        unmatched_candidates,
+    })
 }
 
 /// Scan shell config files for detailed detection results.
@@ -382,15 +310,13 @@ pub struct FileDetectionResult {
 /// Used by `wt config show` to provide debugging output.
 pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>, std::io::Error> {
     use std::collections::HashSet;
-    use std::fs;
-    use std::io::{BufRead, BufReader};
 
     let home = home_dir_required()?;
     let mut results = Vec::new();
 
-    // Check common shell config files for integration patterns
+    // Collect all config file paths to scan
     // Use HashSet to deduplicate paths (e.g., when ZDOTDIR == $HOME)
-    let mut config_files = vec![
+    let mut config_files: Vec<PathBuf> = vec![
         // Bash
         home.join(".bashrc"),
         home.join(".bash_profile"),
@@ -401,111 +327,21 @@ pub fn scan_for_detection_details(cmd: &str) -> Result<Vec<FileDetectionResult>,
             .map(PathBuf::from)
             .unwrap_or_else(|_| home.clone())
             .join(".zshrc"),
+        // Fish conf.d
+        home.join(".config/fish/conf.d").join(format!("{cmd}.fish")),
     ];
 
-    // Deduplicate paths
+    // Add PowerShell profiles
+    config_files.extend(powershell_profile_paths(&home));
+
+    // Deduplicate and scan
     let mut seen = HashSet::new();
-    config_files.retain(|p| seen.insert(p.clone()));
-
     for path in config_files {
-        if !path.exists() {
+        if !seen.insert(path.clone()) || !path.exists() {
             continue;
         }
-
-        if let Ok(file) = fs::File::open(&path) {
-            let reader = BufReader::new(file);
-            let mut matched_lines = Vec::new();
-            let mut unmatched_candidates = Vec::new();
-
-            for line in reader.lines().map_while(Result::ok) {
-                let trimmed = line.trim();
-                // Skip empty lines and comments for candidates
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-
-                if is_shell_integration_line(&line, cmd) {
-                    matched_lines.push(line.clone());
-                } else if contains_cmd_at_word_boundary(&line, cmd) {
-                    unmatched_candidates.push(line.clone());
-                }
-            }
-
-            // Only include files that have something interesting
-            if !matched_lines.is_empty() || !unmatched_candidates.is_empty() {
-                results.push(FileDetectionResult {
-                    path,
-                    matched_lines,
-                    unmatched_candidates,
-                });
-            }
-        }
-    }
-
-    // Check Fish conf.d directory - look for {cmd}.fish file specifically
-    let fish_conf_d = home.join(".config/fish/conf.d");
-    let fish_config = fish_conf_d.join(format!("{cmd}.fish"));
-    if fish_config.exists()
-        && let Ok(file) = fs::File::open(&fish_config)
-    {
-        let reader = BufReader::new(file);
-        let mut matched_lines = Vec::new();
-        let mut unmatched_candidates = Vec::new();
-
-        for line in reader.lines().map_while(Result::ok) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
-            if is_shell_integration_line(&line, cmd) {
-                matched_lines.push(line.clone());
-            } else if contains_cmd_at_word_boundary(&line, cmd) {
-                unmatched_candidates.push(line.clone());
-            }
-        }
-
-        if !matched_lines.is_empty() || !unmatched_candidates.is_empty() {
-            results.push(FileDetectionResult {
-                path: fish_config,
-                matched_lines,
-                unmatched_candidates,
-            });
-        }
-    }
-
-    // Check PowerShell profiles for integration (both Core and 5.1)
-    for profile_path in powershell_profile_paths(&home) {
-        if !profile_path.exists() {
-            continue;
-        }
-
-        if let Ok(file) = fs::File::open(&profile_path) {
-            let reader = BufReader::new(file);
-            let mut matched_lines = Vec::new();
-            let mut unmatched_candidates = Vec::new();
-
-            for line in reader.lines().map_while(Result::ok) {
-                let trimmed = line.trim();
-                // Skip empty lines and comments
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-
-                if is_shell_integration_line(&line, cmd) {
-                    matched_lines.push(line.clone());
-                } else if contains_cmd_at_word_boundary(&line, cmd) {
-                    unmatched_candidates.push(line.clone());
-                }
-            }
-
-            if !matched_lines.is_empty() || !unmatched_candidates.is_empty() {
-                results.push(FileDetectionResult {
-                    path: profile_path,
-                    matched_lines,
-                    unmatched_candidates,
-                });
-            }
+        if let Some(result) = scan_file(&path, cmd) {
+            results.push(result);
         }
     }
 
@@ -1065,48 +901,6 @@ mod tests {
     }
 
     // ==========================================================================
-    // Detection tests: function markers (for installed integration files)
-    // ==========================================================================
-
-    /// Function definition patterns that SHOULD match
-    #[rstest]
-    #[case::bash_func_def("wt() {")]
-    #[case::bash_func_def_space("wt () {")]
-    #[case::fish_func_def("function wt")]
-    #[case::completion_helper("_wt_lazy_complete() {")]
-    #[case::fallback_pattern(r#"command "${WORKTRUNK_BIN:-wt}" "$@""#)]
-    fn test_function_markers_match(#[case] line: &str) {
-        assert!(
-            is_shell_integration_line(line, "wt"),
-            "Function marker should match for 'wt': {line}"
-        );
-    }
-
-    /// Function markers for git-wt should NOT match wt
-    #[rstest]
-    #[case::git_wt_func("git-wt() {")]
-    #[case::git_wt_completion("_git-wt_lazy_complete() {")]
-    #[case::git_wt_fallback(r#"command "${WORKTRUNK_BIN:-git-wt}" "$@""#)]
-    fn test_git_wt_markers_dont_match_wt(#[case] line: &str) {
-        assert!(
-            !is_shell_integration_line(line, "wt"),
-            "git-wt marker should NOT match 'wt': {line}"
-        );
-    }
-
-    /// Function markers for git-wt SHOULD match git-wt
-    #[rstest]
-    #[case::git_wt_func("git-wt() {")]
-    #[case::git_wt_completion("_git-wt_lazy_complete() {")]
-    #[case::git_wt_fallback(r#"command "${WORKTRUNK_BIN:-git-wt}" "$@""#)]
-    fn test_git_wt_markers_match_git_wt(#[case] line: &str) {
-        assert!(
-            is_shell_integration_line(line, "git-wt"),
-            "git-wt marker should match 'git-wt': {line}"
-        );
-    }
-
-    // ==========================================================================
     // Edge cases and real-world patterns
     // ==========================================================================
 
@@ -1201,29 +995,6 @@ mod tests {
             "wt",
             "CONFIRMED FALSE NEGATIVE: dot command with zsh =() substitution",
         );
-    }
-
-    // ------------------------------------------------------------------------
-    // EDGE CASE: bash `function` keyword without parentheses
-    // This DOES match because `has_function_def_fish` matches `function wt`
-    // followed by whitespace (the space before `{`)
-    // ------------------------------------------------------------------------
-
-    /// Bash `function name {` syntax (without parentheses) is detected via fish pattern
-    #[test]
-    fn test_bash_function_keyword_no_parens() {
-        // This matches via has_function_def_fish which looks for "function wt" + whitespace
-        assert_detects(
-            "function wt {",
-            "wt",
-            "bash function keyword without parens (detected via fish pattern)",
-        );
-    }
-
-    /// With parentheses it's detected via bash pattern
-    #[test]
-    fn test_bash_function_keyword_with_parens() {
-        assert_detects("function wt() {", "wt", "bash function keyword with parens");
     }
 
     // ------------------------------------------------------------------------
@@ -1356,16 +1127,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_worktrunk_bin_with_default() {
-        // Using ${WORKTRUNK_BIN:-wt} - the fallback pattern IS detected
-        assert_detects(
-            r#"command "${WORKTRUNK_BIN:-wt}" config shell init bash | source"#,
-            "wt",
-            "WORKTRUNK_BIN with default via fallback pattern",
-        );
-    }
-
     // ------------------------------------------------------------------------
     // EDGE CASE: git wt spacing variations
     // ------------------------------------------------------------------------
@@ -1388,20 +1149,6 @@ mod tests {
             line,
             "git-wt",
             "tab separator (expected: no match - only single space matched)",
-        );
-    }
-
-    // ------------------------------------------------------------------------
-    // EDGE CASE: Function definition brace placement
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn test_function_brace_next_line() {
-        // Brace on next line - not detectable in line-by-line scanning
-        assert_not_detects(
-            "wt()",
-            "wt",
-            "function def with brace on next line (expected: no match)",
         );
     }
 
@@ -1500,44 +1247,6 @@ mod tests {
         assert_not_detects(line, "git-wt", "prefixed 'git wt' should NOT match git-wt");
     }
 
-    /// Prefixed completion helper should NOT match
-    #[rstest]
-    #[case::my_wt("my_wt_lazy_complete() {")]
-    #[case::double_underscore("__wt_lazy_complete() {")]
-    #[case::x_wt("x_wt_lazy_complete() {")]
-    fn test_prefixed_completion_helper_no_match(#[case] line: &str) {
-        assert_not_detects(line, "wt", "prefixed completion helper should NOT match");
-    }
-
-    /// Actual completion helper SHOULD match
-    #[test]
-    fn test_completion_helper_matches() {
-        assert_detects(
-            "_wt_lazy_complete() {",
-            "wt",
-            "completion helper should match",
-        );
-    }
-
-    /// Prefixed WORKTRUNK_BIN variable should NOT match
-    #[rstest]
-    #[case::my_worktrunk(r#"command "${MY_WORKTRUNK_BIN:-wt}" "$@""#)]
-    #[case::old_worktrunk(r#"command "${OLD_WORKTRUNK_BIN:-wt}" "$@""#)]
-    #[case::underscore_worktrunk(r#"command "${_WORKTRUNK_BIN:-wt}" "$@""#)]
-    fn test_prefixed_worktrunk_bin_no_match(#[case] line: &str) {
-        assert_not_detects(line, "wt", "prefixed WORKTRUNK_BIN should NOT match");
-    }
-
-    /// Actual WORKTRUNK_BIN pattern SHOULD match
-    #[test]
-    fn test_worktrunk_bin_matches() {
-        assert_detects(
-            r#"command "${WORKTRUNK_BIN:-wt}" "$@""#,
-            "wt",
-            "WORKTRUNK_BIN fallback should match",
-        );
-    }
-
     // ------------------------------------------------------------------------
     // Summary of confirmed ACCEPTABLE FALSE NEGATIVES:
     // (These are documented limitations, not bugs to fix)
@@ -1554,17 +1263,13 @@ mod tests {
     // Summary of ACCEPTABLE FALSE POSITIVE risks:
     // 9. PowerShell block comments `<# #>` - rare in shell configs
     // 10. Subshell `(eval ...)` - detected correctly but doesn't persist
-    // 11. Wrapper functions never called - detected correctly but not active
     //
     // FIXED in this version (were bugs, now correct):
-    // 12. `my-git-wt` no longer matches `git-wt`
-    // 13. `agit wt` no longer matches `git wt`
-    // 14. `my_wt_lazy_complete` no longer matches `_wt_lazy_complete`
-    // 15. `MY_WORKTRUNK_BIN:-wt}` no longer matches WORKTRUNK_BIN pattern
+    // 11. `my-git-wt` no longer matches `git-wt`
+    // 12. `agit wt` no longer matches `git wt`
     //
     // By design (not bugs):
-    // 16. `git  wt` (double space) - only single space "git wt" is valid
-    // 17. `function wt {` - matches via fish pattern (intended)
+    // 13. `git  wt` (double space) - only single space "git wt" is valid
     //
     // IMPACT OF FALSE NEGATIVES:
     // Detection is ONLY used when shell wrapper is NOT active. Once the user
