@@ -281,13 +281,9 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
             out,
             "{}",
             hint_message(cformat!(
-                "Not found (using defaults); to create one, run <bright-black>wt config create</>"
+                "Not found; to create one, run <bright-black>wt config create</>"
             ))
         )?;
-        writeln!(out)?;
-        let default_config =
-            "# Default configuration:\nworktree-path = \"../{{ repo }}.{{ branch | sanitize }}\"";
-        write!(out, "{}", format_toml(default_config))?;
         return Ok(());
     }
 

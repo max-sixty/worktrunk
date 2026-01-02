@@ -52,7 +52,7 @@ The user config stores personal preferences that apply across all repositories. 
 Controls where new worktrees are created. The template is relative to the repository root.
 
 **Available variables:**
-- `{{ main_worktree }}` — main worktree directory name
+- `{{ repo }}` — repository directory name
 - `{{ branch }}` — raw branch name (e.g., `feature/foo`)
 - `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
@@ -61,7 +61,7 @@ Controls where new worktrees are created. The template is relative to the reposi
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
@@ -69,7 +69,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 # Nested bare repo (git clone --bare <url> project/.git)
 # Creates: ~/code/project/feature-login (sibling to .git)
@@ -317,16 +317,16 @@ args = ["-m", "claude-haiku-4.5"]
 
 # Worktree Path Template
 # Variables:
-#   {{ main_worktree }}     - Main worktree directory name (e.g., "myproject")
+#   {{ repo }}              - Repository directory name (e.g., "myproject")
 #   {{ branch }}            - Raw branch name (e.g., "feature/auth")
 #   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
-# Example paths created (main worktree at /Users/dev/myproject, branch feature/auth):
-#   "../{{ main_worktree }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
-#   ".worktrees/{{ branch | sanitize }}"             → /Users/dev/myproject/.worktrees/feature-auth
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+# Example paths created (repo at /Users/dev/myproject, branch feature/auth):
+#   "../{{ repo }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
+#   ".worktrees/{{ branch | sanitize }}"    → /Users/dev/myproject/.worktrees/feature-auth
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Alternative: Inside repo (useful for bare repos)
 # worktree-path = ".worktrees/{{ branch | sanitize }}"

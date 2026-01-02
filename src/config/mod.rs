@@ -45,16 +45,29 @@ mod tests {
     fn test_config_serialization() {
         let config = WorktrunkConfig::default();
         let toml = toml::to_string(&config).unwrap();
-        assert!(toml.contains("worktree-path"));
-        assert!(toml.contains("../{{ repo }}.{{ branch | sanitize }}"));
+        // worktree-path is not serialized when None (uses built-in default)
+        assert!(!toml.contains("worktree-path"));
         assert!(toml.contains("commit-generation"));
+    }
+
+    #[test]
+    fn test_config_serialization_with_worktree_path() {
+        let config = WorktrunkConfig {
+            worktree_path: Some("custom/{{ branch }}".to_string()),
+            ..Default::default()
+        };
+        let toml = toml::to_string(&config).unwrap();
+        assert!(toml.contains("worktree-path"));
+        assert!(toml.contains("custom/{{ branch }}"));
     }
 
     #[test]
     fn test_default_config() {
         let config = WorktrunkConfig::default();
+        // worktree_path is None by default, but the getter returns the default
+        assert!(config.worktree_path.is_none());
         assert_eq!(
-            config.worktree_path,
+            config.worktree_path(),
             "../{{ repo }}.{{ branch | sanitize }}"
         );
         assert_eq!(config.commit_generation.command, None);
@@ -64,7 +77,7 @@ mod tests {
     #[test]
     fn test_format_worktree_path() {
         let config = WorktrunkConfig {
-            worktree_path: "{{ main_worktree }}.{{ branch }}".to_string(),
+            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -76,7 +89,7 @@ mod tests {
     #[test]
     fn test_format_worktree_path_custom_template() {
         let config = WorktrunkConfig {
-            worktree_path: "{{ main_worktree }}-{{ branch }}".to_string(),
+            worktree_path: Some("{{ main_worktree }}-{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -88,7 +101,7 @@ mod tests {
     #[test]
     fn test_format_worktree_path_only_branch() {
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch }}".to_string(),
+            worktree_path: Some(".worktrees/{{ main_worktree }}/{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -101,7 +114,7 @@ mod tests {
     fn test_format_worktree_path_with_slashes() {
         // Use {{ branch | sanitize }} to replace slashes with dashes
         let config = WorktrunkConfig {
-            worktree_path: "{{ main_worktree }}.{{ branch | sanitize }}".to_string(),
+            worktree_path: Some("{{ main_worktree }}.{{ branch | sanitize }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -113,7 +126,9 @@ mod tests {
     #[test]
     fn test_format_worktree_path_with_multiple_slashes() {
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+            worktree_path: Some(
+                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+            ),
             ..Default::default()
         };
         assert_eq!(
@@ -126,7 +141,9 @@ mod tests {
     fn test_format_worktree_path_with_backslashes() {
         // Windows-style path separators should also be sanitized
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+            worktree_path: Some(
+                ".worktrees/{{ main_worktree }}/{{ branch | sanitize }}".to_string(),
+            ),
             ..Default::default()
         };
         assert_eq!(
@@ -139,7 +156,7 @@ mod tests {
     fn test_format_worktree_path_raw_branch() {
         // {{ branch }} without filter gives raw branch name
         let config = WorktrunkConfig {
-            worktree_path: "{{ main_worktree }}.{{ branch }}".to_string(),
+            worktree_path: Some("{{ main_worktree }}.{{ branch }}".to_string()),
             ..Default::default()
         };
         assert_eq!(
