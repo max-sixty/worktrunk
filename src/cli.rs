@@ -1651,6 +1651,117 @@ print(f"Setting up {ctx['repo']} on branch {ctx['branch']}")
 
 The JSON includes all template variables plus `hook_type` and `hook_name`.
 
+## Designing effective hooks
+
+### post-create vs post-start
+
+Both run when creating a worktree. The difference:
+
+| Hook | Execution | Best for |
+|------|-----------|----------|
+| `post-create` | Blocks until complete | Tasks the developer needs before working (dependency install) |
+| `post-start` | Background, parallel | Long-running tasks that can finish while you work |
+
+Many tasks work well in `post-start` — they'll likely be ready by the time you need them, especially when the fallback is recompiling. If unsure, prefer `post-start` for faster worktree creation.
+
+### Copying untracked files
+
+Git worktrees share the repository but not untracked files. Common files to copy or link:
+
+- **Dependencies**: `node_modules/`, `.venv/`, `target/`, `vendor/`, `Pods/`
+- **Build caches**: `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/`
+- **Generated assets**: Images, ML models, binaries too large for git
+- **Environment files**: `.env` (if not generated per-worktree)
+
+Three strategies:
+
+| Strategy | Speed | Disk | State |
+|----------|-------|------|-------|
+| **Symlink** | Instant | Shared | Shared (changes affect all worktrees) |
+| **Copy** | Slow | Full duplicate | Isolated |
+| **Copy-on-write** | Instant | Shared until modified | Isolated |
+
+### Copy-on-write for disk efficiency
+
+Copy-on-write (CoW) creates instant clones that share disk space until modified. Perfect for large directories.
+
+| OS | Filesystem | Command |
+|----|------------|---------|
+| macOS | APFS | `cp -c` |
+| Linux | Btrfs, XFS | `cp --reflink=auto` |
+| Windows | ReFS | No shell equivalent (requires API) |
+
+Cross-platform pattern that auto-detects and falls back gracefully:
+
+```toml
+[post-create]
+deps = """
+if cp -c /dev/null /dev/null 2>/dev/null; then
+    cp -c -r {{ repo_root }}/node_modules .
+elif cp --reflink=auto /dev/null /dev/null 2>/dev/null; then
+    cp --reflink=auto -r {{ repo_root }}/node_modules .
+else
+    cp -r {{ repo_root }}/node_modules .
+fi
+"""
+```
+
+### Dev servers
+
+Run a dev server per worktree on a deterministic port using `hash_port`:
+
+```toml
+[post-start]
+server = "npm run dev -- --port {{ branch | hash_port }}"
+```
+
+The port is stable across machines and restarts — `feature-api` always gets the same port. Show it in `wt list`:
+
+```toml
+[list]
+url = "http://localhost:{{ branch | hash_port }}"
+```
+
+For subdomain-based routing (useful for cookies/CORS), use `lvh.me` which resolves to 127.0.0.1:
+
+```toml
+[post-start]
+server = "npm run dev -- --host {{ branch | sanitize }}.lvh.me --port {{ branch | hash_port }}"
+```
+
+### Databases
+
+Each worktree can have its own database. Docker containers get unique names and ports:
+
+```toml
+[post-start]
+db = """
+docker run -d --rm \
+  --name {{ repo }}-{{ branch | sanitize }}-postgres \
+  -p {{ 'db-' ~ branch | hash_port }}:5432 \
+  -e POSTGRES_DB={{ repo }} \
+  -e POSTGRES_PASSWORD=dev \
+  postgres:16
+"""
+
+[pre-remove]
+db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null || true"
+```
+
+The `'db-' ~ branch` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
+
+Generate `.env.local` with the connection string:
+
+```toml
+[post-create]
+env = """
+cat > .env.local << EOF
+DATABASE_URL=postgres://postgres:dev@localhost:{{ 'db-' ~ branch | hash_port }}/{{ repo }}
+DEV_PORT={{ branch | hash_port }}
+EOF
+"""
+```
+
 ## Security
 
 Project commands require approval on first run:
@@ -1720,82 +1831,59 @@ if "gitlab" in ctx.get("remote", ""):
 """
 ```
 
-## Examples
+## Language-specific tips
 
-### Node.js / TypeScript
-
-```toml
-[post-create]
-install = "npm ci"
-
-[post-start]
-dev = "npm run dev"
-
-[pre-commit]
-lint = "npm run lint"
-typecheck = "npm run typecheck"
-
-[pre-merge]
-test = "npm test"
-build = "npm run build"
-```
+Each ecosystem has quirks that affect hook design. Contributions welcome for languages not listed.
 
 ### Rust
 
+The `target/` directory is huge (often 1-10GB) and benefits most from CoW. Worktrunk's own config seeds compiled dependencies:
+
 ```toml
-[post-create]
-build = "cargo build"
-
-[pre-commit]
-format = "cargo fmt -- --check"
-clippy = "cargo clippy -- -D warnings"
-
-[pre-merge]
-test = "cargo test"
-build = "cargo build --release"
-
-[post-merge]
-install = "cargo install --path ."
+[post-start]
+deps = """
+[ -d {{ repo_root }}/target/debug/deps ] && [ ! -e target ] &&
+mkdir -p target/debug/deps &&
+cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps/*.rmeta target/debug/deps/ &&
+cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build target/debug/
+"""
 ```
 
-### Python (uv)
+This cuts first build from ~68s to ~3s by reusing compiled dependencies. The check `[ ! -e target ]` skips if target already exists.
+
+### Python
+
+Virtual environments contain absolute paths and can't be copied between directories. Use `uv sync` to recreate — it's fast enough that copying isn't worth it:
 
 ```toml
 [post-create]
 install = "uv sync"
-
-[pre-commit]
-format = "uv run ruff format --check ."
-lint = "uv run ruff check ."
-
-[pre-merge]
-test = "uv run pytest"
-typecheck = "uv run mypy ."
 ```
 
-### Monorepo
+For pip-based projects without uv:
 
 ```toml
 [post-create]
-frontend = "cd frontend && npm ci"
-backend = "cd backend && cargo build"
-
-[post-start]
-database = "docker-compose up -d postgres"
-
-[pre-merge]
-frontend-tests = "cd frontend && npm test"
-backend-tests = "cd backend && cargo test"
+venv = "python -m venv .venv && .venv/bin/pip install -r requirements.txt"
 ```
 
-### Common patterns
+### Node.js
 
-**Fast dependencies + slow build** — Install blocking, build in background:
+`node_modules/` is large but mostly static. CoW works well:
 
 ```toml
-post-create = "npm install"
-post-start = "npm run build"
+[post-create]
+deps = "cp -c -r {{ repo_root }}/node_modules . 2>/dev/null || npm ci"
 ```
+
+If the project has no native dependencies, symlinks are even faster:
+
+```toml
+[post-create]
+deps = "ln -sf {{ repo_root }}/node_modules ."
+```
+
+### Hook flow patterns
 
 **Progressive validation** — Quick checks before commit, thorough validation before merge:
 
@@ -1809,7 +1897,7 @@ test = "npm test"
 build = "npm run build"
 ```
 
-**Target-specific behavior**:
+**Target-specific behavior** — Different actions for production vs staging:
 
 ```toml
 post-merge = """
@@ -1819,14 +1907,6 @@ elif [ "{{ target }}" = "staging" ]; then
     npm run deploy:staging
 fi
 """
-```
-
-**Symlinks and caches** — The `{{ repo_root }}` variable points to the main worktree:
-
-```toml
-[post-create]
-cache = "ln -sf {{ repo_root }}/node_modules node_modules"
-env = "cp {{ repo_root }}/.env.local .env"
 ```
 
 ## See also

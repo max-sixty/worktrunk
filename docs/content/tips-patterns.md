@@ -28,7 +28,7 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 "install" = "npm ci"
 ```
 
-See [Worktrunk's own `.config/wt.toml`](https://github.com/max-sixty/worktrunk/blob/main/.config/wt.toml) for a complete example.
+See [Designing effective hooks](@/hook.md#designing-effective-hooks) for cross-platform CoW commands, language-specific tips, and more patterns.
 
 ## Dev server per worktree
 
