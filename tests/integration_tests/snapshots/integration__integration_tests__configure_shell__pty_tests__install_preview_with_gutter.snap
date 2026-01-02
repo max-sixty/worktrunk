@@ -4,10 +4,7 @@ expression: normalized
 ---
 y
 
-○ Will add shell extension & completions for zsh @ ~/.zshrc
-  if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi
-
-❯ Proceed? [y/N] 
+[36m❯[39m Install shell integration? [1m[y/N/?][22m 
 ✓ Added shell extension & completions for zsh @ ~/.zshrc
 ↳ Skipped bash; ~/.bashrc not found
 ↳ Skipped fish; ~/.config/fish/conf.d not found

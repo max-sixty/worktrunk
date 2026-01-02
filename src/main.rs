@@ -27,13 +27,13 @@ use commands::command_executor::CommandContext;
 use commands::handle_select;
 use commands::worktree::{SwitchResult, handle_push};
 use commands::{
-    ConfigAction, MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals,
-    approve_hooks, clear_approvals, compute_worktree_path, handle_config_create,
-    handle_config_show, handle_configure_shell, handle_hook_show, handle_init, handle_list,
-    handle_merge, handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current,
-    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
-    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
-    resolve_worktree_arg, run_hook, step_commit, step_for_each,
+    MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals, approve_hooks,
+    clear_approvals, compute_worktree_path, handle_config_create, handle_config_show,
+    handle_configure_shell, handle_hook_show, handle_init, handle_list, handle_merge,
+    handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current, handle_show_theme,
+    handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
+    step_commit, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
@@ -726,159 +726,19 @@ fn main() {
                         // Auto-write to shell config files and completions
                         let cmd = cmd.unwrap_or_else(binary_name);
                         handle_configure_shell(shell, yes, cmd)
-                        .map_err(|e| anyhow::anyhow!("{}", e))
-                        .and_then(|scan_result| {
-
-                            // Count shells that became (more) configured
-                            // A shell counts if any of its components changed (extension or completions)
-                            let shells_configured_count = scan_result
-                                .configured
-                                .iter()
-                                .filter(|ext_result| {
-                                    let ext_changed =
-                                        !matches!(ext_result.action, ConfigAction::AlreadyExists);
-                                    let comp_changed = scan_result
-                                        .completion_results
-                                        .iter()
-                                        .find(|c| c.shell == ext_result.shell)
-                                        .is_some_and(|c| {
-                                            !matches!(c.action, ConfigAction::AlreadyExists)
-                                        });
-                                    ext_changed || comp_changed
-                                })
-                                .count();
-
-                            // Show configured shells grouped with their completions
-                            for result in &scan_result.configured {
-                                let shell = result.shell;
-                                let path = format_path_for_display(&result.path);
-                                // For bash/zsh, completions are inline in the init script
-                                let what = if matches!(shell, worktrunk::shell::Shell::Bash | worktrunk::shell::Shell::Zsh) {
-                                    "shell extension & completions"
-                                } else {
-                                    "shell extension"
-                                };
-                                let message = cformat!(
-                                    "{} {what} for <bold>{shell}</> @ <bold>{path}</>",
-                                    result.action.description()
-                                );
-
-                                // Use appropriate output function based on action
-                                // Note: WouldAdd/WouldCreate are only returned in preview mode,
-                                // which is handled internally by prompt_for_confirmation()
-                                match result.action {
-                                    ConfigAction::Added | ConfigAction::Created => {
-                                        crate::output::print(success_message(message))?;
+                            .map_err(|e| anyhow::anyhow!("{}", e))
+                            .and_then(|scan_result| {
+                                // Exit with error if no shells configured
+                                // Show skipped shells first so user knows what was tried
+                                if scan_result.configured.is_empty() {
+                                    crate::output::print_skipped_shells(&scan_result.skipped)?;
+                                    return Err(worktrunk::git::GitError::Other {
+                                        message: "No shell config files found".into(),
                                     }
-                                    ConfigAction::AlreadyExists => {
-                                        crate::output::print(info_message(message))?;
-                                    }
-                                    ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                                        unreachable!("Preview actions handled by confirmation prompt")
-                                    }
+                                    .into());
                                 }
-
-                                // Show completion result for this shell
-                                // TODO: Inconsistent that shell extensions show gutter but completions don't.
-                                // Completions are dynamic stubs (~30 lines) that call back to `wt` - not
-                                // as meaningful to show, but the asymmetry is confusing.
-                                if let Some(comp_result) = scan_result.completion_results.iter().find(|r| r.shell == shell) {
-                                    let comp_path = format_path_for_display(&comp_result.path);
-                                    let comp_message = cformat!(
-                                        "{} completions for <bold>{shell}</> @ <bold>{comp_path}</>",
-                                        comp_result.action.description()
-                                    );
-                                    match comp_result.action {
-                                        ConfigAction::Added | ConfigAction::Created => {
-                                            crate::output::print(success_message(comp_message))?;
-                                        }
-                                        ConfigAction::AlreadyExists => {
-                                            crate::output::print(info_message(comp_message))?;
-                                        }
-                                        ConfigAction::WouldAdd | ConfigAction::WouldCreate => {
-                                            unreachable!("Preview actions handled by confirmation prompt")
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Show skipped shells
-                            for (shell, path) in &scan_result.skipped {
-                                let path = format_path_for_display(path);
-                                crate::output::print(hint_message(cformat!(
-                                    "Skipped <bright-black>{shell}</>; {path} not found"
-                                )))?;
-                            }
-
-                            // Exit with error if no shells configured
-                            if scan_result.configured.is_empty() {
-                                return Err(worktrunk::git::GitError::Other {
-                                    message: "No shell config files found".into(),
-                                }
-                                .into());
-                            }
-
-                            // Summary
-                            if shells_configured_count > 0 {
-                                crate::output::blank()?;
-                                let plural = if shells_configured_count == 1 { "" } else { "s" };
-                                crate::output::print(success_message(format!(
-                                    "Configured {shells_configured_count} shell{plural}"
-                                )))?;
-                            } else {
-                                // No action: all shells were already configured
-                                crate::output::print(success_message("All shells already configured"))?;
-                            }
-
-                            // Zsh compinit advisory: shown after success, before restart hint
-                            if scan_result.zsh_needs_compinit {
-                                crate::output::print(warning_message(
-                                    "Completions require compinit; add to ~/.zshrc before the wt line:",
-                                ))?;
-                                crate::output::print(
-                                    worktrunk::styling::format_bash_with_gutter(
-                                        "autoload -Uz compinit && compinit",
-                                    ),
-                                )?;
-                            }
-
-                            // Restart hint: only shown if the current shell's extension changed
-                            // Fish completions are lazily loaded from ~/.config/fish/completions/
-                            // so no restart needed. Bash/Zsh completions are inline in the init script.
-                            if shells_configured_count > 0 {
-                                let current_shell = std::env::var("SHELL")
-                                    .ok()
-                                    .and_then(|s| s.rsplit('/').next().map(String::from));
-
-                                // Find if current shell had its extension changed
-                                let current_shell_result =
-                                    current_shell.as_ref().and_then(|shell_name| {
-                                        scan_result
-                                            .configured
-                                            .iter()
-                                            .filter(|r| {
-                                                !matches!(r.action, ConfigAction::AlreadyExists)
-                                            })
-                                            .find(|r| {
-                                                r.shell.to_string().eq_ignore_ascii_case(shell_name)
-                                            })
-                                    });
-
-                                if let Some(result) = current_shell_result {
-                                    // Fish auto-sources from conf.d, so just say "Restart shell"
-                                    // Bash/Zsh can source directly for immediate activation
-                                    if matches!(result.shell, worktrunk::shell::Shell::Fish) {
-                                        crate::output::print(hint_message("Restart shell to activate"))?;
-                                    } else {
-                                        let path = format_path_for_display(&result.path);
-                                        crate::output::print(hint_message(format!(
-                                            "Restart shell or run: source {path}"
-                                        )))?;
-                                    }
-                                }
-                            }
-                            Ok(())
-                        })
+                                crate::output::print_shell_install_result(&scan_result)
+                            })
                     }
                     ConfigShellCommand::Uninstall { shell, yes } => {
                         let explicit_shell = shell.is_some();
@@ -1253,7 +1113,7 @@ fn main() {
             verify,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
-            .and_then(|config| {
+            .and_then(|mut config| {
                 // "Approve at the Gate": collect and approve hooks upfront
                 // This ensures approval happens once at the command entry point
                 // If user declines, skip hooks but continue with worktree operation
@@ -1313,6 +1173,16 @@ fn main() {
 
                 // Show success message (temporal locality: immediately after worktree operation)
                 handle_switch_output(&result, &branch_info, execute.is_some())?;
+
+                // Offer shell integration if not already installed/active
+                // (only shows prompt/hint when shell integration isn't working)
+                // With --execute: show hints only (don't interrupt with prompt)
+                // Best-effort: don't fail switch if offer fails
+                if !output::is_shell_integration_active() {
+                    let skip_prompt = execute.is_some();
+                    let _ =
+                        output::prompt_shell_integration(&mut config, &binary_name(), skip_prompt);
+                }
 
                 // Spawn background hooks after success message
                 // - post-switch: runs on ALL switches (Created, Existing, AlreadyAt)

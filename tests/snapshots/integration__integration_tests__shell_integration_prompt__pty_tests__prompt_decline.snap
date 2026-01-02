@@ -1,0 +1,10 @@
+---
+source: tests/integration_tests/shell_integration_prompt.rs
+expression: normalized
+---
+n
+
+[32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m[REPO]/repo.feature[22m[39m
+
+[36m❯[39m Install shell integration? [1m[y/N/?][22m 
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

@@ -31,10 +31,11 @@ pub mod handlers;
 
 // Re-export the public API
 pub use global::{
-    blank, change_directory, execute, flush, is_shell_integration_active, print,
-    shell_integration_hint, stdout, terminate_output,
+    blank, change_directory, execute, flush, is_shell_integration_active, print, stdout,
+    terminate_output,
 };
 // Re-export output handlers
 pub use handlers::{
     execute_command_in_worktree, execute_user_command, handle_remove_output, handle_switch_output,
+    print_shell_install_result, print_skipped_shells, prompt_shell_integration,
 };

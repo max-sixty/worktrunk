@@ -925,6 +925,12 @@ impl TestRepo {
             ),
             // Prevent git from prompting for credentials when running under a TTY
             ("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()),
+            // Use test-specific home directory for isolation
+            ("HOME".to_string(), self.home_path().display().to_string()),
+            (
+                "XDG_CONFIG_HOME".to_string(),
+                self.home_path().join(".config").display().to_string(),
+            ),
             ("LC_ALL".to_string(), "C".to_string()),
             ("LANG".to_string(), "C".to_string()),
             ("SOURCE_DATE_EPOCH".to_string(), TEST_EPOCH.to_string()),
@@ -933,6 +939,21 @@ impl TestRepo {
                 self.test_config_path().display().to_string(),
             ),
         ]
+    }
+
+    /// Configure shell integration for test environment.
+    ///
+    /// Writes the shell config line to `.zshrc` in the test home directory.
+    /// Call this before tests that need shell integration to appear configured.
+    /// The test should also include `SHELL=/bin/zsh` in its env vars.
+    #[cfg_attr(windows, allow(dead_code))] // Used only by unix PTY tests
+    pub fn configure_shell_integration(&self) {
+        let zshrc_path = self.home_path().join(".zshrc");
+        std::fs::write(
+            &zshrc_path,
+            "if command -v wt >/dev/null 2>&1; then eval \"$(command wt config shell init zsh)\"; fi\n",
+        )
+        .expect("Failed to write .zshrc for test");
     }
 
     /// Create a `git` command pre-configured for this test repo.

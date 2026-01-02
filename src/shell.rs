@@ -646,6 +646,36 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     }
 }
 
+/// Get the current shell from `$SHELL` environment variable.
+///
+/// Returns `None` if `$SHELL` is not set or doesn't match a known shell.
+/// Handles versioned/prefixed binaries like `/nix/store/.../zsh-5.9` or `bash5`
+/// by checking if the name starts with a known shell.
+pub fn current_shell() -> Option<Shell> {
+    let shell_path = std::env::var("SHELL").ok()?;
+    let shell_name = shell_path.rsplit('/').next()?;
+
+    // Try exact match first
+    if let Ok(shell) = shell_name.parse() {
+        return Some(shell);
+    }
+
+    // Handle versioned/prefixed binaries (e.g., "zsh-5.9", "bash5")
+    // Check if shell name starts with a known shell
+    let name_lower = shell_name.to_lowercase();
+    if name_lower.starts_with("zsh") {
+        Some(Shell::Zsh)
+    } else if name_lower.starts_with("bash") {
+        Some(Shell::Bash)
+    } else if name_lower.starts_with("fish") {
+        Some(Shell::Fish)
+    } else if name_lower.starts_with("pwsh") || name_lower.starts_with("powershell") {
+        Some(Shell::PowerShell)
+    } else {
+        None
+    }
+}
+
 /// Check if the current shell is zsh (based on $SHELL environment variable).
 ///
 /// Used to determine if the user's primary shell is zsh when running `install`
@@ -653,9 +683,7 @@ pub fn detect_zsh_compinit() -> Option<bool> {
 /// hints; if they're using bash/fish, we skip the hint since zsh isn't their
 /// daily driver.
 pub fn is_current_shell_zsh() -> bool {
-    std::env::var("SHELL")
-        .map(|s| s.ends_with("/zsh") || s.ends_with("/zsh-"))
-        .unwrap_or(false)
+    current_shell() == Some(Shell::Zsh)
 }
 
 #[cfg(test)]

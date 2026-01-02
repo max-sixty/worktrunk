@@ -5,7 +5,7 @@ use worktrunk::config::WorktrunkConfig;
 
 /// Test that approved commands are actually persisted to disk
 ///
-/// This test uses `approve_command_to()` to ensure it never writes to the user's config
+/// This test uses `approve_command()` to ensure it never writes to the user's config
 #[test]
 fn test_approval_saves_to_disk() {
     let temp_dir = TempDir::new().unwrap();
@@ -16,7 +16,7 @@ fn test_approval_saves_to_disk() {
 
     // Add an approval to the explicit path
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/test/repo".to_string(),
             "test command".to_string(),
             Some(&config_path),
@@ -58,14 +58,14 @@ fn test_duplicate_approvals_not_saved_twice() {
 
     // Add same approval twice
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/test/repo".to_string(),
             "test".to_string(),
             Some(&config_path),
         )
         .ok();
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/test/repo".to_string(),
             "test".to_string(),
             Some(&config_path),
@@ -111,21 +111,21 @@ fn test_multiple_project_approvals() {
 
     // Add approvals for different projects
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/user1/repo1".to_string(),
             "npm install".to_string(),
             Some(&config_path),
         )
         .unwrap();
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/user2/repo2".to_string(),
             "cargo build".to_string(),
             Some(&config_path),
         )
         .unwrap();
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/user1/repo1".to_string(),
             "npm test".to_string(),
             Some(&config_path),
@@ -185,7 +185,7 @@ fn test_isolated_config_safety() {
     // Create isolated config and make changes
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/safety-test/repo".to_string(),
             "THIS SHOULD NOT APPEAR IN USER CONFIG".to_string(),
             Some(&config_path),
@@ -250,7 +250,7 @@ fn test_approval_saves_to_new_config_file() {
     // Create a config and save
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/test/nested".to_string(),
             "test command".to_string(),
             Some(&config_path),
@@ -307,7 +307,7 @@ args = ["-s"]
 
     // Add an approval and save back to the same file
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/test/repo".to_string(),
             "npm install".to_string(),
             Some(&config_path),
@@ -356,7 +356,7 @@ fn test_concurrent_approve_preserves_all_approvals() {
 
     // Process A approves and saves "npm install"
     config_a
-        .approve_command_to(
+        .approve_command(
             "github.com/user/repo".to_string(),
             "npm install".to_string(),
             Some(&config_path),
@@ -373,7 +373,7 @@ fn test_concurrent_approve_preserves_all_approvals() {
     // Process B (which loaded BEFORE Process A saved) now approves and saves "npm test"
     // The save_to method should merge with what's on disk, not overwrite
     config_b
-        .approve_command_to(
+        .approve_command(
             "github.com/user/repo".to_string(),
             "npm test".to_string(),
             Some(&config_path),
@@ -409,14 +409,14 @@ fn test_concurrent_revoke_preserves_all_changes() {
     // Setup: config file has two commands approved
     let mut setup_config = WorktrunkConfig::default();
     setup_config
-        .approve_command_to(
+        .approve_command(
             "github.com/user/repo".to_string(),
             "npm install".to_string(),
             Some(&config_path),
         )
         .unwrap();
     setup_config
-        .approve_command_to(
+        .approve_command(
             "github.com/user/repo".to_string(),
             "npm test".to_string(),
             Some(&config_path),
@@ -446,13 +446,13 @@ fn test_concurrent_revoke_preserves_all_changes() {
 
     // Process A revokes "npm install"
     config_a
-        .revoke_command_to("github.com/user/repo", "npm install", Some(&config_path))
+        .revoke_command("github.com/user/repo", "npm install", Some(&config_path))
         .unwrap();
 
     // Process B (with stale state) revokes "npm test"
     // Should see that "npm install" was already revoked and preserve that
     config_b
-        .revoke_command_to("github.com/user/repo", "npm test", Some(&config_path))
+        .revoke_command("github.com/user/repo", "npm test", Some(&config_path))
         .unwrap();
 
     // Read the final state from disk
@@ -483,7 +483,7 @@ fn test_concurrent_approve_different_projects() {
 
     // Process A approves for project1
     config_a
-        .approve_command_to(
+        .approve_command(
             "github.com/user/project1".to_string(),
             "npm install".to_string(),
             Some(&config_path),
@@ -493,7 +493,7 @@ fn test_concurrent_approve_different_projects() {
     // Process B approves for project2
     // Should preserve project1's approval
     config_b
-        .approve_command_to(
+        .approve_command(
             "github.com/user/project2".to_string(),
             "cargo build".to_string(),
             Some(&config_path),
@@ -522,7 +522,7 @@ fn test_concurrent_approve_different_projects() {
 
 /// Test that permission errors when saving config are handled gracefully
 ///
-/// This tests the lower-level `approve_command_to()` method fails when permissions
+/// This tests the lower-level `approve_command()` method fails when permissions
 /// are denied. The higher-level `approve_command_batch()` catches this error and
 /// displays a warning (see src/commands/command_approval.rs:82-85), allowing
 /// commands to execute even when the approval can't be saved.
@@ -570,7 +570,7 @@ fn test_permission_error_prevents_save() {
 
     // Try to save a new approval - this should fail
     let mut config = WorktrunkConfig::default();
-    let result = config.approve_command_to(
+    let result = config.approve_command(
         "github.com/test/readonly".to_string(),
         "test command".to_string(),
         Some(&config_path),
@@ -597,6 +597,62 @@ fn test_permission_error_prevents_save() {
     //
     // The approval succeeds (commands execute) even though saving failed.
     // This test verifies the save operation correctly fails with permission errors.
+}
+
+/// Test that set_skip_shell_integration_prompt saves to disk
+#[test]
+fn test_skip_shell_integration_prompt_saves_to_disk() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("worktrunk").join("config.toml");
+
+    let mut config = WorktrunkConfig::default();
+    config
+        .set_skip_shell_integration_prompt(Some(&config_path))
+        .unwrap();
+
+    // Verify file was created
+    assert!(
+        config_path.exists(),
+        "Config file was not created at {:?}",
+        config_path
+    );
+
+    // Verify TOML structure
+    let toml_content = fs::read_to_string(&config_path).unwrap();
+    assert_snapshot!(toml_content, @r#"
+    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+    skip-shell-integration-prompt = true
+
+    [commit-generation]
+    args = []
+    "#);
+}
+
+/// Test that set_skip_shell_integration_prompt is idempotent
+#[test]
+fn test_skip_shell_integration_prompt_idempotent() {
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+
+    let mut config = WorktrunkConfig::default();
+
+    // Call twice - should not error
+    config
+        .set_skip_shell_integration_prompt(Some(&config_path))
+        .unwrap();
+    config
+        .set_skip_shell_integration_prompt(Some(&config_path))
+        .unwrap();
+
+    // Field should still be true
+    assert!(config.skip_shell_integration_prompt);
+
+    // File should have the flag exactly once
+    let toml_content = fs::read_to_string(&config_path).unwrap();
+    let count = toml_content
+        .matches("skip-shell-integration-prompt")
+        .count();
+    assert_eq!(count, 1, "Flag should appear exactly once");
 }
 
 /// Test that saving config through a symlink preserves the symlink
@@ -643,7 +699,7 @@ command = "llm"
     let mut config: WorktrunkConfig = toml::from_str(&toml_str).unwrap();
 
     config
-        .approve_command_to(
+        .approve_command(
             "github.com/test/symlink-repo".to_string(),
             "npm install".to_string(),
             Some(&symlink_path),
