@@ -576,16 +576,48 @@ pub fn prompt_shell_integration(
     Ok(true)
 }
 
+/// Warning message when running as git subcommand (cd cannot work)
+fn git_subcommand_warning() -> String {
+    cformat!("Use <bright-black>git-wt</> directly (via shell function) for automatic cd")
+}
+
 /// Show switch message when changing directory after worktree removal
+///
+/// When shell integration is not active, warns that cd cannot happen.
+/// This is important for remove/merge since the user would be left in a deleted directory.
 fn print_switch_message_if_changed(
     changed_directory: bool,
     main_path: &Path,
 ) -> anyhow::Result<()> {
-    if changed_directory && let Ok(Some(dest_branch)) = Repository::at(main_path).current_branch() {
-        let path_display = format_path_for_display(main_path);
+    if !changed_directory {
+        return Ok(());
+    }
+
+    let repo = Repository::at(main_path);
+    let Ok(Some(dest_branch)) = repo.current_branch() else {
+        return Ok(());
+    };
+
+    let path_display = format_path_for_display(main_path);
+    let path_escaped = shell_escape::escape(std::borrow::Cow::Borrowed(path_display.as_str()));
+
+    if super::is_shell_integration_active() {
+        // Shell integration active - cd will work
         super::print(info_message(cformat!(
             "Switched to worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>"
         )))?;
+    } else if crate::is_git_subcommand() {
+        // Running as `git wt` - explain why cd can't work
+        super::print(warning_message(cformat!(
+            "Run <bright-black>cd {path_escaped}</> — git runs subcommands as subprocesses"
+        )))?;
+        super::print(hint_message(git_subcommand_warning()))?;
+    } else {
+        // Shell integration not active - user needs to cd manually
+        super::print(warning_message(cformat!(
+            "Run <bright-black>cd {path_escaped}</> — shell integration not active"
+        )))?;
+        super::print(hint_message(shell_integration_hint()))?;
     }
     Ok(())
 }
@@ -634,6 +666,15 @@ pub fn handle_switch_output(
                 if let Some(warning) = path_mismatch_warning {
                     super::print(warning)?;
                 }
+            } else if crate::is_git_subcommand() {
+                // Running as `git wt` - git runs subcommands as subprocesses, so cd cannot work
+                super::print(warning_message(cformat!(
+                    "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — git runs subcommands as subprocesses"
+                )))?;
+                if let Some(warning) = path_mismatch_warning {
+                    super::print(warning)?;
+                }
+                super::print(hint_message(git_subcommand_warning()))?;
             } else if Shell::is_integration_configured(&crate::binary_name())
                 .ok()
                 .flatten()
@@ -1504,6 +1545,13 @@ mod tests {
     fn test_shell_integration_hint() {
         let hint = shell_integration_hint();
         assert!(hint.contains("wt config shell install"));
+    }
+
+    #[test]
+    fn test_git_subcommand_warning() {
+        let warning = git_subcommand_warning();
+        assert!(warning.contains("git-wt"));
+        assert!(warning.contains("shell function"));
     }
 
     #[test]

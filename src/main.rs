@@ -60,6 +60,18 @@ fn binary_name() -> String {
         .unwrap_or_else(|| "wt".to_string())
 }
 
+/// Check if we're running as a git subcommand (e.g., `git wt` instead of `git-wt`).
+///
+/// When git runs a subcommand like `git wt`, it sets `GIT_EXEC_PATH` in the environment.
+/// This is NOT set when running `git-wt` directly or via a shell function.
+///
+/// This distinction matters for shell integration: `git wt` runs as a subprocess of git,
+/// so even with shell integration configured, the `cd` directive cannot propagate to
+/// the parent shell. Users must use `git-wt` directly (via shell function) for automatic cd.
+fn is_git_subcommand() -> bool {
+    std::env::var_os("GIT_EXEC_PATH").is_some()
+}
+
 /// Custom help handling for pager support and markdown rendering.
 ///
 /// We intercept help requests to provide:
