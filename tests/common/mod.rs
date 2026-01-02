@@ -2010,15 +2010,14 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     // Normalize WORKTRUNK_CONFIG_PATH temp paths in stdout/stderr output
     // (metadata is handled via redactions below)
     // IMPORTANT: These specific filters must come BEFORE the generic [PROJECT_ID] filters
-    // Note: Use /[^\s]+ instead of .* to avoid greedy matching that eats entire lines
-    // (?:[A-Z]:)? handles Windows drive letters (C:/Users/...)
+    // Handles: Unix paths (/tmp/...), Windows paths (C:\...), and shell-escaped quoted paths ('C:\...')
     // Use distinct placeholders for config.toml vs config.toml.new for clarity
     settings.add_filter(
-        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-config\.toml\.new",
+        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml\.new'?",
         "[TEST_CONFIG_NEW]",
     );
     settings.add_filter(
-        r"(?:[A-Z]:)?/[^\s]+/\.tmp[^/]+/test-config\.toml",
+        r"'?(?:[A-Z]:)?[/\\][^\s']+[/\\]\.tmp[^/\\']+[/\\]test-config\.toml'?",
         "[TEST_CONFIG]",
     );
 
