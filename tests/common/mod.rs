@@ -2094,10 +2094,10 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(r"wt\.exe", "wt");
 
     // Normalize version strings in `wt config show` output
-    // Version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, v0.8.5-2-gabcdef-dirty
+    // Version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
     // Match the ANSI dim sequence around the version for exact context
     settings.add_filter(
-        r"\x1b\[2mv[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?\x1b\[22m",
+        r"\x1b\[2m(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})\x1b\[22m",
         "\x1b[2m[VERSION]\x1b[22m",
     );
 
