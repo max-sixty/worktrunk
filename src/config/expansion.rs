@@ -16,7 +16,7 @@
 //! - `hash_port` — Hash a string to a deterministic port number (10000-19999)
 //!   ```text
 //!   {{ branch | hash_port }}              → 12472
-//!   {{ repo ~ "-" ~ branch | hash_port }} → 15839
+//!   {{ (repo ~ "-" ~ branch) | hash_port }} → 15839
 //!   ```
 
 use minijinja::{Environment, Value};
@@ -294,8 +294,14 @@ mod tests {
         assert!((10000..20000).contains(&port));
 
         // Concatenation produces different (but deterministic) result
-        let r1 = expand_template("{{ repo ~ '-' ~ branch | hash_port }}", &vars, false).unwrap();
-        let r2 = expand_template("{{ repo ~ '-' ~ branch | hash_port }}", &vars, false).unwrap();
+        let r1 = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+        let r1_port: u16 = r1.parse().expect("should be a number");
+        let r2 = expand_template("{{ (repo ~ '-' ~ branch) | hash_port }}", &vars, false).unwrap();
+        let r2_port: u16 = r2.parse().expect("should be a number");
+
+        assert!((10000..20000).contains(&r1_port));
+        assert!((10000..20000).contains(&r2_port));
+
         assert_eq!(r1, r2);
     }
 }
