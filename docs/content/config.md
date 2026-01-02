@@ -317,16 +317,16 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 
 # Worktree Path Template
 # Variables:
-#   {{ main_worktree }}     - Main worktree directory name (e.g., "myproject")
+#   {{ repo }}              - Repository directory name (e.g., "myproject")
 #   {{ branch }}            - Raw branch name (e.g., "feature/auth")
 #   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
-# Example paths created (main worktree at /Users/dev/myproject, branch feature/auth):
-#   "../{{ main_worktree }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
-#   ".worktrees/{{ branch | sanitize }}"             → /Users/dev/myproject/.worktrees/feature-auth
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+# Example paths created (repo at /Users/dev/myproject, branch feature/auth):
+#   "../{{ repo }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
+#   ".worktrees/{{ branch | sanitize }}"    → /Users/dev/myproject/.worktrees/feature-auth
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Alternative: Inside repo (useful for bare repos)
 # worktree-path = ".worktrees/{{ branch | sanitize }}"

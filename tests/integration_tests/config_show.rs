@@ -591,6 +591,28 @@ fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home
     });
 }
 
+/// Test `wt config show` when user config file doesn't exist
+///
+/// Should show a hint about creating the config and display the default configuration.
+#[rstest]
+fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
+    // Setup mock gh/glab for deterministic BINARIES output
+    repo.setup_mock_ci_tools_unauthenticated();
+
+    // Don't create any user config file - temp_home is empty
+
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        repo.configure_mock_commands(&mut cmd);
+        cmd.arg("config").arg("show").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test `wt config show` shows warning for unmatched candidates (potential false negatives)
 ///
 /// When a shell config contains `wt` at a word boundary but it's NOT detected as
