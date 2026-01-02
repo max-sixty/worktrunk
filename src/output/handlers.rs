@@ -607,13 +607,41 @@ fn print_switch_message_if_changed(
         )))?;
         super::print(hint_message(git_subcommand_warning()))?;
     } else {
-        // Shell integration not active - user needs to cd manually
+        // Shell integration not active - compute specific reason
+        let reason = compute_shell_warning_reason();
         super::print(warning_message(cformat!(
-            "Run <bright-black>cd {path_escaped}</> — shell integration not active"
+            "Run <bright-black>cd {path_escaped}</> — {reason}"
         )))?;
         super::print(hint_message(shell_integration_hint()))?;
     }
     Ok(())
+}
+
+/// Compute the shell warning reason for display in messages.
+///
+/// Returns a specific reason why shell integration isn't working:
+/// - "shell requires restart" — shell config has `eval` line but wrapper not active
+/// - "shell integration not installed" — shell config doesn't have `eval` line
+/// - "ran X; shell integration wraps Y" — invoked with explicit path
+fn compute_shell_warning_reason() -> String {
+    use worktrunk::shell::Shell;
+
+    if Shell::is_integration_configured(&crate::binary_name())
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        if crate::was_invoked_with_explicit_path() {
+            // Invoked with explicit path - shell wrapper won't intercept this binary
+            let invoked = crate::invocation_path();
+            let wraps = crate::binary_name();
+            cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
+        } else {
+            "shell requires restart".to_string()
+        }
+    } else {
+        "shell integration not installed".to_string()
+    }
 }
 
 /// Handle output for a switch operation
@@ -667,23 +695,8 @@ pub fn handle_switch_output(
         None
     } else if is_git_subcommand {
         Some("git runs subcommands as subprocesses".to_string())
-    } else if Shell::is_integration_configured(&crate::binary_name())
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        if crate::was_invoked_with_explicit_path() {
-            // Invoked with explicit path - shell wrapper won't intercept this binary
-            let invoked = crate::invocation_path();
-            let wraps = crate::binary_name();
-            Some(cformat!(
-                "ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>"
-            ))
-        } else {
-            Some("shell requires restart".to_string())
-        }
     } else {
-        Some("shell integration not installed".to_string())
+        Some(compute_shell_warning_reason())
     };
 
     // Show path mismatch warning after the main message
