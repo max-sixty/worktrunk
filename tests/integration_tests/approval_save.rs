@@ -289,6 +289,8 @@ fn test_saving_approval_preserves_toml_comments() {
     let initial_content = r#"# User preferences for worktrunk
 # These comments should be preserved after saving
 
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
 # LLM commit generation settings
 [commit-generation]
 command = "llm"  # inline comment should also be preserved
@@ -618,7 +620,7 @@ fn test_skip_shell_integration_prompt_saves_to_disk() {
     // Verify TOML structure
     let toml_content = fs::read_to_string(&config_path).unwrap();
     assert_snapshot!(toml_content, @r#"
-    worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+    worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
     skip-shell-integration-prompt = true
 
     [commit-generation]
@@ -671,6 +673,8 @@ fn test_saving_through_symlink_preserves_symlink() {
 
     // Create initial config at the target location
     let initial_content = r#"# My dotfiles config
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
 [commit-generation]
 command = "llm"
 "#;

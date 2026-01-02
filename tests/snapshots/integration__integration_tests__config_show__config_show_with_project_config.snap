@@ -32,7 +32,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
+[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[projects."test-project"]
 [107m [0m approved-commands = [[32m"npm install"[0m]
