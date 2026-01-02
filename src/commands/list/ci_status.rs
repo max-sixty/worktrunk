@@ -394,6 +394,43 @@ mod tests {
     }
 
     #[test]
+    fn test_format_indicator_with_url() {
+        let pr_with_url = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: Some("https://github.com/owner/repo/pull/123".to_string()),
+        };
+
+        let formatted = pr_with_url.format_indicator();
+        // Should contain OSC 8 hyperlink escape sequences
+        assert!(formatted.contains("\x1b]8;;"), "Should contain OSC 8 start");
+        assert!(
+            formatted.contains("https://github.com/owner/repo/pull/123"),
+            "Should contain URL"
+        );
+        assert!(formatted.contains("●"), "Should contain indicator");
+    }
+
+    #[test]
+    fn test_format_indicator_without_url() {
+        let pr_no_url = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: None,
+        };
+
+        let formatted = pr_no_url.format_indicator();
+        // Should NOT contain OSC 8 hyperlink
+        assert!(
+            !formatted.contains("\x1b]8;;"),
+            "Should not contain OSC 8 sequences"
+        );
+        assert!(formatted.contains("●"), "Should contain indicator");
+    }
+
+    #[test]
     fn test_pr_status_error_constructor() {
         let error = PrStatus::error();
         assert_eq!(error.ci_status, CiStatus::Error);
@@ -1243,13 +1280,26 @@ impl PrStatus {
         }
     }
 
-    /// Format CI status as a colored indicator for statusline output.
+    /// Format CI status as a colored indicator.
     ///
     /// Returns a string like "●" with appropriate ANSI color.
+    /// If a PR URL is available, adds underline and wraps in an OSC 8 hyperlink.
     pub fn format_indicator(&self) -> String {
-        let style = self.style();
         let indicator = self.indicator();
-        format!("{style}{indicator}{style:#}")
+        if let Some(ref url) = self.url {
+            let style = self.style().underline();
+            format!(
+                "{}{}{}{}{}",
+                style,
+                osc8::Hyperlink::new(url),
+                indicator,
+                osc8::Hyperlink::END,
+                style.render_reset()
+            )
+        } else {
+            let style = self.style();
+            format!("{style}{indicator}{style:#}")
+        }
     }
 
     /// Create an error status for retriable failures (rate limit, network errors)

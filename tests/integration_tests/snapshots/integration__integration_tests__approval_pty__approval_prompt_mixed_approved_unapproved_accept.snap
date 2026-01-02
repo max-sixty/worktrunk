@@ -22,4 +22,4 @@ y
 [0mThird command
 [32m✓[39m [32mCreated new worktree for [1mtest-mixed-accept[22m from [1mmain[22m @ [1m_REPO_/repo.BRANCH[22m[39m
 [33m▲[39m [33mCannot change directory — shell requires restart[39m
-[2m↳[22m [2mRestart shell to activate shell integration[22m
+[2m↳[22m [2mRestart shell to activate[22m

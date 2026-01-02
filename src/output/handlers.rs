@@ -523,7 +523,7 @@ pub fn prompt_shell_integration(
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     if current_shell_installed {
-        super::print(hint_message("Restart shell to activate shell integration"))?;
+        super::print(hint_message("Restart shell to activate"))?;
         return Ok(false);
     }
 
@@ -704,6 +704,9 @@ pub fn handle_switch_output(
                 // Show git subcommand hint if running as git wt
                 if is_git_subcommand {
                     super::print(hint_message(git_subcommand_warning()))?;
+                }
+                if let Some(warning) = path_mismatch_warning {
+                    super::print(warning)?;
                 }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
