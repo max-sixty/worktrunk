@@ -290,6 +290,11 @@ fn shell_integration_hint() -> String {
     cformat!("To enable automatic cd, run <bright-black>wt config shell install</>")
 }
 
+/// Hint when shell integration is installed but shell needs restart
+fn shell_restart_hint() -> &'static str {
+    "Restart shell to activate shell integration"
+}
+
 /// Shell integration hint for unknown/unsupported shell
 fn shell_integration_unsupported_shell(shell_path: &str) -> String {
     // Extract shell name from path (e.g., "/bin/tcsh" -> "tcsh")
@@ -437,7 +442,7 @@ pub fn print_shell_install_result(
         });
 
         if current_shell_result.is_some() {
-            super::print(hint_message("Restart shell to activate shell integration"))?;
+            super::print(hint_message(shell_restart_hint()))?;
         }
     }
 
@@ -523,7 +528,7 @@ pub fn prompt_shell_integration(
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
     if current_shell_installed {
-        super::print(hint_message("Restart shell to activate"))?;
+        super::print(hint_message(shell_restart_hint()))?;
         return Ok(false);
     }
 
