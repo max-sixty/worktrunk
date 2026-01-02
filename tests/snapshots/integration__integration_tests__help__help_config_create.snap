@@ -77,16 +77,16 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m
   [2m# Worktree Path Template
   [2m# Variables:
-  [2m#   {{ main_worktree }}     - Main worktree directory name (e.g., "myproject")
+  [2m#   {{ repo }}              - Repository directory name (e.g., "myproject")
   [2m#   {{ branch }}            - Raw branch name (e.g., "feature/auth")
   [2m#   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
   [2m#
   [2m# Paths are relative to the main worktree root (original repository directory).
   [2m#
-  [2m# Example paths created (main worktree at /Users/dev/myproject, branch feature/auth):
-  [2m#   "../{{ main_worktree }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
-  [2m#   ".worktrees/{{ branch | sanitize }}"             → /Users/dev/myproject/.worktrees/feature-auth
-  [2mworktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+  [2m# Example paths created (repo at /Users/dev/myproject, branch feature/auth):
+  [2m#   "../{{ repo }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
+  [2m#   ".worktrees/{{ branch | sanitize }}"    → /Users/dev/myproject/.worktrees/feature-auth
+  [2mworktree-path = "../{{ repo }}.{{ branch | sanitize }}"
   [2m
   [2m# Alternative: Inside repo (useful for bare repos)
   [2m# worktree-path = ".worktrees/{{ branch | sanitize }}"
