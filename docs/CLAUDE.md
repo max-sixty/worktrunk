@@ -263,6 +263,12 @@ For regions that may contain nested markers (like command pages with embedded sn
 
 This enables precise matching of the outer region.
 
+## Template examples in documentation
+
+**All template examples must have corresponding tests** in `tests/integration_tests/doc_templates.rs`. This catches issues like operator precedence bugs (PR #373).
+
+When adding template examples, add a test that verifies the template produces expected output. See existing tests for patterns.
+
 ## Demo GIF workflow
 
 Demo GIFs (~2MB each) are stored in a separate `worktrunk-assets` repo to avoid bloating git history. Both build and fetch output to `docs/static/assets/` (gitignored), so local builds override fetched assets.
