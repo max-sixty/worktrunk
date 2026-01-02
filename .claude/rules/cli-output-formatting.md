@@ -136,7 +136,7 @@ limitation and its reason:
 ```rust
 // Outcome, but limitation — reason
 "Worktree for feature @ ~/repo.feature, but cannot change directory — shell integration not installed"
-"Worktree for feature @ ~/repo.feature, but cannot change directory — shell integration not active"
+"Worktree for feature @ ~/repo.feature, but cannot change directory — shell requires restart"
 ```
 
 This pattern:
