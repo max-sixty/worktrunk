@@ -592,13 +592,24 @@ fn print_switch_message_if_changed(
 
 /// Handle output for a switch operation
 ///
-/// For existing worktrees: when shell integration is not active, we show
-/// warnings that the shell's directory won't change. This includes when
-/// `--execute` is used — the command runs in the target directory, but the
-/// shell stays put.
+/// # Shell Integration Warnings
 ///
-/// For created worktrees: success message only (creation success trumps the
-/// shell warning, and post-create hooks provide value even without cd).
+/// Always warn when the shell's directory won't change. Users expect to be in
+/// the target worktree after switching.
+///
+/// **When to warn:** Shell integration is not active (`WORKTRUNK_DIRECTIVE_FILE`
+/// not set). This applies to both `Existing` and `Created` results.
+///
+/// **When NOT to warn:**
+/// - `AlreadyAt` — user is already in the target directory
+/// - Shell integration IS active — cd will happen automatically
+///
+/// **Warning reasons:**
+/// - "shell requires restart" — shell config has `eval` line but wrapper not active
+/// - "shell integration not installed" — shell config doesn't have `eval` line
+///
+/// **Message order for Created:** Success message first, then warning. Creation
+/// is a real accomplishment, but users still need to know they won't cd there.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
@@ -614,6 +625,19 @@ pub fn handle_switch_output(
     // Check if shell integration is active (directive file set)
     let is_shell_integration_active = super::is_shell_integration_active();
 
+    // Compute shell warning reason once (only if we'll need it)
+    let shell_warning_reason = if is_shell_integration_active {
+        None
+    } else if Shell::is_integration_configured(&crate::binary_name())
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        Some("shell requires restart")
+    } else {
+        Some("shell integration not installed")
+    };
+
     // Show path mismatch warning after the main message
     let path_mismatch_warning = branch_info.expected_path.as_ref().map(|expected| {
         let expected_display = format_path_for_display(expected);
@@ -624,6 +648,7 @@ pub fn handle_switch_output(
 
     match result {
         SwitchResult::AlreadyAt(_) => {
+            // Already in target directory — no shell warning needed
             super::print(info_message(cformat!(
                 "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
             )))?;
@@ -632,26 +657,8 @@ pub fn handle_switch_output(
             }
         }
         SwitchResult::Existing(_) => {
-            if is_shell_integration_active {
-                // Shell integration active — cd will happen automatically
-                super::print(info_message(format_switch_message(
-                    branch, path, false, None, None,
-                )))?;
-                if let Some(warning) = path_mismatch_warning {
-                    super::print(warning)?;
-                }
-            } else {
+            if let Some(reason) = shell_warning_reason {
                 // Shell integration not active — warn that shell won't cd
-                let reason = if Shell::is_integration_configured(&crate::binary_name())
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
-                    "restart the shell to activate"
-                } else {
-                    "shell integration not installed"
-                };
-
                 if let Some(cmd) = execute_command {
                     // --execute: command will run in target dir, but shell stays put
                     super::print(warning_message(cformat!(
@@ -663,9 +670,14 @@ pub fn handle_switch_output(
                         "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
                     )))?;
                 }
-                if let Some(warning) = path_mismatch_warning {
-                    super::print(warning)?;
-                }
+            } else {
+                // Shell integration active — cd will happen automatically
+                super::print(info_message(format_switch_message(
+                    branch, path, false, None, None,
+                )))?;
+            }
+            if let Some(warning) = path_mismatch_warning {
+                super::print(warning)?;
             }
         }
         SwitchResult::Created {
@@ -674,6 +686,7 @@ pub fn handle_switch_output(
             from_remote,
             ..
         } => {
+            // Always show success for creation
             super::print(success_message(format_switch_message(
                 branch,
                 path,
@@ -681,6 +694,22 @@ pub fn handle_switch_output(
                 base_branch.as_deref(),
                 from_remote.as_deref(),
             )))?;
+
+            // Warn if shell won't cd to the new worktree
+            if let Some(reason) = shell_warning_reason {
+                if let Some(cmd) = execute_command {
+                    super::print(warning_message(cformat!(
+                        "Executing <bold>{cmd}</> @ <bold>{path_display}</>, but shell directory unchanged — {reason}"
+                    )))?;
+                } else {
+                    // Don't repeat "Created worktree" — success message above already said that
+                    super::print(warning_message(cformat!(
+                        "Cannot change directory — {reason}"
+                    )))?;
+                }
+            }
+            // Note: No path_mismatch_warning — created worktrees are always at
+            // the expected path (SwitchBranchInfo::expected_path is None)
         }
     }
 

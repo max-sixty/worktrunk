@@ -33,6 +33,7 @@ exit_code: 0
 
 ----- stderr -----
 [32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [36m◎[39m [36mRunning post-start project hook:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m 'line1
