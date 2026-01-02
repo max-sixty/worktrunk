@@ -16,6 +16,7 @@
 //! See `wt config --help` for complete documentation.
 
 mod commands;
+mod deprecation;
 mod expansion;
 mod hooks;
 mod project;
@@ -25,6 +26,7 @@ mod user;
 
 // Re-export public types
 pub use commands::{Command, CommandConfig};
+pub use deprecation::check_and_migrate as check_deprecated_vars;
 pub use expansion::{expand_template, sanitize_branch_name};
 pub use hooks::HooksConfig;
 pub use project::{
@@ -44,7 +46,7 @@ mod tests {
         let config = WorktrunkConfig::default();
         let toml = toml::to_string(&config).unwrap();
         assert!(toml.contains("worktree-path"));
-        assert!(toml.contains("../{{ main_worktree }}.{{ branch | sanitize }}"));
+        assert!(toml.contains("../{{ repo }}.{{ branch | sanitize }}"));
         assert!(toml.contains("commit-generation"));
     }
 
@@ -53,7 +55,7 @@ mod tests {
         let config = WorktrunkConfig::default();
         assert_eq!(
             config.worktree_path,
-            "../{{ main_worktree }}.{{ branch | sanitize }}"
+            "../{{ repo }}.{{ branch | sanitize }}"
         );
         assert_eq!(config.commit_generation.command, None);
         assert!(config.projects.is_empty());

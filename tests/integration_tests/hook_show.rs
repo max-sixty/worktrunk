@@ -17,7 +17,7 @@ fn test_hook_show_with_both_configs(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [pre-commit]
 user-lint = "pre-commit run --all-files"
@@ -56,7 +56,7 @@ fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -80,7 +80,7 @@ fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -123,7 +123,7 @@ fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo"]
 approved-commands = ["cargo build"]
@@ -177,7 +177,7 @@ fn test_hook_show_project_config_no_hooks(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -211,7 +211,7 @@ fn test_hook_show_outside_git_repo(temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [pre-commit]
 lint = "pre-commit run"

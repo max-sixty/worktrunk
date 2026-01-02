@@ -26,8 +26,6 @@ LCOV_PATH="${COVERAGE_DIR}/lcov.info"
 mkdir -p "${COVERAGE_DIR}"
 
 # Include shell-integration-tests feature for comprehensive coverage of TUI/PTY code.
-# Set NEXTEST_NO_INPUT_HANDLER to prevent nextest terminal cleanup issues with PTY tests.
-export NEXTEST_NO_INPUT_HANDLER=1
 
 # Run tests once with instrumentation, without generating a report yet.
 "${CARGO_BIN[@]}" llvm-cov --locked --workspace --no-report --features shell-integration-tests "$@"

@@ -91,7 +91,7 @@ pub enum StageMode {
 ///
 /// The `worktree-path` template is relative to the repository root.
 /// Supported variables:
-/// - `{{ main_worktree }}` - Main worktree directory name
+/// - `{{ repo }}` - Repository directory name
 /// - `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
 /// - `{{ branch | sanitize }}` - Branch name with `/` and `\` replaced by `-`
 ///
@@ -99,13 +99,13 @@ pub enum StageMode {
 ///
 /// ```toml
 /// # Default - parent directory siblings
-/// worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+/// worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 ///
 /// # Inside repo (clean, no redundant directory)
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
 ///
 /// # Repository-namespaced (useful for shared directories with multiple repos)
-/// worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+/// worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 ///
 /// # Commit generation configuration
 /// [commit-generation]
@@ -295,7 +295,7 @@ pub struct MergeConfig {
 
 /// Default worktree path template (used by serde)
 fn default_worktree_path() -> String {
-    "../{{ main_worktree }}.{{ branch | sanitize }}".to_string()
+    "../{{ repo }}.{{ branch | sanitize }}".to_string()
 }
 
 impl Default for WorktrunkConfig {
@@ -336,7 +336,18 @@ impl WorktrunkConfig {
         if let Some(config_path) = get_config_path()
             && config_path.exists()
         {
-            builder = builder.add_source(File::from(config_path));
+            // Check for deprecated template variables and create migration file if needed
+            // User config always gets migration file (it's global, not worktree-specific)
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                let _ = super::deprecation::check_and_migrate(
+                    &config_path,
+                    &content,
+                    true,
+                    "User config",
+                );
+            }
+
+            builder = builder.add_source(File::from(config_path.clone()));
         }
 
         // Add environment variables with WORKTRUNK prefix
@@ -882,7 +893,7 @@ rename-tab = "echo 'switched'"
         let config = WorktrunkConfig::default();
         assert_eq!(
             config.worktree_path,
-            "../{{ main_worktree }}.{{ branch | sanitize }}"
+            "../{{ repo }}.{{ branch | sanitize }}"
         );
         assert!(config.projects.is_empty());
         assert!(config.list.is_none());

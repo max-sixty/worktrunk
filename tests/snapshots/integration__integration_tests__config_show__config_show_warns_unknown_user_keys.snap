@@ -33,7 +33,7 @@ exit_code: 0
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
 [33m▲[39m [33mUnknown key [1mcommit-gen[22m will be ignored[39m
-[107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
+[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[commit-gen]
 [107m [0m command = [32m"llm"

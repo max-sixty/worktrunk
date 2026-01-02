@@ -309,7 +309,7 @@ fn test_switch_no_config_commands_skips_post_start_commands(repo: TestRepo) {
     fs::write(
         user_config_dir.join("config.toml"),
         format!(
-            r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+            r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."main"]
 approved-commands = ["{}"]
@@ -862,6 +862,63 @@ fn test_switch_clobber_error_backup_exists(repo: TestRepo) {
     // Both paths should still exist (nothing was moved)
     assert!(expected_path.exists());
     assert!(backup_path.exists());
+}
+
+/// Test that post-switch hooks show "@ path" annotation when shell integration is not active.
+///
+/// When the user runs `wt` directly (not through shell wrapper), their shell won't
+/// cd to the worktree directory. Hooks should show "@ path" to clarify where they run.
+#[rstest]
+fn test_switch_post_hook_shows_path_without_shell_integration(repo: TestRepo) {
+    use std::fs;
+
+    // Create project config with a post-switch hook
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "post-switch = \"echo switched\"\n",
+    )
+    .unwrap();
+
+    repo.commit("Add config");
+
+    // Run switch WITHOUT directive file (shell integration not active)
+    // Use --yes to auto-approve the hook command
+    // The hook output should show "@ path" annotation
+    snapshot_switch(
+        "switch_post_hook_path_annotation",
+        &repo,
+        &["--create", "post-hook-test", "--yes"],
+    );
+}
+
+/// Test that post-switch hooks do NOT show "@ path" when shell integration is active.
+///
+/// When running through the shell wrapper (directive file set), the user's shell will
+/// actually cd to the worktree. Hooks don't need the path annotation.
+#[rstest]
+fn test_switch_post_hook_no_path_with_shell_integration(repo: TestRepo) {
+    use std::fs;
+
+    // Create project config with a post-switch hook
+    let config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&config_dir).unwrap();
+    fs::write(
+        config_dir.join("wt.toml"),
+        "post-switch = \"echo switched\"\n",
+    )
+    .unwrap();
+
+    repo.commit("Add config");
+
+    // Run switch WITH directive file (shell integration active)
+    // The hook output should NOT show "@ path" annotation
+    snapshot_switch_with_directive_file(
+        "switch_post_hook_no_path_with_shell_integration",
+        &repo,
+        &["--create", "post-hook-shell-test", "--yes"],
+    );
 }
 
 /// Test --clobber handles paths with extensions correctly

@@ -294,11 +294,11 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 
 # Commit Message Generation (Optional)
 # For generating commit messages during merge operations (wt merge)
-[commit-generation]
+# [commit-generation]
 # Example: Simon Willison's llm CLI (https://github.com/simonw/llm)
 # Install: pip install llm llm-anthropic
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+# command = "llm"
+# args = ["-m", "claude-haiku-4.5"]
 
 # Alternative: AIChat - Rust-based, supports 20+ providers
 # Install from: https://github.com/sigoden/aichat
@@ -489,10 +489,10 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}      - Repository name (e.g., "my-project")
-#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
-#   {{ worktree }}  - Absolute path to the worktree
-#   {{ repo_root }} - Absolute path to the repository root
+#   {{ repo }}           - Repository name (e.g., "my-project")
+#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
+#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
+#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main" default branch)

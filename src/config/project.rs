@@ -48,11 +48,12 @@ impl ProjectListConfig {
 /// # Template Variables
 ///
 /// All hooks support these template variables:
-/// - `{{ repo }}` - Repository name (e.g., "my-project")
+/// - `{{ repo }}` - Repository directory name (e.g., "my-project")
+/// - `{{ repo_path }}` - Absolute path to repository root
 /// - `{{ branch }}` - Branch name (e.g., "feature-foo")
-/// - `{{ worktree }}` - Absolute path to the worktree
 /// - `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-foo")
-/// - `{{ repo_root }}` - Absolute path to the repository root
+/// - `{{ worktree_path }}` - Absolute path to the worktree
+/// - `{{ main_worktree_path }}` - Absolute path to the default branch worktree
 /// - `{{ default_branch }}` - Default branch name (e.g., "main")
 /// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
 /// - `{{ short_commit }}` - Current HEAD commit SHA (short 7-character hash)
@@ -93,6 +94,17 @@ impl ProjectConfig {
         // Load directly with toml crate to preserve insertion order (with preserve_order feature)
         let contents = std::fs::read_to_string(&config_path)
             .map_err(|e| ConfigError::Message(format!("Failed to read config file: {}", e)))?;
+
+        // Check for deprecated template variables and create migration file if needed
+        // Only write migration file in main worktree (where .git is a directory)
+        // Linked worktrees have .git as a file pointing to the main worktree
+        let is_main_worktree = repo_root.join(".git").is_dir();
+        let _ = super::deprecation::check_and_migrate(
+            &config_path,
+            &contents,
+            is_main_worktree,
+            "Project config",
+        );
 
         let config: ProjectConfig = toml::from_str(&contents)
             .map_err(|e| ConfigError::Message(format!("Failed to parse TOML: {}", e)))?;

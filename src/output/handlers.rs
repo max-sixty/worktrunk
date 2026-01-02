@@ -594,11 +594,20 @@ fn print_switch_message_if_changed(
 ///
 /// **Message order for Created:** Success message first, then warning. Creation
 /// is a real accomplishment, but users still need to know they won't cd there.
+///
+/// # Return Value
+///
+/// Returns `Some(path)` when post-switch hooks should show "@ path" in their
+/// announcements (because the user's shell won't be in that directory). This happens when:
+/// - Shell integration is not active (user's shell stays in original directory)
+///
+/// Returns `None` when the user will be in the worktree directory (shell integration
+/// active or already at the worktree), so no path annotation needed.
 pub fn handle_switch_output(
     result: &SwitchResult,
     branch_info: &SwitchBranchInfo,
     execute_command: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<std::path::PathBuf>> {
     // Set target directory for command execution
     super::change_directory(result.path())?;
 
@@ -630,7 +639,7 @@ pub fn handle_switch_output(
         ))
     });
 
-    match result {
+    let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => {
             // Already in target directory — no shell warning needed
             super::print(info_message(cformat!(
@@ -639,6 +648,8 @@ pub fn handle_switch_output(
             if let Some(warning) = path_mismatch_warning {
                 super::print(warning)?;
             }
+            // User is already there - no path annotation needed
+            None
         }
         SwitchResult::Existing(_) => {
             if let Some(reason) = shell_warning_reason {
@@ -654,14 +665,21 @@ pub fn handle_switch_output(
                         "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
                     )))?;
                 }
+                if let Some(warning) = path_mismatch_warning {
+                    super::print(warning)?;
+                }
+                // User won't be there - show path in hook announcements
+                Some(path.clone())
             } else {
                 // Shell integration active — cd will happen automatically
                 super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
-            }
-            if let Some(warning) = path_mismatch_warning {
-                super::print(warning)?;
+                if let Some(warning) = path_mismatch_warning {
+                    super::print(warning)?;
+                }
+                // cd will happen - no path annotation needed
+                None
             }
         }
         SwitchResult::Created {
@@ -691,14 +709,19 @@ pub fn handle_switch_output(
                         "Cannot change directory — {reason}"
                     )))?;
                 }
+                // User won't be there - show path in hook announcements
+                Some(path.clone())
+            } else {
+                // cd will happen - no path annotation needed
+                None
             }
             // Note: No path_mismatch_warning — created worktrees are always at
             // the expected path (SwitchBranchInfo::expected_path is None)
         }
-    }
+    };
 
     super::flush()?;
-    Ok(())
+    Ok(display_path_for_hooks)
 }
 
 /// Execute the --execute command after hooks have run
@@ -875,7 +898,8 @@ fn spawn_post_switch_after_remove(
         &repo_root,
         false, // force=false for CommandContext
     );
-    ctx.spawn_post_switch_commands()
+    // No display_path needed - changed_directory is true, so user's shell IS going there
+    ctx.spawn_post_switch_commands(None)
 }
 
 /// Handle output for RemovedWorktree removal

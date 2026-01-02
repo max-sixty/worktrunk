@@ -3,8 +3,7 @@ source: tests/integration_tests/config_show.rs
 info:
   program: wt
   args:
-    - config
-    - show
+    - list
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -29,19 +28,11 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
+  [1mBranch[0m  [1mStatus[0m        [1mHEAD±[0m    [1mmain↕[0m  [1mPath[0m  [1mRemote⇅[0m  [1mCommit[0m    [1mAge[0m   [1mMessage
+@ main        [2m^[22m                         .              [2ma1e809f5[0m  [2m1d[0m    [2mInitial commit
+
+[2m○[22m [2mShowing 1 worktree
 
 ----- stderr -----
-[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
-
-[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
-[2m↳[22m [2mEmpty file[22m
-
-[36mSHELL INTEGRATION[39m
-[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
-[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
-[2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
-
-[36mRUNTIME[39m
-[107m [0m [1mwt[22m [2m[VERSION][22m
-[2m↳[22m [2mShell integration not active[22m
+[33m▲[39m [33mUser config uses deprecated template variables: [2mrepo_root[22m → [1mrepo_path[22m, [2mworktree[22m → [1mworktree_path[22m, [2mmain_worktree[22m → [1mrepo[22m[39m
+[2m↳[22m [2mWrote migrated test-config.toml.new; to apply: [90mmv -- [TEST_CONFIG_NEW] [TEST_CONFIG][39m[22m

@@ -925,9 +925,7 @@ fn test_pre_remove_hook_executes(mut repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'About to remove worktree'"]
 "#,
     );
@@ -951,7 +949,7 @@ fn test_pre_remove_hook_template_variables(mut repo: TestRepo) {
     repo.write_project_config(
         r#"[pre-remove]
 branch = "echo 'Branch: {{ branch }}'"
-worktree = "echo 'Worktree: {{ worktree }}'"
+worktree = "echo 'Worktree: {{ worktree_path }}'"
 worktree_name = "echo 'Name: {{ worktree_name }}'"
 "#,
     );
@@ -959,12 +957,10 @@ worktree_name = "echo 'Name: {{ worktree_name }}'"
 
     // Pre-approve the commands (templates match what's shown in prompts)
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = [
     "echo 'Branch: {{ branch }}'",
-    "echo 'Worktree: {{ worktree }}'",
+    "echo 'Worktree: {{ worktree_path }}'",
     "echo 'Name: {{ worktree_name }}'",
 ]
 "#,
@@ -999,7 +995,7 @@ fn test_pre_remove_hook_runs_in_background_mode(mut repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["echo 'hook ran' > {}"]
@@ -1037,9 +1033,7 @@ fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["exit 1"]
 "#,
     );
@@ -1077,7 +1071,7 @@ fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["echo 'hook ran' > {}"]
@@ -1123,7 +1117,7 @@ fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
 
     // Pre-approve the command (even though it shouldn't run)
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["echo 'hook ran' > {}"]
@@ -1181,7 +1175,7 @@ fn test_pre_remove_hook_runs_for_detached_head(mut repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["touch {marker_path}"]
@@ -1223,7 +1217,7 @@ fn test_pre_remove_hook_runs_for_detached_head_background(mut repo: TestRepo) {
 
     // Pre-approve the commands
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["touch {marker_path}"]
@@ -1274,7 +1268,7 @@ fn test_pre_remove_hook_branch_expansion_detached_head(mut repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
