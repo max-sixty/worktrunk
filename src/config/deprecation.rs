@@ -6,6 +6,8 @@
 use crate::styling::{eprintln, hint_message, warning_message};
 use color_print::cformat;
 use minijinja::Environment;
+use shell_escape::escape;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -110,14 +112,14 @@ fn replace_template_var(content: &str, old_var: &str, new_var: &str) -> String {
                 || after_var.starts_with('|')
                 || after_var.starts_with("}}")
             {
-                // Replace with new variable name, normalizing whitespace
-                result.push_str("{{ ");
-                result.push_str(new_var);
-
-                // Find the end of the template expression
+                // Find the end of the template expression FIRST before emitting anything
                 if let Some(end) = after_var.find("}}") {
+                    // Replace with new variable name, normalizing whitespace
+                    result.push_str("{{ ");
+                    result.push_str(new_var);
+
                     // Include filter if present
-                    let between = &after_var[..end].trim();
+                    let between = after_var[..end].trim();
                     if !between.is_empty() {
                         // Normalize: "| filter" or "|filter" -> " | filter"
                         if let Some(filter) = between.strip_prefix('|') {
@@ -130,12 +132,9 @@ fn replace_template_var(content: &str, old_var: &str, new_var: &str) -> String {
                     }
                     result.push_str(" }}");
                     remaining = &after_var[end + 2..];
-                } else {
-                    // Malformed template, preserve original
-                    result.push_str("{{");
-                    remaining = after_braces;
+                    continue;
                 }
-                continue;
+                // No closing }} found - fall through to preserve original
             }
         }
 
@@ -211,23 +210,41 @@ pub fn check_and_migrate(
         path.extension().unwrap_or_default().to_string_lossy()
     ));
 
-    std::fs::write(&new_path, new_content)?;
+    // Attempt to write migration file, but don't fail config loading if it fails
+    match std::fs::write(&new_path, new_content) {
+        Ok(()) => {
+            // Show just the filename in the message, full paths in the command
+            let new_filename = new_path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
 
-    // Show just the filename in the message, full paths in the command
-    let new_filename = new_path
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_default();
-
-    eprintln!(
-        "{}",
-        hint_message(cformat!(
-            "Wrote migrated {}; to apply: <bright-black>mv {} {}</>",
-            new_filename,
-            new_path.display(),
-            path.display()
-        ))
-    );
+            // Shell-escape paths for safe copy-paste
+            let new_path_str = new_path.to_string_lossy();
+            let path_str = path.to_string_lossy();
+            let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
+            let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
+                    new_filename,
+                    new_path_escaped,
+                    path_escaped
+                ))
+            );
+        }
+        Err(e) => {
+            // Warn about write failure but don't block config loading
+            eprintln!(
+                "{}",
+                hint_message(cformat!(
+                    "Could not write migration file: <bright-black>{}</>",
+                    e
+                ))
+            );
+        }
+    }
 
     // Flush stderr to ensure output appears before any subsequent messages
     std::io::stderr().flush().ok();
@@ -396,5 +413,13 @@ post-create = "echo hello"
             result, "{{ worktree_path }}",
             "Should not modify worktree_path"
         );
+    }
+
+    #[test]
+    fn test_replace_malformed_template_no_closing_braces() {
+        // Malformed template without closing }} should be preserved exactly
+        let content = "{{ repo_root without closing";
+        let result = replace_deprecated_vars(content);
+        assert_eq!(result, content, "Malformed template should be preserved");
     }
 }
