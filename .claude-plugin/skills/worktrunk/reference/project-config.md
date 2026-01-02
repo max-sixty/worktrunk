@@ -188,10 +188,10 @@ All hooks support template variables for dynamic behavior.
 
 Available in all hook types:
 - `{{ repo }}` - Repository name (e.g., "my-project")
+- `{{ repo_path }}` - Absolute path to repository (e.g., "/path/to/my-project")
 - `{{ branch }}` - Raw branch name (e.g., "feature/auth")
-- `{{ worktree }}` - Absolute path to worktree
 - `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-auth")
-- `{{ repo_root }}` - Absolute path to repository root
+- `{{ worktree_path }}` - Absolute path to worktree (e.g., "/path/to/my-project.feature-auth")
 - `{{ default_branch }}` - Default branch name (e.g., "main")
 - `{{ commit }}` - Full HEAD commit SHA
 - `{{ short_commit }}` - Short HEAD commit SHA (7 chars)
@@ -208,7 +208,7 @@ Example:
 ```toml
 [post-start]
 dev = "npm run dev --port {{ branch | hash_port }}"
-cache = "ln -sf {{ repo_root }}/node_modules.{{ branch | sanitize }} node_modules"
+cache = "ln -sf {{ repo_path }}/node_modules.{{ branch | sanitize }} node_modules"
 ```
 
 <example type="basic-variables">

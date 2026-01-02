@@ -294,11 +294,11 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 
 # Commit Message Generation (Optional)
 # For generating commit messages during merge operations (wt merge)
-[commit-generation]
+# [commit-generation]
 # Example: Simon Willison's llm CLI (https://github.com/simonw/llm)
 # Install: pip install llm llm-anthropic
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
+# command = "llm"
+# args = ["-m", "claude-haiku-4.5"]
 
 # Alternative: AIChat - Rust-based, supports 20+ providers
 # Install from: https://github.com/sigoden/aichat
@@ -317,16 +317,16 @@ args = ["-m", "claude-haiku-4.5"]
 
 # Worktree Path Template
 # Variables:
-#   {{ main_worktree }}     - Main worktree directory name (e.g., "myproject")
+#   {{ repo }}              - Repository directory name (e.g., "myproject")
 #   {{ branch }}            - Raw branch name (e.g., "feature/auth")
 #   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
-# Example paths created (main worktree at /Users/dev/myproject, branch feature/auth):
-#   "../{{ main_worktree }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
-#   ".worktrees/{{ branch | sanitize }}"             → /Users/dev/myproject/.worktrees/feature-auth
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+# Example paths created (repo at /Users/dev/myproject, branch feature/auth):
+#   "../{{ repo }}.{{ branch | sanitize }}" → /Users/dev/myproject.feature-auth
+#   ".worktrees/{{ branch | sanitize }}"    → /Users/dev/myproject/.worktrees/feature-auth
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Alternative: Inside repo (useful for bare repos)
 # worktree-path = ".worktrees/{{ branch | sanitize }}"
@@ -489,10 +489,10 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}      - Repository name (e.g., "my-project")
-#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
-#   {{ worktree }}  - Absolute path to the worktree
-#   {{ repo_root }} - Absolute path to the repository root
+#   {{ repo }}           - Repository name (e.g., "my-project")
+#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
+#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
+#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main" default branch)

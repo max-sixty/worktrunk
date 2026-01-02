@@ -33,7 +33,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
+[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 [107m [0m 
 [107m [0m [1m[36m[commit-generation]
 [107m [0m command = [32m"nonexistent-llm-command-12345"

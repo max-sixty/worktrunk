@@ -91,7 +91,7 @@ pub enum StageMode {
 ///
 /// The `worktree-path` template is relative to the repository root.
 /// Supported variables:
-/// - `{{ main_worktree }}` - Main worktree directory name
+/// - `{{ repo }}` - Repository directory name
 /// - `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
 /// - `{{ branch | sanitize }}` - Branch name with `/` and `\` replaced by `-`
 ///
@@ -99,13 +99,13 @@ pub enum StageMode {
 ///
 /// ```toml
 /// # Default - parent directory siblings
-/// worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+/// worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 ///
 /// # Inside repo (clean, no redundant directory)
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
 ///
 /// # Repository-namespaced (useful for shared directories with multiple repos)
-/// worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+/// worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 ///
 /// # Commit generation configuration
 /// [commit-generation]
@@ -124,10 +124,14 @@ pub enum StageMode {
 ///
 /// Environment variables can override config file settings using `WORKTRUNK_` prefix with
 /// `__` separator for nested fields (e.g., `WORKTRUNK_COMMIT_GENERATION__COMMAND`).
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct WorktrunkConfig {
-    #[serde(rename = "worktree-path", default = "default_worktree_path")]
-    pub worktree_path: String,
+    #[serde(
+        rename = "worktree-path",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) worktree_path: Option<String>,
 
     #[serde(default, rename = "commit-generation")]
     pub commit_generation: CommitGenerationConfig,
@@ -293,28 +297,19 @@ pub struct MergeConfig {
     pub verify: Option<bool>,
 }
 
-/// Default worktree path template (used by serde)
+/// Default worktree path template
 fn default_worktree_path() -> String {
-    "../{{ main_worktree }}.{{ branch | sanitize }}".to_string()
-}
-
-impl Default for WorktrunkConfig {
-    fn default() -> Self {
-        Self {
-            worktree_path: default_worktree_path(),
-            commit_generation: CommitGenerationConfig::default(),
-            projects: std::collections::BTreeMap::new(),
-            list: None,
-            commit: None,
-            merge: None,
-            hooks: HooksConfig::default(),
-            skip_shell_integration_prompt: false,
-            unknown: std::collections::HashMap::new(),
-        }
-    }
+    "../{{ repo }}.{{ branch | sanitize }}".to_string()
 }
 
 impl WorktrunkConfig {
+    /// Returns the worktree path template, falling back to the default if not set.
+    pub fn worktree_path(&self) -> String {
+        self.worktree_path
+            .clone()
+            .unwrap_or_else(default_worktree_path)
+    }
+
     /// Load configuration from config file and environment variables.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):
@@ -324,8 +319,10 @@ impl WorktrunkConfig {
     pub fn load() -> Result<Self, ConfigError> {
         let defaults = Self::default();
 
+        // Note: worktree-path has no default set here - it's handled by the getter
+        // which returns the default when None. This allows us to distinguish
+        // "user explicitly set this" from "using default".
         let mut builder = Config::builder()
-            .set_default("worktree-path", defaults.worktree_path)?
             .set_default(
                 "commit-generation.command",
                 defaults.commit_generation.command.unwrap_or_default(),
@@ -336,7 +333,18 @@ impl WorktrunkConfig {
         if let Some(config_path) = get_config_path()
             && config_path.exists()
         {
-            builder = builder.add_source(File::from(config_path));
+            // Check for deprecated template variables and create migration file if needed
+            // User config always gets migration file (it's global, not worktree-specific)
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                let _ = super::deprecation::check_and_migrate(
+                    &config_path,
+                    &content,
+                    true,
+                    "User config",
+                );
+            }
+
+            builder = builder.add_source(File::from(config_path.clone()));
         }
 
         // Add environment variables with WORKTRUNK prefix
@@ -353,14 +361,16 @@ impl WorktrunkConfig {
 
         let config: Self = builder.build()?.try_deserialize()?;
 
-        // Validate worktree path
-        if config.worktree_path.is_empty() {
-            return Err(ConfigError::Message("worktree-path cannot be empty".into()));
-        }
-        if std::path::Path::new(&config.worktree_path).is_absolute() {
-            return Err(ConfigError::Message(
-                "worktree-path must be relative, not absolute".into(),
-            ));
+        // Validate worktree path (only if explicitly set - default is always valid)
+        if let Some(ref path) = config.worktree_path {
+            if path.is_empty() {
+                return Err(ConfigError::Message("worktree-path cannot be empty".into()));
+            }
+            if std::path::Path::new(path).is_absolute() {
+                return Err(ConfigError::Message(
+                    "worktree-path must be relative, not absolute".into(),
+                ));
+            }
         }
 
         // Validate commit generation config
@@ -404,7 +414,7 @@ impl WorktrunkConfig {
         vars.insert("main_worktree", main_worktree);
         vars.insert("repo", main_worktree);
         vars.insert("branch", branch);
-        expand_template(&self.worktree_path, &vars, false)
+        expand_template(&self.worktree_path(), &vars, false)
     }
 
     /// Check if a command is approved for the given project
@@ -642,7 +652,11 @@ impl WorktrunkConfig {
         } else {
             // No existing file, create from scratch using toml_edit for consistent formatting
             let mut doc = toml_edit::DocumentMut::new();
-            doc["worktree-path"] = toml_edit::value(&self.worktree_path);
+
+            // Only write worktree-path if explicitly set (not the default)
+            if let Some(ref path) = self.worktree_path {
+                doc["worktree-path"] = toml_edit::value(path);
+            }
 
             // skip-shell-integration-prompt (only if true)
             if self.skip_shell_integration_prompt {
@@ -880,9 +894,11 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_worktrunk_config_default() {
         let config = WorktrunkConfig::default();
+        // worktree_path is None by default, but the getter returns the default
+        assert!(config.worktree_path.is_none());
         assert_eq!(
-            config.worktree_path,
-            "../{{ main_worktree }}.{{ branch | sanitize }}"
+            config.worktree_path(),
+            "../{{ repo }}.{{ branch | sanitize }}"
         );
         assert!(config.projects.is_empty());
         assert!(config.list.is_none());
@@ -923,7 +939,7 @@ rename-tab = "echo 'switched'"
     #[test]
     fn test_worktrunk_config_format_path_custom_template() {
         let config = WorktrunkConfig {
-            worktree_path: ".worktrees/{{ branch }}".to_string(),
+            worktree_path: Some(".worktrees/{{ branch }}".to_string()),
             ..Default::default()
         };
         let path = config.format_path("myrepo", "feature").unwrap();

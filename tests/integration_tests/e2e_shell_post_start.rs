@@ -44,9 +44,7 @@ fn test_shell_integration_post_start_background(#[case] shell: &str, repo: TestR
     // Pre-approve the command
     fs::write(
         repo.test_config_path(),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"]
 "#,
     )
@@ -137,9 +135,7 @@ task2 = "sleep 0.05 && echo 'Task 2' > task2.txt"
     // Pre-approve commands
     fs::write(
         repo.test_config_path(),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = [
     "sleep 0.05 && echo 'Task 1' > task1.txt",
     "sleep 0.05 && echo 'Task 2' > task2.txt",
@@ -204,9 +200,7 @@ fn test_bash_shell_integration_post_create_blocks(repo: TestRepo) {
     // Pre-approve command
     fs::write(
         repo.test_config_path(),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'Setup done' > setup.txt"]
 "#,
     )
@@ -275,9 +269,7 @@ fish_bg = "sleep 0.05 && echo 'Fish background done' > fish_bg.txt"
     // Pre-approve command
     fs::write(
         repo.test_config_path(),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
 "#,
     )

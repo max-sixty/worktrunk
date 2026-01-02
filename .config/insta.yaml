@@ -2,7 +2,6 @@
 # https://insta.rs/docs/settings/
 
 test:
-  # Use nextest as the test runner
-  runner: "nextest"
-  # Fall back to cargo-test if nextest is not available
+  # Don't force nextest — its InputHandler can cause SIGTTOU in background process groups.
+  # See tests/common/mod.rs for details. Auto-detection with fallback handles this gracefully.
   test_runner_fallback: true

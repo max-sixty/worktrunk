@@ -84,16 +84,19 @@ All variables are shell-escaped:
 |----------|-------------|
 | `{{ branch }}` | Branch name (raw, e.g., `feature/foo`) |
 | `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
-| `{{ worktree }}` | Absolute path to the worktree |
+| `{{ repo }}` | Repository directory name |
+| `{{ repo_path }}` | Absolute path to repository root |
 | `{{ worktree_name }}` | Worktree directory name |
-| `{{ repo }}` | Repository name |
-| `{{ repo_root }}` | Absolute path to the main repository root |
+| `{{ worktree_path }}` | Absolute path to current worktree |
+| `{{ main_worktree_path }}` | Default branch worktree path |
 | `{{ commit }}` | Current HEAD commit SHA (full) |
 | `{{ short_commit }}` | Current HEAD commit SHA (7 chars) |
 | `{{ default_branch }}` | Default branch name (e.g., "main") |
 | `{{ remote }}` | Primary remote name (e.g., "origin") |
 | `{{ remote_url }}` | Primary remote URL |
 | `{{ upstream }}` | Upstream tracking branch, if configured |
+
+**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`).
 
 ### Examples
 

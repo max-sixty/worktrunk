@@ -16,7 +16,7 @@ fn test_list_config_full_enabled(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
 full = true
@@ -46,7 +46,7 @@ fn test_list_config_branches_enabled(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
 branches = true
@@ -76,7 +76,7 @@ fn test_list_config_cli_override(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
 branches = false
@@ -109,7 +109,7 @@ fn test_list_config_full_and_branches(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."repo".list]
 full = true
@@ -140,7 +140,7 @@ fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -171,7 +171,7 @@ url = "http://localhost:{{ branch | hash_port }}"
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -202,7 +202,7 @@ url = "http://localhost:{{ branch | hash_port }}"
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -241,7 +241,7 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -284,7 +284,7 @@ url = "http://localhost:{{ branch | hash_port }}"
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -325,7 +325,7 @@ url = "http://localhost:8080/{{ branch }}"
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();

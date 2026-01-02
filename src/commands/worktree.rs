@@ -853,7 +853,13 @@ impl<'a> CommandContext<'a> {
     /// Spawn post-switch commands in parallel as background processes (non-blocking)
     ///
     /// Runs on every switch, including to existing worktrees and newly created ones.
-    pub fn spawn_post_switch_commands(&self) -> anyhow::Result<()> {
+    ///
+    /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
+    /// the user's shell won't be in the worktree (shell integration not active).
+    pub fn spawn_post_switch_commands(
+        &self,
+        display_path: Option<&std::path::Path>,
+    ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
 
         let commands = prepare_hook_commands(
@@ -865,7 +871,7 @@ impl<'a> CommandContext<'a> {
             HookType::PostSwitch,
             &[],
             None,
-            None, // No path display - running in expected directory
+            display_path,
         )?;
 
         spawn_hook_commands_background(self, commands, HookType::PostSwitch)

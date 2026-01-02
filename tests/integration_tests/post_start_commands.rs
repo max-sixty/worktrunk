@@ -51,9 +51,7 @@ fn test_post_create_single_command(repo: TestRepo) {
 
     // Pre-approve the command by writing to the isolated test config
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'Setup complete'"]
 "#,
     );
@@ -80,9 +78,7 @@ setup = "echo 'Running setup'"
 
     // Pre-approve both commands in temp HOME
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = [
     "echo 'Installing deps'",
     "echo 'Running setup'",
@@ -107,9 +103,7 @@ fn test_post_create_failing_command(repo: TestRepo) {
 
     // Pre-approve the command in temp HOME
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["exit 1"]
 "#,
     );
@@ -127,11 +121,11 @@ fn test_post_create_template_expansion(repo: TestRepo) {
     // Create project config with template variables
     repo.write_project_config(
         r#"[post-create]
-repo = "echo 'Repo: {{ main_worktree }}' > info.txt"
+repo = "echo 'Repo: {{ repo }}' > info.txt"
 branch = "echo 'Branch: {{ branch }}' >> info.txt"
 hash_port = "echo 'Port: {{ branch | hash_port }}' >> info.txt"
-worktree = "echo 'Worktree: {{ worktree }}' >> info.txt"
-root = "echo 'Root: {{ repo_root }}' >> info.txt"
+worktree = "echo 'Worktree: {{ worktree_path }}' >> info.txt"
+root = "echo 'Root: {{ repo_path }}' >> info.txt"
 "#,
     );
 
@@ -140,15 +134,15 @@ root = "echo 'Root: {{ repo_root }}' >> info.txt"
     // Pre-approve all commands in isolated test config
     let repo_name = "repo";
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 [projects."repo"]
 approved-commands = [
-    "echo 'Repo: {{ main_worktree }}' > info.txt",
+    "echo 'Repo: {{ repo }}' > info.txt",
     "echo 'Branch: {{ branch }}' >> info.txt",
     "echo 'Port: {{ branch | hash_port }}' >> info.txt",
-    "echo 'Worktree: {{ worktree }}' >> info.txt",
-    "echo 'Root: {{ repo_root }}' >> info.txt",
+    "echo 'Worktree: {{ worktree_path }}' >> info.txt",
+    "echo 'Root: {{ repo_path }}' >> info.txt",
 ]
 "#,
     );
@@ -215,9 +209,7 @@ fn test_post_create_default_branch_template(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'Default: {{ default_branch }}' > default.txt"]
 "#,
     );
@@ -371,9 +363,7 @@ fn test_post_create_json_stdin(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["cat > context.json"]
 "#,
     );
@@ -473,9 +463,7 @@ setup = "./scripts/setup.py"
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["./scripts/setup.py"]
 "#,
     );
@@ -543,9 +531,7 @@ fn test_post_start_json_stdin(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["cat > context.json"]
 "#,
     );
@@ -601,9 +587,7 @@ fn test_post_start_single_background_command(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"]
 "#,
     );
@@ -640,9 +624,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
     // Pre-approve both commands
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = [
     "echo 'Task 1 running' > task1.txt",
     "echo 'Task 2 running' > task2.txt",
@@ -684,9 +666,7 @@ server = "sleep 0.05 && echo 'Server running' > server.txt"
 
     // Pre-approve all commands
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = [
     "echo 'Setup done' > setup.txt",
     "sleep 0.05 && echo 'Server running' > server.txt",
@@ -735,9 +715,7 @@ fn test_post_start_log_file_captures_output(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
 "#,
     );
@@ -791,9 +769,7 @@ fn test_post_start_invalid_command_handling(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'unclosed quote"]
 "#,
     );
@@ -828,9 +804,7 @@ task3 = "echo 'TASK3_OUTPUT'"
 
     // Pre-approve all commands
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = [
     "echo 'TASK1_OUTPUT'",
     "echo 'TASK2_OUTPUT'",
@@ -903,9 +877,7 @@ fn test_execute_flag_with_post_start_commands(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'Background task' > background.txt"]
 "#,
     );
@@ -948,9 +920,7 @@ fn test_post_start_complex_shell_commands(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'line1\nline2\nline3' | grep line2 > filtered.txt"]
 "#,
     );
@@ -986,7 +956,7 @@ echo 'second line' >> multiline.txt
 echo 'third line' >> multiline.txt
 ";
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["""
@@ -1038,7 +1008,7 @@ else
 fi
 ";
     repo.write_test_config(&format!(
-        r#"worktree-path = "../{{{{ main_worktree }}}}.{{{{ branch }}}}"
+        r#"worktree-path = "../{{{{ repo }}}}.{{{{ branch }}}}"
 
 [projects."repo"]
 approved-commands = ["""
@@ -1082,9 +1052,7 @@ fn test_post_start_skipped_on_existing_worktree(repo: TestRepo) {
 
     // Pre-approve the command
     repo.write_test_config(
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
-
-[projects."repo"]
+        r#"[projects."repo"]
 approved-commands = ["echo 'POST-START-RAN' > post_start_marker.txt"]
 "#,
     );
