@@ -160,11 +160,6 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let version = version_str();
     let shell_active = output::is_shell_integration_active();
 
-    // Get the raw argv[0] for debugging
-    let argv0 = std::env::args()
-        .next()
-        .unwrap_or_else(|| "(unknown)".to_string());
-
     writeln!(out, "{}", format_heading("RUNTIME", None))?;
 
     // Version and binary name on one line
@@ -173,15 +168,6 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
         "{}",
         format_with_gutter(&cformat!("<bold>{cmd}</> <dim>{version}</>"), None)
     )?;
-
-    // Show argv[0] if different from binary name (helps debug invocation issues)
-    if argv0 != cmd && !argv0.ends_with(&cmd) && !argv0.ends_with(&format!("{cmd}.exe")) {
-        writeln!(
-            out,
-            "{}",
-            format_with_gutter(&cformat!("<dim>invoked as: {argv0}</>"), None)
-        )?;
-    }
 
     // Shell integration status
     if shell_active {
