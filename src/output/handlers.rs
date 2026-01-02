@@ -461,22 +461,25 @@ pub fn print_shell_install_result(
 ///
 /// | Condition | Action |
 /// |-----------|--------|
-/// | Unsupported shell | Hint: `Shell integration not yet supported for <shell> (supports bash, zsh, fish, powershell)` |
+/// | Unsupported shell | Hint: `Shell integration not yet supported for <shell> (supports bash, zsh, fish, PowerShell)` |
 /// | $SHELL not set | Hint: `To enable automatic cd, run wt config shell install` |
-/// | Already installed | Hint: `Restart shell to activate shell integration` |
+/// | Current shell already installed | Hint: `Restart shell to activate shell integration` |
 /// | `skip-shell-integration-prompt` | Hint: `To enable automatic cd, run wt config shell install` |
 /// | TTY | Prompt: `❯ Install shell integration? [y/N/?]` |
 /// | Non-TTY / `--execute` | Hint: `To enable automatic cd, run wt config shell install` |
 ///
 /// When prompting:
-/// 1. Set `skip-shell-integration-prompt = true` (before prompt, survives Ctrl+C)
-/// 2. Show prompt
-/// 3. On decline, show install hint
+/// 1. Show prompt with preview of ALL shells that would be configured
+/// 2. On accept, install for ALL shells (equivalent to `wt config shell install`)
+/// 3. On decline, set `skip-shell-integration-prompt = true` and show hint
+/// 4. On Ctrl+C, exit without setting skip flag (will prompt again next time)
 ///
 /// ## Rationale
 ///
-/// - **"Prompted" means the interactive prompt**: The flag only tracks whether we showed the
-///   interactive prompt, not hints. Hints are reminders shown every time.
+/// - **Installs all shells**: Accepting is equivalent to `wt config shell install`, not just
+///   the current shell. This sets up the user for switching shells later.
+/// - **Skip flag only on explicit decline**: Ctrl+C doesn't set the flag, so users who
+///   interrupted can see the prompt again next time.
 /// - **First-time users (TTY)**: Get a one-time prompt with option to preview (`?`) before deciding
 /// - **Users who declined (TTY)**: Get a reminder hint on each switch
 /// - **Users with stale install**: Already have the config line, just need to restart shell
@@ -498,9 +501,9 @@ pub fn prompt_shell_integration(
     let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
     // Check the current shell (from $SHELL)
-    // If we can't determine the shell, show appropriate hint
+    // Only prompt if current shell is supported (so they benefit immediately)
     let shell_env = std::env::var("SHELL").ok();
-    let Some(shell) = current_shell() else {
+    if current_shell().is_none() {
         let msg = match &shell_env {
             Some(path) => shell_integration_unsupported_shell(path),
             // $SHELL not set: could be Windows PowerShell, or unusual Unix setup
@@ -511,18 +514,25 @@ pub fn prompt_shell_integration(
         return Ok(false);
     };
 
-    // Scan to check if already installed for current shell
-    let pre_scan = scan_shell_configs(Some(shell), true, binary_name)
+    // Scan ALL shells (same as `wt config shell install`)
+    // Only includes shells where config files already exist
+    let scan = scan_shell_configs(None, true, binary_name)
         .map_err(|e| anyhow::anyhow!("Failed to scan shell configs: {e}"))?;
 
-    // Check if current shell is already configured
-    let already_installed = pre_scan
+    // No config files exist - show install hint
+    if scan.configured.is_empty() {
+        super::print(hint_message(shell_integration_hint()))?;
+        return Ok(false);
+    }
+
+    // Check if current shell is already configured (user just needs to restart)
+    let current_shell_installed = scan
         .configured
         .iter()
+        .filter(|r| Some(r.shell) == current_shell())
         .any(|r| matches!(r.action, ConfigAction::AlreadyExists));
 
-    if already_installed {
-        // Config line exists but shell integration not active - just need to restart
+    if current_shell_installed {
         super::print(hint_message("Restart shell to activate shell integration"))?;
         return Ok(false);
     }
@@ -540,10 +550,11 @@ pub fn prompt_shell_integration(
     }
 
     // TTY + first time: Show interactive prompt
+    // Accepting installs for all shells with config files (same as `wt config shell install`)
     super::blank()?;
     let confirmed = prompt_for_install(
-        &pre_scan.configured,
-        &pre_scan.completion_results,
+        &scan.configured,
+        &scan.completion_results,
         binary_name,
         "Install shell integration?",
     )
@@ -556,8 +567,8 @@ pub fn prompt_shell_integration(
         return Ok(false);
     }
 
-    // Install for current shell only
-    let install_result = handle_configure_shell(Some(shell), true, binary_name.to_string())
+    // Install for all shells with config files (same as `wt config shell install`)
+    let install_result = handle_configure_shell(None, true, binary_name.to_string())
         .map_err(|e| anyhow::anyhow!("Failed to configure shell integration: {e}"))?;
 
     print_shell_install_result(&install_result)?;
