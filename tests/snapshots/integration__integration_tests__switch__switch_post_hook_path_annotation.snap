@@ -4,10 +4,9 @@ info:
   program: wt
   args:
     - switch
-    - existing-no-hooks
-    - "--execute"
-    - "echo 'execute still runs'"
-    - "--no-verify"
+    - "--create"
+    - post-hook-test
+    - "--yes"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -32,10 +31,9 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-execute still runs
 
 ----- stderr -----
-[33m▲[39m [33mWorktree for [1mexisting-no-hooks[22m @ [1m_REPO_.existing-no-hooks[22m, but cannot change directory — shell integration not installed[39m
+[32m✓[39m [32mCreated new worktree for [1mpost-hook-test[22m from [1mmain[22m @ [1m_REPO_.post-hook-test[22m[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
-[36m◎[39m [36mExecuting (--execute):[39m
-[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m
+[36m◎[39m [36mRunning post-switch project hook @ [1m_REPO_.post-hook-test[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m switched
