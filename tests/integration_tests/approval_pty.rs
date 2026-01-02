@@ -79,10 +79,23 @@ fn normalize_output(output: &str) -> String {
         .unwrap()
         .replace_all(output, "");
 
-    // Remove repository paths
+    // Remove repository paths (macOS uses .tmp dirs like /var/folders/.../test.tmpXXX)
+    // Match repo.branch-name but not trailing ANSI codes (which start with escape char \x1b)
+    let output = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]+/repo\.[a-zA-Z0-9_-]+")
+        .unwrap()
+        .replace_all(&output, "_REPO_/repo.BRANCH");
+
+    // Also normalize remaining .tmp paths (for non-worktree paths)
     let output = regex::Regex::new(r"/[^\s]+\.tmp[^\s/]+")
         .unwrap()
         .replace_all(&output, "_REPO_");
+
+    // Normalize worktree paths that show as ~/repo.branch-name
+    // When HOME is set to the test temp dir, format_path_for_display abbreviates to ~
+    // Match branch names but not trailing ANSI codes
+    let output = regex::Regex::new(r"~/repo\.[a-zA-Z0-9_-]+")
+        .unwrap()
+        .replace_all(&output, "_REPO_/repo.BRANCH");
 
     // Remove config paths
     let output = regex::Regex::new(r"/var/folders/[^\s]+/test-config\.toml")
@@ -123,12 +136,26 @@ fn normalize_output(output: &str) -> String {
     output_str
 }
 
+/// Get test env vars with shell integration configured.
+///
+/// This adds SHELL=/bin/zsh to the env vars, which is needed because:
+/// - Tests write to .zshrc to simulate configured shell integration
+/// - scan_shell_configs() uses $SHELL to determine which config file to check
+/// - Without this, CI (which has SHELL=/bin/bash) wouldn't find the .zshrc config
+fn test_env_vars_with_shell(repo: &TestRepo) -> Vec<(String, String)> {
+    let mut env_vars = repo.test_env_vars();
+    env_vars.push(("SHELL".to_string(), "/bin/zsh".to_string()));
+    env_vars
+}
+
 #[rstest]
 fn test_approval_prompt_accept(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-approve"],
@@ -147,7 +174,9 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     repo.write_project_config(r#"post-create = "echo 'test command'""#);
     repo.commit("Add config");
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-decline"],
@@ -172,7 +201,9 @@ third = "echo 'Third command'"
     );
     repo.commit("Add config");
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-multi"],
@@ -219,7 +250,9 @@ fn test_approval_prompt_permission_error(repo: TestRepo) {
         }
     }
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-permission"],
@@ -259,7 +292,9 @@ test = "echo 'Running tests...'"
     );
     repo.commit("Add config");
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-named"],
@@ -305,7 +340,9 @@ approved-commands = ["echo 'Second command'"]
         project_id
     ));
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-mixed-accept"],
@@ -362,7 +399,9 @@ approved-commands = ["echo 'Second command'"]
         project_id
     ));
 
-    let env_vars = repo.test_env_vars();
+    // Configure shell integration so we get the "Restart shell" hint instead of the prompt
+    repo.configure_shell_integration();
+    let env_vars = test_env_vars_with_shell(&repo);
     let (output, exit_code) = exec_in_pty_with_input(
         get_cargo_bin("wt").to_str().unwrap(),
         &["switch", "--create", "test-mixed-decline"],

@@ -26,6 +26,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -34,6 +35,7 @@ exit_code: 0
 execute still runs
 
 ----- stderr -----
-[2m○[22m Switched to worktree for [1mexisting-no-hooks[22m @ [1m_REPO_.existing-no-hooks[22m
+[33m▲[39m [33mExecuting [1mecho 'execute still runs'[22m @ [1m_REPO_.existing-no-hooks[22m, but shell directory unchanged — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [36m◎[39m [36mExecuting (--execute):[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'execute still runs'[0m[2m

@@ -69,7 +69,7 @@ fn test_clear_approvals_with_approvals(repo: TestRepo) {
     // Manually approve the command by writing to test config
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             project_id,
             "echo 'test'".to_string(),
             Some(repo.test_config_path()),
@@ -95,7 +95,7 @@ fn test_clear_approvals_global_with_approvals(repo: TestRepo) {
     // Manually approve the command
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             project_id,
             "echo 'test'".to_string(),
             Some(repo.test_config_path()),
@@ -120,7 +120,7 @@ fn test_clear_approvals_after_clear(repo: TestRepo) {
     // Manually approve the command
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             project_id.clone(),
             "echo 'test'".to_string(),
             Some(repo.test_config_path()),
@@ -152,21 +152,21 @@ lint = "echo 'third'"
     let project_id = format!("{}/origin", repo.root_path().display());
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             project_id.clone(),
             "echo 'first'".to_string(),
             Some(repo.test_config_path()),
         )
         .unwrap();
     config
-        .approve_command_to(
+        .approve_command(
             project_id.clone(),
             "echo 'second'".to_string(),
             Some(repo.test_config_path()),
         )
         .unwrap();
     config
-        .approve_command_to(
+        .approve_command(
             project_id,
             "echo 'third'".to_string(),
             Some(repo.test_config_path()),
@@ -191,7 +191,7 @@ fn test_add_approvals_all_already_approved(repo: TestRepo) {
     // Manually approve the command
     let mut config = WorktrunkConfig::default();
     config
-        .approve_command_to(
+        .approve_command(
             project_id,
             "echo 'test'".to_string(),
             Some(repo.test_config_path()),

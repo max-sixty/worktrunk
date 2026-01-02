@@ -24,6 +24,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -36,4 +37,4 @@ exit_code: 0
 [0m[36m◎[39m [36mRunning post-create project hook:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'PROJECT_HOOK'[0m[2m [0m[2m[36m>>[0m[2m hook_order.txt
 [0m[32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
-[2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

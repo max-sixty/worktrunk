@@ -31,3 +31,4 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mWorktree for [1mshell-configured[22m @ [1m_REPO_.shell-configured[22m, but cannot change directory — restart the shell to activate[39m
+[2m↳[22m [2mRestart shell to activate shell integration[22m

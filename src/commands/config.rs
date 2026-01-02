@@ -16,6 +16,7 @@ use worktrunk::utils::get_now;
 
 use super::configure_shell::{ConfigAction, scan_shell_configs};
 use super::list::ci_status::CachedCiStatus;
+use crate::cli::version_str;
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::llm::test_commit_generation;
@@ -139,11 +140,40 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
         render_diagnostics(&mut show_output)?;
     }
 
+    // Render runtime info at the bottom (version, binary name, shell integration status)
+    show_output.push('\n');
+    render_runtime_info(&mut show_output)?;
+
     // Display through pager
     if let Err(e) = show_help_in_pager(&show_output) {
         log::debug!("Pager invocation failed: {}", e);
         // Fall back to direct output via eprintln (matches help behavior)
         worktrunk::styling::eprintln!("{}", show_output);
+    }
+
+    Ok(())
+}
+
+/// Render runtime information (version, binary name, shell integration status)
+fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
+    let cmd = crate::binary_name();
+    let version = version_str();
+    let shell_active = output::is_shell_integration_active();
+
+    writeln!(out, "{}", format_heading("RUNTIME", None))?;
+
+    // Version and binary name on one line
+    writeln!(
+        out,
+        "{}",
+        format_with_gutter(&cformat!("<bold>{cmd}</> <dim>{version}</>"), None)
+    )?;
+
+    // Shell integration status
+    if shell_active {
+        writeln!(out, "{}", info_message("Shell integration active"))?;
+    } else {
+        writeln!(out, "{}", hint_message("Shell integration not active"))?;
     }
 
     Ok(())

@@ -36,7 +36,7 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
-use worktrunk::styling::{eprintln, hint_message, stderr};
+use worktrunk::styling::{eprintln, stderr};
 
 /// Global output state, lazily initialized on first access.
 ///
@@ -83,19 +83,6 @@ fn has_directive_file() -> bool {
         .expect("OUTPUT_STATE lock poisoned")
         .directive_file
         .is_some()
-}
-
-/// Display a shell integration hint
-///
-/// Shell integration hints like "Run `wt config shell install` to enable automatic cd" are only
-/// shown when shell integration is NOT active. When it is active, users already have it.
-/// This is the canonical check - call sites don't need to guard.
-pub fn shell_integration_hint(message: impl Into<String>) -> io::Result<()> {
-    if has_directive_file() {
-        return Ok(());
-    }
-    eprintln!("{}", hint_message(message.into()));
-    stderr().flush()
 }
 
 /// Print a message to stderr (written as-is)
