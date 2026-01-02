@@ -4,21 +4,28 @@
 
 ## Project Status
 
-**This project was released very recently and has very few backward compatibility concerns.**
+**This project has a growing user base. Balance clean design with reasonable compatibility.**
 
-We are in **early release** mode:
-- Breaking changes are generally acceptable
-- Optimize for the best solution, not compatibility with previous versions
+We are in **maturing** mode:
+- Breaking changes to external interfaces require justification (significant improvement, not just cleanup)
+- Prefer deprecation warnings over silent breaks
 - No Rust library compatibility concerns (this is a CLI tool only)
 
-**CLI deprecation policy:** When renaming or removing CLI options, retain the old option with a deprecation warning if there's no code complication cost. If supporting both old and new would add complexity, just make the breaking change.
+**External interfaces to protect:**
+- **Config file format** (`wt.toml`, user config) — avoid breaking changes; provide migration guidance when necessary
+- **CLI flags and arguments** — use deprecation warnings; retain old flags for at least one release cycle
+
+**Internal changes remain flexible:**
+- Codebase structure, dependencies, internal APIs
+- Human-readable output formatting and messages
+- Log file locations and formats
 
 When making decisions, prioritize:
 1. **Best technical solution** over backward compatibility
 2. **Clean design** over maintaining old patterns
 3. **Modern conventions** over legacy approaches
 
-Acceptable breaking changes: config locations, output formats, dependencies, codebase structure. CLI flag changes can be breaking if deprecation warnings would complicate the code.
+Use deprecation warnings to get there smoothly when external interfaces must change.
 
 ## Code Quality
 
