@@ -148,7 +148,12 @@ pub fn handle_configure_shell(
 
     // Show what will be done and ask for confirmation (unless --yes flag is used)
     if !skip_confirmation
-        && !prompt_for_confirmation(&preview.configured, &completion_preview, &cmd)?
+        && !prompt_for_install(
+            &preview.configured,
+            &completion_preview,
+            &cmd,
+            "Install shell integration?",
+        )?
     {
         return Err("Cancelled by user".to_string());
     }
@@ -492,16 +497,19 @@ fn configure_fish_file(
     }))
 }
 
-fn prompt_for_confirmation(
+/// Display what will be installed (shell extensions and completions)
+///
+/// Shows the config lines that will be added without prompting.
+/// Used both for install preview and when user types `?` at prompt.
+///
+/// Note: I/O errors are intentionally ignored - preview is best-effort
+/// and shouldn't block the prompt flow.
+pub fn show_install_preview(
     results: &[ConfigureResult],
     completion_results: &[CompletionResult],
     cmd: &str,
-) -> Result<bool, String> {
+) {
     use anstyle::Style;
-
-    // CRITICAL: Flush stdout before writing to stderr to prevent stream interleaving
-    // Flushes both stdout (for data output) and stderr (for messages)
-    crate::output::flush().map_err(|e| e.to_string())?;
 
     let bold = Style::new().bold();
 
@@ -521,16 +529,15 @@ fn prompt_for_confirmation(
             "shell extension & completions"
         };
 
-        output::print(format!(
+        let _ = output::print(format!(
             "{} {} {what} for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ))
-        .map_err(|e| e.to_string())?;
+        ));
 
         // Show the config line that will be added with gutter
-        output::print(format_bash_with_gutter(&result.config_line)).map_err(|e| e.to_string())?;
-        output::blank().map_err(|e| e.to_string())?; // Blank line after each shell block
+        let _ = output::print(format_bash_with_gutter(&result.config_line));
+        let _ = output::blank(); // Blank line after each shell block
     }
 
     // Show completion changes (only fish has separate completion files)
@@ -542,28 +549,72 @@ fn prompt_for_confirmation(
         let shell = result.shell;
         let path = format_path_for_display(&result.path);
 
-        output::print(format!(
+        let _ = output::print(format!(
             "{} {} completions for {bold}{shell}{bold:#} @ {bold}{path}{bold:#}",
             result.action.symbol(),
             result.action.description(),
-        ))
-        .map_err(|e| e.to_string())?;
+        ));
 
         // Show the completion content that will be written
         let fish_completion = fish_completion_content(cmd);
-        output::print(format_bash_with_gutter(fish_completion.trim()))
-            .map_err(|e| e.to_string())?;
-        output::blank().map_err(|e| e.to_string())?; // Blank line after
+        let _ = output::print(format_bash_with_gutter(fish_completion.trim()));
+        let _ = output::blank(); // Blank line after
     }
-
-    prompt_yes_no()
 }
 
-/// Prompt user for yes/no confirmation, returns true if user confirms
+/// Prompt for install with [y/N/?] options
+///
+/// - `y` or `yes`: Accept and return true
+/// - `n`, `no`, or empty: Decline and return false
+/// - `?`: Show preview (via show_install_preview) and re-prompt
+pub fn prompt_for_install(
+    results: &[ConfigureResult],
+    completion_results: &[CompletionResult],
+    cmd: &str,
+    prompt_text: &str,
+) -> Result<bool, String> {
+    use std::io::Write;
+
+    // Flush before interactive prompt
+    crate::output::flush().map_err(|e| e.to_string())?;
+
+    loop {
+        eprint!(
+            "{}",
+            color_print::cformat!("{} {} <bold>[y/N/?]</> ", PROMPT_SYMBOL, prompt_text)
+        );
+        io::stderr().flush().map_err(|e| e.to_string())?;
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| e.to_string())?;
+
+        let response = input.trim().to_lowercase();
+        match response.as_str() {
+            "y" | "yes" => {
+                eprintln!();
+                return Ok(true);
+            }
+            "?" => {
+                eprintln!();
+                show_install_preview(results, completion_results, cmd);
+                // Loop back to prompt again
+            }
+            _ => {
+                // Empty, "n", "no", or anything else is decline
+                eprintln!();
+                return Ok(false);
+            }
+        }
+    }
+}
+
+/// Prompt user for yes/no confirmation (simple [y/N] prompt)
 fn prompt_yes_no() -> Result<bool, String> {
     use anstyle::Style;
     use std::io::Write;
-    use worktrunk::styling::{PROMPT_SYMBOL, eprint};
+    use worktrunk::styling::eprint;
 
     let bold = Style::new().bold();
     eprint!("{PROMPT_SYMBOL} Proceed? {bold}[y/N]{bold:#} ");

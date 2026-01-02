@@ -23,9 +23,7 @@ pub use config::{
     handle_config_create, handle_config_show, handle_state_clear, handle_state_clear_all,
     handle_state_get, handle_state_set, handle_state_show,
 };
-pub use configure_shell::{
-    ConfigAction, handle_configure_shell, handle_show_theme, handle_unconfigure_shell,
-};
+pub use configure_shell::{handle_configure_shell, handle_show_theme, handle_unconfigure_shell};
 pub use for_each::step_for_each;
 pub use init::handle_init;
 pub use list::handle_list;

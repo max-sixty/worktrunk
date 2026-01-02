@@ -25,6 +25,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -38,6 +39,6 @@ exit_code: 0
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
 [32m✓[39m [32mCreated new worktree for [1mfeature-x[22m from [1mmain[22m @ [1m_REPO_.feature-x[22m[39m
-[2m↳[22m [2mRun [90mwt config shell install[39m to enable automatic cd[22m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [36m◎[39m [36mRunning post-start [1mproject:dev[22m:[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m run dev

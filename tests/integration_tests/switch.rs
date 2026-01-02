@@ -11,15 +11,19 @@ use tempfile::TempDir;
 // Snapshot helpers
 
 fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str]) {
-    snapshot_switch_impl(test_name, repo, args, false, None);
+    snapshot_switch_impl(test_name, repo, args, false, None, None);
 }
 
 fn snapshot_switch_with_directive_file(test_name: &str, repo: &TestRepo, args: &[&str]) {
-    snapshot_switch_impl(test_name, repo, args, true, None);
+    snapshot_switch_impl(test_name, repo, args, true, None, None);
 }
 
 fn snapshot_switch_from_dir(test_name: &str, repo: &TestRepo, args: &[&str], cwd: &Path) {
-    snapshot_switch_impl(test_name, repo, args, false, Some(cwd));
+    snapshot_switch_impl(test_name, repo, args, false, Some(cwd), None);
+}
+
+fn snapshot_switch_with_shell(test_name: &str, repo: &TestRepo, args: &[&str], shell: &str) {
+    snapshot_switch_impl(test_name, repo, args, false, None, Some(shell));
 }
 
 fn snapshot_switch_impl(
@@ -28,6 +32,7 @@ fn snapshot_switch_impl(
     args: &[&str],
     with_directive_file: bool,
     cwd: Option<&Path>,
+    shell: Option<&str>,
 ) {
     let settings = setup_snapshot_settings(repo);
     settings.bind(|| {
@@ -41,6 +46,9 @@ fn snapshot_switch_impl(
         let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
         if let Some((ref directive_path, ref _guard)) = maybe_directive {
             configure_directive_file(&mut cmd, directive_path);
+        }
+        if let Some(shell_path) = shell {
+            cmd.env("SHELL", shell_path);
         }
         assert_cmd_snapshot!(test_name, cmd);
     });
@@ -114,10 +122,12 @@ fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
 
     // Switch to existing worktree - should show warning about binary invoked directly
     // (different from "no shell integration" warning when shell is not configured at all)
-    snapshot_switch(
+    // Note: Must set SHELL=/bin/zsh so scan_shell_configs() looks for .zshrc
+    snapshot_switch_with_shell(
         "switch_existing_with_shell_configured",
         &repo,
         &["shell-configured"],
+        "/bin/zsh",
     );
 }
 

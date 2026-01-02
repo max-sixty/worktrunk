@@ -34,13 +34,13 @@ fn test_configure_shell_with_yes(repo: TestRepo, temp_home: TempDir) {
 
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [90mbash[39m; ~/.bashrc not found[22m
-        [2m↳[22m [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
+        [2m↳[22m [2mSkipped [90mbash[39m; [90m~/.bashrc[39m not found[22m
+        [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
         [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
-        [2m↳[22m [2mRestart shell or run: source ~/.zshrc[22m
+        [2m↳[22m [2mRestart shell or run: [90msource ~/.zshrc[39m[22m
         ");
     });
 
@@ -82,7 +82,7 @@ fn test_configure_shell_specific_shell(repo: TestRepo, temp_home: TempDir) {
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
         [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
-        [2m↳[22m [2mRestart shell or run: source ~/.zshrc[22m
+        [2m↳[22m [2mRestart shell or run: [90msource ~/.zshrc[39m[22m
         ");
     });
 
@@ -287,9 +287,9 @@ fn test_configure_shell_no_files(repo: TestRepo, temp_home: TempDir) {
         ----- stdout -----
 
         ----- stderr -----
-        [2m↳[22m [2mSkipped [90mbash[39m; ~/.bashrc not found[22m
-        [2m↳[22m [2mSkipped [90mzsh[39m; ~/.zshrc not found[22m
-        [2m↳[22m [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
+        [2m↳[22m [2mSkipped [90mbash[39m; [90m~/.bashrc[39m not found[22m
+        [2m↳[22m [2mSkipped [90mzsh[39m; [90m~/.zshrc[39m not found[22m
+        [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
         [31m✗[39m [31mNo shell config files found[39m
         ");
     });
@@ -326,12 +326,12 @@ fn test_configure_shell_multiple_configs(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
+        [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
         [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
-        [2m↳[22m [2mRestart shell or run: source ~/.zshrc[22m
+        [2m↳[22m [2mRestart shell or run: [90msource ~/.zshrc[39m[22m
         ");
     });
 
@@ -386,12 +386,12 @@ fn test_configure_shell_mixed_states(repo: TestRepo, temp_home: TempDir) {
         ----- stderr -----
         [2m○[22m Already configured shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
+        [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
 
         [32m✓[39m [32mConfigured 1 shell[39m
         [33m▲[39m [33mCompletions require compinit; add to ~/.zshrc before the wt line:[39m
         [107m [0m [2m[0m[2m[34mautoload[0m[2m [0m[2m[36m-Uz[0m[2m compinit [0m[2m[36m&&[0m[2m [0m[2m[34mcompinit[0m[2m[0m
-        [2m↳[22m [2mRestart shell or run: source ~/.zshrc[22m
+        [2m↳[22m [2mRestart shell or run: [90msource ~/.zshrc[39m[22m
         ");
     });
 
@@ -765,7 +765,7 @@ fn test_configure_shell_no_warning_when_compinit_enabled(repo: TestRepo, temp_ho
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
 
         [32m✓[39m [32mConfigured 1 shell[39m
-        [2m↳[22m [2mRestart shell or run: source ~/.zshrc[22m
+        [2m↳[22m [2mRestart shell or run: [90msource ~/.zshrc[39m[22m
         ");
     });
 }
@@ -801,10 +801,10 @@ fn test_configure_shell_no_warning_for_bash_user(repo: TestRepo, temp_home: Temp
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
+        [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
-        [2m↳[22m [2mRestart shell or run: source ~/.bashrc[22m
+        [2m↳[22m [2mRestart shell or run: [90msource ~/.bashrc[39m[22m
         ");
     });
 }
@@ -912,7 +912,7 @@ fn test_configure_shell_no_warning_when_shell_unset(repo: TestRepo, temp_home: T
         ----- stderr -----
         [32m✓[39m [32mAdded shell extension & completions for [1mbash[22m @ [1m~/.bashrc[22m[39m
         [32m✓[39m [32mAdded shell extension & completions for [1mzsh[22m @ [1m~/.zshrc[22m[39m
-        [2m↳[22m [2mSkipped [90mfish[39m; ~/.config/fish/conf.d not found[22m
+        [2m↳[22m [2mSkipped [90mfish[39m; [90m~/.config/fish/conf.d[39m not found[22m
 
         [32m✓[39m [32mConfigured 2 shells[39m
         ");

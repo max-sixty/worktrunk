@@ -366,7 +366,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
         // First approval
         assert!(!config.is_command_approved("github.com/user/repo", "npm install"));
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
                 Some(&config_path),
@@ -382,7 +382,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
             .approved_commands
             .len();
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
                 Some(&config_path),
@@ -410,14 +410,14 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Set up two approved commands
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
                 Some(&config_path),
             )
             .unwrap();
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm test".to_string(),
                 Some(&config_path),
@@ -429,7 +429,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Revoke one command
         config
-            .revoke_command_to("github.com/user/repo", "npm install", Some(&config_path))
+            .revoke_command("github.com/user/repo", "npm install", Some(&config_path))
             .unwrap();
         assert!(!config.is_command_approved("github.com/user/repo", "npm install"));
         assert!(config.is_command_approved("github.com/user/repo", "npm test"));
@@ -439,7 +439,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Revoke the last command - should remove the project entry
         config
-            .revoke_command_to("github.com/user/repo", "npm test", Some(&config_path))
+            .revoke_command("github.com/user/repo", "npm test", Some(&config_path))
             .unwrap();
         assert!(!config.is_command_approved("github.com/user/repo", "npm test"));
         assert!(!config.projects.contains_key("github.com/user/repo"));
@@ -456,12 +456,12 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Revoking from non-existent project is a no-op
         config
-            .revoke_command_to("github.com/user/repo", "npm install", Some(&config_path))
+            .revoke_command("github.com/user/repo", "npm install", Some(&config_path))
             .unwrap();
 
         // Set up one command
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo".to_string(),
                 "npm install".to_string(),
                 Some(&config_path),
@@ -470,7 +470,7 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Revoking non-existent command is a no-op
         config
-            .revoke_command_to("github.com/user/repo", "npm test", Some(&config_path))
+            .revoke_command("github.com/user/repo", "npm test", Some(&config_path))
             .unwrap();
         assert!(config.is_command_approved("github.com/user/repo", "npm install"));
     }
@@ -486,21 +486,21 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Set up multiple projects
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo1".to_string(),
                 "npm install".to_string(),
                 Some(&config_path),
             )
             .unwrap();
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo1".to_string(),
                 "npm test".to_string(),
                 Some(&config_path),
             )
             .unwrap();
         config
-            .approve_command_to(
+            .approve_command(
                 "github.com/user/repo2".to_string(),
                 "cargo build".to_string(),
                 Some(&config_path),
@@ -512,17 +512,17 @@ task2 = "echo 'Task 2 running' > task2.txt"
 
         // Revoke entire project
         config
-            .revoke_project_to("github.com/user/repo1", Some(&config_path))
+            .revoke_project("github.com/user/repo1", Some(&config_path))
             .unwrap();
         assert!(!config.projects.contains_key("github.com/user/repo1"));
         assert!(config.projects.contains_key("github.com/user/repo2"));
 
         // Revoking non-existent project is a no-op
         config
-            .revoke_project_to("github.com/user/repo1", Some(&config_path))
+            .revoke_project("github.com/user/repo1", Some(&config_path))
             .unwrap();
         config
-            .revoke_project_to("github.com/nonexistent/repo", Some(&config_path))
+            .revoke_project("github.com/nonexistent/repo", Some(&config_path))
             .unwrap();
     }
 

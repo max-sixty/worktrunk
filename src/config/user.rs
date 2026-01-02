@@ -155,6 +155,14 @@ pub struct WorktrunkConfig {
     #[serde(flatten, default)]
     pub hooks: HooksConfig,
 
+    /// Skip the first-run shell integration prompt
+    #[serde(
+        default,
+        rename = "skip-shell-integration-prompt",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub skip_shell_integration_prompt: bool,
+
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
     pub(crate) unknown: std::collections::HashMap<String, toml::Value>,
@@ -300,6 +308,7 @@ impl Default for WorktrunkConfig {
             commit: None,
             merge: None,
             hooks: HooksConfig::default(),
+            skip_shell_integration_prompt: false,
             unknown: std::collections::HashMap::new(),
         }
     }
@@ -406,15 +415,11 @@ impl WorktrunkConfig {
             .unwrap_or(false)
     }
 
-    /// Add an approved command and save to config file
-    pub fn approve_command(&mut self, project: String, command: String) -> Result<(), ConfigError> {
-        self.approve_command_to(project, command, None)
-    }
-
-    /// Add an approved command and save to a specific config file (for testing)
+    /// Add an approved command and save to config file.
     ///
     /// Reloads from disk before modifying to reduce race conditions from concurrent processes.
-    pub fn approve_command_to(
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn approve_command(
         &mut self,
         project: String,
         command: String,
@@ -480,16 +485,11 @@ impl WorktrunkConfig {
         Ok(())
     }
 
-    /// Revoke an approved command and save to config file
-    pub fn revoke_command(&mut self, project: &str, command: &str) -> Result<(), ConfigError> {
-        self.revoke_command_to(project, command, None)
-    }
-
-    /// Revoke an approved command and save to a specific config file (for testing)
+    /// Revoke an approved command and save to config file.
     ///
     /// Reloads from disk before modifying to reduce race conditions from concurrent processes.
-    #[doc(hidden)]
-    pub fn revoke_command_to(
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn revoke_command(
         &mut self,
         project: &str,
         command: &str,
@@ -514,16 +514,11 @@ impl WorktrunkConfig {
         Ok(())
     }
 
-    /// Remove all approvals for a project and save to config file
-    pub fn revoke_project(&mut self, project: &str) -> Result<(), ConfigError> {
-        self.revoke_project_to(project, None)
-    }
-
-    /// Remove all approvals for a project and save to a specific config file (for testing)
+    /// Remove all approvals for a project and save to config file.
     ///
     /// Reloads from disk before modifying to reduce race conditions from concurrent processes.
-    #[doc(hidden)]
-    pub fn revoke_project_to(
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn revoke_project(
         &mut self,
         project: &str,
         config_path: Option<&std::path::Path>,
@@ -535,6 +530,22 @@ impl WorktrunkConfig {
             self.save_impl(config_path)?;
         }
         Ok(())
+    }
+
+    /// Set `skip-shell-integration-prompt = true` and save.
+    ///
+    /// Pass `None` for default config path, or `Some(path)` for testing.
+    pub fn set_skip_shell_integration_prompt(
+        &mut self,
+        config_path: Option<&std::path::Path>,
+    ) -> Result<(), ConfigError> {
+        if self.skip_shell_integration_prompt {
+            return Ok(());
+        }
+        // Reload from disk first to avoid clobbering concurrent changes
+        self.reload_projects_from(config_path)?;
+        self.skip_shell_integration_prompt = true;
+        self.save_impl(config_path)
     }
 
     /// Save the current configuration to the default config file location
@@ -592,7 +603,14 @@ impl WorktrunkConfig {
                 .parse()
                 .map_err(|e| ConfigError::Message(format!("Failed to parse config file: {}", e)))?;
 
-            // Only update the projects section - that's the only thing we modify programmatically
+            // Update skip-shell-integration-prompt flag
+            if self.skip_shell_integration_prompt {
+                doc["skip-shell-integration-prompt"] = toml_edit::value(true);
+            } else {
+                doc.remove("skip-shell-integration-prompt");
+            }
+
+            // Update the projects section
             // Ensure projects table exists
             if !doc.contains_key("projects") {
                 doc["projects"] = toml_edit::Item::Table(toml_edit::Table::new());
@@ -625,6 +643,11 @@ impl WorktrunkConfig {
             // No existing file, create from scratch using toml_edit for consistent formatting
             let mut doc = toml_edit::DocumentMut::new();
             doc["worktree-path"] = toml_edit::value(&self.worktree_path);
+
+            // skip-shell-integration-prompt (only if true)
+            if self.skip_shell_integration_prompt {
+                doc["skip-shell-integration-prompt"] = toml_edit::value(true);
+            }
 
             // commit-generation section
             doc["commit-generation"] = toml_edit::Item::Table(toml_edit::Table::new());
@@ -866,6 +889,7 @@ rename-tab = "echo 'switched'"
         assert!(config.commit.is_none());
         assert!(config.merge.is_none());
         assert!(!config.commit_generation.is_configured());
+        assert!(!config.skip_shell_integration_prompt);
     }
 
     #[test]
@@ -948,5 +972,53 @@ rename-tab = "echo 'switched'"
         let parsed: MergeConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.squash, Some(true));
         assert_eq!(parsed.rebase, Some(false));
+    }
+
+    #[test]
+    fn test_skip_shell_integration_prompt_default_false() {
+        let config = WorktrunkConfig::default();
+        assert!(!config.skip_shell_integration_prompt);
+    }
+
+    #[test]
+    fn test_skip_shell_integration_prompt_serde_roundtrip() {
+        // Test serialization when true
+        let config = WorktrunkConfig {
+            skip_shell_integration_prompt: true,
+            ..WorktrunkConfig::default()
+        };
+        let toml = toml::to_string(&config).unwrap();
+        assert!(toml.contains("skip-shell-integration-prompt = true"));
+
+        // Test deserialization
+        let parsed: WorktrunkConfig = toml::from_str(&toml).unwrap();
+        assert!(parsed.skip_shell_integration_prompt);
+    }
+
+    #[test]
+    fn test_skip_shell_integration_prompt_skipped_when_false() {
+        // When false, the field should not appear in serialized output
+        let config = WorktrunkConfig::default();
+        let toml = toml::to_string(&config).unwrap();
+        assert!(!toml.contains("skip-shell-integration-prompt"));
+    }
+
+    #[test]
+    fn test_skip_shell_integration_prompt_parsed_from_toml() {
+        let content = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+skip-shell-integration-prompt = true
+"#;
+        let config: WorktrunkConfig = toml::from_str(content).unwrap();
+        assert!(config.skip_shell_integration_prompt);
+    }
+
+    #[test]
+    fn test_skip_shell_integration_prompt_defaults_when_missing() {
+        let content = r#"
+worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#;
+        let config: WorktrunkConfig = toml::from_str(content).unwrap();
+        assert!(!config.skip_shell_integration_prompt);
     }
 }

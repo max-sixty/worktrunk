@@ -661,7 +661,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
             .unwrap_or(0);
 
         config
-            .revoke_project(project_id)
+            .revoke_project(project_id, None)
             .context("Failed to clear project approvals")?;
 
         crate::output::print(success_message(format!(
