@@ -89,34 +89,10 @@ impl ColumnKind {
 }
 
 impl PrStatus {
-    /// Get indicator symbol and style for rendering (with URL underline)
-    fn indicator_and_style(&self) -> (&'static str, Style) {
-        let style = if self.url.is_some() {
-            self.style().underline()
-        } else {
-            self.style()
-        };
-        (self.indicator(), style)
-    }
-
+    /// Render indicator as a StyledLine for table column rendering.
     fn render_indicator(&self) -> StyledLine {
         let mut segment = StyledLine::new();
-        let (indicator, style) = self.indicator_and_style();
-
-        if let Some(ref url) = self.url {
-            let styled_indicator = format!(
-                "{}{}{}{}{}",
-                style,
-                osc8::Hyperlink::new(url),
-                indicator,
-                osc8::Hyperlink::END,
-                style.render_reset()
-            );
-            segment.push_raw(styled_indicator);
-        } else {
-            segment.push_styled(indicator.to_string(), style);
-        }
-
+        segment.push_raw(self.format_indicator());
         segment
     }
 }

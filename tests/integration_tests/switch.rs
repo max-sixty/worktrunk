@@ -456,6 +456,63 @@ fn test_switch_path_mismatch_shows_hint(repo: TestRepo) {
     snapshot_switch_with_directive_file("switch_path_mismatch_shows_hint", &repo, &["feature"]);
 }
 
+/// Test path mismatch warning without shell integration.
+///
+/// When shell integration is not active, the path mismatch warning should appear
+/// alongside the "cannot change directory" warning.
+#[rstest]
+fn test_switch_path_mismatch_without_shell_integration(repo: TestRepo) {
+    // Create a worktree at a non-standard path
+    let wrong_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("wrong-path-no-shell");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        wrong_path.to_str().unwrap(),
+        "-b",
+        "feature-mismatch",
+    ]);
+
+    // Switch without directive file (no shell integration) - should show both warnings
+    snapshot_switch(
+        "switch_path_mismatch_no_shell",
+        &repo,
+        &["feature-mismatch"],
+    );
+}
+
+/// Test AlreadyAt with path mismatch.
+///
+/// When already in a worktree whose path doesn't match the branch name,
+/// switching to that branch should show the path mismatch warning.
+#[rstest]
+fn test_switch_already_at_with_path_mismatch(repo: TestRepo) {
+    // Create a worktree at a non-standard path
+    let wrong_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("wrong-path-already");
+    repo.run_git(&[
+        "worktree",
+        "add",
+        wrong_path.to_str().unwrap(),
+        "-b",
+        "feature-already",
+    ]);
+
+    // Switch from within the worktree with mismatched path (AlreadyAt case)
+    snapshot_switch_from_dir(
+        "switch_already_at_path_mismatch",
+        &repo,
+        &["feature-already"],
+        &wrong_path,
+    );
+}
+
 /// Test that switching to a branch errors when path is occupied by worktree on different branch
 ///
 /// With branch-first lookup, if a worktree was created for "feature" but then switched to

@@ -1,10 +1,10 @@
 [post-start]
 # Seed compiled deps from main worktree using CoW (~3s vs ~68s full rebuild)
 deps = """
-[ -d {{ repo_root }}/target/debug/deps ] && [ ! -e target ] &&
+[ -d {{ repo_path }}/target/debug/deps ] && [ ! -e target ] &&
 mkdir -p target/debug/deps &&
-cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps/*.rmeta target/debug/deps/ &&
-cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build target/debug/
+cp -c {{ repo_path }}/target/debug/deps/*.rlib {{ repo_path }}/target/debug/deps/*.rmeta target/debug/deps/ &&
+cp -cR {{ repo_path }}/target/debug/.fingerprint {{ repo_path }}/target/debug/build target/debug/
 """
 assets = "./dev/fetch-assets"
 docs = "cd docs && zola serve -p {{ branch | hash_port }}"
