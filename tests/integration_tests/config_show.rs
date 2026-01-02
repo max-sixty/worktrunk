@@ -17,7 +17,7 @@ fn test_config_show_with_project_config(mut repo: TestRepo, temp_home: TempDir) 
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [projects."test-project"]
 approved-commands = ["npm install"]
@@ -61,7 +61,7 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -91,7 +91,7 @@ fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -324,7 +324,7 @@ fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: Te
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"",
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
     )
     .unwrap();
 
@@ -360,7 +360,7 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"\n\n[commit-gen]\ncommand = \"llm\"",
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"\n\n[commit-gen]\ncommand = \"llm\"",
     )
     .unwrap();
 
@@ -388,7 +388,7 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        "worktree-path = \"../{{ main_worktree }}.{{ branch }}\"",
+        "worktree-path = \"../{{ repo }}.{{ branch }}\"",
     )
     .unwrap();
 
@@ -421,7 +421,7 @@ fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDi
     let config_path = global_config_dir.join("config.toml");
     fs::write(
         &config_path,
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 
 [commit-generation]
 command = "nonexistent-llm-command-12345"
@@ -469,7 +469,7 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -508,7 +508,7 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -536,7 +536,7 @@ fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir)
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -569,7 +569,7 @@ fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();
@@ -629,6 +629,64 @@ alias wt="git worktree"
     });
 }
 
+/// Test deprecated template variables show warning with migration hint
+///
+/// When a config uses deprecated variables (repo_root, worktree, main_worktree),
+/// the CLI should:
+/// 1. Show a warning listing the deprecated variables and their replacements
+/// 2. Create a .new migration file with replacements
+/// 3. Show a hint with the mv command to apply the migration
+#[rstest]
+fn test_deprecated_template_variables_show_warning(repo: TestRepo, temp_home: TempDir) {
+    // Write config with deprecated variables to the test config path
+    // (WORKTRUNK_CONFIG_PATH overrides XDG paths in tests)
+    let config_path = repo.test_config_path();
+    fs::write(
+        config_path,
+        // Use all deprecated variables: repo_root, worktree, main_worktree
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+
+[hooks]
+post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
+"#,
+    )
+    .unwrap();
+
+    // Use `wt list` which loads config through WorktrunkConfig::load() and triggers deprecation check
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was created (config.toml -> config.toml.new)
+    let migration_file = config_path.with_extension("toml.new");
+    assert!(
+        migration_file.exists(),
+        "Migration file should be created at {:?}",
+        migration_file
+    );
+
+    // Verify migration file has replacements
+    let migrated_content = fs::read_to_string(&migration_file).unwrap();
+    assert!(
+        migrated_content.contains("{{ repo }}"),
+        "Migration should replace main_worktree with repo"
+    );
+    assert!(
+        migrated_content.contains("{{ repo_path }}"),
+        "Migration should replace repo_root with repo_path"
+    );
+    assert!(
+        migrated_content.contains("{{ worktree_path }}"),
+        "Migration should replace worktree with worktree_path"
+    );
+}
+
 /// Test `wt config show` with shell integration active (WORKTRUNK_DIRECTIVE_FILE set)
 #[rstest]
 fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: TempDir) {
@@ -640,7 +698,7 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
     fs::create_dir_all(&global_config_dir).unwrap();
     fs::write(
         global_config_dir.join("config.toml"),
-        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+        r#"worktree-path = "../{{ repo }}.{{ branch }}"
 "#,
     )
     .unwrap();

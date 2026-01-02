@@ -285,7 +285,8 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
             ))
         )?;
         writeln!(out)?;
-        let default_config = "# Default configuration:\nworktree-path = \"../{{ main_worktree }}.{{ branch | sanitize }}\"";
+        let default_config =
+            "# Default configuration:\nworktree-path = \"../{{ repo }}.{{ branch | sanitize }}\"";
         write!(out, "{}", format_toml(default_config))?;
         return Ok(());
     }

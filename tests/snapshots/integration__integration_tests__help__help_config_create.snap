@@ -13,6 +13,7 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -53,11 +54,11 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m
   [2m# Commit Message Generation (Optional)
   [2m# For generating commit messages during merge operations (wt merge)
-  [2m[commit-generation]
+  [2m# [commit-generation]
   [2m# Example: Simon Willison's llm CLI (https://github.com/simonw/llm)
   [2m# Install: pip install llm llm-anthropic
-  [2mcommand = "llm"
-  [2margs = ["-m", "claude-haiku-4.5"]
+  [2m# command = "llm"
+  [2m# args = ["-m", "claude-haiku-4.5"]
   [2m
   [2m# Alternative: AIChat - Rust-based, supports 20+ providers
   [2m# Install from: https://github.com/sigoden/aichat
@@ -246,10 +247,10 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# developers working on the project.
   [2m
   [2m# Available template variables (all hooks):
-  [2m#   {{ repo }}      - Repository name (e.g., "my-project")
-  [2m#   {{ branch }}    - Raw branch name (e.g., "feature/foo")
-  [2m#   {{ worktree }}  - Absolute path to the worktree
-  [2m#   {{ repo_root }} - Absolute path to the repository root
+  [2m#   {{ repo }}           - Repository name (e.g., "my-project")
+  [2m#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
+  [2m#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
+  [2m#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
   [2m#
   [2m# Merge-related hooks also support:
   [2m#   {{ target }}    - Target branch for the merge (e.g., "main" default branch)

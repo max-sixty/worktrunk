@@ -951,16 +951,19 @@ All variables are shell-escaped:
 |----------|-------------|
 | `{{ branch }}` | Branch name (raw, e.g., `feature/foo`) |
 | `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
-| `{{ worktree }}` | Absolute path to the worktree |
+| `{{ repo }}` | Repository directory name |
+| `{{ repo_path }}` | Absolute path to repository root |
 | `{{ worktree_name }}` | Worktree directory name |
-| `{{ repo }}` | Repository name |
-| `{{ repo_root }}` | Absolute path to the main repository root |
+| `{{ worktree_path }}` | Absolute path to current worktree |
+| `{{ main_worktree_path }}` | Default branch worktree path |
 | `{{ commit }}` | Current HEAD commit SHA (full) |
 | `{{ short_commit }}` | Current HEAD commit SHA (7 chars) |
 | `{{ default_branch }}` | Default branch name (e.g., "main") |
 | `{{ remote }}` | Primary remote name (e.g., "origin") |
 | `{{ remote_url }}` | Primary remote URL |
 | `{{ upstream }}` | Upstream tracking branch, if configured |
+
+**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`).
 
 ## Examples
 
@@ -1614,11 +1617,12 @@ Hooks can use template variables that expand at runtime:
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `{{ repo }}` | my-project | Repository name |
+| `{{ repo }}` | my-project | Repository directory name |
+| `{{ repo_path }}` | /path/to/my-project | Absolute path to repository root |
 | `{{ branch }}` | feature-foo | Branch name |
-| `{{ worktree }}` | /path/to/worktree | Absolute worktree path |
 | `{{ worktree_name }}` | my-project.feature-foo | Worktree directory name |
-| `{{ repo_root }}` | /path/to/main | Repository root path |
+| `{{ worktree_path }}` | /path/to/my-project.feature-foo | Absolute worktree path |
+| `{{ main_worktree_path }}` | /path/to/my-project | Default branch worktree |
 | `{{ default_branch }}` | main | Default branch name |
 | `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
 | `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |
@@ -1626,6 +1630,10 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
+
+See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
+
+**Deprecated:** `repo_root` (use `repo_path`), `worktree` (use `worktree_path`), `main_worktree` (use `repo`). These still work but emit warnings.
 
 ### Filters
 
@@ -1708,11 +1716,11 @@ Cross-platform pattern that auto-detects and falls back gracefully:
 [post-create]
 deps = """
 if cp -c /dev/null /dev/null 2>/dev/null; then
-    cp -c -r {{ repo_root }}/node_modules .
+    cp -c -r {{ main_worktree_path }}/node_modules .
 elif cp --reflink=auto /dev/null /dev/null 2>/dev/null; then
-    cp --reflink=auto -r {{ repo_root }}/node_modules .
+    cp --reflink=auto -r {{ main_worktree_path }}/node_modules .
 else
-    cp -r {{ repo_root }}/node_modules .
+    cp -r {{ main_worktree_path }}/node_modules .
 fi
 """
 ```
@@ -1870,10 +1878,10 @@ The `target/` directory is huge (often 1-10GB) and benefits most from CoW. Workt
 ```toml
 [post-start]
 deps = """
-[ -d {{ repo_root }}/target/debug/deps ] && [ ! -e target ] &&
+[ -d {{ main_worktree_path }}/target/debug/deps ] && [ ! -e target ] &&
 mkdir -p target/debug/deps &&
-cp -c {{ repo_root }}/target/debug/deps/*.rlib {{ repo_root }}/target/debug/deps/*.rmeta target/debug/deps/ &&
-cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/build target/debug/
+cp -c {{ main_worktree_path }}/target/debug/deps/*.rlib {{ main_worktree_path }}/target/debug/deps/*.rmeta target/debug/deps/ &&
+cp -cR {{ main_worktree_path }}/target/debug/.fingerprint {{ main_worktree_path }}/target/debug/build target/debug/
 """
 ```
 
@@ -1901,14 +1909,14 @@ venv = "python -m venv .venv && .venv/bin/pip install -r requirements.txt"
 
 ```toml
 [post-create]
-deps = "cp -c -r {{ repo_root }}/node_modules . 2>/dev/null || npm ci"
+deps = "cp -c -r {{ main_worktree_path }}/node_modules . 2>/dev/null || npm ci"
 ```
 
 If the project has no native dependencies, symlinks are even faster:
 
 ```toml
 [post-create]
-deps = "ln -sf {{ repo_root }}/node_modules ."
+deps = "ln -sf {{ main_worktree_path }}/node_modules ."
 ```
 
 ### Hook flow patterns

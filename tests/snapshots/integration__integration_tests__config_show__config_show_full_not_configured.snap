@@ -33,7 +33,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
+[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m
