@@ -2257,7 +2257,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
         after_long_help = r#"Change directory to a worktree, creating one if needed.
 <!-- demo: wt-switch.gif 1600x900 -->
 
-Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
+Worktrees are addressed by branch name; paths are computed from a template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
 ## Examples
 
@@ -2303,6 +2303,14 @@ wt switch -                      # Back to previous
 wt switch ^                      # Default branch worktree
 wt switch --create fix --base=@  # Branch from current HEAD
 ```
+
+## When wt switch fails
+
+- **Branch doesn't exist** — Use `--create`, or check `wt list --branches`
+- **Path occupied** — Another worktree is at the target path; switch to it or remove it
+- **Stale directory** — Use `--clobber` to remove a non-worktree directory at the target path
+
+To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## See also
 

@@ -12,6 +12,7 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -80,7 +81,8 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
 
 Change directory to a worktree, creating one if needed.
 
-Worktrees are addressed by branch name — each worktree has exactly one branch, and the path is derived automatically.
+Worktrees are addressed by branch name; paths are computed from a template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing
+branches in place.
 
 [32mExamples
 
@@ -120,6 +122,14 @@ When creating a worktree, worktrunk:
   [2mwt switch -                      # Back to previous
   [2mwt switch ^                      # Default branch worktree
   [2mwt switch --create fix --base=@  # Branch from current HEAD
+
+[32mWhen wt switch fails
+
+- [1mBranch doesn't exist[0m — Use [2m--create[0m, or check [2mwt list --branches
+- [1mPath occupied[0m — Another worktree is at the target path; switch to it or remove it
+- [1mStale directory[0m — Use [2m--clobber[0m to remove a non-worktree directory at the target path
+
+To change which branch a worktree is on, use [2mgit switch[0m inside that worktree.
 
 [32mSee also
 
