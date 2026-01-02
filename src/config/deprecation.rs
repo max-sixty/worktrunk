@@ -92,60 +92,19 @@ pub fn replace_deprecated_vars(content: &str) -> String {
     result
 }
 
-/// Replace a single template variable throughout the content
+/// Replace a single template variable within Jinja blocks ({{ }} and {% %})
 fn replace_template_var(content: &str, old_var: &str, new_var: &str) -> String {
-    let mut result = String::with_capacity(content.len());
-    let mut remaining = content;
+    use regex::Regex;
 
-    while let Some(start) = remaining.find("{{") {
-        // Add everything before {{
-        result.push_str(&remaining[..start]);
-        let after_braces = &remaining[start + 2..];
+    // Match Jinja blocks: {{ ... }} or {% ... %} (non-greedy, dotall for multiline)
+    let block_re = Regex::new(r"(?s)\{\{.*?\}\}|\{%.*?%\}").unwrap();
+    let var_re = Regex::new(&format!(r"\b{}\b", regex::escape(old_var))).unwrap();
 
-        // Skip leading whitespace
-        let trimmed = after_braces.trim_start();
-
-        // Check if this is our variable
-        if let Some(after_var) = trimmed.strip_prefix(old_var) {
-            // Must be followed by whitespace, "|", or "}}"
-            if after_var.starts_with(char::is_whitespace)
-                || after_var.starts_with('|')
-                || after_var.starts_with("}}")
-            {
-                // Find the end of the template expression FIRST before emitting anything
-                if let Some(end) = after_var.find("}}") {
-                    // Replace with new variable name, normalizing whitespace
-                    result.push_str("{{ ");
-                    result.push_str(new_var);
-
-                    // Include filter if present
-                    let between = after_var[..end].trim();
-                    if !between.is_empty() {
-                        // Normalize: "| filter" or "|filter" -> " | filter"
-                        if let Some(filter) = between.strip_prefix('|') {
-                            result.push_str(" | ");
-                            result.push_str(filter.trim());
-                        } else {
-                            result.push(' ');
-                            result.push_str(between);
-                        }
-                    }
-                    result.push_str(" }}");
-                    remaining = &after_var[end + 2..];
-                    continue;
-                }
-                // No closing }} found - fall through to preserve original
-            }
-        }
-
-        // Not our variable, preserve the {{
-        result.push_str("{{");
-        remaining = after_braces;
-    }
-
-    // Add any remaining content
-    result.push_str(remaining);
-    result
+    block_re
+        .replace_all(content, |caps: &regex::Captures| {
+            var_re.replace_all(&caps[0], new_var).into_owned()
+        })
+        .into_owned()
 }
 
 /// Check config content for deprecated variables and optionally create migration file
@@ -358,14 +317,14 @@ post-create = "cd {{ worktree_path }} && npm install"
     fn test_replace_deprecated_vars_no_spaces() {
         let content = "{{repo_root}}";
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{ repo_path }}");
+        assert_eq!(result, "{{repo_path}}"); // Preserves original formatting
     }
 
     #[test]
     fn test_replace_deprecated_vars_filter_no_spaces() {
         let content = "{{repo_root|sanitize}}";
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{ repo_path | sanitize }}");
+        assert_eq!(result, "{{repo_path|sanitize}}"); // Preserves original formatting
     }
 
     #[test]
@@ -398,10 +357,10 @@ post-create = "echo hello"
     }
 
     #[test]
-    fn test_replace_deprecated_vars_normalizes_whitespace() {
+    fn test_replace_deprecated_vars_preserves_whitespace() {
         let content = "{{  repo_root  }}";
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, "{{ repo_path }}");
+        assert_eq!(result, "{{  repo_path  }}"); // Preserves original formatting
     }
 
     #[test]
@@ -416,10 +375,13 @@ post-create = "echo hello"
     }
 
     #[test]
-    fn test_replace_malformed_template_no_closing_braces() {
-        // Malformed template without closing }} should be preserved exactly
-        let content = "{{ repo_root without closing";
+    fn test_replace_in_statement_blocks() {
+        // Word boundary replacement handles {% %} blocks too
+        let content = r#"{% if repo_root %}echo {{ repo_root }}{% endif %}"#;
         let result = replace_deprecated_vars(content);
-        assert_eq!(result, content, "Malformed template should be preserved");
+        assert_eq!(
+            result,
+            r#"{% if repo_path %}echo {{ repo_path }}{% endif %}"#
+        );
     }
 }
