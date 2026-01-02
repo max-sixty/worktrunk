@@ -24,6 +24,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -32,7 +33,7 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[107m [0m  worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
+[107m [0m worktree-path = [32m"../{{ main_worktree }}.{{ branch }}"
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m
@@ -45,3 +46,7 @@ exit_code: 0
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
 [2m↳[22m [2mCommit generation not configured[22m
+
+[36mRUNTIME[39m
+[107m [0m [1mwt[22m [2m[VERSION][22m
+[2m↳[22m [2mShell integration not active[22m
