@@ -82,7 +82,7 @@ fn escape_shell_string(s: &str) -> String {
 /// Write a mock shell script, with platform-appropriate setup.
 ///
 /// On Unix: writes directly as executable script
-/// On Windows: writes script + .bat/.cmd shims that invoke via bash
+/// On Windows: writes script (no extension) for Git Bash + .bat/.cmd shims for CMD
 fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
     #[cfg(unix)]
     {
@@ -94,14 +94,15 @@ fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
 
     #[cfg(windows)]
     {
-        // Write the shell script with .sh extension
-        let script_path = bin_dir.join(format!("{}.sh", name));
+        // Write the shell script without extension (for Git Bash)
+        // Git Bash executes files with shebangs directly, no extension needed
+        let script_path = bin_dir.join(name);
         fs::write(&script_path, script).unwrap();
 
-        // Create .bat and .cmd shims that invoke via bash
+        // Create .bat and .cmd shims (for CMD/PowerShell)
         // %~dp0 expands to the directory containing the batch file
         // %* forwards all arguments
-        let shim = format!("@bash \"%~dp0{}.sh\" %*\n", name);
+        let shim = format!("@bash \"%~dp0{}\" %*\n", name);
         fs::write(bin_dir.join(format!("{}.cmd", name)), &shim).unwrap();
         fs::write(bin_dir.join(format!("{}.bat", name)), &shim).unwrap();
     }
@@ -300,7 +301,7 @@ mod tests {
 
         #[cfg(windows)]
         {
-            assert!(bin_dir.join("test-cmd.sh").exists());
+            assert!(bin_dir.join("test-cmd").exists()); // Shell script for Git Bash
             assert!(bin_dir.join("test-cmd.cmd").exists());
             assert!(bin_dir.join("test-cmd.bat").exists());
         }
@@ -318,7 +319,7 @@ mod tests {
 
         #[cfg(windows)]
         {
-            assert!(bin_dir.join("simple-cmd.sh").exists());
+            assert!(bin_dir.join("simple-cmd").exists()); // Shell script for Git Bash
             assert!(bin_dir.join("simple-cmd.cmd").exists());
             assert!(bin_dir.join("simple-cmd.bat").exists());
         }
