@@ -160,21 +160,43 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let version = version_str();
     let shell_active = output::is_shell_integration_active();
 
-    writeln!(out, "{}", format_heading("RUNTIME", None))?;
-
-    // Version and binary name on one line
+    // Version as suffix to heading (avoid lonely gutter)
     writeln!(
         out,
         "{}",
-        format_with_gutter(&cformat!("<bold>{cmd}</> <dim>{version}</>"), None)
+        format_heading("RUNTIME", Some(&cformat!("{cmd} {version}")))
     )?;
 
     // Shell integration status
     if shell_active {
         writeln!(out, "{}", info_message("Shell integration active"))?;
     } else {
-        writeln!(out, "{}", hint_message("Shell integration not active"))?;
+        writeln!(out, "{}", warning_message("Shell integration not active"))?;
     }
+
+    // Debug info for shell integration troubleshooting
+    // Show invocation details that help diagnose issues like https://github.com/max-sixty/worktrunk/pull/387
+    let invocation = crate::invocation_path();
+    let is_git_subcommand = crate::is_git_subcommand();
+    let is_explicit_path = crate::was_invoked_with_explicit_path();
+
+    // Build debug lines
+    let mut debug_lines = Vec::new();
+
+    // Always show how wt was invoked
+    debug_lines.push(cformat!("Invoked as: <bold>{invocation}</>"));
+
+    // Show relevant detection flags
+    if is_git_subcommand {
+        debug_lines.push("Git subcommand: yes (GIT_EXEC_PATH set)".to_string());
+    }
+    if is_explicit_path {
+        debug_lines.push("Explicit path: yes (contains path separator)".to_string());
+    }
+
+    // Show all debug info in a gutter
+    let debug_text = debug_lines.join("\n");
+    writeln!(out, "{}", format_with_gutter(&debug_text, None))?;
 
     Ok(())
 }

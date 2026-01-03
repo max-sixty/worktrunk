@@ -367,13 +367,6 @@ pub struct SwitchBranchInfo {
     pub expected_path: Option<PathBuf>,
 }
 
-impl SwitchBranchInfo {
-    /// The branch name
-    pub fn branch(&self) -> &str {
-        &self.branch
-    }
-}
-
 /// How the branch should be handled after worktree removal.
 ///
 /// This enum replaces the previous `no_delete_branch: bool, force_delete: bool` pattern,

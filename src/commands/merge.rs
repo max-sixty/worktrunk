@@ -26,65 +26,41 @@ pub struct MergeOptions<'a> {
     pub stage_mode: super::commit::StageMode,
 }
 
-/// Reason why a worktree was preserved (not removed) after merge
-enum PreserveReason {
-    /// User explicitly passed --no-remove
-    NoRemoveFlag,
-    /// Running from the main worktree (can't remove main worktree)
-    IsMainWorktree,
-    /// Current branch is the same as the target branch
-    AlreadyOnTarget,
-}
-
-/// Context for collecting merge commands
-struct MergeCommandCollector<'a> {
-    repo: &'a Repository,
-    no_commit: bool,
-    no_verify: bool,
+/// Collect all commands that will be executed during merge.
+///
+/// Returns (commands, project_identifier) for batch approval.
+fn collect_merge_commands(
+    repo: &Repository,
+    commit: bool,
+    verify: bool,
     will_remove: bool,
-}
+) -> anyhow::Result<(Vec<HookCommand>, String)> {
+    let mut all_commands = Vec::new();
+    let project_config = match repo.load_project_config()? {
+        Some(cfg) => cfg,
+        None => return Ok((all_commands, repo.project_identifier()?.to_string())),
+    };
 
-/// Commands collected for batch approval with their project identifier
-/// - `Vec<HookCommand>`: Commands with their hook types for approval display
-/// - `String`: Project identifier for config lookup
-type CollectedCommands = (Vec<HookCommand>, String);
+    // Collect pre-commit commands if we'll commit (direct or via squash)
+    let mut hooks = Vec::new();
 
-impl<'a> MergeCommandCollector<'a> {
-    /// Collect all commands that will be executed during merge
-    ///
-    /// Returns original (unexpanded) commands for approval matching
-    fn collect(self) -> anyhow::Result<CollectedCommands> {
-        let mut all_commands = Vec::new();
-        let project_config = match self.repo.load_project_config()? {
-            Some(cfg) => cfg,
-            None => return Ok((all_commands, self.repo.project_identifier()?.to_string())),
-        };
-
-        // Collect original commands (not expanded) for approval
-        // Expansion happens later in prepare_commands during execution
-
-        // Collect pre-commit commands if we'll commit (direct or via squash)
-        // These run before: (1) direct commit (line 179), or (2) squash commit (line 194 → handle_dev_squash)
-        let mut hooks = Vec::new();
-
-        if !self.no_commit && !self.no_verify && self.repo.is_dirty()? {
-            hooks.push(HookType::PreCommit);
-        }
-
-        if !self.no_verify {
-            hooks.push(HookType::PreMerge);
-            hooks.push(HookType::PostMerge);
-            if self.will_remove {
-                hooks.push(HookType::PreRemove);
-                hooks.push(HookType::PostSwitch);
-            }
-        }
-
-        all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
-
-        let project_id = self.repo.project_identifier()?.to_string();
-        Ok((all_commands, project_id))
+    if commit && verify && repo.is_dirty()? {
+        hooks.push(HookType::PreCommit);
     }
+
+    if verify {
+        hooks.push(HookType::PreMerge);
+        hooks.push(HookType::PostMerge);
+        if will_remove {
+            hooks.push(HookType::PreRemove);
+            hooks.push(HookType::PostSwitch);
+        }
+    }
+
+    all_commands.extend(collect_commands_for_hooks(&project_config, &hooks));
+
+    let project_id = repo.project_identifier()?.to_string();
+    Ok((all_commands, project_id))
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
@@ -129,13 +105,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let remove_effective = remove && !on_target && !in_main;
 
     // Collect and approve all commands upfront for batch permission request
-    let (all_commands, project_id) = MergeCommandCollector {
-        repo,
-        no_commit: !commit,
-        no_verify: !verify,
-        will_remove: remove_effective,
-    }
-    .collect()?;
+    let (all_commands, project_id) =
+        collect_merge_commands(repo, commit, verify, remove_effective)?;
 
     // Approve all commands in a single batch (shows templates, not expanded values)
     let approved = approve_command_batch(&all_commands, &project_id, config, yes, false)?;
@@ -253,19 +224,19 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             force_worktree: false,
         };
         // Run hooks during merge removal (pass through verify flag)
-        // Approval was handled at the gate (MergeCommandCollector)
+        // Approval was handled at the gate (collect_merge_commands)
         crate::output::handle_remove_output(&remove_result, true, verify)?;
     } else {
-        // Print comprehensive summary (worktree preserved)
-        // Priority: main worktree > on target > --no-remove flag
-        let reason = if in_main {
-            PreserveReason::IsMainWorktree
+        // Worktree preserved - show reason (priority: main worktree > on target > --no-remove flag)
+        let message = if in_main {
+            "Worktree preserved (main worktree)"
         } else if on_target {
-            PreserveReason::AlreadyOnTarget
+            "Worktree preserved (already on target branch)"
         } else {
-            PreserveReason::NoRemoveFlag
+            "Worktree preserved (--no-remove)"
         };
-        handle_merge_summary_output(reason)?;
+        crate::output::print(info_message(message))?;
+        crate::output::flush()?;
     }
 
     if verify {
@@ -299,18 +270,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Handle output for merge summary using global output context
-fn handle_merge_summary_output(reason: PreserveReason) -> anyhow::Result<()> {
-    let message = match reason {
-        PreserveReason::IsMainWorktree => "Worktree preserved (main worktree)",
-        PreserveReason::AlreadyOnTarget => "Worktree preserved (already on target branch)",
-        PreserveReason::NoRemoveFlag => "Worktree preserved (--no-remove)",
-    };
-    crate::output::print(info_message(message))?;
-    crate::output::flush()?;
-
-    Ok(())
-}
 /// Run pre-merge commands sequentially (blocking, fail-fast)
 ///
 /// Runs user hooks first, then project hooks.

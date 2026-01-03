@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{Repository, parse_numstat_line};
+use worktrunk::shell::extract_filename_from_path;
 
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
@@ -48,13 +49,19 @@ fn get_diff_pager() -> Option<&'static String> {
 /// pager command with appropriate flags. This would eliminate the need to
 /// maintain a list of pagers that need special handling.
 fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
-    // Split on whitespace to get the command name, then check basename
+    // Split on whitespace to get the command name, then extract basename
+    // Uses extract_filename_from_path for consistent handling of Windows paths and .exe
     pager_cmd
         .split_whitespace()
         .next()
-        .and_then(|cmd| cmd.rsplit('/').next())
+        .and_then(extract_filename_from_path)
         // bat is called "batcat" on Debian/Ubuntu
-        .is_some_and(|basename| matches!(basename, "delta" | "bat" | "batcat"))
+        // Case-insensitive for Windows where commands might be Delta.exe, BAT.EXE, etc.
+        .is_some_and(|basename| {
+            basename.eq_ignore_ascii_case("delta")
+                || basename.eq_ignore_ascii_case("bat")
+                || basename.eq_ignore_ascii_case("batcat")
+        })
 }
 
 /// Maximum time to wait for pager to complete.
@@ -1043,6 +1050,15 @@ mod tests {
         assert!(!pager_needs_paging_disabled("delta-preview"));
         assert!(!pager_needs_paging_disabled("/path/to/delta-preview"));
         assert!(pager_needs_paging_disabled("batcat")); // Debian's bat package name
+
+        // Case-insensitive matching (Windows command names)
+        assert!(pager_needs_paging_disabled("Delta"));
+        assert!(pager_needs_paging_disabled("DELTA"));
+        assert!(pager_needs_paging_disabled("BAT"));
+        assert!(pager_needs_paging_disabled("Bat"));
+        assert!(pager_needs_paging_disabled("BatCat"));
+        assert!(pager_needs_paging_disabled("delta.exe"));
+        assert!(pager_needs_paging_disabled("Delta.EXE"));
     }
 
     #[test]

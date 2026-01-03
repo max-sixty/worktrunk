@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1
+
+### Improved
+
+- **Shell integration debug info**: `wt config show` now displays invocation details (path, git subcommand mode, explicit path usage) to help diagnose shell integration issues. "Shell integration not active" is now a warning instead of a hint.
+
 ## 0.9.0
 
 ### Improved
