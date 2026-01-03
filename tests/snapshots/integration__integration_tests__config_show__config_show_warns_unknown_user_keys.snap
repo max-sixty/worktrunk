@@ -46,6 +46,7 @@ exit_code: 0
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
-[36mRUNTIME[39m
-[107m [0m [1mwt[22m [2m[VERSION][22m
-[2m↳[22m [2mShell integration not active[22m
+[36mRUNTIME[39m  wt [VERSION]
+[33m▲[39m [33mShell integration not active[39m
+[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+[107m [0m Explicit path: yes (contains path separator)

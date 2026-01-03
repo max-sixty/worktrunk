@@ -2130,11 +2130,19 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
 
     // Normalize version strings in `wt config show` RUNTIME section
     // Version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
-    // Match specifically after "wt" (bold+reset) to avoid matching commit hashes elsewhere
-    // Pattern: wt<bold-reset> <dim>VERSION<dim-reset>
+    // New format: version as suffix to RUNTIME heading (e.g., "RUNTIME  wt v0.9.0")
+    // Pattern: <cyan>RUNTIME</cyan>  wt VERSION
     settings.add_filter(
-        r"(\x1b\[1mwt\x1b\[22m \x1b\[2m)(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})(\x1b\[22m)",
-        "$1[VERSION]$2",
+        r"(RUNTIME\x1b\[39m  wt )(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        "${1}[VERSION]",
+    );
+
+    // Normalize project root paths in "Invoked as:" debug output
+    // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
+    // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots
+    settings.add_filter(
+        r"(Invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
+        "${1}[PROJECT_ROOT]/target/$2/wt$3",
     );
 
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency
