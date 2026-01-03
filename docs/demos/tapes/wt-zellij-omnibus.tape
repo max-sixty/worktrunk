@@ -198,3 +198,10 @@ Sleep 3s
 # Done!
 Type "done!"
 Sleep 1.5s
+
+Hide
+# Clean up zellij after recording stops
+Ctrl+Space
+Sleep 200ms
+Type "q"
+Sleep 500ms

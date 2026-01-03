@@ -431,6 +431,36 @@ mod tests {
     }
 
     #[test]
+    fn test_format_indicator_with_options_skips_link() {
+        // When include_link=false, should not include OSC 8 even when URL is present
+        let pr_with_url = PrStatus {
+            ci_status: CiStatus::Passed,
+            source: CiSource::PullRequest,
+            is_stale: false,
+            url: Some("https://github.com/owner/repo/pull/123".to_string()),
+        };
+
+        let with_link = pr_with_url.format_indicator_with_options(true);
+        let without_link = pr_with_url.format_indicator_with_options(false);
+
+        // With link should contain OSC 8
+        assert!(
+            with_link.contains("\x1b]8;;"),
+            "include_link=true should contain OSC 8"
+        );
+
+        // Without link should NOT contain OSC 8
+        assert!(
+            !without_link.contains("\x1b]8;;"),
+            "include_link=false should not contain OSC 8"
+        );
+
+        // Both should contain the indicator
+        assert!(with_link.contains("●"), "Should contain indicator");
+        assert!(without_link.contains("●"), "Should contain indicator");
+    }
+
+    #[test]
     fn test_pr_status_error_constructor() {
         let error = PrStatus::error();
         assert_eq!(error.ci_status, CiStatus::Error);
@@ -1280,13 +1310,22 @@ impl PrStatus {
         }
     }
 
-    /// Format CI status as a colored indicator.
+    /// Format CI status as a colored indicator with clickable link.
     ///
     /// Returns a string like "●" with appropriate ANSI color.
     /// If a PR URL is available, adds underline and wraps in an OSC 8 hyperlink.
     pub fn format_indicator(&self) -> String {
+        self.format_indicator_with_options(true)
+    }
+
+    /// Format CI status with control over link inclusion.
+    ///
+    /// When `include_link` is false, the indicator is colored but not clickable.
+    /// Used for environments that don't support OSC 8 hyperlinks (e.g., Claude Code).
+    pub fn format_indicator_with_options(&self, include_link: bool) -> String {
         let indicator = self.indicator();
-        if let Some(ref url) = self.url {
+        if include_link && self.url.is_some() {
+            let url = self.url.as_ref().unwrap();
             let style = self.style().underline();
             format!(
                 "{}{}{}{}{}",

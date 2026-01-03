@@ -24,8 +24,6 @@
 //! - Simple implementation - no traits, no handler structs
 //! - stdout always available for data output (JSON, etc.)
 
-#[cfg(not(unix))]
-use super::handlers::execute_streaming;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
@@ -36,6 +34,8 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
+#[cfg(not(unix))]
+use worktrunk::shell_exec::execute_streaming;
 use worktrunk::styling::{eprintln, stderr};
 
 /// Global output state, lazily initialized on first access.
@@ -274,6 +274,20 @@ pub fn terminate_output() -> io::Result<()> {
 /// This is useful for handlers that need to know whether shell integration is active.
 pub fn is_shell_integration_active() -> bool {
     has_directive_file()
+}
+
+/// Returns `Some(path)` when shell integration isn't active, `None` otherwise.
+///
+/// Use this to decide whether hook announcements should show "@ path".
+/// When shell integration is active, the user's shell will cd to the path automatically,
+/// so no annotation is needed. When inactive, showing the path helps users understand
+/// where hooks are running.
+pub fn hooks_display_path(path: &std::path::Path) -> Option<&std::path::Path> {
+    if is_shell_integration_active() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 #[cfg(test)]

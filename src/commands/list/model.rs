@@ -369,11 +369,19 @@ impl ListItem {
         self.is_potentially_removable() == Some(true)
     }
 
-    /// Format this item as a single-line statusline string.
+    /// Format this item as a single-line statusline string with clickable links.
     ///
     /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci`
     /// Uses 2-space separators between non-empty parts.
     pub fn format_statusline(&self) -> String {
+        self.format_statusline_with_options(true)
+    }
+
+    /// Format this item as a single-line statusline string with link control.
+    ///
+    /// When `include_links` is false, CI indicators are colored but not clickable.
+    /// Used for environments that don't support OSC 8 hyperlinks (e.g., Claude Code).
+    pub fn format_statusline_with_options(&self, include_links: bool) -> String {
         let mut parts: Vec<String> = Vec::new();
 
         // 1. Branch name
@@ -426,7 +434,7 @@ impl ListItem {
 
         // 7. CI status
         if let Some(Some(ref pr_status)) = self.pr_status {
-            parts.push(pr_status.format_indicator());
+            parts.push(pr_status.format_indicator_with_options(include_links));
         }
 
         parts.join("  ")

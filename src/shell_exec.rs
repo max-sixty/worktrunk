@@ -289,6 +289,241 @@ pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::pro
     result
 }
 
+// ============================================================================
+// Streaming command execution with signal handling
+// ============================================================================
+
+#[cfg(unix)]
+fn process_group_alive(pgid: i32) -> bool {
+    match nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pgid), None) {
+        Ok(_) => true,
+        Err(nix::errno::Errno::ESRCH) => false,
+        Err(_) => true,
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_exit(pgid: i32, grace: std::time::Duration) -> bool {
+    std::thread::sleep(grace);
+    !process_group_alive(pgid)
+}
+
+#[cfg(unix)]
+fn forward_signal_with_escalation(pgid: i32, sig: i32) {
+    let pgid = nix::unistd::Pid::from_raw(pgid);
+    let initial_signal = match sig {
+        signal_hook::consts::SIGINT => nix::sys::signal::Signal::SIGINT,
+        signal_hook::consts::SIGTERM => nix::sys::signal::Signal::SIGTERM,
+        _ => return,
+    };
+
+    let _ = nix::sys::signal::killpg(pgid, initial_signal);
+
+    let grace = std::time::Duration::from_millis(200);
+    match sig {
+        signal_hook::consts::SIGINT => {
+            if !wait_for_exit(pgid.as_raw(), grace) {
+                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
+                if !wait_for_exit(pgid.as_raw(), grace) {
+                    let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+                }
+            }
+        }
+        signal_hook::consts::SIGTERM => {
+            if !wait_for_exit(pgid.as_raw(), grace) {
+                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Execute a command with streaming output
+///
+/// Uses Stdio::inherit for stderr to preserve TTY behavior - this ensures commands like cargo
+/// detect they're connected to a terminal and don't buffer their output.
+///
+/// If `redirect_stdout_to_stderr` is true, redirects child stdout to our stderr at the OS level
+/// (via `Stdio::from(io::stderr())`). This ensures deterministic output ordering (all child output
+/// flows through stderr). Per CLAUDE.md: child process output goes to stderr, worktrunk output
+/// goes to stdout.
+///
+/// If `stdin_content` is provided, it will be piped to the command's stdin (used for hook context JSON).
+///
+/// If `inherit_stdin` is true and `stdin_content` is None, stdin is inherited from the parent process,
+/// enabling interactive programs (like `claude`, `vim`, or `python -i`) to read user input.
+/// If false and `stdin_content` is None, stdin is set to null (appropriate for non-interactive hooks).
+///
+/// Returns error if command exits with non-zero status.
+///
+/// ## Cross-Platform Shell Execution
+///
+/// Uses the platform's preferred shell via `ShellConfig`:
+/// - Unix: `/bin/sh -c`
+/// - Windows: Git Bash if available, PowerShell fallback
+///
+/// ## Signal Handling (Unix)
+///
+/// When `forward_signals` is true, the child is spawned in its own process group and
+/// SIGINT/SIGTERM received by the parent are forwarded to that group so we can abort
+/// the entire command tree without shell-wrapping. If the process group does not exit
+/// promptly, we escalate to SIGTERM/SIGKILL (SIGINT path) or SIGKILL (SIGTERM path).
+/// We still return exit code 128 + signal number (e.g., 130 for SIGINT) to match Unix conventions.
+pub fn execute_streaming(
+    command: &str,
+    working_dir: &std::path::Path,
+    redirect_stdout_to_stderr: bool,
+    stdin_content: Option<&str>,
+    inherit_stdin: bool,
+    forward_signals: bool,
+) -> anyhow::Result<()> {
+    use crate::git::{GitError, WorktrunkError};
+    use std::io::Write;
+    #[cfg(unix)]
+    use {
+        signal_hook::consts::{SIGINT, SIGTERM},
+        signal_hook::iterator::Signals,
+        std::os::unix::process::CommandExt,
+    };
+
+    let shell = ShellConfig::get();
+    #[cfg(not(unix))]
+    let _ = forward_signals;
+
+    // Determine stdout handling based on redirect flag
+    // When redirecting, use Stdio::from(stderr) to redirect child stdout to our stderr at OS level.
+    // This keeps stdout reserved for data output while hook output goes to stderr.
+    // Previously used shell-level `{ cmd } 1>&2` wrapping, but OS-level redirect is simpler
+    // and may improve signal handling by removing an extra shell process layer.
+    let stdout_mode = if redirect_stdout_to_stderr {
+        std::process::Stdio::from(std::io::stderr())
+    } else {
+        std::process::Stdio::inherit()
+    };
+
+    let stdin_mode = if stdin_content.is_some() {
+        std::process::Stdio::piped()
+    } else if inherit_stdin {
+        std::process::Stdio::inherit()
+    } else {
+        std::process::Stdio::null()
+    };
+
+    #[cfg(unix)]
+    let mut signals = if forward_signals {
+        Some(Signals::new([SIGINT, SIGTERM])?)
+    } else {
+        None
+    };
+
+    let mut cmd = shell.command(command);
+    #[cfg(unix)]
+    if forward_signals {
+        // Isolate the child in its own process group so we can signal the whole tree.
+        cmd.process_group(0);
+    }
+    let mut child = cmd
+        .current_dir(working_dir)
+        .stdin(stdin_mode)
+        .stdout(stdout_mode)
+        .stderr(std::process::Stdio::inherit()) // Preserve TTY for errors
+        // Prevent vergen "overridden" warning in nested cargo builds when run via `cargo run`.
+        // Add more VERGEN_* variables here if we expand build.rs and hit similar issues.
+        .env_remove("VERGEN_GIT_DESCRIBE")
+        // Prevent hooks from writing to the directive file
+        .env_remove(DIRECTIVE_FILE_ENV_VAR)
+        .spawn()
+        .map_err(|e| {
+            anyhow::Error::from(GitError::Other {
+                message: format!("Failed to execute command with {}: {}", shell.name, e),
+            })
+        })?;
+
+    // Write stdin content if provided (used for hook context JSON)
+    // We ignore write errors here because:
+    // 1. The child may have already exited (broken pipe)
+    // 2. Hooks that don't read stdin will still work
+    // 3. Hooks that need stdin will fail with their own error message
+    if let Some(content) = stdin_content
+        && let Some(mut stdin) = child.stdin.take()
+    {
+        // Write and close stdin immediately so the child doesn't block waiting for more input
+        let _ = stdin.write_all(content.as_bytes());
+        // stdin is dropped here, closing the pipe
+    }
+
+    #[cfg(unix)]
+    let (status, seen_signal) = if forward_signals {
+        let child_pgid = child.id() as i32;
+        let mut seen_signal: Option<i32> = None;
+        loop {
+            if let Some(status) = child.try_wait().map_err(|e| {
+                anyhow::Error::from(GitError::Other {
+                    message: format!("Failed to wait for command: {}", e),
+                })
+            })? {
+                break (status, seen_signal);
+            }
+            if let Some(signals) = signals.as_mut() {
+                for sig in signals.pending() {
+                    if seen_signal.is_none() {
+                        seen_signal = Some(sig);
+                        forward_signal_with_escalation(child_pgid, sig);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    } else {
+        let status = child.wait().map_err(|e| {
+            anyhow::Error::from(GitError::Other {
+                message: format!("Failed to wait for command: {}", e),
+            })
+        })?;
+        (status, None)
+    };
+
+    #[cfg(not(unix))]
+    let status = child.wait().map_err(|e| {
+        anyhow::Error::from(GitError::Other {
+            message: format!("Failed to wait for command: {}", e),
+        })
+    })?;
+
+    #[cfg(unix)]
+    if let Some(sig) = seen_signal {
+        return Err(WorktrunkError::ChildProcessExited {
+            code: 128 + sig,
+            message: format!("terminated by signal {}", sig),
+        }
+        .into());
+    }
+
+    // Check if child was killed by a signal (Unix only)
+    // This handles Ctrl-C: when SIGINT is sent, the child receives it and terminates,
+    // and we propagate the signal exit code (128 + signal number, e.g., 130 for SIGINT)
+    #[cfg(unix)]
+    if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return Err(WorktrunkError::ChildProcessExited {
+            code: 128 + sig,
+            message: format!("terminated by signal {}", sig),
+        }
+        .into());
+    }
+
+    if !status.success() {
+        // Get the exit code if available (None means terminated by signal on some platforms)
+        let code = status.code().unwrap_or(1);
+        return Err(WorktrunkError::ChildProcessExited {
+            code,
+            message: format!("exit status: {}", code),
+        }
+        .into());
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

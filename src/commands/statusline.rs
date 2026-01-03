@@ -154,10 +154,10 @@ pub fn run(claude_code: bool) -> Result<()> {
         None
     };
 
-    // Git status
+    // Git status (skip links in claude-code mode - OSC 8 not supported)
     let repo = Repository::at(&cwd);
     if repo.git_dir().is_ok()
-        && let Some(status_line) = get_git_status(&repo, &cwd)?
+        && let Some(status_line) = get_git_status(&repo, &cwd, !claude_code)?
     {
         // In claude-code mode, skip branch name if directory matches worktrunk template
         // TODO: Use actual configured template from config instead of hardcoding ".{branch}"
@@ -207,7 +207,9 @@ pub fn run(claude_code: bool) -> Result<()> {
 }
 
 /// Get git status line for the current worktree
-fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
+///
+/// When `include_links` is true, CI status includes clickable OSC 8 hyperlinks.
+fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<Option<String>> {
     // Get current worktree info
     let worktrees = repo.list_worktrees()?;
     let current_worktree = worktrees.iter().find(|wt| cwd.starts_with(&wt.path));
@@ -252,12 +254,13 @@ fn get_git_status(repo: &Repository, cwd: &Path) -> Result<Option<String>> {
         CollectOptions::default(),
     )?;
 
-    // Return the pre-formatted statusline
-    if let Some(ref statusline) = item.display.statusline {
-        Ok(Some(statusline.clone()))
-    } else {
+    // Format statusline with link control
+    let statusline = item.format_statusline_with_options(include_links);
+    if statusline.is_empty() {
         // Fallback: just show branch name
         Ok(Some(wt.branch.as_deref().unwrap_or("HEAD").to_string()))
+    } else {
+        Ok(Some(statusline))
     }
 }
 

@@ -34,7 +34,6 @@ output::change_directory(&path)?;  // Writes to directive file if set, else no-o
 | Function | Destination | Purpose |
 |----------|-------------|---------|
 | `print(message)` | stderr | Status messages (use with formatting functions) |
-| `shell_integration_hint(message)` | stderr | Hints suppressed when shell integration active |
 | `blank()` | stderr | Visual separation |
 | `stdout(content)` | stdout | Primary output (tables, JSON, pipeable) |
 | `change_directory(path)` | directive file | Shell cd after wt exits |
@@ -99,7 +98,6 @@ edge cases. After consolidation, the thin wrappers (`print`, `stdout`,
 **What still provides value:**
 
 - `change_directory()`, `execute()` — IPC with shell wrapper via directive file
-- `shell_integration_hint()` — conditional suppression logic
 - `terminate_output()` — ANSI reset when needed
 
 **What could be further simplified:**
@@ -111,3 +109,7 @@ edge cases. After consolidation, the thin wrappers (`print`, `stdout`,
 The abstraction cost is low, but if we wanted to reduce indirection, these
 wrappers could be removed. The main value they provide is consistency (correct
 stream, always flushing).
+
+## Related
+
+For message content and styling conventions, see `cli-output-formatting.md`.
