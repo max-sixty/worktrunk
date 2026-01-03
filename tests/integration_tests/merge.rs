@@ -1084,8 +1084,9 @@ mod tests {
     repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
 
     // Configure LLM in worktrunk config for deterministic, high-quality commit messages
-    // On Windows, use forward slashes in the config for shell compatibility
-    let llm_path = bin_dir.join("llm");
+    // On Windows, direct execution needs .cmd extension; use forward slashes for shell compatibility
+    let llm_name = if cfg!(windows) { "llm.cmd" } else { "llm" };
+    let llm_path = bin_dir.join(llm_name);
     let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
     let worktrunk_config = format!(
         r#"
@@ -1267,8 +1268,9 @@ def refresh_token(token: str) -> Optional[Dict]:
     repo.run_git_in(&feature_wt, &["commit", "-m", "Add validation"]);
 
     // Configure LLM in worktrunk config
-    // On Windows, use forward slashes in the config for shell compatibility
-    let llm_path = bin_dir.join("llm");
+    // On Windows, direct execution needs .cmd extension; use forward slashes for shell compatibility
+    let llm_name = if cfg!(windows) { "llm.cmd" } else { "llm" };
+    let llm_path = bin_dir.join(llm_name);
     let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
     let worktrunk_config = format!(
         r#"
