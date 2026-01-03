@@ -3,9 +3,16 @@
 //! These tests verify that the CI status parsing code correctly handles
 //! JSON responses from GitHub (gh) and GitLab (glab) CLI tools.
 //!
-//! On Windows, the test infrastructure sets PATHEXT to prefer .BAT before .EXE
-//! and removes directories containing real gh.exe from PATH. This allows our
-//! mock gh.bat scripts to be found by Command::new("gh").
+//! ## Windows skip
+//!
+//! These tests are skipped on Windows because Rust's `Command::new("gh")` uses
+//! CreateProcessW, which searches PATH for `.exe` files only — it doesn't respect
+//! PATHEXT like cmd.exe does. Our mock infrastructure creates `.bat`/`.cmd` files,
+//! which aren't found by CreateProcessW. Creating a real `.exe` stub would require
+//! a separate helper crate with significant complexity.
+//!
+//! The CI status feature works identically on Windows (just calls `gh`/`glab`),
+//! and the core functionality is verified by Unix tests.
 
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
@@ -18,6 +25,7 @@ fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
 
 /// Test CI status detection with GitHub PR showing passed checks
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -59,6 +67,7 @@ fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
 
 /// Test CI status detection with GitHub PR showing failed checks
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -100,6 +109,7 @@ fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
 
 /// Test CI status detection with GitHub PR showing running checks
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -141,6 +151,7 @@ fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
 
 /// Test CI status detection with GitHub PR showing conflicts
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -182,6 +193,7 @@ fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
 
 /// Test CI status detection with StatusContext (external CI like pre-commit.ci)
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -223,6 +235,7 @@ fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
 
 /// Test CI status detection with StatusContext failure (external CI)
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -264,6 +277,7 @@ fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
 
 /// Test CI status detection with no PR but workflow run
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -301,6 +315,7 @@ fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
 
 /// Test CI status detection with workflow run in progress
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -338,6 +353,7 @@ fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
 
 /// Test CI status with stale PR (local HEAD differs from PR HEAD)
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_stale_pr(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -380,6 +396,7 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
 
 /// Test CI status detection with mixed CheckRun and StatusContext results
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -423,6 +440,7 @@ fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
 
 /// Test CI status detection when PR has no checks configured
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -462,6 +480,7 @@ fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
 
 /// Test filtering PRs by repository owner
 #[rstest]
+#[cfg_attr(windows, ignore)]
 fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     // Add GitHub remote with specific owner
     repo.run_git(&[
