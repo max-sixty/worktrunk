@@ -8,14 +8,14 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::git::Repository;
-use worktrunk::shell_exec::run;
+use worktrunk::git::{Repository, parse_numstat_line};
 
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
 use super::list::model::ListItem;
 use super::worktree::handle_switch;
 use crate::output::handle_switch_output;
+use crate::pager::{git_config_pager, parse_pager_value};
 
 /// Cached pager command, detected once at startup.
 ///
@@ -27,29 +27,13 @@ static CACHED_PAGER: OnceLock<Option<String>> = OnceLock::new();
 fn get_diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
-            // Returns Some(pager) if valid, None if empty/cat (no pager desired)
-            let parse_pager = |s: &str| -> Option<String> {
-                let trimmed = s.trim();
-                (!trimmed.is_empty() && trimmed != "cat").then(|| trimmed.to_string())
-            };
-
             // GIT_PAGER takes precedence - if set (even to "cat" or empty), don't fall back
             if let Ok(pager) = std::env::var("GIT_PAGER") {
-                return parse_pager(&pager);
+                return parse_pager_value(&pager);
             }
 
             // Fall back to core.pager config
-            let mut cmd = Command::new("git");
-            cmd.args(["config", "--get", "core.pager"]);
-            run(&mut cmd, None).ok().and_then(|output| {
-                if output.status.success() {
-                    String::from_utf8(output.stdout)
-                        .ok()
-                        .and_then(|s| parse_pager(&s))
-                } else {
-                    None
-                }
-            })
+            git_config_pager()
         })
         .as_ref()
 }
@@ -660,42 +644,6 @@ impl WorktreeSkimItem {
     }
 }
 
-/// Parse a git numstat line and extract insertions/deletions
-///
-/// Numstat format: `added<TAB>deleted<TAB>filename`
-/// With --graph --color=always, lines have ANSI-colored graph prefix like `ESC[31m|ESC[m `.
-/// Binary files show "-" instead of numbers.
-///
-/// Returns Some((insertions, deletions)) for valid numstat lines.
-fn parse_numstat_line(line: &str) -> Option<(usize, usize)> {
-    use ansi_str::AnsiStr;
-
-    // First strip ANSI escape sequences (graph coloring contains digits that confuse parsing)
-    let stripped = line.ansi_strip();
-
-    // Strip graph prefix (e.g., "| ") and find tab-separated values
-    let trimmed = stripped.trim_start_matches(|c: char| !c.is_ascii_digit() && c != '-');
-
-    // Must have at least two tab-separated fields
-    let mut parts = trimmed.split('\t');
-    let added_str = parts.next()?;
-    let deleted_str = parts.next()?;
-
-    // "-" means binary file, treat as 0
-    let added = if added_str == "-" {
-        0
-    } else {
-        added_str.parse().ok()?
-    };
-    let deleted = if deleted_str == "-" {
-        0
-    } else {
-        deleted_str.parse().ok()?
-    };
-
-    Some((added, deleted))
-}
-
 /// Field delimiter for git log format with timestamps
 const FIELD_DELIM: char = '\x1f';
 
@@ -1149,7 +1097,7 @@ mod tests {
     fn test_parse_numstat_line_binary_file() {
         // Binary files show "-" instead of numbers
         let result = parse_numstat_line("-\t-\timage.png");
-        assert_eq!(result, Some((0, 0)));
+        assert_eq!(result, None);
     }
 
     #[test]

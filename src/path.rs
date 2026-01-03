@@ -106,11 +106,49 @@ pub fn format_path_for_display(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// Sanitize a string for use as a filename on all platforms.
+///
+/// Replaces invalid characters and control characters with `-`, trims trailing
+/// dots/spaces (Windows), and prefixes reserved device names with `_`.
+pub fn sanitize_for_filename(value: &str) -> String {
+    let mut result: String = value
+        .chars()
+        .map(|c| match c {
+            // Windows/Unix invalid filename characters
+            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
+            // Control characters (0x00-0x1F)
+            c if c.is_control() => '-',
+            _ => c,
+        })
+        .collect();
+
+    // Trim trailing dots and spaces (Windows silently strips these)
+    while result.ends_with('.') || result.ends_with(' ') {
+        result.pop();
+    }
+
+    // Handle Windows reserved names (case-insensitive)
+    // CON, PRN, AUX, NUL, COM1-9, LPT1-9
+    let upper = result.to_uppercase();
+    let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
+
+    if is_reserved {
+        format!("_{result}")
+    } else if result.is_empty() {
+        "_empty".to_string()
+    } else {
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::{format_path_for_display, home_dir, to_posix_path};
+    use super::{format_path_for_display, home_dir, sanitize_for_filename, to_posix_path};
 
     #[test]
     fn shortens_path_under_home() {
@@ -215,5 +253,28 @@ mod tests {
         assert_eq!(to_posix_path("/some/path"), "/some/path");
         assert_eq!(to_posix_path("relative"), "relative");
         assert_eq!(to_posix_path(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_for_filename_replaces_invalid_chars() {
+        assert_eq!(sanitize_for_filename("foo/bar"), "foo-bar");
+        assert_eq!(sanitize_for_filename("name:with?chars"), "name-with-chars");
+    }
+
+    #[test]
+    fn test_sanitize_for_filename_trims_trailing_dots_and_spaces() {
+        assert_eq!(sanitize_for_filename("file. "), "file");
+        assert_eq!(sanitize_for_filename("file..."), "file");
+    }
+
+    #[test]
+    fn test_sanitize_for_filename_prefixes_reserved_names() {
+        assert_eq!(sanitize_for_filename("CON"), "_CON");
+        assert_eq!(sanitize_for_filename("com1"), "_com1");
+    }
+
+    #[test]
+    fn test_sanitize_for_filename_handles_empty() {
+        assert_eq!(sanitize_for_filename(""), "_empty");
     }
 }

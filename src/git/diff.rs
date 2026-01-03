@@ -1,5 +1,6 @@
 //! Git diff utilities for parsing and formatting diff statistics.
 
+use ansi_str::AnsiStr;
 use color_print::cformat;
 
 /// Line-level diff totals (added/deleted counts) used across git operations.
@@ -9,38 +10,43 @@ pub struct LineDiff {
     pub deleted: usize,
 }
 
+/// Parse a git numstat line and extract insertions/deletions.
+///
+/// Supports standard `git diff --numstat` output as well as log output with
+/// `--graph --color=always` prefixes.
+/// Returns `None` for binary entries (`-` counts).
+pub fn parse_numstat_line(line: &str) -> Option<(usize, usize)> {
+    // Strip ANSI escape sequences (graph coloring contains digits that confuse parsing).
+    let stripped = line.ansi_strip();
+
+    // Strip graph prefix (e.g., "| ") and find tab-separated values.
+    let trimmed = stripped.trim_start_matches(|c: char| !c.is_ascii_digit() && c != '-');
+
+    let mut parts = trimmed.split('\t');
+    let added_str = parts.next()?;
+    let deleted_str = parts.next()?;
+
+    // "-" means binary file; line counts are unavailable, so skip.
+    if added_str == "-" || deleted_str == "-" {
+        return None;
+    }
+
+    let added = added_str.parse().ok()?;
+    let deleted = deleted_str.parse().ok()?;
+
+    Some((added, deleted))
+}
+
 impl LineDiff {
     /// Parse `git diff --numstat` output into aggregated line totals.
     pub fn from_numstat(output: &str) -> anyhow::Result<Self> {
         let mut totals = LineDiff::default();
 
         for line in output.lines() {
-            if line.trim().is_empty() {
-                continue;
+            if let Some((added, deleted)) = parse_numstat_line(line) {
+                totals.added += added;
+                totals.deleted += deleted;
             }
-
-            let mut parts = line.split('\t');
-            let Some(added_str) = parts.next() else {
-                continue;
-            };
-            let Some(deleted_str) = parts.next() else {
-                continue;
-            };
-
-            // Binary files show "-" for added/deleted
-            if added_str == "-" || deleted_str == "-" {
-                continue;
-            }
-
-            let Ok(added) = added_str.parse::<usize>() else {
-                continue;
-            };
-            let Ok(deleted) = deleted_str.parse::<usize>() else {
-                continue;
-            };
-
-            totals.added += added;
-            totals.deleted += deleted;
         }
 
         Ok(totals)

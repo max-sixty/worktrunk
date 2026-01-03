@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use worktrunk::git::{GitRemoteUrl, Repository};
+use worktrunk::path::sanitize_for_filename;
 use worktrunk::shell_exec::run;
 use worktrunk::utils::get_now;
 
@@ -35,16 +36,11 @@ pub fn get_platform_for_repo(repo_root: &str) -> Option<CiPlatform> {
 
 /// Get the origin remote URL for a repository.
 fn get_remote_url_for_repo(repo_root: &str) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.args(["remote", "get-url", "origin"])
-        .current_dir(repo_root);
-    let output = run(&mut cmd, None).ok()?;
-
-    if output.status.success() {
-        String::from_utf8(output.stdout).ok()
-    } else {
-        None
-    }
+    let repo = Repository::at(repo_root);
+    repo.run_command(&["remote", "get-url", "origin"])
+        .ok()
+        .map(|output| output.trim().to_string())
+        .filter(|output| !output.is_empty())
 }
 
 /// Get the GitLab hostname for a repository by parsing its origin remote URL.
@@ -1093,68 +1089,15 @@ impl CachedCiStatus {
 
     /// Get the cache directory path: `.git/wt-cache/ci-status/`
     fn cache_dir(repo_root: &str) -> Option<PathBuf> {
-        let mut cmd = Command::new("git");
-        cmd.args(["rev-parse", "--git-common-dir"])
-            .current_dir(repo_root);
-        let output = run(&mut cmd, None).ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        let git_dir = String::from_utf8(output.stdout).ok()?;
-        let git_dir = git_dir.trim();
-
-        // Handle relative paths from git rev-parse
-        let git_path = if Path::new(git_dir).is_absolute() {
-            PathBuf::from(git_dir)
-        } else {
-            PathBuf::from(repo_root).join(git_dir)
-        };
-
-        Some(git_path.join("wt-cache").join("ci-status"))
-    }
-
-    /// Sanitize branch name for use as a filename.
-    /// Handles Windows reserved names, control characters, and invalid filename characters.
-    fn sanitize_branch_for_filename(branch: &str) -> String {
-        let mut result: String = branch
-            .chars()
-            .map(|c| match c {
-                // Windows/Unix invalid filename characters
-                '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
-                // Control characters (0x00-0x1F)
-                c if c.is_control() => '-',
-                _ => c,
-            })
-            .collect();
-
-        // Trim trailing dots and spaces (Windows silently strips these)
-        while result.ends_with('.') || result.ends_with(' ') {
-            result.pop();
-        }
-
-        // Handle Windows reserved names (case-insensitive)
-        // CON, PRN, AUX, NUL, COM1-9, LPT1-9
-        let upper = result.to_uppercase();
-        let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-            || (upper.len() == 4
-                && (upper.starts_with("COM") || upper.starts_with("LPT"))
-                && upper.chars().last().is_some_and(|c| c.is_ascii_digit()));
-
-        if is_reserved {
-            format!("_{result}")
-        } else if result.is_empty() {
-            "_empty".to_string()
-        } else {
-            result
-        }
+        let repo = Repository::at(repo_root);
+        let git_common_dir = repo.git_common_dir().ok()?;
+        Some(git_common_dir.join("wt-cache").join("ci-status"))
     }
 
     /// Get the cache file path for a branch.
     fn cache_file(branch: &str, repo_root: &str) -> Option<PathBuf> {
         let dir = Self::cache_dir(repo_root)?;
-        let safe_branch = Self::sanitize_branch_for_filename(branch);
+        let safe_branch = sanitize_for_filename(branch);
         Some(dir.join(format!("{safe_branch}.json")))
     }
 

@@ -137,6 +137,70 @@ impl DefaultBranchName {
     }
 }
 
+/// Parse `git status --porcelain -z` output into a list of affected filenames.
+///
+/// The -z format uses NUL separators and handles renames specially:
+/// - Normal entries: `XY path\0`
+/// - Renames/copies: `XY new_path\0old_path\0`
+///
+/// This correctly handles filenames with spaces and ensures both old and new
+/// paths are included for renames/copies (important for overlap detection).
+pub fn parse_porcelain_z(output: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut entries = output.split('\0').filter(|s| !s.is_empty());
+
+    while let Some(entry) = entries.next() {
+        // Each entry is "XY path" where XY is exactly 2 status chars
+        if entry.len() < 3 {
+            continue;
+        }
+
+        let status = &entry[0..2];
+        let path = &entry[3..];
+        files.push(path.to_string());
+
+        // For renames (R) and copies (C), the next NUL-separated field is the old path
+        if (status.starts_with('R') || status.starts_with('C'))
+            && let Some(old_path) = entries.next()
+        {
+            files.push(old_path.to_string());
+        }
+    }
+
+    files
+}
+
+/// Parse untracked files from `git status --porcelain -z` output.
+///
+/// Format: "XY path\0" where XY is the status code and path follows a space.
+/// Untracked files have status "??".
+pub fn parse_untracked_files(status_output: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut entries = status_output.split('\0').filter(|s| !s.is_empty());
+
+    while let Some(entry) = entries.next() {
+        // Format: "XY PATH" where XY is 2 status chars, space, then path
+        if entry.len() < 3 {
+            continue;
+        }
+
+        let status = &entry[0..2];
+        let path = &entry[3..];
+
+        // Only collect untracked files
+        if status == "??" {
+            files.push(path.to_string());
+        }
+
+        // Skip old path for renames/copies (we don't care about them here)
+        if status.starts_with('R') || status.starts_with('C') {
+            entries.next();
+        }
+    }
+
+    files
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

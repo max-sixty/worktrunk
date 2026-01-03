@@ -29,7 +29,7 @@ use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
 
 // Re-exports from submodules
-pub use diff::{DiffStats, LineDiff};
+pub use diff::{DiffStats, LineDiff, parse_numstat_line};
 pub use error::{
     // Typed error enum (Display produces styled output)
     GitError,
@@ -40,6 +40,7 @@ pub use error::{
     add_hook_skip_hint,
     exit_code,
 };
+pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use repository::{Repository, ResolvedWorktree, set_base_path};
 pub use url::GitRemoteUrl;
 /// Why branch content is considered integrated into the target branch.
