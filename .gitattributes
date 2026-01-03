@@ -1,0 +1,4 @@
+# Force LF line endings for all text files to ensure consistent commit hashes
+# across platforms. Without this, Windows may use CRLF which changes file
+# content hashes and thus commit hashes.
+* text=auto eol=lf
