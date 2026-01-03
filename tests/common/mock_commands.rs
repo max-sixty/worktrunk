@@ -4,11 +4,14 @@
 // All mock logic is written as shell scripts (#!/bin/sh).
 //
 // On Unix: shell scripts are directly executable via shebang
-// On Windows: thin .bat/.cmd shims invoke the scripts via bash (Git Bash)
+// On Windows: thin .bat/.cmd shims invoke the scripts via bash
+//
+// Requirements:
+// - On Windows, Git Bash must be installed and `bash` must be in PATH
+// - This matches production: hooks require Git Bash on Windows anyway
 //
 // This approach:
 // - Single source of truth for mock behavior
-// - Matches production: hooks require Git Bash on Windows anyway
 // - Simpler than maintaining parallel shell/batch implementations
 
 use std::fs;
@@ -74,62 +77,6 @@ pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &[&str], exit_code
 /// Escape single quotes in shell strings.
 fn escape_shell_string(s: &str) -> String {
     s.replace('\'', "'\"'\"'")
-}
-
-/// A branch that matches two arguments (e.g., "run pytest").
-pub struct MockBranch2 {
-    /// First argument to match
-    pub arg1: &'static str,
-    /// Second argument to match
-    pub arg2: &'static str,
-    /// Lines of output to print
-    pub output: Vec<&'static str>,
-    /// Exit code
-    pub exit_code: i32,
-}
-
-/// Create a mock command that switches on two arguments.
-///
-/// Useful for commands like `uv run pytest` where both args matter.
-pub fn create_mock_command_2arg(
-    bin_dir: &Path,
-    name: &str,
-    branches: &[MockBranch2],
-    default_exit: i32,
-) {
-    let mut script = String::from("#!/bin/sh\n");
-
-    // Generate if-elif chain for two-arg matching
-    let mut first = true;
-    for branch in branches {
-        if first {
-            script.push_str(&format!(
-                "if [ \"$1\" = \"{}\" ] && [ \"$2\" = \"{}\" ]; then\n",
-                branch.arg1, branch.arg2
-            ));
-            first = false;
-        } else {
-            script.push_str(&format!(
-                "elif [ \"$1\" = \"{}\" ] && [ \"$2\" = \"{}\" ]; then\n",
-                branch.arg1, branch.arg2
-            ));
-        }
-        for line in &branch.output {
-            let escaped = escape_shell_string(line);
-            script.push_str(&format!("    echo '{}'\n", escaped));
-        }
-        script.push_str(&format!("    exit {}\n", branch.exit_code));
-    }
-
-    if !first {
-        script.push_str("else\n");
-        script.push_str(&format!("    exit {}\n", default_exit));
-        script.push_str("fi\n");
-    } else {
-        script.push_str(&format!("exit {}\n", default_exit));
-    }
-
-    write_mock_script(bin_dir, name, &script);
 }
 
 /// Write a mock shell script, with platform-appropriate setup.
