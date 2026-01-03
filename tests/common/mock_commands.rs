@@ -1,10 +1,15 @@
 // Cross-platform mock command helpers
 //
 // These helpers create mock executables that work on both Unix and Windows.
-// On Unix: creates shell scripts with #!/bin/sh shebang
-// On Windows: creates .cmd batch files
+// All mock logic is written as shell scripts (#!/bin/sh).
 //
-// The API abstracts platform differences so test logic remains identical.
+// On Unix: shell scripts are directly executable via shebang
+// On Windows: thin .bat/.cmd shims invoke the scripts via bash (Git Bash)
+//
+// This approach:
+// - Single source of truth for mock behavior
+// - Matches production: hooks require Git Bash on Windows anyway
+// - Simpler than maintaining parallel shell/batch implementations
 
 use std::fs;
 use std::path::Path;
@@ -28,38 +33,13 @@ pub struct MockBranch {
 /// * `name` - Command name (e.g., "cargo", "gh")
 /// * `branches` - List of argument matches and their behavior
 /// * `default_exit` - Exit code when no branch matches
-///
-/// # Example
-/// ```ignore
-/// create_mock_command(
-///     &bin_dir,
-///     "cargo",
-///     &[
-///         MockBranch {
-///             arg: "test",
-///             output: vec!["running 18 tests", "test result: ok"],
-///             exit_code: 0,
-///         },
-///         MockBranch {
-///             arg: "clippy",
-///             output: vec!["Checking worktrunk v0.1.0"],
-///             exit_code: 0,
-///         },
-///     ],
-///     1, // default exit code for unknown subcommands
-/// );
-/// ```
-#[cfg(unix)]
 pub fn create_mock_command(bin_dir: &Path, name: &str, branches: &[MockBranch], default_exit: i32) {
-    use std::os::unix::fs::PermissionsExt;
-
     let mut script = String::from("#!/bin/sh\ncase \"$1\" in\n");
 
     for branch in branches {
         script.push_str(&format!("    {})\n", branch.arg));
         for line in &branch.output {
-            // Escape single quotes in output
-            let escaped = line.replace('\'', "'\"'\"'");
+            let escaped = escape_shell_string(line);
             script.push_str(&format!("        echo '{}'\n", escaped));
         }
         script.push_str(&format!("        exit {}\n", branch.exit_code));
@@ -71,112 +51,29 @@ pub fn create_mock_command(bin_dir: &Path, name: &str, branches: &[MockBranch], 
     script.push_str("        ;;\n");
     script.push_str("esac\n");
 
-    let script_path = bin_dir.join(name);
-    fs::write(&script_path, script).unwrap();
-    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(windows)]
-pub fn create_mock_command(bin_dir: &Path, name: &str, branches: &[MockBranch], default_exit: i32) {
-    // Use goto-based structure for reliable exit codes on Windows.
-    // Single-line `if ... exit /b N` can have inconsistent behavior
-    // when scripts are invoked via `cmd /c`.
-
-    let mut script = String::from("@echo off\n");
-
-    // Generate if-goto chain
-    for (i, branch) in branches.iter().enumerate() {
-        script.push_str(&format!("if \"%1\"==\"{}\" goto branch{}\n", branch.arg, i));
-    }
-    script.push_str("goto default\n\n");
-
-    // Generate branch labels
-    for (i, branch) in branches.iter().enumerate() {
-        script.push_str(&format!(":branch{}\n", i));
-        for line in &branch.output {
-            // In batch files, special characters need escaping
-            // Empty strings use echo. (no space) to print blank line
-            let escaped = escape_batch_string(line);
-            if escaped.is_empty() {
-                script.push_str("echo.\n");
-            } else {
-                script.push_str(&format!("echo {}\n", escaped));
-            }
-        }
-        script.push_str(&format!("exit /b {}\n\n", branch.exit_code));
-    }
-
-    script.push_str(":default\n");
-    script.push_str(&format!("exit /b {}\n", default_exit));
-
-    // Write both .cmd and .bat for maximum compatibility
-    fs::write(bin_dir.join(format!("{}.cmd", name)), &script).unwrap();
-    fs::write(bin_dir.join(format!("{}.bat", name)), &script).unwrap();
+    write_mock_script(bin_dir, name, &script);
 }
 
 /// Create a mock command that outputs fixed content regardless of arguments.
 ///
 /// Useful for simple mocks like `llm` that just return canned output.
-#[cfg(unix)]
 pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &[&str], exit_code: i32) {
-    use std::os::unix::fs::PermissionsExt;
-
     let mut script = String::from("#!/bin/sh\n");
     // Discard stdin (for mocks that receive piped input)
     script.push_str("cat > /dev/null\n");
 
     for line in output {
-        // Escape single quotes in output
-        let escaped = line.replace('\'', "'\"'\"'");
+        let escaped = escape_shell_string(line);
         script.push_str(&format!("echo '{}'\n", escaped));
     }
     script.push_str(&format!("exit {}\n", exit_code));
 
-    let script_path = bin_dir.join(name);
-    fs::write(&script_path, script).unwrap();
-    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+    write_mock_script(bin_dir, name, &script);
 }
 
-#[cfg(windows)]
-pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &[&str], exit_code: i32) {
-    let mut script = String::from("@echo off\n");
-
-    // Note: Windows batch files don't read stdin by default, which is
-    // sufficient for our mocks. The child exits without consuming stdin,
-    // and the parent's write either completes or gets BrokenPipe.
-
-    for line in output {
-        let escaped = escape_batch_string(line);
-        if escaped.is_empty() {
-            script.push_str("echo.\n");
-        } else {
-            script.push_str(&format!("echo {}\n", escaped));
-        }
-    }
-    script.push_str(&format!("exit /b {}\n", exit_code));
-
-    fs::write(bin_dir.join(format!("{}.cmd", name)), &script).unwrap();
-    fs::write(bin_dir.join(format!("{}.bat", name)), &script).unwrap();
-}
-
-#[cfg(windows)]
-fn escape_batch_string(s: &str) -> String {
-    // Batch file escaping rules:
-    // - ^ escapes special chars: & | < > ^
-    // - % needs to be doubled: %%
-    // - Empty strings: use special marker (handled by caller with echo.)
-    if s.is_empty() {
-        return String::new();
-    }
-
-    s.replace('%', "%%")
-        .replace('^', "^^")
-        .replace('&', "^&")
-        .replace('|', "^|")
-        .replace('<', "^<")
-        .replace('>', "^>")
-        .replace('(', "^(")
-        .replace(')', "^)")
+/// Escape single quotes in shell strings.
+fn escape_shell_string(s: &str) -> String {
+    s.replace('\'', "'\"'\"'")
 }
 
 /// A branch that matches two arguments (e.g., "run pytest").
@@ -194,15 +91,12 @@ pub struct MockBranch2 {
 /// Create a mock command that switches on two arguments.
 ///
 /// Useful for commands like `uv run pytest` where both args matter.
-#[cfg(unix)]
 pub fn create_mock_command_2arg(
     bin_dir: &Path,
     name: &str,
     branches: &[MockBranch2],
     default_exit: i32,
 ) {
-    use std::os::unix::fs::PermissionsExt;
-
     let mut script = String::from("#!/bin/sh\n");
 
     // Generate if-elif chain for two-arg matching
@@ -221,7 +115,7 @@ pub fn create_mock_command_2arg(
             ));
         }
         for line in &branch.output {
-            let escaped = line.replace('\'', "'\"'\"'");
+            let escaped = escape_shell_string(line);
             script.push_str(&format!("    echo '{}'\n", escaped));
         }
         script.push_str(&format!("    exit {}\n", branch.exit_code));
@@ -235,49 +129,35 @@ pub fn create_mock_command_2arg(
         script.push_str(&format!("exit {}\n", default_exit));
     }
 
-    let script_path = bin_dir.join(name);
-    fs::write(&script_path, script).unwrap();
-    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+    write_mock_script(bin_dir, name, &script);
 }
 
-#[cfg(windows)]
-pub fn create_mock_command_2arg(
-    bin_dir: &Path,
-    name: &str,
-    branches: &[MockBranch2],
-    default_exit: i32,
-) {
-    let mut script = String::from("@echo off\n");
-
-    // Generate if-goto chain for two-arg matching
-    for (i, branch) in branches.iter().enumerate() {
-        script.push_str(&format!(
-            "if \"%1\"==\"{}\" if \"%2\"==\"{}\" goto branch{}\n",
-            branch.arg1, branch.arg2, i
-        ));
-    }
-    script.push_str("goto default\n\n");
-
-    // Generate branch labels
-    for (i, branch) in branches.iter().enumerate() {
-        script.push_str(&format!(":branch{}\n", i));
-        for line in &branch.output {
-            // Empty strings use echo. (no space) to print blank line
-            let escaped = escape_batch_string(line);
-            if escaped.is_empty() {
-                script.push_str("echo.\n");
-            } else {
-                script.push_str(&format!("echo {}\n", escaped));
-            }
-        }
-        script.push_str(&format!("exit /b {}\n\n", branch.exit_code));
+/// Write a mock shell script, with platform-appropriate setup.
+///
+/// On Unix: writes directly as executable script
+/// On Windows: writes script + .bat/.cmd shims that invoke via bash
+fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script_path = bin_dir.join(name);
+        fs::write(&script_path, script).unwrap();
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    script.push_str(":default\n");
-    script.push_str(&format!("exit /b {}\n", default_exit));
+    #[cfg(windows)]
+    {
+        // Write the shell script with .sh extension
+        let script_path = bin_dir.join(format!("{}.sh", name));
+        fs::write(&script_path, script).unwrap();
 
-    fs::write(bin_dir.join(format!("{}.cmd", name)), &script).unwrap();
-    fs::write(bin_dir.join(format!("{}.bat", name)), &script).unwrap();
+        // Create .bat and .cmd shims that invoke via bash
+        // %~dp0 expands to the directory containing the batch file
+        // %* forwards all arguments
+        let shim = format!("@bash \"%~dp0{}.sh\" %*\n", name);
+        fs::write(bin_dir.join(format!("{}.cmd", name)), &shim).unwrap();
+        fs::write(bin_dir.join(format!("{}.bat", name)), &shim).unwrap();
+    }
 }
 
 // === High-level mock helpers for common test scenarios ===
@@ -370,9 +250,7 @@ pub fn create_mock_llm_api(bin_dir: &Path) {
 /// Create a mock uv command for dependency sync and dev server.
 ///
 /// Handles: `uv sync` (1 arg) and `uv run dev` (2 args).
-#[cfg(unix)]
 pub fn create_mock_uv_sync(bin_dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     let script = r#"#!/bin/sh
 if [ "$1" = "sync" ]; then
     echo ""
@@ -388,43 +266,11 @@ else
     exit 1
 fi
 "#;
-    let path = bin_dir.join("uv");
-    fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(windows)]
-pub fn create_mock_uv_sync(bin_dir: &Path) {
-    let script = r#"@echo off
-if "%1"=="sync" goto sync
-if "%1"=="run" if "%2"=="dev" goto rundev
-goto fail
-
-:sync
-echo.
-echo   Resolved 24 packages in 145ms
-echo   Installed 24 packages in 1.2s
-exit /b 0
-
-:rundev
-echo.
-echo   Starting dev server on http://localhost:3000...
-exit /b 0
-
-:fail
-echo uv: unknown command '%1 %2'
-exit /b 1
-"#;
-    fs::write(bin_dir.join("uv.cmd"), script).unwrap();
-    fs::write(bin_dir.join("uv.bat"), script).unwrap();
+    write_mock_script(bin_dir, "uv", script);
 }
 
 /// Create mock uv that delegates to pytest/ruff commands.
-///
-/// On Unix, this uses exec. On Windows, it calls the command directly.
-#[cfg(unix)]
 pub fn create_mock_uv_pytest_ruff(bin_dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     let script = r#"#!/bin/sh
 if [ "$1" = "run" ] && [ "$2" = "pytest" ]; then
     exec pytest
@@ -436,33 +282,7 @@ else
     exit 1
 fi
 "#;
-    let path = bin_dir.join("uv");
-    fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(windows)]
-pub fn create_mock_uv_pytest_ruff(bin_dir: &Path) {
-    // Windows can't exec, so we use call instead
-    let script = r#"@echo off
-if "%1"=="run" if "%2"=="pytest" goto pytest
-if "%1"=="run" if "%2"=="ruff" goto ruff
-goto fail
-
-:pytest
-call pytest.cmd
-exit /b %ERRORLEVEL%
-
-:ruff
-call ruff.cmd check
-exit /b %ERRORLEVEL%
-
-:fail
-echo uv: unknown command '%1 %2'
-exit /b 1
-"#;
-    fs::write(bin_dir.join("uv.cmd"), script).unwrap();
-    fs::write(bin_dir.join("uv.bat"), script).unwrap();
+    write_mock_script(bin_dir, "uv", script);
 }
 
 /// Create a mock pytest command with test output.
@@ -533,6 +353,7 @@ mod tests {
 
         #[cfg(windows)]
         {
+            assert!(bin_dir.join("test-cmd.sh").exists());
             assert!(bin_dir.join("test-cmd.cmd").exists());
             assert!(bin_dir.join("test-cmd.bat").exists());
         }
@@ -550,6 +371,7 @@ mod tests {
 
         #[cfg(windows)]
         {
+            assert!(bin_dir.join("simple-cmd.sh").exists());
             assert!(bin_dir.join("simple-cmd.cmd").exists());
             assert!(bin_dir.join("simple-cmd.bat").exists());
         }
