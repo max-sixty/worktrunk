@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, parse_numstat_line};
 
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
@@ -644,42 +644,6 @@ impl WorktreeSkimItem {
     }
 }
 
-/// Parse a git numstat line and extract insertions/deletions
-///
-/// Numstat format: `added<TAB>deleted<TAB>filename`
-/// With --graph --color=always, lines have ANSI-colored graph prefix like `ESC[31m|ESC[m `.
-/// Binary files show "-" instead of numbers.
-///
-/// Returns Some((insertions, deletions)) for valid numstat lines.
-fn parse_numstat_line(line: &str) -> Option<(usize, usize)> {
-    use ansi_str::AnsiStr;
-
-    // First strip ANSI escape sequences (graph coloring contains digits that confuse parsing)
-    let stripped = line.ansi_strip();
-
-    // Strip graph prefix (e.g., "| ") and find tab-separated values
-    let trimmed = stripped.trim_start_matches(|c: char| !c.is_ascii_digit() && c != '-');
-
-    // Must have at least two tab-separated fields
-    let mut parts = trimmed.split('\t');
-    let added_str = parts.next()?;
-    let deleted_str = parts.next()?;
-
-    // "-" means binary file, treat as 0
-    let added = if added_str == "-" {
-        0
-    } else {
-        added_str.parse().ok()?
-    };
-    let deleted = if deleted_str == "-" {
-        0
-    } else {
-        deleted_str.parse().ok()?
-    };
-
-    Some((added, deleted))
-}
-
 /// Field delimiter for git log format with timestamps
 const FIELD_DELIM: char = '\x1f';
 
@@ -1108,62 +1072,6 @@ mod tests {
         assert!(output.contains("1: HEAD±"));
         assert!(output.contains("2: log"));
         assert!(output.contains("3: main…±"));
-    }
-
-    #[test]
-    fn test_parse_numstat_line_basic() {
-        // Tab-separated: added<TAB>deleted<TAB>filename
-        let result = parse_numstat_line("10\t5\tfile.rs");
-        assert_eq!(result, Some((10, 5)));
-    }
-
-    #[test]
-    fn test_parse_numstat_line_insertions_only() {
-        let result = parse_numstat_line("15\t0\tfile.rs");
-        assert_eq!(result, Some((15, 0)));
-    }
-
-    #[test]
-    fn test_parse_numstat_line_deletions_only() {
-        let result = parse_numstat_line("0\t8\tfile.rs");
-        assert_eq!(result, Some((0, 8)));
-    }
-
-    #[test]
-    fn test_parse_numstat_line_binary_file() {
-        // Binary files show "-" instead of numbers
-        let result = parse_numstat_line("-\t-\timage.png");
-        assert_eq!(result, Some((0, 0)));
-    }
-
-    #[test]
-    fn test_parse_numstat_line_with_graph_prefix() {
-        // Git graph prefixes the numstat line with graph characters
-        let result = parse_numstat_line("| 10\t5\tfile.rs");
-        assert_eq!(result, Some((10, 5)));
-
-        // First numstat line after commit has "* | " prefix
-        let result = parse_numstat_line("* | 11\t0\tCargo.toml");
-        assert_eq!(result, Some((11, 0)));
-
-        // Subsequent numstat lines have "| " prefix
-        let result = parse_numstat_line("| 17\t3\tsrc/main.rs");
-        assert_eq!(result, Some((17, 3)));
-
-        // With ANSI colors (--color=always adds escape codes to graph)
-        // ESC[31m = red, ESC[m = reset
-        let esc = '\x1b';
-        let ansi_colored = format!("{esc}[31m|{esc}[m 11\t0\tCargo.toml");
-        let result = parse_numstat_line(&ansi_colored);
-        assert_eq!(result, Some((11, 0)));
-    }
-
-    #[test]
-    fn test_parse_numstat_line_not_numstat() {
-        // Not a numstat line
-        assert_eq!(parse_numstat_line("* abc1234 Fix bug"), None);
-        assert_eq!(parse_numstat_line(""), None);
-        assert_eq!(parse_numstat_line("regular text"), None);
     }
 
     // format_log_output tests use dependency injection for deterministic time formatting.

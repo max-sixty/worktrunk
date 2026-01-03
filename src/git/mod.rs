@@ -29,7 +29,7 @@ use std::sync::LazyLock;
 static HEAVY_OPS_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
 
 // Re-exports from submodules
-pub use diff::{DiffStats, LineDiff};
+pub use diff::{DiffStats, LineDiff, parse_numstat_line};
 pub use error::{
     // Typed error enum (Display produces styled output)
     GitError,

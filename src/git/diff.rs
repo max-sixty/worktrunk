@@ -1,5 +1,6 @@
 //! Git diff utilities for parsing and formatting diff statistics.
 
+use ansi_str::AnsiStr;
 use color_print::cformat;
 
 /// Line-level diff totals (added/deleted counts) used across git operations.
@@ -9,38 +10,43 @@ pub struct LineDiff {
     pub deleted: usize,
 }
 
+/// Parse a git numstat line and extract insertions/deletions.
+///
+/// Supports standard `git diff --numstat` output as well as log output with
+/// `--graph --color=always` prefixes.
+/// Returns `None` for binary entries (`-` counts).
+pub fn parse_numstat_line(line: &str) -> Option<(usize, usize)> {
+    // Strip ANSI escape sequences (graph coloring contains digits that confuse parsing).
+    let stripped = line.ansi_strip();
+
+    // Strip graph prefix (e.g., "| ") and find tab-separated values.
+    let trimmed = stripped.trim_start_matches(|c: char| !c.is_ascii_digit() && c != '-');
+
+    let mut parts = trimmed.split('\t');
+    let added_str = parts.next()?;
+    let deleted_str = parts.next()?;
+
+    // "-" means binary file; line counts are unavailable, so skip.
+    if added_str == "-" || deleted_str == "-" {
+        return None;
+    }
+
+    let added = added_str.parse().ok()?;
+    let deleted = deleted_str.parse().ok()?;
+
+    Some((added, deleted))
+}
+
 impl LineDiff {
     /// Parse `git diff --numstat` output into aggregated line totals.
     pub fn from_numstat(output: &str) -> anyhow::Result<Self> {
         let mut totals = LineDiff::default();
 
         for line in output.lines() {
-            if line.trim().is_empty() {
-                continue;
+            if let Some((added, deleted)) = parse_numstat_line(line) {
+                totals.added += added;
+                totals.deleted += deleted;
             }
-
-            let mut parts = line.split('\t');
-            let Some(added_str) = parts.next() else {
-                continue;
-            };
-            let Some(deleted_str) = parts.next() else {
-                continue;
-            };
-
-            // Binary files show "-" for added/deleted
-            if added_str == "-" || deleted_str == "-" {
-                continue;
-            }
-
-            let Ok(added) = added_str.parse::<usize>() else {
-                continue;
-            };
-            let Ok(deleted) = deleted_str.parse::<usize>() else {
-                continue;
-            };
-
-            totals.added += added;
-            totals.deleted += deleted;
         }
 
         Ok(totals)
@@ -254,6 +260,66 @@ mod tests {
         let output = "10\tabc\tsrc/main.rs";
         let result = LineDiff::from_numstat(output).unwrap();
         assert!(result.is_empty()); // Should skip non-numeric
+    }
+
+    // ============================================================================
+    // parse_numstat_line Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_numstat_line_basic() {
+        // Tab-separated: added<TAB>deleted<TAB>filename
+        let result = parse_numstat_line("10\t5\tfile.rs");
+        assert_eq!(result, Some((10, 5)));
+    }
+
+    #[test]
+    fn test_parse_numstat_line_insertions_only() {
+        let result = parse_numstat_line("15\t0\tfile.rs");
+        assert_eq!(result, Some((15, 0)));
+    }
+
+    #[test]
+    fn test_parse_numstat_line_deletions_only() {
+        let result = parse_numstat_line("0\t8\tfile.rs");
+        assert_eq!(result, Some((0, 8)));
+    }
+
+    #[test]
+    fn test_parse_numstat_line_binary_file() {
+        // Binary files show "-" instead of numbers
+        let result = parse_numstat_line("-\t-\timage.png");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_numstat_line_with_graph_prefix() {
+        // Git graph prefixes the numstat line with graph characters
+        let result = parse_numstat_line("| 10\t5\tfile.rs");
+        assert_eq!(result, Some((10, 5)));
+
+        // First numstat line after commit has "* | " prefix
+        let result = parse_numstat_line("* | 11\t0\tCargo.toml");
+        assert_eq!(result, Some((11, 0)));
+
+        // Subsequent numstat lines have "| " prefix
+        let result = parse_numstat_line("| 17\t3\tsrc/main.rs");
+        assert_eq!(result, Some((17, 3)));
+
+        // With ANSI colors (--color=always adds escape codes to graph)
+        // ESC[31m = red, ESC[m = reset
+        let esc = '\x1b';
+        let ansi_colored = format!("{esc}[31m|{esc}[m 11\t0\tCargo.toml");
+        let result = parse_numstat_line(&ansi_colored);
+        assert_eq!(result, Some((11, 0)));
+    }
+
+    #[test]
+    fn test_parse_numstat_line_not_numstat() {
+        // Not a numstat line
+        assert_eq!(parse_numstat_line("* abc1234 Fix bug"), None);
+        assert_eq!(parse_numstat_line(""), None);
+        assert_eq!(parse_numstat_line("regular text"), None);
     }
 
     // ============================================================================

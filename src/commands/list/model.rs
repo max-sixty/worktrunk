@@ -81,7 +81,7 @@ pub struct WorktreeData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_tree_diff_with_main: Option<Option<LineDiff>>,
     /// Git operation in progress (rebase/merge)
-    #[serde(skip_serializing_if = "git_operation_is_none")]
+    #[serde(skip_serializing_if = "GitOperationState::is_none")]
     pub git_operation: GitOperationState,
     pub is_main: bool,
     /// Whether this is the current worktree (matches $PWD)
@@ -975,6 +975,12 @@ pub enum GitOperationState {
     Merge,
 }
 
+impl GitOperationState {
+    fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
 /// Tracks which status symbol positions are actually used across all items
 /// and the maximum width needed for each position.
 ///
@@ -1283,11 +1289,6 @@ impl WorkingTreeStatus {
         }
         s
     }
-}
-
-/// Helper for serde skip_serializing_if
-fn git_operation_is_none(state: &GitOperationState) -> bool {
-    *state == GitOperationState::None
 }
 
 #[cfg(test)]
@@ -1947,10 +1948,10 @@ mod tests {
     }
 
     #[test]
-    fn test_git_operation_is_none() {
-        assert!(git_operation_is_none(&GitOperationState::None));
-        assert!(!git_operation_is_none(&GitOperationState::Rebase));
-        assert!(!git_operation_is_none(&GitOperationState::Merge));
+    fn test_git_operation_state_is_none() {
+        assert!(GitOperationState::None.is_none());
+        assert!(!GitOperationState::Rebase.is_none());
+        assert!(!GitOperationState::Merge.is_none());
     }
 
     // ============================================================================
