@@ -866,13 +866,13 @@ pub fn collect(
 
         let initial_footer = format!("{INFO_SYMBOL} {dim}{footer_base} (loading...){dim:#}");
 
-        let table = ProgressiveTable::new(
+        let mut table = ProgressiveTable::new(
             layout.format_header_line(),
             skeletons,
             initial_footer,
             max_width,
         );
-        table.render_initial()?;
+        table.render_skeleton()?;
         Some(table)
     } else {
         None
@@ -1100,7 +1100,7 @@ pub fn collect(
                 let rendered = layout.format_list_item_line(item, previous_branch.as_deref());
                 table.update_row(item_idx, rendered);
             }
-            table.finalize_tty(final_msg)?;
+            table.finalize(final_msg)?;
         } else {
             // Non-TTY: output to stdout (same as buffered mode)
             // Progressive skeleton was suppressed; now output the final table
