@@ -185,10 +185,6 @@ pub use super::columns::DiffVariant;
 
 /// Width of short commit hash display (first 8 hex characters)
 const COMMIT_HASH_WIDTH: usize = 8;
-/// Get terminal width for list rendering.
-pub fn get_safe_list_width() -> usize {
-    get_terminal_width()
-}
 
 /// Ensures a column width is at least as wide as its header.
 ///
@@ -849,7 +845,7 @@ pub fn calculate_layout_from_basics(
     calculate_layout_with_width(
         items,
         skip_tasks,
-        get_safe_list_width(),
+        get_terminal_width(),
         main_worktree_path,
         url_template,
     )

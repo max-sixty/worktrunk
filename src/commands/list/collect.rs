@@ -819,7 +819,7 @@ pub fn collect(
     );
 
     // Single-line invariant: use safe width to prevent line wrapping
-    let max_width = super::layout::get_safe_list_width();
+    let max_width = crate::display::get_terminal_width();
 
     // Create collection options from skip set
     let options = super::collect_progressive_impl::CollectOptions {

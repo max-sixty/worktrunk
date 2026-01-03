@@ -791,7 +791,7 @@ pub fn handle_select() -> anyhow::Result<()> {
     // List width depends on preview position:
     // - Right layout: skim splits ~50% for list, ~50% for preview
     // - Down layout: list gets full width, preview is below
-    let terminal_width = super::list::layout::get_safe_list_width();
+    let terminal_width = crate::display::get_terminal_width();
     let skim_list_width = match state.initial_layout {
         PreviewLayout::Right => terminal_width / 2,
         PreviewLayout::Down => terminal_width,
