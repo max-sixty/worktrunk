@@ -41,6 +41,9 @@ server = "npm run dev -- --port {{ branch | hash_port }}"
 
 [list]
 url = "http://localhost:{{ branch | hash_port }}"
+
+[pre-remove]
+server = "lsof -ti :{{ branch | hash_port }} | xargs kill 2>/dev/null || true"
 ```
 
 The URL column in `wt list` shows each worktree's dev server:
