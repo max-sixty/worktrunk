@@ -184,7 +184,7 @@ pub fn handle_configure_shell(
         .any(|r| r.shell == Shell::Zsh && !matches!(r.action, ConfigAction::AlreadyExists));
     let should_check_compinit = zsh_was_configured
         && (shell_filter == Some(Shell::Zsh)
-            || (shell_filter.is_none() && shell::is_current_shell_zsh()));
+            || (shell_filter.is_none() && shell::current_shell() == Some(Shell::Zsh)));
 
     // Probe user's zsh to check if compinit is enabled.
     // Only flag if we positively detect it's missing (Some(false)).

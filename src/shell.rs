@@ -676,16 +676,6 @@ pub fn current_shell() -> Option<Shell> {
     }
 }
 
-/// Check if the current shell is zsh (based on $SHELL environment variable).
-///
-/// Used to determine if the user's primary shell is zsh when running `install`
-/// without a specific shell argument. If they're a zsh user, we show compinit
-/// hints; if they're using bash/fish, we skip the hint since zsh isn't their
-/// daily driver.
-pub fn is_current_shell_zsh() -> bool {
-    current_shell() == Some(Shell::Zsh)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
