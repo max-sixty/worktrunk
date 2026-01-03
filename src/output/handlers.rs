@@ -281,7 +281,7 @@ pub fn handle_switch_output(
 
     let path = result.path();
     let path_display = format_path_for_display(path);
-    let branch = branch_info.branch();
+    let branch = &branch_info.branch;
 
     // Check if shell integration is active (directive file set)
     let is_shell_integration_active = super::is_shell_integration_active();
