@@ -518,6 +518,14 @@ impl Repository {
             .map(PathBuf::as_path)
     }
 
+    /// Get the directory where worktrunk background logs are stored.
+    ///
+    /// Logs are centralized under the main worktree's git directory:
+    /// `.git/wt-logs/`.
+    pub fn wt_logs_dir(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.git_common_dir()?.join("wt-logs"))
+    }
+
     /// Get the git directory (may be different from common-dir in worktrees).
     ///
     /// Always returns an absolute path, resolving any relative paths returned by git.

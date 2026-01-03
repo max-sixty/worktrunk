@@ -9,13 +9,13 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::Repository;
-use worktrunk::shell_exec::run;
 
 use super::list::collect;
 use super::list::layout::{DiffDisplayConfig, DiffVariant};
 use super::list::model::ListItem;
 use super::worktree::handle_switch;
 use crate::output::handle_switch_output;
+use crate::pager::{git_config_pager, parse_pager_value};
 
 /// Cached pager command, detected once at startup.
 ///
@@ -27,29 +27,13 @@ static CACHED_PAGER: OnceLock<Option<String>> = OnceLock::new();
 fn get_diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
-            // Returns Some(pager) if valid, None if empty/cat (no pager desired)
-            let parse_pager = |s: &str| -> Option<String> {
-                let trimmed = s.trim();
-                (!trimmed.is_empty() && trimmed != "cat").then(|| trimmed.to_string())
-            };
-
             // GIT_PAGER takes precedence - if set (even to "cat" or empty), don't fall back
             if let Ok(pager) = std::env::var("GIT_PAGER") {
-                return parse_pager(&pager);
+                return parse_pager_value(&pager);
             }
 
             // Fall back to core.pager config
-            let mut cmd = Command::new("git");
-            cmd.args(["config", "--get", "core.pager"]);
-            run(&mut cmd, None).ok().and_then(|output| {
-                if output.status.success() {
-                    String::from_utf8(output.stdout)
-                        .ok()
-                        .and_then(|s| parse_pager(&s))
-                } else {
-                    None
-                }
-            })
+            git_config_pager()
         })
         .as_ref()
 }

@@ -283,6 +283,93 @@ pub struct DiffDisplayConfig {
     pub always_show_zeros: bool,
 }
 
+impl DiffDisplayConfig {
+    /// Format diff values with fixed-width alignment for tabular display.
+    ///
+    /// Numbers are right-aligned within a 3-digit column width.
+    /// Returns empty spaces if both values are zero (unless `always_show_zeros` is set).
+    #[cfg(unix)] // Only used by select command which is unix-only
+    pub fn format_aligned(&self, positive: usize, negative: usize) -> String {
+        const DIGITS: usize = 3;
+        let positive_width = 1 + DIGITS; // symbol + digits
+        let negative_width = 1 + DIGITS;
+        let total_width = positive_width + 1 + negative_width; // with separator
+
+        let config = DiffColumnConfig {
+            positive_digits: DIGITS,
+            negative_digits: DIGITS,
+            total_width,
+            display: *self,
+        };
+
+        config.render_segment(positive, negative).render()
+    }
+
+    /// Format diff values as plain text with ANSI colors (no fixed-width alignment).
+    ///
+    /// Returns `None` if both values are zero (unless `always_show_zeros` is set).
+    /// Format: `+N -M` with appropriate colors for each component.
+    pub fn format_plain(&self, positive: usize, negative: usize) -> Option<String> {
+        if !self.always_show_zeros && positive == 0 && negative == 0 {
+            return None;
+        }
+
+        let symbols = self.variant.symbols();
+        let mut parts = Vec::with_capacity(2);
+
+        if positive > 0 || self.always_show_zeros {
+            parts.push(format!(
+                "{}{}{}{}",
+                self.positive_style,
+                symbols.positive,
+                positive,
+                self.positive_style.render_reset()
+            ));
+        }
+
+        if negative > 0 || self.always_show_zeros {
+            parts.push(format!(
+                "{}{}{}{}",
+                self.negative_style,
+                symbols.negative,
+                negative,
+                self.negative_style.render_reset()
+            ));
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct DiffSymbols {
+    pub(super) positive: &'static str,
+    pub(super) negative: &'static str,
+}
+
+impl DiffVariant {
+    pub(super) fn symbols(self) -> DiffSymbols {
+        match self {
+            DiffVariant::Signs => DiffSymbols {
+                positive: "+",
+                negative: "-",
+            },
+            DiffVariant::Arrows => DiffSymbols {
+                positive: "↑",
+                negative: "↓",
+            },
+            DiffVariant::UpstreamArrows => DiffSymbols {
+                positive: "⇡",
+                negative: "⇣",
+            },
+        }
+    }
+}
+
 impl ColumnKind {
     pub fn diff_display_config(self) -> Option<DiffDisplayConfig> {
         match self {
@@ -306,6 +393,12 @@ impl ColumnKind {
             }),
             _ => None,
         }
+    }
+
+    /// Format diff-style values as plain text with ANSI colors (for json-pretty).
+    pub(crate) fn format_diff_plain(self, positive: usize, negative: usize) -> Option<String> {
+        let config = self.diff_display_config()?;
+        config.format_plain(positive, negative)
     }
 
     pub fn has_data(self, flags: &ColumnDataFlags) -> bool {

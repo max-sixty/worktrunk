@@ -691,8 +691,7 @@ fn require_user_config_path() -> anyhow::Result<PathBuf> {
 
 /// Clear all log files from the wt-logs directory
 fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
-    let git_common_dir = repo.git_common_dir()?;
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = repo.wt_logs_dir()?;
 
     if !log_dir.exists() {
         return Ok(0);
@@ -718,8 +717,7 @@ fn clear_logs(repo: &Repository) -> anyhow::Result<usize> {
 
 /// Render the LOG FILES section (heading + table or "(none)") into the output buffer
 fn render_log_files(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
-    let git_common_dir = repo.git_common_dir()?;
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = repo.wt_logs_dir()?;
     let log_dir_display = format_path_for_display(&log_dir);
 
     writeln!(
@@ -1133,8 +1131,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         .collect();
 
     // Get log files
-    let git_common_dir = repo.git_common_dir()?;
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = repo.wt_logs_dir()?;
     let logs: Vec<serde_json::Value> = if log_dir.exists() {
         let mut entries: Vec<_> = std::fs::read_dir(&log_dir)?
             .filter_map(|e| e.ok())

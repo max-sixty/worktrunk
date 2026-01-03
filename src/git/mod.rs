@@ -40,6 +40,7 @@ pub use error::{
     add_hook_skip_hint,
     exit_code,
 };
+pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use repository::{Repository, ResolvedWorktree, set_base_path};
 pub use url::GitRemoteUrl;
 /// Why branch content is considered integrated into the target branch.
