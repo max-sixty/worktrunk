@@ -282,13 +282,16 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             &destination_repo_root,
             yes,
         );
-        // Show path when user's shell stays in a different directory than where hooks run.
-        // This happens only with --no-remove on a feature branch (not in_main, not on_target).
-        // When in_main or on_target, user is already in the destination directory.
-        let display_path = if !remove_effective && !in_main && !on_target {
+        // Show path when user's shell won't be in the destination directory where hooks run.
+        let display_path = if in_main || on_target {
+            // User is already in the destination directory
+            None
+        } else if !remove_effective {
+            // Worktree preserved — user's shell stays in feature worktree
             Some(destination_path.as_path())
         } else {
-            None
+            // Worktree removed — show path only if shell integration won't cd there
+            crate::output::hooks_display_path(&destination_path)
         };
         execute_post_merge_commands(&ctx, &target_branch, None, display_path)?;
     }

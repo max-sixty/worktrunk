@@ -1279,7 +1279,7 @@ fn main() {
 
                     // Post-start runs only on creation (setup tasks)
                     if matches!(&result, SwitchResult::Created { .. }) {
-                        ctx.spawn_post_start_commands()?;
+                        ctx.spawn_post_start_commands(hooks_display_path.as_deref())?;
                     }
                 }
 

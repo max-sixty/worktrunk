@@ -832,7 +832,13 @@ impl<'a> CommandContext<'a> {
     }
 
     /// Spawn post-start commands in parallel as background processes (non-blocking)
-    pub fn spawn_post_start_commands(&self) -> anyhow::Result<()> {
+    ///
+    /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
+    /// the user's shell won't be in the worktree (shell integration not active).
+    pub fn spawn_post_start_commands(
+        &self,
+        display_path: Option<&std::path::Path>,
+    ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
 
         let commands = prepare_hook_commands(
@@ -844,7 +850,7 @@ impl<'a> CommandContext<'a> {
             HookType::PostStart,
             &[],
             None,
-            None, // No path display - running in expected directory
+            display_path,
         )?;
 
         spawn_hook_commands_background(self, commands, HookType::PostStart)

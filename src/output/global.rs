@@ -276,6 +276,20 @@ pub fn is_shell_integration_active() -> bool {
     has_directive_file()
 }
 
+/// Returns `Some(path)` when shell integration isn't active, `None` otherwise.
+///
+/// Use this to decide whether hook announcements should show "@ path".
+/// When shell integration is active, the user's shell will cd to the path automatically,
+/// so no annotation is needed. When inactive, showing the path helps users understand
+/// where hooks are running.
+pub fn hooks_display_path(path: &std::path::Path) -> Option<&std::path::Path> {
+    if is_shell_integration_active() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

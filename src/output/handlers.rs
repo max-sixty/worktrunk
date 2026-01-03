@@ -912,8 +912,8 @@ fn spawn_post_switch_after_remove(
         &repo_root,
         false, // force=false for CommandContext
     );
-    // No display_path needed - changed_directory is true, so user's shell IS going there
-    ctx.spawn_post_switch_commands(None)
+    // Show path when shell integration isn't active — the cd directive won't take effect
+    ctx.spawn_post_switch_commands(super::hooks_display_path(main_path))
 }
 
 /// Handle output for RemovedWorktree removal
