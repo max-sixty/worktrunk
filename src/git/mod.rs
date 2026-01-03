@@ -42,7 +42,7 @@ pub use error::{
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
 pub use repository::{Repository, ResolvedWorktree, set_base_path};
-pub use url::GitRemoteUrl;
+pub use url::{GitRemoteUrl, parse_owner_repo, parse_remote_host, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
 ///
 /// Used by both `wt list` (for status symbols) and `wt remove` (for messages).

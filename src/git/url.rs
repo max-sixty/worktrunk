@@ -118,6 +118,39 @@ impl GitRemoteUrl {
     }
 }
 
+/// Extract owner from a git remote URL.
+///
+/// Used for client-side filtering of PRs/MRs by source repository. When multiple users
+/// have PRs with the same branch name (e.g., everyone has a `feature` branch), we need
+/// to identify which PR comes from *our* fork/remote, not just which PR we authored.
+///
+/// # Why not use `--author`?
+///
+/// The `gh pr list --author` flag filters by who *created* the PR, not whose fork
+/// the PR comes *from*. These are usually the same, but not always:
+/// - Maintainers may create PRs from contributor forks
+/// - Bots may create PRs on behalf of users
+/// - Organization repos: `--author company` doesn't match individual user PRs
+///
+/// # Why client-side filtering?
+///
+/// Neither `gh` nor `glab` CLI support server-side filtering by source repository.
+/// The `gh pr list --head` flag only accepts branch name, not `owner:branch` format.
+/// So we fetch PRs matching the branch name, then filter by `headRepositoryOwner`.
+pub fn parse_remote_owner(url: &str) -> Option<String> {
+    GitRemoteUrl::parse(url).map(|u| u.owner().to_string())
+}
+
+/// Extract owner and repository name from a git remote URL.
+pub fn parse_owner_repo(url: &str) -> Option<(String, String)> {
+    GitRemoteUrl::parse(url).map(|u| (u.owner().to_string(), u.repo().to_string()))
+}
+
+/// Extract hostname from a git remote URL.
+pub fn parse_remote_host(url: &str) -> Option<String> {
+    GitRemoteUrl::parse(url).map(|u| u.host().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +229,135 @@ mod tests {
         let url = GitRemoteUrl::parse("https://github.com/company-org/project.git").unwrap();
         assert_eq!(url.owner(), "company-org");
         assert_eq!(url.repo(), "project");
+    }
+
+    #[test]
+    fn test_parse_remote_owner() {
+        assert_eq!(
+            parse_remote_owner("https://github.com/max-sixty/worktrunk.git"),
+            Some("max-sixty".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("  https://github.com/owner/repo\n"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("git@github.com:max-sixty/worktrunk.git"),
+            Some("max-sixty".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("ssh://git@github.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("ssh://github.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("https://gitlab.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("https://gitlab.example.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("git@gitlab.com:owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("https://bitbucket.org/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("git@bitbucket.org:owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("https://github.com/company-org/project.git"),
+            Some("company-org".to_string())
+        );
+        assert_eq!(
+            parse_remote_owner("http://github.com/owner/repo.git"),
+            Some("owner".to_string())
+        );
+        assert_eq!(parse_remote_owner("https://github.com/"), None);
+        assert_eq!(parse_remote_owner("git@github.com:"), None);
+        assert_eq!(parse_remote_owner(""), None);
+    }
+
+    #[test]
+    fn test_parse_remote_host() {
+        assert_eq!(
+            parse_remote_host("https://gitlab.com/owner/repo.git"),
+            Some("gitlab.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("https://gitlab.example.com/owner/repo.git"),
+            Some("gitlab.example.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("  https://github.com/owner/repo\n"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("http://gitlab.internal.company.com/owner/repo.git"),
+            Some("gitlab.internal.company.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("git@gitlab.com:owner/repo.git"),
+            Some("gitlab.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("git@gitlab.example.com:owner/repo.git"),
+            Some("gitlab.example.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("ssh://git@gitlab.example.com/owner/repo.git"),
+            Some("gitlab.example.com".to_string())
+        );
+        assert_eq!(
+            parse_remote_host("ssh://gitlab.example.com/owner/repo.git"),
+            Some("gitlab.example.com".to_string())
+        );
+        assert_eq!(parse_remote_host("https://"), None);
+        assert_eq!(parse_remote_host("git@"), None);
+        assert_eq!(parse_remote_host(""), None);
+    }
+
+    #[test]
+    fn test_parse_owner_repo() {
+        assert_eq!(
+            parse_owner_repo("https://github.com/owner/repo.git"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_owner_repo("https://github.com/owner/repo"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_owner_repo("  https://github.com/owner/repo.git\n"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_owner_repo("git@github.com:owner/repo.git"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_owner_repo("git@github.com:owner/repo"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_owner_repo("ssh://git@github.com/owner/repo.git"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_owner_repo("https://gitlab.com/owner/repo.git"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(parse_owner_repo("https://github.com/owner/"), None);
+        assert_eq!(parse_owner_repo("git@github.com:owner/"), None);
+        assert_eq!(parse_owner_repo(""), None);
     }
 
     #[test]
