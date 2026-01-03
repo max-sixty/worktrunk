@@ -19,6 +19,7 @@ pub(crate) mod help_pager;
 mod llm;
 mod md_help;
 mod output;
+mod pager;
 
 pub use crate::cli::OutputFormat;
 

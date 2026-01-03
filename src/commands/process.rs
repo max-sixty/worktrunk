@@ -5,35 +5,7 @@ use std::path::Path;
 use std::process::Command;
 use std::process::Stdio;
 use worktrunk::git::Repository;
-use worktrunk::path::format_path_for_display;
-
-/// Sanitize a string for use as a filename on all platforms.
-/// Replaces characters that are illegal in Windows filenames or are path separators.
-/// Also handles Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).
-fn sanitize_for_filename(s: &str) -> String {
-    // Replace illegal characters
-    let sanitized: String = s
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*' => '-',
-            _ => c,
-        })
-        .collect();
-
-    // Check for Windows reserved device names (case-insensitive)
-    // These cannot be used as filenames on Windows, even with extensions
-    let upper = sanitized.to_uppercase();
-    let is_reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (upper.len() == 4
-            && (upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.chars().nth(3).is_some_and(|c| matches!(c, '1'..='9')));
-
-    if is_reserved {
-        format!("_{}", sanitized)
-    } else {
-        sanitized
-    }
-}
+use worktrunk::path::{format_path_for_display, sanitize_for_filename};
 
 /// Get the separator needed before closing brace in POSIX shell command grouping.
 /// Returns empty string if command already ends with newline or semicolon.
@@ -71,11 +43,8 @@ pub fn spawn_detached(
     name: &str,
     context_json: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
-    // Get the git common directory (shared across all worktrees)
-    let git_common_dir = repo.git_common_dir()?;
-
     // Create log directory in the common git directory
-    let log_dir = git_common_dir.join("wt-logs");
+    let log_dir = repo.wt_logs_dir()?;
     fs::create_dir_all(&log_dir).with_context(|| {
         format!(
             "Failed to create log directory {}",

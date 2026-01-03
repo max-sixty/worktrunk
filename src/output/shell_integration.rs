@@ -92,15 +92,28 @@ pub(crate) fn git_subcommand_warning() -> String {
 /// Returns a reason string explaining why shell integration isn't working.
 /// See the module documentation for the complete spec of warning messages.
 pub(crate) fn compute_shell_warning_reason() -> String {
-    if Shell::is_integration_configured(&crate::binary_name())
+    let is_configured = Shell::is_integration_configured(&crate::binary_name())
         .ok()
         .flatten()
-        .is_some()
-    {
-        if crate::was_invoked_with_explicit_path() {
+        .is_some();
+    let explicit_path = crate::was_invoked_with_explicit_path();
+    let invoked = crate::invocation_path();
+    let wraps = crate::binary_name();
+
+    compute_shell_warning_reason_inner(is_configured, explicit_path, &invoked, &wraps)
+}
+
+/// Inner logic for computing shell warning reason.
+/// Separated for testability - the outer function handles environment queries.
+fn compute_shell_warning_reason_inner(
+    is_configured: bool,
+    explicit_path: bool,
+    invoked: &str,
+    wraps: &str,
+) -> String {
+    if is_configured {
+        if explicit_path {
             // Invoked with explicit path - shell wrapper won't intercept this binary
-            let invoked = crate::invocation_path();
-            let wraps = crate::binary_name();
             cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
         } else {
             "shell requires restart".to_string()
@@ -356,4 +369,44 @@ pub fn prompt_shell_integration(
     print_shell_install_result(&install_result)?;
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shell_integration_hint() {
+        let hint = shell_integration_hint();
+        assert!(hint.contains("wt config shell install"));
+    }
+
+    #[test]
+    fn test_git_subcommand_warning() {
+        let warning = git_subcommand_warning();
+        assert!(warning.contains("git-wt"));
+        assert!(warning.contains("shell function"));
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_not_installed() {
+        // Shell integration not configured -> "not installed"
+        let reason = compute_shell_warning_reason_inner(false, false, "wt", "wt");
+        assert_eq!(reason, "shell integration not installed");
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_explicit_path() {
+        // Shell integration configured + explicit path -> "ran X; wraps Y"
+        let reason = compute_shell_warning_reason_inner(true, true, "./target/debug/wt", "wt");
+        assert!(reason.contains("./target/debug/wt"));
+        assert!(reason.contains("wt"));
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_needs_restart() {
+        // Shell integration configured + NOT explicit path -> "shell requires restart"
+        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
+        assert_eq!(reason, "shell requires restart");
+    }
 }

@@ -21,13 +21,10 @@
 //! commands like `less`. If Git Bash is not available, falls back to direct output.
 
 use std::io::{IsTerminal, Write};
-use std::process::{Command, Stdio};
-use worktrunk::shell_exec::{ShellConfig, run};
+use std::process::Stdio;
+use worktrunk::shell_exec::ShellConfig;
 
-fn validate_pager(s: &str) -> Option<String> {
-    let trimmed = s.trim();
-    (!trimmed.is_empty() && trimmed != "cat").then(|| trimmed.to_string())
-}
+use crate::pager::{git_config_pager, parse_pager_value};
 
 /// Detect pager for help output, following git's pager precedence.
 ///
@@ -41,22 +38,13 @@ fn detect_help_pager() -> Option<String> {
     // Check environment variables in git's precedence order
     let pager = std::env::var("GIT_PAGER")
         .ok()
-        .and_then(|s| validate_pager(&s))
+        .and_then(|s| parse_pager_value(&s))
+        .or_else(git_config_pager)
         .or_else(|| {
-            // Try git config core.pager
-            let mut cmd = Command::new("git");
-            cmd.args(["config", "--get", "core.pager"]);
-            run(&mut cmd, None).ok().and_then(|output| {
-                if !output.status.success() {
-                    return None;
-                }
-                String::from_utf8(output.stdout)
-                    .inspect_err(|e| log::debug!("git config output not UTF-8: {}", e))
-                    .ok()
-                    .and_then(|s| validate_pager(&s))
-            })
-        })
-        .or_else(|| std::env::var("PAGER").ok().and_then(|s| validate_pager(&s)));
+            std::env::var("PAGER")
+                .ok()
+                .and_then(|s| parse_pager_value(&s))
+        });
 
     // If user explicitly configured a pager, use it
     if pager.is_some() {
@@ -142,22 +130,21 @@ pub fn show_help_in_pager(help_text: &str) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::pager::parse_pager_value;
+
     #[test]
     fn test_validate_excludes_cat() {
-        assert_eq!(super::validate_pager("cat"), None);
-        assert_eq!(super::validate_pager("  cat  "), None);
-        assert_eq!(super::validate_pager(""), None);
-        assert_eq!(super::validate_pager("  "), None);
+        assert_eq!(parse_pager_value("cat"), None);
+        assert_eq!(parse_pager_value("  cat  "), None);
+        assert_eq!(parse_pager_value(""), None);
+        assert_eq!(parse_pager_value("  "), None);
     }
 
     #[test]
     fn test_validate_accepts_valid_pagers() {
-        assert_eq!(super::validate_pager("less"), Some("less".to_string()));
-        assert_eq!(super::validate_pager("  less  "), Some("less".to_string()));
-        assert_eq!(super::validate_pager("delta"), Some("delta".to_string()));
-        assert_eq!(
-            super::validate_pager("less -R"),
-            Some("less -R".to_string())
-        );
+        assert_eq!(parse_pager_value("less"), Some("less".to_string()));
+        assert_eq!(parse_pager_value("  less  "), Some("less".to_string()));
+        assert_eq!(parse_pager_value("delta"), Some("delta".to_string()));
+        assert_eq!(parse_pager_value("less -R"), Some("less -R".to_string()));
     }
 }
