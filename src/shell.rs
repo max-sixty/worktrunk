@@ -776,6 +776,32 @@ mod tests {
         assert_eq!(extract_filename_from_path(path), expected);
     }
 
+    /// Issue #348: Windows Git Bash shell detection
+    ///
+    /// Git Bash sets $SHELL to Windows-style paths like:
+    /// `C:\Program Files\Git\usr\bin\bash.exe`
+    ///
+    /// This test verifies the full path-to-shell detection flow works on Windows.
+    #[cfg(windows)]
+    #[rstest]
+    #[case::git_bash(r"C:\Program Files\Git\usr\bin\bash.exe", Shell::Bash)]
+    #[case::msys2_zsh(r"C:\msys64\usr\bin\zsh.exe", Shell::Zsh)]
+    #[case::powershell(
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        Shell::PowerShell
+    )]
+    #[case::pwsh(r"C:\Program Files\PowerShell\7\pwsh.exe", Shell::PowerShell)]
+    fn test_issue_348_windows_shell_detection(#[case] shell_path: &str, #[case] expected: Shell) {
+        // This is the exact flow that failed before the fix:
+        // 1. extract_filename_from_path() extracts "bash" from Windows path
+        // 2. shell_from_name() maps "bash" to Shell::Bash
+        let shell_name = extract_filename_from_path(shell_path)
+            .expect("should extract filename from Windows path");
+        let detected =
+            shell_from_name(shell_name).expect("should detect shell from extracted name");
+        assert_eq!(detected, expected);
+    }
+
     #[rstest]
     #[case::bash("bash", Some(Shell::Bash))]
     #[case::bash_versioned("bash5", Some(Shell::Bash))]
