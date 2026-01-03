@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/shell_integration_prompt.rs
+assertion_line: 465
 expression: normalized
 ---
 y

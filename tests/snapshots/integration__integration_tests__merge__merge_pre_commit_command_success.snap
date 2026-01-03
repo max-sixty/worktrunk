@@ -24,6 +24,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -46,4 +47,5 @@ exit_code: 0
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
 [36m◎ Removing [1mfeature[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

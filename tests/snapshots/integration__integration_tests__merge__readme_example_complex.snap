@@ -68,7 +68,8 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 [107m [0m  3 files changed, 33 insertions(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 3 files, [32m+33[39m[39m[90m)[39m[39m
 [36m◎ Removing [1mfeature-auth[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
-[2m○[22m Switched to worktree for [1mmain[22m @ [1m_REPO_[22m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [36m◎[39m [36mRunning post-merge [1mproject:install[22m @ [1m_REPO_[22m:[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m install [0m[2m[36m--path[0m[2m .
 [0m  Installing worktrunk v0.1.0

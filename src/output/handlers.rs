@@ -198,6 +198,11 @@ fn shell_integration_hint() -> String {
     cformat!("To enable automatic cd, run <bright-black>wt config shell install</>")
 }
 
+/// Hint when shell integration is installed but shell needs restart
+fn shell_restart_hint() -> &'static str {
+    "Restart shell to activate shell integration"
+}
+
 /// Shell integration hint for unknown/unsupported shell
 fn shell_integration_unsupported_shell(shell_path: &str) -> String {
     // Extract shell name from path (e.g., "/bin/tcsh" -> "tcsh")
@@ -345,7 +350,7 @@ pub fn print_shell_install_result(
         });
 
         if current_shell_result.is_some() {
-            super::print(hint_message("Restart shell to activate shell integration"))?;
+            super::print(hint_message(shell_restart_hint()))?;
         }
     }
 
@@ -396,6 +401,13 @@ pub fn prompt_shell_integration(
     use std::io::IsTerminal;
     use worktrunk::shell::current_shell;
 
+    // Skip when running as git subcommand - shell integration can't help there
+    // (running through git prevents cd, so the shell wrapper won't intercept)
+    // The git subcommand warning is already shown by the caller
+    if crate::is_git_subcommand() {
+        return Ok(false);
+    }
+
     let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
     // Check the current shell (from $SHELL)
@@ -434,7 +446,7 @@ pub fn prompt_shell_integration(
         // Shell integration is configured but not active for this invocation
         if !crate::was_invoked_with_explicit_path() {
             // Invoked via PATH but wrapper isn't active - needs shell restart
-            super::print(hint_message("Restart shell to activate shell integration"))?;
+            super::print(hint_message(shell_restart_hint()))?;
         }
         // For explicit paths: no hint needed - handle_switch_output() warning already explains
         return Ok(false);
@@ -473,18 +485,126 @@ pub fn prompt_shell_integration(
     Ok(true)
 }
 
-/// Show switch message when changing directory after worktree removal
+/// Warning message when running as git subcommand (cd cannot work)
+fn git_subcommand_warning() -> String {
+    cformat!("Use <bright-black>git-wt</> directly (via shell function) for automatic cd")
+}
+
+/// Show switch message when changing directory after worktree removal.
+///
+/// When shell integration is not active, warns that cd cannot happen.
+/// This is important for remove/merge since the user would be left in a deleted directory.
+///
+/// # Warning Message Format
+///
+/// Uses the standard "Cannot change directory — {reason}" pattern.
+/// See [`compute_shell_warning_reason`] for the full list of reasons.
 fn print_switch_message_if_changed(
     changed_directory: bool,
     main_path: &Path,
 ) -> anyhow::Result<()> {
-    if changed_directory && let Ok(Some(dest_branch)) = Repository::at(main_path).current_branch() {
-        let path_display = format_path_for_display(main_path);
+    if !changed_directory {
+        return Ok(());
+    }
+
+    let repo = Repository::at(main_path);
+    let Ok(Some(dest_branch)) = repo.current_branch() else {
+        return Ok(());
+    };
+
+    let path_display = format_path_for_display(main_path);
+
+    if super::is_shell_integration_active() {
+        // Shell integration active - cd will work
         super::print(info_message(cformat!(
             "Switched to worktree for <bold>{dest_branch}</> @ <bold>{path_display}</>"
         )))?;
+    } else if crate::is_git_subcommand() {
+        // Running as `git wt` - explain why cd can't work
+        super::print(warning_message(
+            "Cannot change directory — ran git wt; running through git prevents cd",
+        ))?;
+        super::print(hint_message(git_subcommand_warning()))?;
+    } else {
+        // Shell integration not active - compute specific reason
+        let reason = compute_shell_warning_reason();
+        super::print(warning_message(cformat!(
+            "Cannot change directory — {reason}"
+        )))?;
+        super::print(hint_message(shell_integration_hint()))?;
     }
     Ok(())
+}
+
+/// Compute the shell warning reason for display in messages.
+///
+/// # Shell Integration Warning Messages (Complete Spec)
+///
+/// When shell integration is not active, warn that cd won't happen.
+///
+/// ## Switch to Existing Worktree (`wt switch X` where X exists)
+///
+/// | Condition | Warning | Hint |
+/// |-----------|---------|------|
+/// | Not installed | `▲ Worktree for X @ path, but cannot change directory — shell integration not installed` | `↳ To enable automatic cd, run wt config shell install` |
+/// | Needs restart | `▲ Worktree for X @ path, but cannot change directory — shell requires restart` | `↳ Restart shell to activate shell integration` |
+/// | Explicit path | `▲ Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | (none) |
+/// | Git subcommand | `▲ Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `↳ Use git-wt directly (via shell function) for automatic cd` |
+///
+/// ## After Merge/Remove (switching to main worktree)
+///
+/// | Condition | Warning | Hint |
+/// |-----------|---------|------|
+/// | Git subcommand | `▲ Cannot change directory — ran git wt; running through git prevents cd` | `↳ Use git-wt directly (via shell function) for automatic cd` |
+/// | Other | `▲ Cannot change directory — {reason}` | `↳ To enable automatic cd, run wt config shell install` |
+///
+/// ## Success Case (shell integration active)
+///
+/// ```text
+/// ○ Switched to worktree for X @ path
+/// ```
+///
+/// # Reason Values (returned by this function)
+///
+/// | Reason | Meaning |
+/// |--------|---------|
+/// | `shell integration not installed` | Shell config doesn't have the `eval` line |
+/// | `shell requires restart` | Shell config has `eval` line but wrapper not active |
+/// | `ran X; shell integration wraps Y` | Invoked with explicit path (e.g., `./target/debug/wt`) |
+///
+/// Note: The git subcommand case (`ran git wt; ...`) is handled separately via `is_git_subcommand()`.
+fn compute_shell_warning_reason() -> String {
+    use worktrunk::shell::Shell;
+
+    let is_configured = Shell::is_integration_configured(&crate::binary_name())
+        .ok()
+        .flatten()
+        .is_some();
+    let explicit_path = crate::was_invoked_with_explicit_path();
+    let invoked = crate::invocation_path();
+    let wraps = crate::binary_name();
+
+    compute_shell_warning_reason_inner(is_configured, explicit_path, &invoked, &wraps)
+}
+
+/// Inner logic for computing shell warning reason.
+/// Separated for testability - the outer function handles environment queries.
+fn compute_shell_warning_reason_inner(
+    is_configured: bool,
+    explicit_path: bool,
+    invoked: &str,
+    wraps: &str,
+) -> String {
+    if is_configured {
+        if explicit_path {
+            // Invoked with explicit path - shell wrapper won't intercept this binary
+            cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
+        } else {
+            "shell requires restart".to_string()
+        }
+    } else {
+        "shell integration not installed".to_string()
+    }
 }
 
 /// Handle output for a switch operation
@@ -501,9 +621,9 @@ fn print_switch_message_if_changed(
 /// - `AlreadyAt` — user is already in the target directory
 /// - Shell integration IS active — cd will happen automatically
 ///
-/// **Warning reasons:**
-/// - "shell requires restart" — shell config has `eval` line but wrapper not active
-/// - "shell integration not installed" — shell config doesn't have `eval` line
+/// **Warning format:** `Cannot change directory — {reason}`
+///
+/// See [`compute_shell_warning_reason`] for the full list of reasons.
 ///
 /// **Message order for Created:** Success message first, then warning. Creation
 /// is a real accomplishment, but users still need to know they won't cd there.
@@ -532,25 +652,14 @@ pub fn handle_switch_output(
     let is_shell_integration_active = super::is_shell_integration_active();
 
     // Compute shell warning reason once (only if we'll need it)
+    // Git subcommand case is special — needs a hint after the warning
+    let is_git_subcommand = crate::is_git_subcommand();
     let shell_warning_reason: Option<String> = if is_shell_integration_active {
         None
-    } else if Shell::is_integration_configured(&crate::binary_name())
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        if crate::was_invoked_with_explicit_path() {
-            // Invoked with explicit path - shell wrapper won't intercept this binary
-            let invoked = crate::invocation_path();
-            let wraps = crate::binary_name();
-            Some(cformat!(
-                "ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>"
-            ))
-        } else {
-            Some("shell requires restart".to_string())
-        }
+    } else if is_git_subcommand {
+        Some("ran git wt; running through git prevents cd".to_string())
     } else {
-        Some("shell integration not installed".to_string())
+        Some(compute_shell_warning_reason())
     };
 
     // Show path mismatch warning after the main message
@@ -575,25 +684,29 @@ pub fn handle_switch_output(
         }
         SwitchResult::Existing(_) => {
             if let Some(reason) = &shell_warning_reason {
-                // Shell integration not active — warn that shell won't cd
+                // Shell integration not active — single warning with context
+                if let Some(warning) = path_mismatch_warning {
+                    super::print(warning)?;
+                }
                 if let Some(cmd) = execute_command {
-                    // --execute: command will run in target dir, but shell stays put
+                    // --execute: command runs in target dir, but shell stays put
                     super::print(warning_message(cformat!(
                         "Executing <bold>{cmd}</> @ <bold>{path_display}</>, but shell directory unchanged — {reason}"
                     )))?;
                 } else {
-                    // No --execute: user expected to cd but won't
+                    // No --execute: what exists + why cd won't happen
                     super::print(warning_message(cformat!(
                         "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
                     )))?;
                 }
-                if let Some(warning) = path_mismatch_warning {
-                    super::print(warning)?;
+                // Show git subcommand hint if running as git wt
+                if is_git_subcommand {
+                    super::print(hint_message(git_subcommand_warning()))?;
                 }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
             } else {
-                // Shell integration active — cd will happen automatically
+                // Shell integration active — user actually switched
                 super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
@@ -630,6 +743,10 @@ pub fn handle_switch_output(
                     super::print(warning_message(cformat!(
                         "Cannot change directory — {reason}"
                     )))?;
+                }
+                // Show git subcommand hint if running as git wt
+                if is_git_subcommand {
+                    super::print(hint_message(git_subcommand_warning()))?;
                 }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
@@ -1191,5 +1308,34 @@ mod tests {
     fn test_shell_integration_hint() {
         let hint = shell_integration_hint();
         assert!(hint.contains("wt config shell install"));
+    }
+
+    #[test]
+    fn test_git_subcommand_warning() {
+        let warning = git_subcommand_warning();
+        assert!(warning.contains("git-wt"));
+        assert!(warning.contains("shell function"));
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_not_installed() {
+        // Shell integration not configured -> "not installed"
+        let reason = compute_shell_warning_reason_inner(false, false, "wt", "wt");
+        assert_eq!(reason, "shell integration not installed");
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_explicit_path() {
+        // Shell integration configured + explicit path -> "ran X; wraps Y"
+        let reason = compute_shell_warning_reason_inner(true, true, "./target/debug/wt", "wt");
+        assert!(reason.contains("./target/debug/wt"));
+        assert!(reason.contains("wt"));
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_needs_restart() {
+        // Shell integration configured + NOT explicit path -> "shell requires restart"
+        let reason = compute_shell_warning_reason_inner(true, false, "wt", "wt");
+        assert_eq!(reason, "shell requires restart");
     }
 }

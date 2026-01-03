@@ -4,7 +4,6 @@ info:
   program: wt
   args:
     - remove
-    - "--no-background"
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
     CLICOLOR_FORCE: "1"
@@ -14,6 +13,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_EXEC_PATH: /usr/lib/git-core
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -31,7 +31,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[36m◎[39m [36mRemoving current worktree...[39m
-[32m✓ Removed [1mfeature[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
-[33m▲[39m [33mCannot change directory — shell integration not installed[39m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
+[36m◎ Removing [1mfeature-git-subcmd[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
+[33m▲[39m [33mCannot change directory — ran git wt; running through git prevents cd[39m
+[2m↳[22m [2mUse [90mgit-wt[39m directly (via shell function) for automatic cd[22m

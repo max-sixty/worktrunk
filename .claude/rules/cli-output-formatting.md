@@ -139,13 +139,15 @@ limitation and its reason:
 ```rust
 // Outcome, but limitation — reason
 "Worktree for feature @ ~/repo.feature, but cannot change directory — shell integration not installed"
-"Worktree for feature @ ~/repo.feature, but cannot change directory — shell requires restart"
 ```
 
 This pattern:
 - States what succeeded (worktree exists at path)
 - Uses "but" to introduce what didn't work (cannot cd)
 - Uses em-dash to explain why (shell integration status)
+
+See `compute_shell_warning_reason()` in `src/output/handlers.rs` for the
+complete spec of shell integration warning messages and hints
 
 **Compute decisions once:** For background operations, check conditions upfront,
 show the message, then pass the decision explicitly rather than re-checking in

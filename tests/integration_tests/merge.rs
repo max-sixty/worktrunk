@@ -52,6 +52,25 @@ fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
     snapshot_merge("merge_fast_forward", &repo, &["main"], Some(&feature_wt));
 }
 
+/// Test merge when running as a git subcommand (`git wt merge` instead of `wt merge`).
+///
+/// When git runs a subcommand, it sets `GIT_EXEC_PATH` in the environment.
+/// Shell integration cannot work in this case because cd directives cannot
+/// propagate through git's subprocess to the parent shell.
+#[rstest]
+fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
+    let (repo, feature_wt) = merge_scenario;
+
+    // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
+    snapshot_merge_with_env(
+        "merge_as_git_subcommand",
+        &repo,
+        &["main"],
+        Some(&feature_wt),
+        &[("GIT_EXEC_PATH", "/usr/lib/git-core")],
+    );
+}
+
 #[rstest]
 fn test_merge_when_primary_not_on_default_but_default_has_worktree(
     mut repo_with_alternate_primary: TestRepo,
