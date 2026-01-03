@@ -1,5 +1,8 @@
 # CLI Output Formatting Standards
 
+> For output system architecture (shell integration, stdout vs stderr, output
+> functions API), see `output-system-architecture.md`.
+
 ## User Message Principles
 
 Output messages should acknowledge user-supplied arguments (flags, options,

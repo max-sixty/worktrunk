@@ -24,8 +24,6 @@
 //! - Simple implementation - no traits, no handler structs
 //! - stdout always available for data output (JSON, etc.)
 
-#[cfg(not(unix))]
-use super::handlers::execute_streaming;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
@@ -36,6 +34,8 @@ use std::sync::{Mutex, OnceLock};
 use worktrunk::shell_exec::DIRECTIVE_FILE_ENV_VAR;
 #[cfg(unix)]
 use worktrunk::shell_exec::ShellConfig;
+#[cfg(not(unix))]
+use worktrunk::shell_exec::execute_streaming;
 use worktrunk::styling::{eprintln, stderr};
 
 /// Global output state, lazily initialized on first access.
