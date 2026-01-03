@@ -167,6 +167,14 @@ impl Repository {
             .unwrap_or(false)
     }
 
+    /// Get the URL for a remote, if configured.
+    pub fn remote_url(&self, remote: &str) -> Option<String> {
+        self.run_command(&["remote", "get-url", remote])
+            .ok()
+            .map(|url| url.trim().to_string())
+            .filter(|url| !url.is_empty())
+    }
+
     /// Check if a local git branch exists.
     pub fn local_branch_exists(&self, branch: &str) -> anyhow::Result<bool> {
         Ok(self
@@ -1608,12 +1616,12 @@ impl Repository {
                 // Try to get the remote URL first
                 let remote = self.primary_remote()?;
 
-                if let Ok(url) = self.run_command(&["remote", "get-url", remote]) {
+                if let Some(url) = self.remote_url(remote) {
                     if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
                         return Ok(parsed.project_identifier());
                     }
                     // Fallback for URLs that don't fit host/owner/repo model (e.g., with ports)
-                    let url = url.trim().strip_suffix(".git").unwrap_or(url.trim());
+                    let url = url.strip_suffix(".git").unwrap_or(url.as_str());
                     // Handle ssh:// format with port: ssh://git@host:port/path -> host/port/path
                     if let Some(ssh_part) = url.strip_prefix("ssh://") {
                         let ssh_part = ssh_part.strip_prefix("git@").unwrap_or(ssh_part);

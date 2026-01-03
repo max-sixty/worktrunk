@@ -37,10 +37,7 @@ pub fn get_platform_for_repo(repo_root: &str) -> Option<CiPlatform> {
 /// Get the origin remote URL for a repository.
 fn get_remote_url_for_repo(repo_root: &str) -> Option<String> {
     let repo = Repository::at(repo_root);
-    repo.run_command(&["remote", "get-url", "origin"])
-        .ok()
-        .map(|output| output.trim().to_string())
-        .filter(|output| !output.is_empty())
+    repo.remote_url("origin")
 }
 
 /// Get the GitLab hostname for a repository by parsing its origin remote URL.
