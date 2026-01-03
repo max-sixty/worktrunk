@@ -3,7 +3,7 @@
 //! These tests ensure that column headers align with their data,
 //! and that progressive rendering maintains consistent alignment.
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
@@ -17,11 +17,7 @@ fn test_status_column_alignment_with_header(mut repo: TestRepo) {
     std::fs::write(wt.join("untracked.txt"), "new").unwrap();
     std::fs::write(wt.join("file.txt"), "modified").unwrap();
 
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "list", &[], None);
-        assert_cmd_snapshot!("status_column_alignment_check", cmd);
-    });
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "list", &[], None));
 }
 
 /// Test that Status column width is consistent across all rows
@@ -37,9 +33,5 @@ fn test_status_column_width_consistency(mut repo: TestRepo) {
     std::fs::write(wt2.join("file.txt"), "modified").unwrap();
     repo.run_git_in(&wt2, &["add", "file.txt"]);
 
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "list", &[], None);
-        assert_cmd_snapshot!("status_column_width_consistency", cmd);
-    });
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "list", &[], None));
 }

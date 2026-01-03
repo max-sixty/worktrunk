@@ -1,55 +1,23 @@
 use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario, repo, repo_with_alternate_primary,
     repo_with_feature_worktree, repo_with_main_worktree, repo_with_multi_commit_feature,
-    setup_snapshot_settings,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
-use std::path::{Path, PathBuf};
-
-/// Helper to create snapshot with normalized paths
-fn snapshot_merge(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "merge", args, cwd);
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
-
-/// Helper to snapshot switch command
-fn snapshot_switch(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
-
-/// Helper to create snapshot with custom environment (for LLM testing)
-fn snapshot_merge_with_env(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    cwd: Option<&std::path::Path>,
-    env_vars: &[(&str, &str)],
-) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "merge", args, cwd);
-        for (key, value) in env_vars {
-            cmd.env(key, value);
-        }
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
+use std::path::PathBuf;
 
 #[rstest]
 fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Merge feature into main
-    snapshot_merge("merge_fast_forward", &repo, &["main"], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
 }
 
 /// Test merge when running as a git subcommand (`git wt merge` instead of `wt merge`).
@@ -62,13 +30,11 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Merge with GIT_EXEC_PATH set (simulating `git wt merge ...`)
-    snapshot_merge_with_env(
-        "merge_as_git_subcommand",
-        &repo,
-        &["main"],
-        Some(&feature_wt),
-        &[("GIT_EXEC_PATH", "/usr/lib/git-core")],
-    );
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt));
+        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        cmd
+    });
 }
 
 #[rstest]
@@ -78,12 +44,12 @@ fn test_merge_when_primary_not_on_default_but_default_has_worktree(
     let repo = &mut repo_with_alternate_primary;
     let feature_wt = repo.add_feature();
 
-    snapshot_merge(
-        "merge_when_primary_not_on_default_but_default_has_worktree",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -91,18 +57,18 @@ fn test_merge_with_no_remove_flag(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Merge with --no-remove flag (should not finish worktree)
-    snapshot_merge(
-        "merge_with_no_remove",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--no-remove"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
 fn test_merge_already_on_target(repo: TestRepo) {
     // Already on main branch (repo root)
-    snapshot_merge("merge_already_on_target", &repo, &[], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], None));
 }
 
 #[rstest]
@@ -112,12 +78,12 @@ fn test_merge_dirty_working_tree(mut repo: TestRepo) {
     std::fs::write(feature_wt.join("dirty.txt"), "uncommitted content").unwrap();
 
     // Try to merge (should fail due to dirty working tree)
-    snapshot_merge(
-        "merge_dirty_working_tree",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -133,12 +99,12 @@ fn test_merge_not_fast_forward(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Try to merge (should fail or require actual merge)
-    snapshot_merge(
-        "merge_not_fast_forward",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 /// Test that `wt merge --no-commit` shows merge-context hint when main has newer commits.
@@ -181,12 +147,12 @@ fn test_merge_no_commit_not_fast_forward(repo: TestRepo) {
 
     // Try to merge with --no-commit --no-remove (skips rebase, so push fails with not-fast-forward)
     // Main has "Add main file" commit that feature doesn't have as ancestor
-    snapshot_merge(
-        "merge_no_commit_not_fast_forward",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--no-commit", "--no-remove"],
-        Some(&feature_path),
-    );
+        Some(&feature_path)
+    ));
 }
 
 #[rstest]
@@ -233,7 +199,12 @@ fn test_merge_rebase_conflict(repo: TestRepo) {
     );
 
     // Try to merge - should fail with rebase conflict
-    snapshot_merge("merge_rebase_conflict", &repo, &["main"], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -241,7 +212,7 @@ fn test_merge_to_default_branch(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Merge without specifying target (should use default branch)
-    snapshot_merge("merge_to_default", &repo, &[], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], Some(&feature_wt)));
 }
 
 #[rstest]
@@ -249,7 +220,7 @@ fn test_merge_with_caret_symbol(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Merge using ^ symbol (should resolve to default branch)
-    snapshot_merge("merge_with_caret", &repo, &["^"], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["^"], Some(&feature_wt)));
 }
 
 #[rstest]
@@ -258,12 +229,12 @@ fn test_merge_error_detached_head(repo: TestRepo) {
     repo.detach_head();
 
     // Try to merge (should fail - detached HEAD)
-    snapshot_merge(
-        "merge_error_detached_head",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(repo.root_path()),
-    );
+        Some(repo.root_path())
+    ));
 }
 
 #[rstest]
@@ -276,12 +247,12 @@ fn test_merge_squash_deterministic(mut repo_with_main_worktree: TestRepo) {
     repo.commit_in_worktree(&feature_wt, "file3.txt", "content 3", "docs: update readme");
 
     // Merge (squashing is now the default - no LLM configured, should use deterministic message)
-    snapshot_merge(
-        "merge_squash_deterministic",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -312,7 +283,12 @@ args = ["-c", "cat >/dev/null && echo 'feat: implement user authentication syste
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // (squashing is now the default, no need for --squash flag)
-    snapshot_merge("merge_squash_with_llm", repo, &["main"], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -324,16 +300,14 @@ fn test_merge_squash_llm_command_not_found(mut repo_with_main_worktree: TestRepo
     repo.commit_in_worktree(&feature_wt, "file2.txt", "content 2", "fix: bug fix");
 
     // Configure LLM command that doesn't exist - should error
-    snapshot_merge_with_env(
-        "merge_squash_llm_command_not_found",
-        repo,
-        &["main"],
-        Some(&feature_wt),
-        &[(
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
+        cmd.env(
             "WORKTRUNK_COMMIT_GENERATION__COMMAND",
             "nonexistent-llm-command",
-        )],
-    );
+        );
+        cmd
+    });
 }
 
 #[rstest]
@@ -359,7 +333,12 @@ args = ["-c", "cat > /dev/null; echo 'Error: connection refused' >&2 && exit 1"]
 "#;
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
-    snapshot_merge("merge_squash_llm_error", repo, &["main"], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -370,12 +349,12 @@ fn test_merge_squash_single_commit(mut repo_with_main_worktree: TestRepo) {
         repo.add_worktree_with_commit("feature", "file1.txt", "content", "feat: single commit");
 
     // Merge (squashing is default) - should skip squashing since there's only one commit
-    snapshot_merge(
-        "merge_squash_single_commit",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -384,12 +363,12 @@ fn test_merge_no_squash(repo_with_multi_commit_feature: TestRepo) {
     let feature_wt = &repo.worktrees["feature"];
 
     // Merge with --no-squash - should NOT squash the commits
-    snapshot_merge(
-        "merge_no_squash",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main", "--no-squash"],
-        Some(feature_wt),
-    );
+        Some(feature_wt)
+    ));
 }
 
 #[rstest]
@@ -417,12 +396,12 @@ fn test_merge_squash_empty_changes(mut repo_with_main_worktree: TestRepo) {
     );
 
     // Merge (squashing is default) - should succeed even when commits result in no net changes
-    snapshot_merge(
-        "merge_squash_empty_changes",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -440,12 +419,12 @@ fn test_merge_auto_commit_deterministic(mut repo_with_main_worktree: TestRepo) {
     std::fs::write(feature_wt.join("feature.txt"), "modified content").unwrap();
 
     // Merge - should auto-commit with deterministic message (no LLM configured)
-    snapshot_merge(
-        "merge_auto_commit_deterministic",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -472,12 +451,12 @@ args = ["-c", "cat >/dev/null && echo 'fix: improve auth validation logic'"]
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Merge with LLM configured - should auto-commit with LLM commit message
-    snapshot_merge(
-        "merge_auto_commit_with_llm",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -498,12 +477,12 @@ args = ["-c", "cat >/dev/null && echo 'fix: update file 1 content'"]
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Merge (squashing is default) - should stage uncommitted changes, then squash all commits including the staged changes
-    snapshot_merge(
-        "merge_auto_commit_and_squash",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(feature_wt),
-    );
+        Some(feature_wt)
+    ));
 }
 
 #[rstest]
@@ -518,16 +497,16 @@ fn test_merge_with_untracked_files(mut repo_with_main_worktree: TestRepo) {
     std::fs::write(feature_wt.join("untracked2.txt"), "untracked content 2").unwrap();
 
     // Merge - should show warning about untracked files
-    snapshot_merge_with_env(
-        "merge_with_untracked_files",
-        repo,
-        &["main"],
-        Some(&feature_wt),
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: commit changes"),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
@@ -542,12 +521,12 @@ fn test_merge_pre_merge_command_success(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --yes to skip approval prompts
-    snapshot_merge(
-        "merge_pre_merge_command_success",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -562,12 +541,12 @@ fn test_merge_pre_merge_command_failure(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --yes - pre-merge command should fail and block merge
-    snapshot_merge(
-        "merge_pre_merge_command_failure",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -582,12 +561,12 @@ fn test_merge_pre_merge_command_no_hooks(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --no-verify - should skip pre-merge commands and succeed
-    snapshot_merge(
-        "merge_pre_merge_command_no_hooks",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--no-verify"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -611,12 +590,12 @@ test = "exit 0"
     let feature_wt = repo.add_feature();
 
     // Merge with --yes - all pre-merge commands should pass
-    snapshot_merge(
-        "merge_pre_merge_command_named",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -635,12 +614,12 @@ fn test_merge_post_merge_command_success(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --yes
-    snapshot_merge(
-        "merge_post_merge_command_success",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 
     // Verify the command ran in the main worktree (not the feature worktree)
     let marker_file = repo.root_path().join("post-merge-ran.txt");
@@ -672,12 +651,12 @@ fn test_merge_post_merge_command_skipped_with_no_verify(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --no-verify - hook should be skipped entirely
-    snapshot_merge(
-        "merge_post_merge_command_no_verify",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes", "--no-verify"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 
     // Verify the command did not run in the main worktree
     let marker_file = repo.root_path().join("post-merge-ran.txt");
@@ -699,12 +678,12 @@ fn test_merge_post_merge_command_failure(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --yes - post-merge command should fail but merge should complete
-    snapshot_merge(
-        "merge_post_merge_command_failure",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -727,12 +706,12 @@ deploy = "echo 'Deploying branch {{ branch }}' > deploy.txt"
     let feature_wt = repo.add_feature();
 
     // Merge with --yes
-    snapshot_merge(
-        "merge_post_merge_command_named",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 
     // Verify both commands ran
     let notify_file = repo.root_path().join("notify.txt");
@@ -768,12 +747,12 @@ fn test_merge_post_merge_runs_with_nothing_to_merge(mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
 
     // Merge with --yes - nothing to merge but post-merge should still run
-    snapshot_merge(
-        "merge_post_merge_runs_with_nothing_to_merge",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 
     // Verify the post-merge command ran in the main worktree
     let marker_file = repo.root_path().join("post-merge-ran.txt");
@@ -799,12 +778,7 @@ fn test_merge_post_merge_runs_from_main_branch(repo: TestRepo) {
     repo.commit("Add config");
 
     // Run merge from main branch (repo root) - nothing to merge
-    snapshot_merge(
-        "merge_post_merge_runs_from_main_branch",
-        &repo,
-        &["--yes"],
-        None, // cwd = repo root = main branch
-    );
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &["--yes"], None));
 
     // Verify the post-merge command ran
     let marker_file = repo.root_path().join("post-merge-ran.txt");
@@ -832,12 +806,12 @@ fn test_merge_pre_commit_command_success(mut repo: TestRepo) {
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
 
     // Merge with --yes (changes uncommitted, should trigger pre-commit hook)
-    snapshot_merge(
-        "merge_pre_commit_command_success",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -854,12 +828,12 @@ fn test_merge_pre_commit_command_failure(mut repo: TestRepo) {
     fs::write(feature_wt.join("feature.txt"), "feature content").unwrap();
 
     // Merge with --yes - pre-commit command should fail and block merge
-    snapshot_merge(
-        "merge_pre_commit_command_failure",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -879,12 +853,12 @@ fn test_merge_pre_squash_command_success(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --yes (squashing is now the default)
-    snapshot_merge(
-        "merge_pre_squash_command_success",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -899,12 +873,12 @@ fn test_merge_pre_squash_command_failure(mut repo: TestRepo) {
     let feature_wt = repo.add_feature();
 
     // Merge with --yes (squashing is default) - pre-commit command should fail and block merge
-    snapshot_merge(
-        "merge_pre_squash_command_failure",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--yes"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -913,7 +887,7 @@ fn test_merge_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
     let feature_wt = repo.worktree_path("feature");
 
     // Try to merge without specifying target (should fail - no remote to get default branch)
-    snapshot_merge("merge_no_remote", &repo, &[], Some(feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], Some(feature_wt)));
 }
 
 // README EXAMPLE GENERATION TESTS
@@ -931,11 +905,9 @@ fn test_merge_no_remote(#[from(repo_with_feature_worktree)] repo: TestRepo) {
 #[rstest]
 fn test_readme_example_simple(repo: TestRepo) {
     // Snapshot the switch --create command (runs from bare repo)
-    snapshot_switch(
+    assert_cmd_snapshot!(
         "readme_example_simple_switch",
-        &repo,
-        &["--create", "fix-auth"],
-        None,
+        make_snapshot_cmd(&repo, "switch", &["--create", "fix-auth"], None)
     );
 
     // Get the created worktree path and make a commit
@@ -960,7 +932,10 @@ pub fn refresh(refresh_token: &str) -> String {
     repo.run_git_in(&feature_wt, &["commit", "-m", "Implement JWT validation"]);
 
     // Snapshot the merge command
-    snapshot_merge("readme_example_simple", &repo, &["main"], Some(&feature_wt));
+    assert_cmd_snapshot!(
+        "readme_example_simple",
+        make_snapshot_cmd(&repo, "merge", &["main"], Some(&feature_wt))
+    );
 }
 
 /// Generate README example: Complex merge with multiple hooks
@@ -1141,13 +1116,11 @@ command = "{}"
         "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         bin_dir.display()
     );
-    snapshot_merge_with_env(
-        "readme_example_complex",
-        &repo,
-        &["main", "--yes"],
-        Some(&feature_wt),
-        &[("PATH", &path_with_bin)],
-    );
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "merge", &["main", "--yes"], Some(&feature_wt));
+        cmd.env("PATH", &path_with_bin);
+        cmd
+    });
 }
 
 /// Generate README example: Creating worktree with post-create and post-start hooks
@@ -1215,11 +1188,10 @@ fi
         bin_dir.display()
     );
 
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
+    assert_cmd_snapshot!("readme_example_hooks_post_create", {
         let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-x", "--yes"], None);
         cmd.env("PATH", &path_with_bin);
-        assert_cmd_snapshot!("readme_example_hooks_post_create", cmd);
+        cmd
     });
 }
 
@@ -1424,13 +1396,11 @@ command = "{}"
         "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         bin_dir.display()
     );
-    snapshot_merge_with_env(
-        "readme_example_hooks_pre_merge",
-        &repo,
-        &["main", "--yes"],
-        Some(&feature_wt),
-        &[("PATH", &path_with_bin)],
-    );
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "merge", &["main", "--yes"], Some(&feature_wt));
+        cmd.env("PATH", &path_with_bin);
+        cmd
+    });
 }
 
 #[rstest]
@@ -1439,28 +1409,12 @@ fn test_merge_no_commit_with_clean_tree(mut repo_with_feature_worktree: TestRepo
     let feature_wt = &repo.worktrees["feature"];
 
     // Merge with --no-commit (should succeed - clean tree)
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(
-            repo,
-            "merge",
-            &["main", "--no-commit", "--no-remove"],
-            Some(feature_wt),
-        );
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
-        [107m [0m * [33mfc12499[m Add feature file
-        [107m [0m  feature.txt | 1 [32m+[m
-        [107m [0m  1 file changed, 1 insertion(+)
-        [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-        [2m○[22m Worktree preserved (--no-remove)
-        ");
-    });
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-commit", "--no-remove"],
+        Some(feature_wt),
+    ));
 }
 
 #[rstest]
@@ -1477,20 +1431,12 @@ fn test_merge_no_commit_with_dirty_tree(mut repo: TestRepo) {
     fs::write(feature_wt.join("uncommitted.txt"), "uncommitted content").unwrap();
 
     // Try to merge with --no-commit (should fail - dirty tree)
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd =
-            make_snapshot_cmd(&repo, "merge", &["main", "--no-commit"], Some(&feature_wt));
-        assert_cmd_snapshot!(cmd, @"
-        success: false
-        exit_code: 1
-        ----- stdout -----
-
-        ----- stderr -----
-        [31m✗[39m [31mCannot merge with --no-commit: [1mfeature[22m has uncommitted changes[39m
-        [2m↳[22m [2mCommit or stash changes first[22m
-        ");
-    });
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "merge",
+        &["main", "--no-commit"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1499,28 +1445,12 @@ fn test_merge_no_commit_no_squash_no_remove_redundant(mut repo_with_feature_work
     let feature_wt = &repo.worktrees["feature"];
 
     // Merge with --no-commit --no-squash --no-remove (redundant but valid - should succeed)
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(
-            repo,
-            "merge",
-            &["main", "--no-commit", "--no-squash", "--no-remove"],
-            Some(feature_wt),
-        );
-        assert_cmd_snapshot!(cmd, @r"
-        success: true
-        exit_code: 0
-        ----- stdout -----
-
-        ----- stderr -----
-        [36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mfc12499[22m (no commit/squash/rebase needed)[39m
-        [107m [0m * [33mfc12499[m Add feature file
-        [107m [0m  feature.txt | 1 [32m+[m
-        [107m [0m  1 file changed, 1 insertion(+)
-        [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m
-        [2m○[22m Worktree preserved (--no-remove)
-        ");
-    });
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main", "--no-commit", "--no-squash", "--no-remove"],
+        Some(feature_wt),
+    ));
 }
 
 #[rstest]
@@ -1531,7 +1461,12 @@ fn test_merge_no_commits(mut repo_with_main_worktree: TestRepo) {
     let feature_wt = repo.add_worktree("no-commits");
 
     // Merge without any commits - should skip both squashing and rebasing
-    snapshot_merge("merge_no_commits", repo, &["main"], Some(&feature_wt));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        repo,
+        "merge",
+        &["main"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1543,12 +1478,12 @@ fn test_merge_no_commits_with_changes(mut repo_with_main_worktree: TestRepo) {
     fs::write(feature_wt.join("newfile.txt"), "new content").unwrap();
 
     // Merge - should commit the changes, skip squashing (only 1 commit), and skip rebasing (at merge base)
-    snapshot_merge(
-        "merge_no_commits_with_changes",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1565,12 +1500,12 @@ fn test_merge_rebase_fast_forward(mut repo: TestRepo) {
     repo.run_git(&["commit", "-m", "Update main"]);
 
     // Merge - should fast-forward (no commits to replay)
-    snapshot_merge(
-        "merge_rebase_fast_forward",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1592,12 +1527,12 @@ fn test_merge_rebase_true_rebase(mut repo: TestRepo) {
     repo.run_git(&["commit", "-m", "Update main"]);
 
     // Merge - should show rebasing progress (has commits to replay)
-    snapshot_merge(
-        "merge_rebase_true_rebase",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 // =============================================================================
@@ -1609,12 +1544,12 @@ fn test_merge_no_rebase_when_already_rebased(merge_scenario: (TestRepo, PathBuf)
     // Feature branch is based on main (no divergence), so --no-rebase should succeed
     let (repo, feature_wt) = merge_scenario;
 
-    snapshot_merge(
-        "merge_no_rebase_already_rebased",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--no-rebase"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1633,12 +1568,12 @@ fn test_merge_no_rebase_when_not_rebased(mut repo: TestRepo) {
     repo.run_git(&["commit", "-m", "Update main"]);
 
     // --no-rebase should fail because feature is not rebased onto main
-    snapshot_merge(
-        "merge_no_rebase_not_rebased",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main", "--no-rebase"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1654,12 +1589,12 @@ fn test_merge_primary_on_different_branch(mut repo: TestRepo) {
         "Add feature file",
     );
 
-    snapshot_merge(
-        "merge_primary_on_different_branch",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 
     // Verify primary stayed on develop (we don't switch branches, only worktrees)
     assert_eq!(repo.current_branch(), "develop");
@@ -1698,12 +1633,12 @@ fn test_merge_primary_on_different_branch_dirty(mut repo: TestRepo) {
     );
 
     // Try to merge to main - should fail because primary has uncommitted changes that conflict
-    snapshot_merge(
-        "merge_primary_on_different_branch_dirty",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1712,12 +1647,12 @@ fn test_merge_race_condition_commit_after_push(mut repo_with_feature_worktree: T
     let feature_wt = repo.worktrees["feature"].clone();
 
     // Merge to main (this pushes the branch to main)
-    snapshot_merge(
-        "merge_race_condition_before_new_commit",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main", "--no-remove"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 
     // RACE CONDITION: Simulate another developer adding a commit to the feature branch
     // after the merge/push but before worktree removal and branch deletion.
@@ -1823,12 +1758,12 @@ fn test_merge_to_non_default_target(repo: TestRepo) {
     // Merge to staging explicitly (NOT to main)
     // This should rebase onto staging (which has staging-file.txt)
     // NOT onto main (which has main-file.txt)
-    snapshot_merge(
-        "merge_to_non_default_target",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "merge",
         &["staging"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -1853,16 +1788,16 @@ fn test_merge_squash_with_working_tree_creates_backup(mut repo_with_main_worktre
 
     // Merge with squash (default behavior)
     // This should create a backup before squashing because there are uncommitted changes
-    snapshot_merge_with_env(
-        "merge_squash_with_working_tree_creates_backup",
-        repo,
-        &["main"],
-        Some(&feature_wt),
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(repo, "merge", &["main"], Some(&feature_wt));
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: update files"),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 
     // Verify that a backup was created in the reflog
     // Note: The worktree has been removed by the merge, so we check from the repo root
@@ -1885,7 +1820,7 @@ fn test_merge_when_default_branch_missing_worktree(repo: TestRepo) {
     // Move primary off default branch so no worktree holds it
     repo.switch_primary_to("develop");
 
-    snapshot_merge("merge_default_branch_missing_worktree", &repo, &[], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "merge", &[], None));
 }
 
 #[rstest]
@@ -1926,44 +1861,6 @@ fn test_merge_does_not_permanently_set_receive_deny_current_branch(
     );
 }
 
-/// Helper to snapshot step squash with env vars
-fn snapshot_step_squash_with_env(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    cwd: Option<&Path>,
-    env_vars: &[(&str, &str)],
-) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
-        cmd.arg("squash").args(args);
-        for (key, value) in env_vars {
-            cmd.env(key, value);
-        }
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
-
-/// Helper to snapshot step commit command
-fn snapshot_step_commit_with_env(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    cwd: Option<&Path>,
-    env_vars: &[(&str, &str)],
-) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
-        cmd.arg("commit").args(args);
-        for (key, value) in env_vars {
-            cmd.env(key, value);
-        }
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
-
 #[rstest]
 fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
     // Create a feature worktree with multiple commits
@@ -1987,19 +1884,20 @@ fn test_step_squash_with_no_verify_flag(mut repo: TestRepo) {
     repo.run_git_in(&feature_wt, &["add", "file2.txt"]);
     repo.run_git_in(&feature_wt, &["commit", "-m", "feat: add file 2"]);
 
-    snapshot_step_squash_with_env(
-        "step_squash_no_verify",
-        &repo,
-        &["--no-verify"],
-        Some(&feature_wt),
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("squash").args(["--no-verify"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             (
                 "WORKTRUNK_COMMIT_GENERATION__ARGS",
                 "squash: combined commits",
             ),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
@@ -2017,19 +1915,20 @@ fn test_step_squash_with_stage_tracked_flag(mut repo: TestRepo) {
     // Add uncommitted tracked changes
     fs::write(feature_wt.join("file1.txt"), "updated content").expect("Failed to write file");
 
-    snapshot_step_squash_with_env(
-        "step_squash_stage_tracked",
-        &repo,
-        &["--stage=tracked"],
-        Some(&feature_wt),
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("squash").args(["--stage=tracked"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             (
                 "WORKTRUNK_COMMIT_GENERATION__ARGS",
                 "squash: combined commits",
             ),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
@@ -2056,19 +1955,20 @@ fn test_step_squash_with_both_flags(mut repo: TestRepo) {
 
     fs::write(feature_wt.join("file1.txt"), "updated content").expect("Failed to write file");
 
-    snapshot_step_squash_with_env(
-        "step_squash_both_flags",
-        &repo,
-        &["--no-verify", "--stage=tracked"],
-        Some(&feature_wt),
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("squash").args(["--no-verify", "--stage=tracked"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             (
                 "WORKTRUNK_COMMIT_GENERATION__ARGS",
                 "squash: combined commits",
             ),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
@@ -2078,7 +1978,12 @@ fn test_step_squash_no_commits(mut repo: TestRepo) {
     // Create a feature worktree but don't add any commits
     let feature_wt = repo.add_worktree("feature");
 
-    snapshot_step_squash_with_env("step_squash_no_commits", &repo, &[], Some(&feature_wt), &[]);
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -2089,13 +1994,12 @@ fn test_step_squash_single_commit(mut repo: TestRepo) {
     let feature_wt =
         repo.add_worktree_with_commit("feature", "file1.txt", "content 1", "feat: single commit");
 
-    snapshot_step_squash_with_env(
-        "step_squash_single_commit",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        &[],
-        Some(&feature_wt),
-        &[],
-    );
+        "step",
+        &["squash"],
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -2110,16 +2014,17 @@ fn test_step_commit_with_no_verify_flag(repo: TestRepo) {
 
     fs::write(repo.root_path().join("file1.txt"), "content 1").expect("Failed to write file");
 
-    snapshot_step_commit_with_env(
-        "step_commit_no_verify",
-        &repo,
-        &["--no-verify"],
-        None,
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--no-verify"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             ("WORKTRUNK_COMMIT_GENERATION__ARGS", "feat: add file"),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
@@ -2134,19 +2039,20 @@ fn test_step_commit_with_stage_tracked_flag(repo: TestRepo) {
     )
     .expect("Failed to write file");
 
-    snapshot_step_commit_with_env(
-        "step_commit_stage_tracked",
-        &repo,
-        &["--stage=tracked"],
-        None,
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--stage=tracked"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             (
                 "WORKTRUNK_COMMIT_GENERATION__ARGS",
                 "fix: update tracked file",
             ),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
@@ -2164,34 +2070,36 @@ fn test_step_commit_with_both_flags(repo: TestRepo) {
 
     fs::write(repo.root_path().join("tracked.txt"), "modified").expect("Failed to write file");
 
-    snapshot_step_commit_with_env(
-        "step_commit_both_flags",
-        &repo,
-        &["--no-verify", "--stage=tracked"],
-        None,
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--no-verify", "--stage=tracked"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             ("WORKTRUNK_COMMIT_GENERATION__ARGS", "fix: update file"),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 #[rstest]
 fn test_step_commit_nothing_to_commit(repo: TestRepo) {
     // No changes made - commit should fail with "nothing to commit"
-    snapshot_step_commit_with_env(
-        "step_commit_nothing_to_commit",
-        &repo,
-        &["--stage=none"],
-        None,
-        &[
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], None);
+        cmd.arg("commit").args(["--stage=none"]);
+        for (key, value) in &[
             ("WORKTRUNK_COMMIT_GENERATION__COMMAND", "echo"),
             (
                 "WORKTRUNK_COMMIT_GENERATION__ARGS",
                 "feat: this should fail",
             ),
-        ],
-    );
+        ] {
+            cmd.env(key, value);
+        }
+        cmd
+    });
 }
 
 // =============================================================================
@@ -2210,12 +2118,12 @@ fn test_merge_error_uncommitted_changes_with_no_commit(mut repo_with_main_worktr
     fs::write(feature_wt.join("dirty.txt"), "uncommitted content").unwrap();
 
     // Try to merge with --no-commit - should fail because working tree is dirty
-    snapshot_merge(
-        "merge_error_uncommitted_changes_no_commit",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main", "--no-commit", "--no-remove"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 #[rstest]
@@ -2245,12 +2153,12 @@ fn test_merge_error_conflicting_changes_in_target(mut repo_with_alternate_primar
     .unwrap();
 
     // Try to merge - should fail because of conflicting uncommitted changes
-    snapshot_merge(
-        "merge_error_conflicting_changes",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         repo,
+        "merge",
         &["main"],
-        Some(&feature_wt),
-    );
+        Some(&feature_wt)
+    ));
 }
 
 // =============================================================================
@@ -2264,25 +2172,23 @@ fn test_step_commit_show_prompt(repo: TestRepo) {
     repo.git_command().args(["add", "new_file.txt"]);
 
     // The prompt should be written to stdout
-    snapshot_step_commit_with_env(
-        "step_commit_show_prompt",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        &["--show-prompt"],
-        None,
-        &[],
-    );
+        "step",
+        &["commit", "--show-prompt"],
+        None
+    ));
 }
 
 #[rstest]
 fn test_step_commit_show_prompt_no_staged_changes(repo: TestRepo) {
     // No staged changes - should still output the prompt (with empty diff)
-    snapshot_step_commit_with_env(
-        "step_commit_show_prompt_no_staged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        &["--show-prompt"],
-        None,
-        &[],
-    );
+        "step",
+        &["commit", "--show-prompt"],
+        None
+    ));
 }
 
 #[rstest]
@@ -2293,28 +2199,17 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
     let feature_wt = repo.worktree_path("feature");
 
     // Should output the squash prompt with commits and diff
-    snapshot_step_squash_with_env(
-        "step_squash_show_prompt",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
-        &["--show-prompt"],
-        Some(feature_wt),
-        &[],
-    );
+        "step",
+        &["squash", "--show-prompt"],
+        Some(feature_wt)
+    ));
 }
 
 // =============================================================================
 // step rebase tests
 // =============================================================================
-
-/// Helper to snapshot step rebase command
-fn snapshot_step_rebase(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&Path>) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "step", &[], cwd);
-        cmd.arg("rebase").args(args);
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
 
 /// Test that step rebase correctly handles merge commits.
 ///
@@ -2350,10 +2245,9 @@ fn test_step_rebase_with_merge_commit(mut repo: TestRepo) {
     );
 
     // Now step rebase should linearize the history (not report "Already up-to-date")
-    snapshot_step_rebase(
-        "step_rebase_with_merge_commit",
-        &repo,
-        &["main"],
-        Some(&feature_wt),
-    );
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "step", &[], Some(&feature_wt));
+        cmd.arg("rebase").args(["main"]);
+        cmd
+    });
 }

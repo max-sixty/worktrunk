@@ -7,49 +7,10 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::time::Duration;
 
-/// Helper to create snapshot with normalized paths
-fn snapshot_remove(test_name: &str, repo: &TestRepo, args: &[&str], cwd: Option<&std::path::Path>) {
-    snapshot_remove_impl(test_name, repo, args, cwd, false);
-}
-
-/// Helper to create snapshot with directive file (simulates shell wrapper)
-fn snapshot_remove_with_directive_file(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    cwd: Option<&std::path::Path>,
-) {
-    snapshot_remove_impl(test_name, repo, args, cwd, true);
-}
-
-fn snapshot_remove_impl(
-    test_name: &str,
-    repo: &TestRepo,
-    args: &[&str],
-    cwd: Option<&std::path::Path>,
-    with_directive_file: bool,
-) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        // Directive file guard - declared at closure scope to live through command execution
-        let maybe_directive = if with_directive_file {
-            Some(directive_file())
-        } else {
-            None
-        };
-
-        let mut cmd = make_snapshot_cmd(repo, "remove", args, cwd);
-        if let Some((ref directive_path, ref _guard)) = maybe_directive {
-            configure_directive_file(&mut cmd, directive_path);
-        }
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
-
 #[rstest]
 fn test_remove_already_on_default(repo: TestRepo) {
     // Already on main branch
-    snapshot_remove("remove_already_on_default", &repo, &[], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &[], None));
 }
 
 #[rstest]
@@ -57,7 +18,7 @@ fn test_remove_switch_to_default(repo: TestRepo) {
     // Create and switch to a feature branch in the main repo
     repo.run_git(&["switch", "-c", "feature"]);
 
-    snapshot_remove("remove_switch_to_default", &repo, &[], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &[], None));
 }
 
 #[rstest]
@@ -65,14 +26,25 @@ fn test_remove_from_worktree(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-wt");
 
     // Run remove from within the worktree
-    snapshot_remove("remove_from_worktree", &repo, &[], Some(&worktree_path));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[],
+        Some(&worktree_path)
+    ));
 }
 
 #[rstest]
 fn test_remove_internal_mode(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-internal");
 
-    snapshot_remove_with_directive_file("remove_internal_mode", &repo, &[], Some(&worktree_path));
+    // Directive file guard must live through command execution
+    let (directive_path, _guard) = directive_file();
+    assert_cmd_snapshot!({
+        let mut cmd = make_snapshot_cmd(&repo, "remove", &[], Some(&worktree_path));
+        configure_directive_file(&mut cmd, &directive_path);
+        cmd
+    });
 }
 
 /// Test remove when running as a git subcommand (`git wt remove` instead of `wt remove`).
@@ -98,7 +70,7 @@ fn test_remove_dirty_working_tree(repo: TestRepo) {
     // Create a dirty file
     std::fs::write(repo.root_path().join("dirty.txt"), "uncommitted changes").unwrap();
 
-    snapshot_remove("remove_dirty_working_tree", &repo, &[], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &[], None));
 }
 
 #[rstest]
@@ -107,7 +79,7 @@ fn test_remove_by_name_from_main(mut repo: TestRepo) {
     let _worktree_path = repo.add_worktree("feature-a");
 
     // Remove it by name from main repo
-    snapshot_remove("remove_by_name_from_main", &repo, &["feature-a"], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature-a"], None));
 }
 
 #[rstest]
@@ -117,12 +89,12 @@ fn test_remove_by_name_from_other_worktree(mut repo: TestRepo) {
     let _worktree_b = repo.add_worktree("feature-b");
 
     // From worktree A, remove worktree B by name
-    snapshot_remove(
-        "remove_by_name_from_other_worktree",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-b"],
-        Some(&worktree_a),
-    );
+        Some(&worktree_a)
+    ));
 }
 
 #[rstest]
@@ -130,18 +102,18 @@ fn test_remove_current_by_name(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature-current");
 
     // Remove current worktree by specifying its name
-    snapshot_remove(
-        "remove_current_by_name",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-current"],
-        Some(&worktree_path),
-    );
+        Some(&worktree_path)
+    ));
 }
 
 #[rstest]
 fn test_remove_nonexistent_worktree(repo: TestRepo) {
     // Try to remove a worktree that doesn't exist
-    snapshot_remove("remove_nonexistent_worktree", &repo, &["nonexistent"], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["nonexistent"], None));
 }
 
 /// Test removing a branch that exists but has no worktree, when expected path is occupied.
@@ -201,23 +173,18 @@ fn test_remove_branch_no_worktree_path_occupied(mut repo: TestRepo) {
 
     // Now: branch `npm` exists, no worktree for it, but npm's expected path has `other` branch
     // Running `wt remove npm` should show "No worktree found" NOT "Cannot create worktree"
-    snapshot_remove(
-        "remove_branch_no_worktree_path_occupied",
-        &repo,
-        &["npm"],
-        None,
-    );
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["npm"], None));
 }
 
 #[rstest]
 fn test_remove_multiple_nonexistent_force(repo: TestRepo) {
     // Try to force-remove multiple branches that don't exist
-    snapshot_remove(
-        "remove_multiple_nonexistent_force",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["-D", "foo", "bar", "baz"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -229,18 +196,18 @@ fn test_remove_remote_only_branch(#[from(repo_with_remote)] repo: TestRepo) {
     repo.run_git(&["fetch", "origin"]);
 
     // Try to remove a branch that only exists on remote - should get helpful error
-    snapshot_remove(
-        "remove_remote_only_branch",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["remote-feature"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
 fn test_remove_nonexistent_branch(repo: TestRepo) {
     // Try to remove a branch that doesn't exist at all
-    snapshot_remove("remove_nonexistent_branch", &repo, &["nonexistent"], None);
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["nonexistent"], None));
 }
 
 #[rstest]
@@ -250,12 +217,12 @@ fn test_remove_partial_success(mut repo: TestRepo) {
 
     // Try to remove both the valid worktree and a nonexistent one
     // The valid one should be removed; error for nonexistent; exit with failure
-    snapshot_remove(
-        "remove_partial_success",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature", "nonexistent"],
-        None,
-    );
+        None
+    ));
 
     // Verify the valid worktree was actually removed
     let worktrees_dir = repo.root_path().parent().unwrap();
@@ -273,12 +240,7 @@ fn test_remove_by_name_dirty_target(mut repo: TestRepo) {
     std::fs::write(worktree_path.join("dirty.txt"), "uncommitted changes").unwrap();
 
     // Try to remove it by name from main repo
-    snapshot_remove(
-        "remove_by_name_dirty_target",
-        &repo,
-        &["feature-dirty"],
-        None,
-    );
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature-dirty"], None));
 }
 
 #[rstest]
@@ -289,12 +251,12 @@ fn test_remove_multiple_worktrees(mut repo: TestRepo) {
     let _worktree_c = repo.add_worktree("feature-c");
 
     // Remove all three at once from main repo
-    snapshot_remove(
-        "remove_multiple_worktrees",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-a", "feature-b", "feature-c"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -305,12 +267,12 @@ fn test_remove_multiple_including_current(mut repo: TestRepo) {
     let _worktree_c = repo.add_worktree("feature-c");
 
     // From worktree A, remove all three (including current)
-    snapshot_remove(
-        "remove_multiple_including_current",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-a", "feature-b", "feature-c"],
-        Some(&worktree_a),
-    );
+        Some(&worktree_a)
+    ));
 }
 
 #[rstest]
@@ -333,12 +295,12 @@ fn test_remove_branch_not_fully_merged(mut repo: TestRepo) {
 
     // Try to remove it from the main repo
     // Branch deletion should fail but worktree removal should succeed
-    snapshot_remove(
-        "remove_branch_not_fully_merged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-unmerged"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -347,12 +309,12 @@ fn test_remove_foreground(mut repo: TestRepo) {
     let _worktree_path = repo.add_worktree("feature-fg");
 
     // Remove it with --no-background flag from main repo
-    snapshot_remove(
-        "remove_foreground",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "feature-fg"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -375,12 +337,12 @@ fn test_remove_foreground_unmerged(mut repo: TestRepo) {
 
     // Remove it with --no-background flag from main repo
     // Branch deletion should fail but worktree removal should succeed
-    snapshot_remove(
-        "remove_foreground_unmerged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "feature-unmerged-fg"],
-        None,
-    );
+        None
+    ));
 }
 
 /// Tests foreground removal with --no-delete-branch on an integrated branch.
@@ -391,12 +353,12 @@ fn test_remove_foreground_no_delete_branch(mut repo: TestRepo) {
     let _worktree_path = repo.add_worktree("feature-fg-keep");
 
     // Remove with both --no-background and --no-delete-branch
-    snapshot_remove(
-        "remove_foreground_no_delete_branch",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "--no-delete-branch", "feature-fg-keep"],
-        None,
-    );
+        None
+    ));
 }
 
 /// Tests foreground removal with --no-delete-branch on an unmerged branch.
@@ -429,16 +391,16 @@ fn test_remove_foreground_no_delete_branch_unmerged(mut repo: TestRepo) {
     // No hint because:
     // - Branch is unmerged (wouldn't be deleted anyway)
     // - --no-delete-branch had no effect
-    snapshot_remove(
-        "remove_foreground_no_delete_branch_unmerged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &[
             "--no-background",
             "--no-delete-branch",
             "feature-fg-unmerged-keep",
         ],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -448,12 +410,12 @@ fn test_remove_no_delete_branch(mut repo: TestRepo) {
 
     // Remove worktree but keep the branch using --no-delete-branch flag
     // Since branch is integrated, the flag has an effect - hint explains this
-    snapshot_remove(
-        "remove_no_delete_branch",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-delete-branch", "feature-keep"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -482,12 +444,12 @@ fn test_remove_no_delete_branch_unmerged(mut repo: TestRepo) {
 
     // Remove worktree with --no-delete-branch flag
     // Since branch is unmerged, the flag has no effect - no hint shown
-    snapshot_remove(
-        "remove_no_delete_branch_unmerged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-delete-branch", "feature-unmerged-keep"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -499,12 +461,12 @@ fn test_remove_branch_only_merged(repo: TestRepo) {
         .unwrap();
 
     // Remove the branch (no worktree exists)
-    snapshot_remove(
-        "remove_branch_only_merged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-merged"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -536,12 +498,12 @@ fn test_remove_branch_only_unmerged(repo: TestRepo) {
 
     // Try to remove the branch (no worktree exists, branch not merged)
     // Branch deletion should fail but not error
-    snapshot_remove(
-        "remove_branch_only_unmerged",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-unmerged"],
-        None,
-    );
+        None
+    ));
 }
 
 #[rstest]
@@ -572,12 +534,12 @@ fn test_remove_branch_only_force_delete(repo: TestRepo) {
         .unwrap();
 
     // Force delete the branch (no worktree exists)
-    snapshot_remove(
-        "remove_branch_only_force_delete",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--force-delete", "feature-force"],
-        None,
-    );
+        None
+    ));
 }
 
 /// Test that remove works from a detached HEAD state in a worktree.
@@ -592,12 +554,12 @@ fn test_remove_from_detached_head_in_worktree(mut repo: TestRepo) {
     repo.detach_head_in_worktree("feature-detached");
 
     // Run remove from within the detached worktree (should still work)
-    snapshot_remove(
-        "remove_from_detached_head_in_worktree",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &[],
-        Some(&worktree_path),
-    );
+        Some(&worktree_path)
+    ));
 }
 
 /// Test foreground removal from a detached HEAD state.
@@ -615,12 +577,12 @@ fn test_remove_foreground_detached_head(mut repo: TestRepo) {
     repo.detach_head_in_worktree("feature-detached-fg");
 
     // Run foreground remove from within the detached worktree
-    snapshot_remove(
-        "remove_foreground_detached_head",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background"],
-        Some(&worktree_path),
-    );
+        Some(&worktree_path)
+    ));
 }
 
 /// Test that `wt remove @` works from a detached HEAD state in a worktree.
@@ -635,12 +597,12 @@ fn test_remove_at_from_detached_head_in_worktree(mut repo: TestRepo) {
     repo.detach_head_in_worktree("feature-detached-at");
 
     // Run `wt remove @` from within the detached worktree (should behave same as no args)
-    snapshot_remove(
-        "remove_at_from_detached_head_in_worktree",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["@"],
-        Some(&worktree_path),
-    );
+        Some(&worktree_path)
+    ));
 }
 
 /// Test that a branch with matching tree content (but not an ancestor) is deleted.
@@ -723,12 +685,12 @@ fn test_remove_branch_matching_tree_content(repo: TestRepo) {
     );
 
     // Remove the branch - should succeed because tree content matches main
-    snapshot_remove(
-        "remove_branch_matching_tree_content",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-squashed"],
-        None,
-    );
+        None
+    ));
 }
 /// Test the explicit difference between removing main worktree (error) vs linked worktree (success).
 ///
@@ -748,40 +710,32 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
 
     // Part 1: Verify linked worktree CAN be removed (from within it)
     // Use --no-background to ensure removal completes before creating next worktree
-    snapshot_remove(
+    assert_cmd_snapshot!(
         "remove_main_vs_linked__from_linked_succeeds",
-        &repo,
-        &["--no-background"],
-        Some(&linked_wt_path),
+        make_snapshot_cmd(&repo, "remove", &["--no-background"], Some(&linked_wt_path))
     );
 
     // Part 2: Recreate the linked worktree for the next test
     let _linked_wt_path = repo.add_worktree("feature2");
 
     // Part 3: Verify linked worktree CAN be removed (from main, by name)
-    snapshot_remove(
+    assert_cmd_snapshot!(
         "remove_main_vs_linked__from_main_by_name_succeeds",
-        &repo,
-        &["feature2"],
-        None,
+        make_snapshot_cmd(&repo, "remove", &["feature2"], None)
     );
 
     // Part 4: Verify main worktree CANNOT be removed (from main, on default branch)
-    snapshot_remove(
+    assert_cmd_snapshot!(
         "remove_main_vs_linked__main_on_default_fails",
-        &repo,
-        &[],
-        None,
+        make_snapshot_cmd(&repo, "remove", &[], None)
     );
 
     // Part 5: Create a feature branch IN the main worktree, verify STILL cannot remove
     repo.run_git(&["switch", "-c", "feature-in-main"]);
 
-    snapshot_remove(
+    assert_cmd_snapshot!(
         "remove_main_vs_linked__main_on_feature_fails",
-        &repo,
-        &[],
-        None,
+        make_snapshot_cmd(&repo, "remove", &[], None)
     );
 
     // Part 6: Verify main worktree CANNOT be removed by name from a linked worktree
@@ -789,11 +743,9 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     repo.run_git(&["switch", "main"]);
 
     let linked_for_test = repo.add_worktree("test-from-linked");
-    snapshot_remove(
+    assert_cmd_snapshot!(
         "remove_main_vs_linked__main_by_name_from_linked_fails",
-        &repo,
-        &["main"],
-        Some(&linked_for_test),
+        make_snapshot_cmd(&repo, "remove", &["main"], Some(&linked_for_test))
     );
 }
 
@@ -922,12 +874,12 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
 
     // Remove the feature branch - should succeed because content is integrated
     // (detected via merge simulation using git merge-tree)
-    snapshot_remove(
-        "remove_squash_merged_then_main_advanced",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["feature-squash"],
-        None,
-    );
+        None
+    ));
 }
 
 // ============================================================================
@@ -952,12 +904,12 @@ approved-commands = ["echo 'About to remove worktree'"]
     let _worktree_path = repo.add_worktree("feature-hook");
 
     // Remove with --no-background to ensure synchronous execution
-    snapshot_remove(
-        "pre_remove_hook_executes",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "feature-hook"],
-        None,
-    );
+        None
+    ));
 }
 
 /// Test pre-remove hook has access to template variables.
@@ -988,12 +940,12 @@ approved-commands = [
     let _worktree_path = repo.add_worktree("feature-templates");
 
     // Remove with --no-background
-    snapshot_remove(
-        "pre_remove_hook_template_variables",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "feature-templates"],
-        None,
-    );
+        None
+    ));
 }
 
 /// Test pre-remove hook runs even in background mode (before spawning background process).
@@ -1060,12 +1012,12 @@ approved-commands = ["exit 1"]
     let worktree_path = repo.add_worktree("feature-fail");
 
     // Remove - should FAIL due to hook failure
-    snapshot_remove(
-        "pre_remove_hook_failure_aborts",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "feature-fail"],
-        None,
-    );
+        None
+    ));
 
     // Verify worktree was NOT removed (hook failure aborted removal)
     assert!(
@@ -1147,12 +1099,12 @@ approved-commands = ["echo 'hook ran' > {}"]
     let worktree_path = repo.add_worktree("feature-skip");
 
     // Remove with --no-verify to skip hooks
-    snapshot_remove(
-        "pre_remove_hook_skipped_with_no_verify",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background", "--no-verify", "feature-skip"],
-        None,
-    );
+        None
+    ));
 
     // Wait for any potential hook execution (absence check - can't poll, use 500ms per guidelines)
     thread::sleep(Duration::from_millis(500));
@@ -1205,12 +1157,12 @@ approved-commands = ["touch {marker_path}"]
     repo.detach_head_in_worktree("feature-detached-hook");
 
     // Remove with --no-background to ensure synchronous execution
-    snapshot_remove(
-        "pre_remove_hook_runs_for_detached_head",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &["--no-background"],
-        Some(&worktree_path),
-    );
+        Some(&worktree_path)
+    ));
 
     // Marker file should exist - hook ran
     assert!(
@@ -1247,12 +1199,12 @@ approved-commands = ["touch {marker_path}"]
     repo.detach_head_in_worktree("feature-detached-bg");
 
     // Remove in background mode (default)
-    snapshot_remove(
-        "pre_remove_hook_runs_for_detached_head_background",
+    assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
+        "remove",
         &[],
-        Some(&worktree_path),
-    );
+        Some(&worktree_path)
+    ));
 
     // Marker file should exist - hook ran before background spawn
     assert!(

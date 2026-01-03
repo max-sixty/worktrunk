@@ -118,23 +118,26 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
     // Run from the feature worktree to see commits ahead
     let feature_path = repo.worktree_path("feature");
     let output = run_statusline_from_dir(&repo, &[], None, feature_path);
-    assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
+    assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2");
 }
 
 // --- Claude Code Mode Tests ---
 
-/// Create snapshot settings that filter the dynamic temp path
-fn claude_code_snapshot_settings(repo: &TestRepo) -> insta::Settings {
+/// Create snapshot settings that normalize path output for statusline tests.
+///
+/// The statusline output varies by platform:
+/// - Linux: Raw path is filtered by auto-bound settings to `_REPO_`
+/// - macOS: Fish-style abbreviation (e.g., `/p/v/f/.../repo`) bypasses auto-bound filters
+///
+/// This function normalizes both cases to a consistent `[PATH]` placeholder.
+fn claude_code_snapshot_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    // The path gets fish-style abbreviated, so filter the abbreviated form
-    // e.g., /private/var/folders/.../repo -> /p/v/f/.../repo
-    // We replace everything up to "repo" with [PATH]
-    settings.add_filter(r"(?m)^.*repo", "[PATH]");
-    // Also filter the raw path in case it appears
-    settings.add_filter(
-        &regex::escape(&repo.root_path().display().to_string()),
-        "[PATH]",
-    );
+    // Normalize _REPO_ (from auto-bound filters on Linux) to [PATH]
+    settings.add_filter(r"_REPO_", "[PATH]");
+    // Normalize fish-abbreviated paths (on macOS) to [PATH]
+    settings.add_filter(r"/[a-zA-Z0-9/._-]+/repo", "[PATH]");
+    // Strip leading ANSI reset code if present (output starts with [0m)
+    settings.add_filter(r"^\x1b\[0m ", "");
     settings
 }
 
@@ -166,7 +169,7 @@ fn test_statusline_claude_code_full_context(repo: TestRepo) {
     );
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
-    claude_code_snapshot_settings(&repo).bind(|| {
+    claude_code_snapshot_settings().bind(|| {
         assert_snapshot!(output, @"[PATH]  main  [36m?[0m[2m^[22m  | Opus");
     });
 }
@@ -177,7 +180,7 @@ fn test_statusline_claude_code_minimal(repo: TestRepo) {
     let json = format!(r#"{{"workspace": {{"current_dir": "{escaped_path}"}}}}"#,);
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
-    claude_code_snapshot_settings(&repo).bind(|| {
+    claude_code_snapshot_settings().bind(|| {
         assert_snapshot!(output, @"[PATH]  main  [2m^[22m");
     });
 }
@@ -193,7 +196,7 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
     );
 
     let output = run_statusline(&repo, &["--claude-code"], Some(&json));
-    claude_code_snapshot_settings(&repo).bind(|| {
+    claude_code_snapshot_settings().bind(|| {
         assert_snapshot!(output, @"[PATH]  main  [2m^[22m  | Haiku");
     });
 }

@@ -1,109 +1,8 @@
 use crate::common::{
-    DAY, HOUR, MINUTE, TestRepo, list_snapshots, repo, repo_with_remote, setup_snapshot_settings,
-    wt_command,
+    DAY, HOUR, MINUTE, TestRepo, list_snapshots, repo, repo_with_remote, wt_command,
 };
-use insta::Settings;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use std::path::Path;
-use std::process::Command;
-
-fn snapshot_list(test_name: &str, repo: &TestRepo) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command(repo, repo.root_path()),
-    );
-}
-
-fn snapshot_list_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command(repo, cwd),
-    );
-}
-
-fn snapshot_list_json(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.arg("--format=json");
-    run_snapshot(list_snapshots::json_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_with_branches(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.arg("--branches");
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_with_remotes(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.arg("--remotes");
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_with_branches_and_remotes(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.args(["--branches", "--remotes"]);
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_full(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.arg("--full");
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_progressive(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.arg("--progressive");
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_no_progressive(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.arg("--no-progressive");
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_progressive_branches(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.args(["--progressive", "--branches"]);
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_list_progressive_full(test_name: &str, repo: &TestRepo) {
-    let mut cmd = list_snapshots::command(repo, repo.root_path());
-    cmd.args(["--progressive", "--full"]);
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-// README example snapshots - use narrower width for doc site code blocks
-fn snapshot_readme_list_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
-    run_snapshot(
-        setup_snapshot_settings(repo),
-        test_name,
-        list_snapshots::command_readme(repo, cwd),
-    );
-}
-
-fn snapshot_readme_list_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
-    let mut cmd = list_snapshots::command_readme(repo, cwd);
-    cmd.arg("--full");
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn snapshot_readme_list_branches_full_from_dir(test_name: &str, repo: &TestRepo, cwd: &Path) {
-    let mut cmd = list_snapshots::command_readme(repo, cwd);
-    cmd.args(["--branches", "--full"]);
-    run_snapshot(setup_snapshot_settings(repo), test_name, cmd);
-}
-
-fn run_snapshot(settings: Settings, test_name: &str, mut cmd: Command) {
-    settings.bind(|| {
-        assert_cmd_snapshot!(test_name, cmd);
-    });
-}
 
 /// Creates worktrees with specific timestamps for ordering tests.
 /// Returns the path to feature-current (the worktree to run tests from).
@@ -191,7 +90,7 @@ fn setup_timestamped_worktrees(repo: &mut TestRepo) -> std::path::PathBuf {
 
 #[rstest]
 fn test_list_single_worktree(repo: TestRepo) {
-    snapshot_list("single_worktree", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -199,7 +98,7 @@ fn test_list_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 
-    snapshot_list("multiple_worktrees", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 /// Test that the `-` gutter symbol appears for the previous worktree (target of `wt switch -`).
@@ -228,14 +127,14 @@ fn test_list_previous_worktree_gutter(mut repo: TestRepo) {
     cmd.output().unwrap();
 
     // Now list should show `-` for feature (the previous worktree, target of `wt switch -`)
-    snapshot_list("previous_worktree_gutter", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
 fn test_list_detached_head(repo: TestRepo) {
     repo.detach_head();
 
-    snapshot_list("detached_head", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -246,7 +145,7 @@ fn test_list_detached_head_in_worktree(mut repo: TestRepo) {
     repo.add_worktree("feature");
     repo.detach_head_in_worktree("feature");
 
-    snapshot_list("detached_head_in_worktree", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -254,7 +153,7 @@ fn test_list_locked_worktree(mut repo: TestRepo) {
     repo.add_worktree("locked-feature");
     repo.lock_worktree("locked-feature", Some("Testing lock functionality"));
 
-    snapshot_list("locked_worktree", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -262,7 +161,7 @@ fn test_list_locked_no_reason(mut repo: TestRepo) {
     repo.add_worktree("locked-no-reason");
     repo.lock_worktree("locked-no-reason", None);
 
-    snapshot_list("locked_no_reason", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 // Removed: test_list_long_branch_name - covered by spacing_edge_cases.rs
@@ -275,7 +174,7 @@ fn test_list_long_commit_message(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.commit("Short message");
 
-    snapshot_list("long_commit_message", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 // Removed: test_list_unicode_branch_name - covered by spacing_edge_cases.rs
@@ -288,7 +187,7 @@ fn test_list_unicode_commit_message(mut repo: TestRepo) {
     repo.add_worktree("feature-test");
     repo.commit("Fix bug with café ☕ handling");
 
-    snapshot_list("unicode_commit_message", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -303,7 +202,7 @@ fn test_list_many_worktrees_with_varied_stats(mut repo: TestRepo) {
     // Add some with files to create diff stats
     repo.add_worktree("with-changes");
 
-    snapshot_list("many_worktrees_varied", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 // Removed: test_list_json_single_worktree and test_list_json_multiple_worktrees
@@ -318,7 +217,11 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
     repo.add_worktree("locked-feature");
     repo.lock_worktree("locked-feature", Some("Testing"));
 
-    snapshot_list_json("json_with_metadata", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
 }
 
 /// Test that committed_trees_match is true when a branch has commits ahead but identical tree content.
@@ -346,7 +249,11 @@ fn test_list_json_tree_matches_main_after_merge(mut repo: TestRepo) {
 
     // Now feature-merged is ahead of main (has merge commit) but tree content matches main
     // JSON output should show branch_op_state: "TreesMatch" with ahead > 0
-    snapshot_list_json("json_tree_matches_main_after_merge", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
 }
 
 #[rstest]
@@ -359,7 +266,11 @@ fn test_list_with_branches_flag(mut repo: TestRepo) {
     // Create one branch with a worktree
     repo.add_worktree("feature-with-worktree");
 
-    snapshot_list_with_branches("with_branches_flag", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
+        cmd
+    });
 }
 
 #[rstest]
@@ -368,7 +279,11 @@ fn test_list_with_branches_flag_no_available(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 
-    snapshot_list_with_branches("with_branches_flag_none_available", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
+        cmd
+    });
 }
 
 #[rstest]
@@ -378,7 +293,11 @@ fn test_list_with_branches_flag_only_branches(repo: TestRepo) {
     repo.create_branch("branch-beta");
     repo.create_branch("branch-gamma");
 
-    snapshot_list_with_branches("with_branches_flag_only_branches", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
+        cmd
+    });
 }
 
 #[rstest]
@@ -397,7 +316,11 @@ fn test_list_with_remotes_flag(#[from(repo_with_remote)] repo: TestRepo) {
     // - origin/remote-feature-1 (remote branch without local worktree)
     // - origin/remote-feature-2 (remote branch without local worktree)
     // Should NOT show origin/main (main has a worktree)
-    snapshot_list_with_remotes("with_remotes_flag", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--remotes");
+        cmd
+    });
 }
 
 #[rstest]
@@ -419,7 +342,11 @@ fn test_list_with_remotes_and_branches(#[from(repo_with_remote)] repo: TestRepo)
     // - local-only-2 branch (local, no worktree)
     // - origin/remote-only-1 (remote, no local)
     // - origin/remote-only-2 (remote, no local)
-    snapshot_list_with_branches_and_remotes("with_remotes_and_branches", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--branches", "--remotes"]);
+        cmd
+    });
 }
 
 #[rstest]
@@ -442,7 +369,11 @@ fn test_list_with_remotes_filters_tracked_worktrees(#[from(repo_with_remote)] mu
     // - feature-with-worktree worktree
     // - origin/remote-only (remote branch not tracked by any local branch)
     // Should NOT show origin/main or origin/feature-with-worktree (both tracked)
-    snapshot_list_with_remotes("with_remotes_filters_tracked_worktrees", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--remotes");
+        cmd
+    });
 }
 
 #[rstest]
@@ -461,7 +392,11 @@ fn test_list_with_remotes_filters_tracked_branches(#[from(repo_with_remote)] rep
     // - origin/remote-only (remote branch not tracked by any local branch)
     // Should NOT show origin/main (tracked by main + has worktree)
     // Should NOT show origin/tracked-branch (tracked by local tracked-branch)
-    snapshot_list_with_remotes("with_remotes_filters_tracked_branches", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--remotes");
+        cmd
+    });
 }
 
 #[rstest]
@@ -492,7 +427,11 @@ fn test_list_json_with_display_fields(mut repo: TestRepo) {
     repo.commit("Main commit 1");
     repo.commit("Main commit 2");
 
-    snapshot_list_json("json_with_display_fields", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
 }
 
 #[rstest]
@@ -500,7 +439,7 @@ fn test_list_ordering_rules(mut repo: TestRepo) {
     let current_path = setup_timestamped_worktrees(&mut repo);
 
     // Run from feature-current worktree to test "current worktree" logic
-    snapshot_list_from_dir("list_ordering_rules", &repo, &current_path);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, &current_path));
 }
 
 #[rstest]
@@ -557,9 +496,7 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
     repo.run_git_in(&no_upstream_wt, &["status", "--porcelain"]);
 
     // Run list --branches --full to show all columns including Remote
-    let settings = setup_snapshot_settings(&repo);
-
-    settings.bind(|| {
+    assert_cmd_snapshot!("with_upstream_tracking", {
         let mut cmd = wt_command();
         repo.configure_wt_cmd(&mut cmd);
         repo.configure_mock_commands(&mut cmd);
@@ -567,7 +504,7 @@ fn test_list_with_upstream_tracking(mut repo: TestRepo) {
             .arg("--branches")
             .arg("--full")
             .current_dir(repo.root_path());
-        assert_cmd_snapshot!("with_upstream_tracking", cmd);
+        cmd
     });
 }
 
@@ -579,7 +516,7 @@ fn test_list_primary_on_different_branch(mut repo: TestRepo) {
     repo.add_worktree("feature-a");
     repo.add_worktree("feature-b");
 
-    snapshot_list("list_primary_on_different_branch", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -612,7 +549,7 @@ fn test_list_with_user_marker(mut repo: TestRepo) {
     let wip_wt = repo.add_worktree("wip-docs");
     std::fs::write(wip_wt.join("README.md"), "# Documentation").unwrap();
 
-    snapshot_list("with_user_marker", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -628,7 +565,11 @@ fn test_list_json_with_user_marker(mut repo: TestRepo) {
     // Worktree without user marker
     repo.add_worktree("without-status");
 
-    snapshot_list_json("json_with_user_marker", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
 }
 
 #[rstest]
@@ -675,7 +616,11 @@ fn test_list_json_with_git_operation(mut repo: TestRepo) {
     );
 
     // JSON output should show git_operation: "rebase" for the feature worktree
-    snapshot_list_json("json_with_git_operation", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--format=json");
+        cmd
+    });
 }
 
 #[rstest]
@@ -689,7 +634,11 @@ fn test_list_branch_only_with_status(repo: TestRepo) {
     repo.set_marker("branch-only", "🌿");
 
     // Use --branches flag to show branch-only entries
-    snapshot_list_with_branches("branch_only_with_status", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
+        cmd
+    });
 }
 
 #[rstest]
@@ -702,7 +651,7 @@ fn test_list_user_marker_with_special_characters(mut repo: TestRepo) {
     repo.add_worktree("multi");
     repo.set_marker("multi", "👨‍💻");
 
-    snapshot_list("user_marker_special_chars", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 /// Set up a repo for README examples showing realistic worktree states.
@@ -1555,7 +1504,10 @@ fn mock_ci_status(repo: &TestRepo, branch: &str, status: &str, source: &str, is_
 #[rstest]
 fn test_readme_example_list(mut repo: TestRepo) {
     let feature_api = setup_readme_example_repo(&mut repo);
-    snapshot_readme_list_from_dir("readme_example_list", &repo, &feature_api);
+    assert_cmd_snapshot!(
+        "readme_example_list",
+        list_snapshots::command_readme(&repo, &feature_api)
+    );
 }
 
 /// Generate README example: `wt list --full` output
@@ -1566,7 +1518,11 @@ fn test_readme_example_list(mut repo: TestRepo) {
 #[rstest]
 fn test_readme_example_list_full(mut repo: TestRepo) {
     let feature_api = setup_readme_example_repo(&mut repo);
-    snapshot_readme_list_full_from_dir("readme_example_list_full", &repo, &feature_api);
+    assert_cmd_snapshot!("readme_example_list_full", {
+        let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
+        cmd.arg("--full");
+        cmd
+    });
 }
 
 /// Generate README example: `wt list --branches --full` output
@@ -1577,11 +1533,11 @@ fn test_readme_example_list_full(mut repo: TestRepo) {
 #[rstest]
 fn test_readme_example_list_branches(mut repo: TestRepo) {
     let feature_api = setup_readme_example_repo(&mut repo);
-    snapshot_readme_list_branches_full_from_dir(
-        "readme_example_list_branches",
-        &repo,
-        &feature_api,
-    );
+    assert_cmd_snapshot!("readme_example_list_branches", {
+        let mut cmd = list_snapshots::command_readme(&repo, &feature_api);
+        cmd.args(["--branches", "--full"]);
+        cmd
+    });
 }
 
 /// Generate tips-patterns.md example: dev server per worktree workflow
@@ -1604,10 +1560,9 @@ url = "http://localhost:{{ branch | hash_port }}"
     );
 
     // Run from main worktree (URLs dim since no servers running)
-    run_snapshot(
-        setup_snapshot_settings(&repo),
+    assert_cmd_snapshot!(
         "tips_dev_server_workflow",
-        list_snapshots::command_readme(&repo, repo.root_path()),
+        list_snapshots::command_readme(&repo, repo.root_path())
     );
 }
 
@@ -1618,7 +1573,11 @@ fn test_list_progressive_flag(mut repo: TestRepo) {
 
     // Force progressive mode even in non-TTY test environment
     // Output should be identical to buffered mode (only process differs)
-    snapshot_list_progressive("progressive_flag", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1626,7 +1585,11 @@ fn test_list_no_progressive_flag(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     // Explicitly force buffered mode
-    snapshot_list_no_progressive("no_progressive_flag", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--no-progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1640,7 +1603,11 @@ fn test_list_progressive_with_branches(mut repo: TestRepo) {
 
     // Critical: test that --branches works with --progressive
     // This ensures progressive mode supports the --branches flag
-    snapshot_list_progressive_branches("progressive_with_branches", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--progressive", "--branches"]);
+        cmd
+    });
 }
 
 // ============================================================================
@@ -1649,7 +1616,11 @@ fn test_list_progressive_with_branches(mut repo: TestRepo) {
 
 #[rstest]
 fn test_list_task_dag_single_worktree(repo: TestRepo) {
-    snapshot_list_progressive("task_dag_single_worktree", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1658,7 +1629,11 @@ fn test_list_task_dag_multiple_worktrees(mut repo: TestRepo) {
     repo.add_worktree("feature-b");
     repo.add_worktree("feature-c");
 
-    snapshot_list_progressive("task_dag_multiple_worktrees", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1670,7 +1645,11 @@ fn test_list_task_dag_full_with_diffs(mut repo: TestRepo) {
     // Create another worktree with commits
     let _feature_b = repo.add_worktree_with_commit("feature-b", "file.txt", "test", "Test commit");
 
-    snapshot_list_progressive_full("task_dag_full_with_diffs", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--progressive", "--full"]);
+        cmd
+    });
 }
 
 #[rstest]
@@ -1689,7 +1668,11 @@ fn test_list_task_dag_with_upstream(mut repo: TestRepo) {
     repo.run_git_in(&ahead, &["add", "."]);
     repo.run_git_in(&ahead, &["commit", "-m", "Ahead commit"]);
 
-    snapshot_list_progressive_full("task_dag_with_upstream", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--progressive", "--full"]);
+        cmd
+    });
 }
 
 #[rstest]
@@ -1699,7 +1682,11 @@ fn test_list_task_dag_many_worktrees(mut repo: TestRepo) {
         repo.add_worktree(&format!("feature-{}", i));
     }
 
-    snapshot_list_progressive("task_dag_many_worktrees", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1708,14 +1695,22 @@ fn test_list_task_dag_with_locked_worktree(mut repo: TestRepo) {
     repo.add_worktree("locked");
     repo.lock_worktree("locked", Some("Testing task DAG with locked worktree"));
 
-    snapshot_list_progressive("task_dag_with_locked", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
 fn test_list_task_dag_detached_head(repo: TestRepo) {
     repo.detach_head();
 
-    snapshot_list_progressive("task_dag_detached_head", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1726,13 +1721,11 @@ fn test_list_task_dag_ordering_stability(mut repo: TestRepo) {
 
     // Run from feature-current worktree
     // Expected order: main, feature-current, then by timestamp: feature-newest, feature-middle, feature-oldest
-    let mut cmd = list_snapshots::command(&repo, &current_path);
-    cmd.arg("--progressive");
-    run_snapshot(
-        setup_snapshot_settings(&repo),
-        "task_dag_ordering_stability",
-        cmd,
-    );
+    assert_cmd_snapshot!("task_dag_ordering_stability", {
+        let mut cmd = list_snapshots::command(&repo, &current_path);
+        cmd.arg("--progressive");
+        cmd
+    });
 }
 
 #[rstest]
@@ -1802,15 +1795,12 @@ fn test_list_with_c_flag(mut repo: TestRepo) {
     repo.add_worktree("feature-b");
 
     // Run wt -C <repo_path> list from a completely different directory
-    let mut settings = setup_snapshot_settings(&repo);
-    // Redact the -C path argument in metadata (try different selector formats)
-    settings.add_redaction(".args[1]", "[REPO_PATH]");
-    settings.bind(|| {
+    assert_cmd_snapshot!("list_with_c_flag", {
         let mut cmd = wt_command();
         cmd.args(["-C", repo.root_path().to_str().unwrap(), "list"]);
         // Run from system temp dir to ensure -C is actually being used
         cmd.current_dir(std::env::temp_dir());
-        assert_cmd_snapshot!("list_with_c_flag", cmd);
+        cmd
     });
 }
 
@@ -1881,7 +1871,7 @@ fn test_list_large_diffs_alignment(mut repo: TestRepo) {
     // Set user marker
     repo.set_marker("diverged", "💬");
 
-    snapshot_list("large_diffs_alignment", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -1936,7 +1926,7 @@ fn test_list_status_column_padding_with_emoji(mut repo: TestRepo) {
 
     repo.set_marker("main-symbol", "💬");
 
-    snapshot_list("status_column_padding_emoji", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -1973,7 +1963,7 @@ fn test_list_maximum_working_tree_symbols(mut repo: TestRepo) {
     repo.run_git_in(&feature, &["rm", "file-d.txt"]);
 
     // Result should show: ?!+»✘
-    snapshot_list("maximum_working_tree_symbols", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 #[rstest]
@@ -2047,11 +2037,10 @@ fn test_list_maximum_status_with_git_operation(mut repo: TestRepo) {
 
     // Result should show: ?!+ (working_tree) + = (conflicts) + ↻ (rebase) + ↕ (diverged) + ⊠ (locked) + 🤖 (user marker)
     // Use --full to enable conflict detection
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
+    assert_cmd_snapshot!("maximum_status_with_git_operation", {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
-        assert_cmd_snapshot!("maximum_status_with_git_operation", cmd);
+        cmd
     });
 }
 
@@ -2176,11 +2165,10 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     repo.set_marker("feature", "🤖");
 
     // Result should show 11 chars: ?!+»✘=⊠↕⇅🤖
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
+    assert_cmd_snapshot!("maximum_status_symbols", {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
         cmd.arg("--full");
-        assert_cmd_snapshot!("maximum_status_symbols", cmd);
+        cmd
     });
 }
 
@@ -2213,10 +2201,17 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
     // Without --full: no conflict symbol (only checks commit-level)
-    snapshot_list("working_tree_conflicts_without_full", &repo);
+    assert_cmd_snapshot!(
+        "working_tree_conflicts_without_full",
+        list_snapshots::command(&repo, repo.root_path())
+    );
 
     // With --full: should show conflict symbol because uncommitted changes conflict
-    snapshot_list_full("working_tree_conflicts_with_full", &repo);
+    assert_cmd_snapshot!("working_tree_conflicts_with_full", {
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--full");
+        cmd
+    });
 }
 
 /// Test that clean working trees don't affect conflict detection with --full.
@@ -2243,8 +2238,15 @@ fn test_list_full_clean_working_tree_uses_commit_conflicts(mut repo: TestRepo) {
 
     // Feature has a committed conflict, working tree is clean
     // Both with and without --full should show the conflict symbol
-    snapshot_list("commit_conflicts_without_full", &repo);
-    snapshot_list_full("commit_conflicts_with_full", &repo);
+    assert_cmd_snapshot!(
+        "commit_conflicts_without_full",
+        list_snapshots::command(&repo, repo.root_path())
+    );
+    assert_cmd_snapshot!("commit_conflicts_with_full", {
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--full");
+        cmd
+    });
 }
 
 #[rstest]
@@ -2252,7 +2254,7 @@ fn test_list_warns_when_default_branch_missing_worktree(repo: TestRepo) {
     // Move primary worktree off the default branch so no worktree holds it
     repo.switch_primary_to("develop");
 
-    snapshot_list("default_branch_missing_worktree", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 /// Test that git errors during task execution are collected and displayed as warnings.
@@ -2272,7 +2274,7 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
     // Write an invalid SHA that doesn't exist in the repo
     std::fs::write(&ref_path, "0000000000000000000000000000000000000000\n").unwrap();
 
-    snapshot_list("git_error_warning", &repo);
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
 /// Test that orphan branches (no common ancestor with main) are handled gracefully.
@@ -2316,5 +2318,9 @@ fn test_list_handles_orphan_branch(repo: TestRepo) {
         "Expected no merge base for orphan branch"
     );
 
-    snapshot_list_with_branches("orphan_branch_no_error", &repo);
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--branches");
+        cmd
+    });
 }

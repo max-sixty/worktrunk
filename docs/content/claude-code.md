@@ -12,7 +12,7 @@ Worktrunk includes a Claude Code plugin that automatically tracks which worktree
 
 The plugin adds status indicators to `wt list`:
 
-<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__with_user_marker.snap — edit source to update -->
+<!-- ⚠️ AUTO-GENERATED-HTML from tests/snapshots/integration__integration_tests__list__list_with_user_marker.snap — edit source to update -->
 
 {% terminal() %}
 <span class="prompt">$</span> <span class="cmd">wt list</span>
