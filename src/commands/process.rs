@@ -246,6 +246,60 @@ fn spawn_detached_windows(
     Ok(())
 }
 
+/// Build shell command for background worktree removal
+///
+/// `branch_to_delete` is the branch to delete after removing the worktree.
+/// Pass `None` for detached HEAD or when branch should be retained.
+/// This decision is computed upfront (checking if branch is merged) before spawning the background process.
+///
+/// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
+/// even when the worktree contains untracked files (like build artifacts).
+pub fn build_remove_command(
+    worktree_path: &std::path::Path,
+    branch_to_delete: Option<&str>,
+    force_worktree: bool,
+) -> String {
+    use shell_escape::escape;
+
+    let worktree_path_str = worktree_path.to_string_lossy();
+    let worktree_escaped = escape(worktree_path_str.as_ref().into());
+
+    // TODO: This delay is a timing-based workaround, not a principled fix.
+    // The race: after wt exits, the shell wrapper reads the directive file and
+    // runs `cd`. But fish (and other shells) may call getcwd() before the cd
+    // completes (e.g., for prompt updates), and if the background removal has
+    // already deleted the directory, we get "shell-init: error retrieving current
+    // directory". A 1s delay is very conservative (shell cd takes ~1-5ms), but
+    // deterministic solutions (shell-spawned background, marker file sync) add
+    // significant complexity for marginal benefit.
+    let delay = "sleep 1";
+
+    // Stop fsmonitor daemon first (best effort - ignore errors)
+    // This prevents zombie daemons from accumulating when using builtin fsmonitor
+    let stop_fsmonitor = format!(
+        "git -C {} fsmonitor--daemon stop 2>/dev/null || true",
+        worktree_escaped
+    );
+
+    let force_flag = if force_worktree { " --force" } else { "" };
+
+    match branch_to_delete {
+        Some(branch_name) => {
+            let branch_escaped = escape(branch_name.into());
+            format!(
+                "{} && {} && git worktree remove{} {} && git branch -D {}",
+                delay, stop_fsmonitor, force_flag, worktree_escaped, branch_escaped
+            )
+        }
+        None => {
+            format!(
+                "{} && {} && git worktree remove{} {}",
+                delay, stop_fsmonitor, force_flag, worktree_escaped
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,5 +370,40 @@ mod tests {
 
         // Commands with internal semicolons but not trailing
         assert_eq!(posix_command_separator("echo; hello"), ";");
+    }
+
+    #[test]
+    fn test_build_remove_command() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("/tmp/test-worktree");
+
+        // Without branch deletion, without force
+        let cmd = build_remove_command(&path, None, false);
+        assert!(cmd.contains("git worktree remove"));
+        assert!(cmd.contains("/tmp/test-worktree"));
+        assert!(!cmd.contains("branch -D"));
+        assert!(!cmd.contains("--force"));
+
+        // With branch deletion, without force
+        let cmd = build_remove_command(&path, Some("feature-branch"), false);
+        assert!(cmd.contains("git worktree remove"));
+        assert!(cmd.contains("git branch -D"));
+        assert!(cmd.contains("feature-branch"));
+        assert!(!cmd.contains("--force"));
+
+        // With force flag
+        let cmd = build_remove_command(&path, None, true);
+        assert!(cmd.contains("git worktree remove --force"));
+
+        // With branch deletion and force
+        let cmd = build_remove_command(&path, Some("feature-branch"), true);
+        assert!(cmd.contains("git worktree remove --force"));
+        assert!(cmd.contains("git branch -D"));
+
+        // Shell escaping for special characters
+        let special_path = PathBuf::from("/tmp/test worktree");
+        let cmd = build_remove_command(&special_path, Some("feature/branch"), false);
+        assert!(cmd.contains("worktree remove"));
     }
 }

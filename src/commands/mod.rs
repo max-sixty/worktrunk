@@ -1,3 +1,4 @@
+pub mod branch_deletion;
 pub mod command_approval;
 pub mod command_executor;
 pub mod commit;
@@ -5,6 +6,7 @@ pub mod config;
 pub mod configure_shell;
 pub mod context;
 mod for_each;
+mod hook_commands;
 mod hooks;
 pub mod init;
 pub mod list;
@@ -14,8 +16,8 @@ pub mod project_config;
 pub mod repository_ext;
 #[cfg(unix)]
 pub mod select;
-pub mod standalone;
 pub mod statusline;
+pub mod step_commands;
 pub mod worktree;
 
 pub use command_approval::approve_hooks;
@@ -25,14 +27,14 @@ pub use config::{
 };
 pub use configure_shell::{handle_configure_shell, handle_show_theme, handle_unconfigure_shell};
 pub use for_each::step_for_each;
+pub use hook_commands::{add_approvals, clear_approvals, handle_hook_show, run_hook};
 pub use init::handle_init;
 pub use list::handle_list;
 pub use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
 pub use select::handle_select;
-pub use standalone::{
-    RebaseResult, SquashResult, add_approvals, clear_approvals, handle_hook_show, handle_rebase,
-    handle_squash, run_hook, step_commit, step_show_squash_prompt,
+pub use step_commands::{
+    RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_show_squash_prompt,
 };
 pub use worktree::{
     ResolutionContext, compute_worktree_path, handle_remove, handle_remove_by_path,

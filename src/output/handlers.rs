@@ -3,9 +3,12 @@
 use color_print::cformat;
 use std::path::Path;
 
+use crate::commands::branch_deletion::{
+    BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
+};
 use crate::commands::command_executor::CommandContext;
 use crate::commands::execute_pre_remove_commands;
-use crate::commands::process::spawn_detached;
+use crate::commands::process::{build_remove_command, spawn_detached};
 use crate::commands::worktree::{BranchDeletionMode, RemoveResult, SwitchBranchInfo, SwitchResult};
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::GitError;
@@ -54,101 +57,6 @@ fn format_switch_message(
             format_path_for_display(path)
         ),
     }
-}
-
-/// Result of an integration check, including which target was used.
-struct IntegrationResult {
-    reason: Option<IntegrationReason>,
-    /// The target that was actually checked against (may be upstream if ahead of local)
-    effective_target: String,
-}
-
-/// Check if a branch's content has been integrated into the target.
-///
-/// Returns the reason if the branch is safe to delete (ordered by check cost):
-/// - `SameCommit`: Branch HEAD is literally the same commit as target
-/// - `NoAddedChanges`: Branch has no file changes beyond merge-base (empty three-dot diff)
-/// - `TreesMatch`: The branch's tree SHA matches the target's tree SHA (squash merge/rebase)
-/// - `MergeAddsNothing`: Merge simulation shows branch would add nothing (squash + target advanced)
-///
-/// Also returns the effective target used (may be upstream if it's ahead of local).
-///
-/// Returns None reason if no condition is met, or if an error occurs (e.g., invalid refs).
-/// This fail-safe default prevents accidental branch deletion when integration cannot
-/// be determined.
-fn get_integration_reason(repo: &Repository, branch_name: &str, target: &str) -> IntegrationResult {
-    let effective_target = repo.effective_integration_target(target);
-
-    let reason = check_integration_against(repo, branch_name, &effective_target);
-
-    IntegrationResult {
-        reason,
-        effective_target,
-    }
-}
-
-/// Check integration against a specific target ref.
-fn check_integration_against(
-    repo: &Repository,
-    branch_name: &str,
-    target: &str,
-) -> Option<IntegrationReason> {
-    // Use lazy provider for short-circuit evaluation.
-    // Expensive checks (would_merge_add) are skipped if cheaper ones succeed.
-    let mut provider = worktrunk::git::LazyGitIntegration::new(repo, branch_name, target);
-    worktrunk::git::check_integration(&mut provider)
-}
-
-/// Outcome of a branch deletion attempt.
-enum BranchDeletionOutcome {
-    /// Branch was not deleted (not integrated and not forced)
-    NotDeleted,
-    /// Branch was force-deleted without integration check
-    ForceDeleted,
-    /// Branch was deleted because it was integrated
-    Integrated(IntegrationReason),
-}
-
-/// Result of a branch deletion attempt.
-struct BranchDeletionResult {
-    outcome: BranchDeletionOutcome,
-    /// The target that was actually checked against (may be upstream if ahead of local)
-    effective_target: String,
-}
-
-/// Attempt to delete a branch if it's integrated or force_delete is set.
-///
-/// Returns `BranchDeletionResult` with:
-/// - `outcome`: Whether/why deletion occurred
-/// - `effective_target`: The ref checked against (may be upstream if ahead of local)
-fn delete_branch_if_safe(
-    repo: &Repository,
-    branch_name: &str,
-    target: &str,
-    force_delete: bool,
-) -> anyhow::Result<BranchDeletionResult> {
-    let IntegrationResult {
-        reason,
-        effective_target,
-    } = get_integration_reason(repo, branch_name, target);
-
-    // Determine outcome based on integration and force flag
-    let outcome = match (reason, force_delete) {
-        (Some(r), _) => {
-            repo.run_command(&["branch", "-D", branch_name])?;
-            BranchDeletionOutcome::Integrated(r)
-        }
-        (None, true) => {
-            repo.run_command(&["branch", "-D", branch_name])?;
-            BranchDeletionOutcome::ForceDeleted
-        }
-        (None, false) => BranchDeletionOutcome::NotDeleted,
-    };
-
-    Ok(BranchDeletionResult {
-        outcome,
-        effective_target,
-    })
 }
 
 /// Handle the result of a branch deletion attempt.
@@ -751,60 +659,6 @@ pub fn execute_user_command(command: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build shell command for background worktree removal
-///
-/// `branch_to_delete` is the branch to delete after removing the worktree.
-/// Pass `None` for detached HEAD or when branch should be retained.
-/// This decision is computed upfront (checking if branch is merged) before spawning the background process.
-///
-/// `force_worktree` adds `--force` to `git worktree remove`, allowing removal
-/// even when the worktree contains untracked files (like build artifacts).
-fn build_remove_command(
-    worktree_path: &std::path::Path,
-    branch_to_delete: Option<&str>,
-    force_worktree: bool,
-) -> String {
-    use shell_escape::escape;
-
-    let worktree_path_str = worktree_path.to_string_lossy();
-    let worktree_escaped = escape(worktree_path_str.as_ref().into());
-
-    // TODO: This delay is a timing-based workaround, not a principled fix.
-    // The race: after wt exits, the shell wrapper reads the directive file and
-    // runs `cd`. But fish (and other shells) may call getcwd() before the cd
-    // completes (e.g., for prompt updates), and if the background removal has
-    // already deleted the directory, we get "shell-init: error retrieving current
-    // directory". A 1s delay is very conservative (shell cd takes ~1-5ms), but
-    // deterministic solutions (shell-spawned background, marker file sync) add
-    // significant complexity for marginal benefit.
-    let delay = "sleep 1";
-
-    // Stop fsmonitor daemon first (best effort - ignore errors)
-    // This prevents zombie daemons from accumulating when using builtin fsmonitor
-    let stop_fsmonitor = format!(
-        "git -C {} fsmonitor--daemon stop 2>/dev/null || true",
-        worktree_escaped
-    );
-
-    let force_flag = if force_worktree { " --force" } else { "" };
-
-    match branch_to_delete {
-        Some(branch_name) => {
-            let branch_escaped = escape(branch_name.into());
-            format!(
-                "{} && {} && git worktree remove{} {} && git branch -D {}",
-                delay, stop_fsmonitor, force_flag, worktree_escaped, branch_escaped
-            )
-        }
-        None => {
-            format!(
-                "{} && {} && git worktree remove{} {}",
-                delay, stop_fsmonitor, force_flag, worktree_escaped
-            )
-        }
-    }
-}
-
 /// Handle output for a remove operation
 ///
 /// Approval is handled at the gate (command entry point), not here.
@@ -1337,58 +1191,5 @@ mod tests {
     fn test_shell_integration_hint() {
         let hint = shell_integration_hint();
         assert!(hint.contains("wt config shell install"));
-    }
-
-    #[test]
-    fn test_build_remove_command() {
-        let path = PathBuf::from("/tmp/test-worktree");
-
-        // Without branch deletion, without force
-        let cmd = build_remove_command(&path, None, false);
-        assert!(cmd.contains("git worktree remove"));
-        assert!(cmd.contains("/tmp/test-worktree"));
-        assert!(!cmd.contains("branch -D"));
-        assert!(!cmd.contains("--force"));
-
-        // With branch deletion, without force
-        let cmd = build_remove_command(&path, Some("feature-branch"), false);
-        assert!(cmd.contains("git worktree remove"));
-        assert!(cmd.contains("git branch -D"));
-        assert!(cmd.contains("feature-branch"));
-        assert!(!cmd.contains("--force"));
-
-        // With force flag
-        let cmd = build_remove_command(&path, None, true);
-        assert!(cmd.contains("git worktree remove --force"));
-
-        // With branch deletion and force
-        let cmd = build_remove_command(&path, Some("feature-branch"), true);
-        assert!(cmd.contains("git worktree remove --force"));
-        assert!(cmd.contains("git branch -D"));
-
-        // Shell escaping for special characters
-        let special_path = PathBuf::from("/tmp/test worktree");
-        let cmd = build_remove_command(&special_path, Some("feature/branch"), false);
-        assert!(cmd.contains("worktree remove"));
-    }
-
-    #[test]
-    fn test_branch_deletion_outcome_matching() {
-        // Ensure the match patterns work correctly
-        let outcomes = [
-            (BranchDeletionOutcome::NotDeleted, false),
-            (BranchDeletionOutcome::ForceDeleted, true),
-            (
-                BranchDeletionOutcome::Integrated(IntegrationReason::SameCommit),
-                true,
-            ),
-        ];
-        for (outcome, expected_deleted) in outcomes {
-            let deleted = matches!(
-                outcome,
-                BranchDeletionOutcome::ForceDeleted | BranchDeletionOutcome::Integrated(_)
-            );
-            assert_eq!(deleted, expected_deleted);
-        }
     }
 }

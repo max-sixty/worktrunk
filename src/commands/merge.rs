@@ -172,13 +172,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     // Squash commits if enabled - track whether squashing occurred
     let squashed = if squash_enabled {
         matches!(
-            super::standalone::handle_squash(
+            super::step_commands::handle_squash(
                 Some(&target_branch),
                 yes,
                 !verify, // skip_pre_commit when !verify
                 stage_mode
             )?,
-            super::standalone::SquashResult::Squashed
+            super::step_commands::SquashResult::Squashed
         )
     } else {
         false
@@ -188,8 +188,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let rebased = if rebase {
         // Auto-rebase onto target
         matches!(
-            super::standalone::handle_rebase(Some(&target_branch))?,
-            super::standalone::RebaseResult::Rebased
+            super::step_commands::handle_rebase(Some(&target_branch))?,
+            super::step_commands::RebaseResult::Rebased
         )
     } else {
         // --no-rebase: verify already rebased, fail if not
