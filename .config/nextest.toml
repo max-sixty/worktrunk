@@ -1,6 +1,6 @@
-# IMPORTANT: When running in background process groups (AI coding environments
-# like Codex/Claude Code, or nested tmux/screen sessions), nextest's InputHandler
-# can receive SIGTTOU when restoring terminal settings, causing process suspension.
+# IMPORTANT: Tests that spawn interactive shells (zsh -ic, bash -ic) cause
+# nextest's InputHandler to receive SIGTTOU when restoring terminal settings,
+# suspending the test process. See https://github.com/nextest-rs/nextest/issues/2878
 #
 # Solution: Run with NEXTEST_NO_INPUT_HANDLER=1 or use the pre-merge hook which
 # sets this automatically:
@@ -10,8 +10,6 @@
 # Or use `cargo test` which doesn't have this issue:
 #
 #   cargo test --test integration --features shell-integration-tests
-#
-# See tests/common/mod.rs for details on the SIGTTOU issue.
 
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }

@@ -355,11 +355,10 @@ pub fn merge_scenario_multi_commit(mut repo: TestRepo) -> (TestRepo, PathBuf) {
 /// 2. SIGTTIN/SIGTTOU are blocked to prevent test processes from being stopped
 ///
 /// NOTE: PTY tests are behind the `shell-integration-tests` feature because they can
-/// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This is NOT
-/// caused by our code - investigation confirmed our tests don't change the terminal's
-/// foreground process group. The issue is in nextest's teardown path (InputHandlerImpl::restore
-/// calls tcsetattr while nextest isn't in the foreground pgrp). Workaround: run with
-/// NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
+/// trigger a nextest bug where its InputHandler cleanup receives SIGTTOU. This happens
+/// when tests spawn interactive shells (zsh -ic, bash -ic) which take control of the
+/// foreground process group. See https://github.com/nextest-rs/nextest/issues/2878
+/// Workaround: run with NEXTEST_NO_INPUT_HANDLER=1. See CLAUDE.md for details.
 #[cfg(unix)]
 pub fn native_pty_system() -> Box<dyn portable_pty::PtySystem> {
     ignore_tty_signals();
