@@ -38,12 +38,14 @@ pub struct ProgressiveTable {
     is_tty: bool,
     /// Lines that have been modified since last flush
     dirty: Vec<usize>,
+    /// Whether the skeleton was printed (only true in TTY mode after render_skeleton)
+    rendered: bool,
 }
 
 impl ProgressiveTable {
     /// Create a new progressive table with the given structure.
     ///
-    /// Call `render_initial()` after construction to print the initial table.
+    /// Call `render_skeleton()` after construction to print the skeleton table.
     ///
     /// # Arguments
     /// * `header` - The header line content
@@ -79,13 +81,17 @@ impl ProgressiveTable {
             row_count,
             is_tty,
             dirty: Vec::new(),
+            rendered: false,
         }
     }
 
-    /// Print the initial table to stdout (TTY only).
-    pub fn render_initial(&self) -> std::io::Result<()> {
-        if self.is_tty {
+    /// Print the skeleton table to stdout (TTY only).
+    ///
+    /// Idempotent: calling multiple times has no effect after the first render.
+    pub fn render_skeleton(&mut self) -> std::io::Result<()> {
+        if self.is_tty && !self.rendered {
             self.print_all()?;
+            self.rendered = true;
         }
         Ok(())
     }
@@ -125,7 +131,10 @@ impl ProgressiveTable {
         }
 
         self.lines[line_idx] = truncated;
-        self.dirty.push(line_idx);
+        // Only mark dirty if we've rendered (otherwise nothing on screen to redraw)
+        if self.rendered {
+            self.dirty.push(line_idx);
+        }
         true
     }
 
@@ -147,19 +156,28 @@ impl ProgressiveTable {
         }
 
         self.lines[footer_idx] = truncated;
-        self.dirty.push(footer_idx);
+        // Only mark dirty if we've rendered (otherwise nothing on screen to redraw)
+        if self.rendered {
+            self.dirty.push(footer_idx);
+        }
         true
     }
 
     /// Flush pending changes to the terminal.
     ///
     /// Redraws all lines that have been modified since the last flush.
-    /// No-op in non-TTY mode.
+    /// No-op if nothing is dirty (which includes the case where we haven't rendered yet).
     pub fn flush(&mut self) -> std::io::Result<()> {
-        if !self.is_tty || self.dirty.is_empty() {
-            self.dirty.clear();
+        if self.dirty.is_empty() {
             return Ok(());
         }
+
+        // Defense-in-depth: dirty should only be non-empty if we're in TTY mode and rendered.
+        // The update_* methods gate on `self.rendered`, which is only set when is_tty is true.
+        debug_assert!(
+            self.is_tty && self.rendered,
+            "dirty list should only be non-empty after render_skeleton in TTY mode"
+        );
 
         // Take ownership of dirty indices to avoid borrow conflict with redraw_line
         for line_idx in std::mem::take(&mut self.dirty) {
@@ -199,15 +217,13 @@ impl ProgressiveTable {
         stdout.flush()
     }
 
-    /// Finalize for TTY: update footer and flush.
+    /// Finalize: update footer and flush.
+    ///
+    /// Updates the footer content. If we rendered initially, also redraws the footer.
     ///
     /// # Arguments
     /// * `final_footer` - Final summary message to replace loading status
-    pub fn finalize_tty(&mut self, final_footer: String) -> std::io::Result<()> {
-        if !self.is_tty {
-            return Ok(());
-        }
-
+    pub fn finalize(&mut self, final_footer: String) -> std::io::Result<()> {
         self.update_footer(final_footer);
         self.flush()
     }
@@ -332,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn test_finalize_tty_non_tty_mode() {
+    fn test_finalize_without_render() {
         let mut table = ProgressiveTable::new(
             "header".to_string(),
             vec!["row".to_string()],
@@ -340,16 +356,15 @@ mod tests {
             80,
         );
 
-        // In non-TTY mode (typical test environment), finalize_tty returns early
-        // without updating footer because is_tty is false
-        table.finalize_tty("Complete!".to_string()).unwrap();
+        // Without render_skeleton(), finalize updates footer but doesn't print
+        table.finalize("Complete!".to_string()).unwrap();
 
-        // Verify no panic and no error - that's all we can reliably test
-        // since is_tty depends on the test environment
+        // Footer IS updated (the data changes), but no output since not rendered
+        assert_eq!(table.lines.last().unwrap(), "Complete!");
     }
 
     #[test]
-    fn test_dirty_tracking() {
+    fn test_dirty_tracking_before_render() {
         let mut table = ProgressiveTable::new(
             "header".to_string(),
             vec!["row0".to_string(), "row1".to_string()],
@@ -360,16 +375,40 @@ mod tests {
         // Initially no dirty lines
         assert!(table.dirty.is_empty());
 
-        // Update marks line as dirty
+        // Before render_skeleton, updates modify data but don't mark dirty
+        // (nothing on screen to redraw)
+        assert!(table.update_row(0, "updated".into()));
+        assert!(table.dirty.is_empty());
+        assert_eq!(table.lines[1], "updated"); // Data IS updated
+
+        assert!(table.update_footer("new footer".into()));
+        assert!(table.dirty.is_empty());
+        assert_eq!(table.lines.last().unwrap(), "new footer"); // Data IS updated
+
+        // Flush is a no-op (nothing dirty)
+        table.flush().unwrap();
+        assert!(table.dirty.is_empty());
+    }
+
+    #[test]
+    fn test_dirty_tracking_after_render() {
+        let mut table = ProgressiveTable::new(
+            "header".to_string(),
+            vec!["row0".to_string(), "row1".to_string()],
+            "footer".to_string(),
+            80,
+        );
+
+        // Simulate TTY render state (in tests, is_tty is false so render_skeleton is a no-op,
+        // but we can manually set both flags to test dirty tracking while maintaining invariant)
+        table.is_tty = true;
+        table.rendered = true;
+
+        // After render, updates mark lines as dirty
         table.update_row(0, "updated".into());
         assert_eq!(table.dirty, vec![1]); // line_idx = row_idx + 1
 
-        // Footer update adds to dirty list
         table.update_footer("new footer".into());
         assert_eq!(table.dirty, vec![1, 4]); // footer is last line
-
-        // Flush clears dirty list
-        table.flush().unwrap();
-        assert!(table.dirty.is_empty());
     }
 }
