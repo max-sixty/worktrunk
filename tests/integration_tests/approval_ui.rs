@@ -1,6 +1,6 @@
 //! Tests for command approval UI
 
-use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
+use crate::common::{TestRepo, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -9,36 +9,33 @@ use std::process::Stdio;
 
 /// Helper to create snapshot with test environment
 fn snapshot_approval(test_name: &str, repo: &TestRepo, args: &[&str], approve: bool) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    let mut cmd = make_snapshot_cmd(repo, "switch", args, None);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().unwrap();
+    let mut child = cmd.spawn().unwrap();
 
-        // Write approval response
-        {
-            let stdin = child.stdin.as_mut().unwrap();
-            let response = if approve { b"y\n" } else { b"n\n" };
-            stdin.write_all(response).unwrap();
-        }
+    // Write approval response
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        let response = if approve { b"y\n" } else { b"n\n" };
+        stdin.write_all(response).unwrap();
+    }
 
-        let output = child.wait_with_output().unwrap();
+    let output = child.wait_with_output().unwrap();
 
-        // Use insta snapshot for combined output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!(
-            "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
-            output.status.code().unwrap_or(-1),
-            stdout,
-            stderr
-        );
+    // Use insta snapshot for combined output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!(
+        "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
+        output.status.code().unwrap_or(-1),
+        stdout,
+        stderr
+    );
 
-        insta::assert_snapshot!(test_name, combined);
-    });
+    insta::assert_snapshot!(test_name, combined);
 }
 
 #[rstest]
@@ -112,11 +109,10 @@ fn test_yes_flag_does_not_save_approvals(repo: TestRepo) {
     repo.commit("Add config");
 
     // Run with --yes
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "test-yes", "--yes"], None);
-        assert_cmd_snapshot!("yes_does_not_save_approvals_first_run", cmd);
-    });
+    assert_cmd_snapshot!(
+        "yes_does_not_save_approvals_first_run",
+        make_snapshot_cmd(&repo, "switch", &["--create", "test-yes", "--yes"], None)
+    );
 
     // Clean up the worktree
     repo.wt_command()
@@ -149,11 +145,10 @@ approved-commands = ["echo 'approved' > output.txt"]
     ));
 
     // Should execute without prompting
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "test-approved"], None);
-        assert_cmd_snapshot!("already_approved_skip_prompt", cmd);
-    });
+    assert_cmd_snapshot!(
+        "already_approved_skip_prompt",
+        make_snapshot_cmd(&repo, "switch", &["--create", "test-approved"], None)
+    );
 }
 
 #[rstest]
@@ -211,36 +206,33 @@ test = "echo 'Running tests...'"
 
 /// Helper for step hook snapshot tests with approval prompt
 fn snapshot_run_hook(test_name: &str, repo: &TestRepo, hook_type: &str, approve: bool) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "hook", &[hook_type], None);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    let mut cmd = make_snapshot_cmd(repo, "hook", &[hook_type], None);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().unwrap();
+    let mut child = cmd.spawn().unwrap();
 
-        // Write approval response
-        {
-            let stdin = child.stdin.as_mut().unwrap();
-            let response = if approve { b"y\n" } else { b"n\n" };
-            stdin.write_all(response).unwrap();
-        }
+    // Write approval response
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        let response = if approve { b"y\n" } else { b"n\n" };
+        stdin.write_all(response).unwrap();
+    }
 
-        let output = child.wait_with_output().unwrap();
+    let output = child.wait_with_output().unwrap();
 
-        // Use insta snapshot for combined output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!(
-            "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
-            output.status.code().unwrap_or(-1),
-            stdout,
-            stderr
-        );
+    // Use insta snapshot for combined output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!(
+        "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
+        output.status.code().unwrap_or(-1),
+        stdout,
+        stderr
+    );
 
-        insta::assert_snapshot!(test_name, combined);
-    });
+    insta::assert_snapshot!(test_name, combined);
 }
 
 /// Test that `wt hook pre-merge` requires approval (security boundary test)
@@ -292,11 +284,10 @@ fn test_approval_fails_in_non_tty(repo: TestRepo) {
 
     // Run WITHOUT piping stdin - this simulates non-TTY environment
     // When running under cargo test, stdin is not a TTY
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "test-non-tty"], None);
-        assert_cmd_snapshot!("approval_fails_in_non_tty", cmd);
-    });
+    assert_cmd_snapshot!(
+        "approval_fails_in_non_tty",
+        make_snapshot_cmd(&repo, "switch", &["--create", "test-non-tty"], None)
+    );
 }
 
 /// Test that --yes flag bypasses TTY requirement
@@ -308,16 +299,12 @@ fn test_yes_bypasses_tty_check(repo: TestRepo) {
     repo.commit("Add config");
 
     // Run with --yes to bypass approval entirely
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(
-            &repo,
-            "switch",
-            &["--create", "test-yes-tty", "--yes"],
-            None,
-        );
-        assert_cmd_snapshot!("yes_bypasses_tty_check", cmd);
-    });
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "switch",
+        &["--create", "test-yes-tty", "--yes"],
+        None
+    ));
 }
 
 /// Test that `{{ target }}` is the current branch when running standalone
@@ -449,12 +436,10 @@ lint = "echo 'lint'"
     repo.commit("Add pre-merge hooks");
 
     // Run with a name that doesn't exist
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd =
-            make_snapshot_cmd(&repo, "hook", &["pre-merge", "nonexistent", "--yes"], None);
-        assert_cmd_snapshot!("step_hook_unknown_name_error", cmd);
-    });
+    assert_cmd_snapshot!(
+        "step_hook_unknown_name_error",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "nonexistent", "--yes"], None)
+    );
 }
 
 /// Test error message when hook has no named commands
@@ -465,45 +450,41 @@ fn test_step_hook_name_filter_on_unnamed_command(repo: TestRepo) {
     repo.commit("Add pre-merge hook");
 
     // Run with a name filter on a hook that has no named commands
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "test", "--yes"], None);
-        assert_cmd_snapshot!("step_hook_name_filter_on_unnamed", cmd);
-    });
+    assert_cmd_snapshot!(
+        "step_hook_name_filter_on_unnamed",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "test", "--yes"], None)
+    );
 }
 
 /// Helper for step hook snapshot tests with extra args and approval prompt
 fn snapshot_run_hook_with_args(test_name: &str, repo: &TestRepo, args: &[&str], approve: bool) {
-    let settings = setup_snapshot_settings(repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(repo, "hook", args, None);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    let mut cmd = make_snapshot_cmd(repo, "hook", args, None);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().unwrap();
+    let mut child = cmd.spawn().unwrap();
 
-        // Write approval response
-        {
-            let stdin = child.stdin.as_mut().unwrap();
-            let response = if approve { b"y\n" } else { b"n\n" };
-            stdin.write_all(response).unwrap();
-        }
+    // Write approval response
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        let response = if approve { b"y\n" } else { b"n\n" };
+        stdin.write_all(response).unwrap();
+    }
 
-        let output = child.wait_with_output().unwrap();
+    let output = child.wait_with_output().unwrap();
 
-        // Use insta snapshot for combined output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!(
-            "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
-            output.status.code().unwrap_or(-1),
-            stdout,
-            stderr
-        );
+    // Use insta snapshot for combined output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!(
+        "exit_code: {}\n----- stdout -----\n{}\n----- stderr -----\n{}",
+        output.status.code().unwrap_or(-1),
+        stdout,
+        stderr
+    );
 
-        insta::assert_snapshot!(test_name, combined);
-    });
+    insta::assert_snapshot!(test_name, combined);
 }
 
 /// Test that `project:` prefix filter still requires approval (security fix test)
@@ -561,11 +542,10 @@ test = "echo 'user test'"
     );
 
     // Running with user: prefix should not prompt for approval
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "hook", &["pre-merge", "user:test"], None);
-        assert_cmd_snapshot!("user_prefix_skips_approval", cmd);
-    });
+    assert_cmd_snapshot!(
+        "user_prefix_skips_approval",
+        make_snapshot_cmd(&repo, "hook", &["pre-merge", "user:test"], None)
+    );
 }
 
 /// Test running all hooks (no name filter) still works
@@ -614,9 +594,8 @@ third = "echo 'third' >> output.txt"
 #[cfg(unix)] // select command is unix-only
 #[rstest]
 fn test_select_fails_in_non_tty(repo: TestRepo) {
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "select", &[], None);
-        assert_cmd_snapshot!("select_fails_in_non_tty", cmd);
-    });
+    assert_cmd_snapshot!(
+        "select_fails_in_non_tty",
+        make_snapshot_cmd(&repo, "select", &[], None)
+    );
 }

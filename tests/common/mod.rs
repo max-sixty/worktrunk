@@ -813,6 +813,8 @@ pub struct TestRepo {
     git_config_path: PathBuf,
     /// Path to mock bin directory for gh/glab commands
     mock_bin_path: Option<PathBuf>,
+    /// Snapshot settings guard - keeps insta filters active for this repo's lifetime
+    _snapshot_guard: insta::internals::SettingsBindDropGuard,
 }
 
 impl TestRepo {
@@ -838,14 +840,19 @@ impl TestRepo {
         let test_config_path = temp_dir.path().join("test-config.toml");
         let git_config_path = temp_dir.path().join("test-gitconfig");
 
+        // Bind full snapshot settings (including ANSI cleanup) for all tests
+        let worktrees = HashMap::new();
+        let snapshot_guard = setup_snapshot_settings_for_paths(&root, &worktrees).bind_to_scope();
+
         let mut repo = Self {
             temp_dir,
             root,
-            worktrees: HashMap::new(),
+            worktrees,
             remote: None,
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            _snapshot_guard: snapshot_guard,
         };
 
         // Mock gh/glab as authenticated to prevent CI hints in test output
@@ -876,14 +883,19 @@ impl TestRepo {
         )
         .unwrap();
 
+        // Set up snapshot settings before creating the repo (worktrees empty initially)
+        let worktrees = HashMap::new();
+        let snapshot_guard = setup_snapshot_settings_for_paths(&root, &worktrees).bind_to_scope();
+
         let repo = Self {
             temp_dir,
             root,
-            worktrees: HashMap::new(),
+            worktrees,
             remote: None,
             test_config_path,
             git_config_path,
             mock_bin_path: None,
+            _snapshot_guard: snapshot_guard,
         };
 
         // Run git init (can't avoid this for empty repos)
@@ -1932,6 +1944,16 @@ pub fn add_standard_env_redactions(settings: &mut insta::Settings) {
 /// This extracts the common settings configuration while allowing the
 /// `assert_cmd_snapshot!` macro to remain in test files for correct module path capture.
 pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
+    setup_snapshot_settings_for_paths(repo.root_path(), &repo.worktrees)
+}
+
+/// Full snapshot settings - path filters AND ANSI cleanup.
+/// Use this with `settings.bind()` for assert_cmd_snapshot! tests.
+/// Clones current settings (which may already have minimal path filters from TestRepo).
+fn setup_snapshot_settings_for_paths(
+    root: &Path,
+    worktrees: &HashMap<String, PathBuf>,
+) -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("../snapshots");
 
@@ -1951,8 +1973,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
     settings.add_filter(r"\\", "/");
 
     // Normalize paths (canonicalize for macOS /var -> /private/var symlink)
-    let root_canonical =
-        canonicalize(repo.root_path()).unwrap_or_else(|_| repo.root_path().to_path_buf());
+    let root_canonical = canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let root_str = root_canonical.to_str().unwrap();
     // Convert backslashes to forward slashes before escaping (backslash filter already ran)
     let root_str_normalized = root_str.replace('\\', "/");
@@ -1979,7 +2000,7 @@ pub fn setup_snapshot_settings(repo: &TestRepo) -> insta::Settings {
         settings.add_filter(&tilde_worktree_pattern, "_REPO_$1");
     }
 
-    for (name, path) in &repo.worktrees {
+    for (name, path) in worktrees {
         let canonical = canonicalize(path).unwrap_or_else(|_| path.clone());
         let path_str = canonical.to_str().unwrap();
         let replacement = format!("_WORKTREE_{}_", name.to_uppercase().replace('-', "_"));

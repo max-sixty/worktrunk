@@ -118,7 +118,7 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
     // Run from the feature worktree to see commits ahead
     let feature_path = repo.worktree_path("feature");
     let output = run_statusline_from_dir(&repo, &[], None, feature_path);
-    assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2[0m");
+    assert_snapshot!(output, @"[0m feature  [2m↑[22m  [32m↑2[0m  ^[32m+2");
 }
 
 // --- Claude Code Mode Tests ---
