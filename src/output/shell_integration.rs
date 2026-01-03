@@ -60,7 +60,7 @@ use color_print::cformat;
 
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::path::format_path_for_display;
-use worktrunk::shell::Shell;
+use worktrunk::shell::{Shell, extract_filename_from_path};
 use worktrunk::styling::hint_message;
 
 /// Shell integration install hint message.
@@ -75,8 +75,9 @@ pub(crate) fn shell_restart_hint() -> &'static str {
 
 /// Shell integration hint for unknown/unsupported shell.
 fn shell_integration_unsupported_shell(shell_path: &str) -> String {
-    // Extract shell name from path (e.g., "/bin/tcsh" -> "tcsh")
-    let shell_name = shell_path.rsplit('/').next().unwrap_or(shell_path);
+    // Extract shell name from path, handling both Unix and Windows paths
+    // e.g., "/bin/tcsh" -> "tcsh", "C:\...\tcsh.exe" -> "tcsh"
+    let shell_name = extract_filename_from_path(shell_path).unwrap_or(shell_path);
     format!(
         "Shell integration not yet supported for {shell_name} (supports bash, zsh, fish, PowerShell)"
     )
@@ -252,7 +253,7 @@ pub fn print_shell_install_result(
     if shells_configured_count > 0 {
         let current_shell = std::env::var("SHELL")
             .ok()
-            .and_then(|s| s.rsplit('/').next().map(String::from));
+            .and_then(|s| extract_filename_from_path(&s).map(String::from));
 
         let current_shell_result = current_shell.as_ref().and_then(|shell_name| {
             scan_result

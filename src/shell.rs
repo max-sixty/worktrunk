@@ -646,15 +646,31 @@ pub fn detect_zsh_compinit() -> Option<bool> {
     }
 }
 
-/// Get the current shell from `$SHELL` environment variable.
+/// Extract executable name from a path, stripping `.exe` on Windows.
 ///
-/// Returns `None` if `$SHELL` is not set or doesn't match a known shell.
-/// Handles versioned/prefixed binaries like `/nix/store/.../zsh-5.9` or `bash5`
-/// by checking if the name starts with a known shell.
-pub fn current_shell() -> Option<Shell> {
-    let shell_path = std::env::var("SHELL").ok()?;
-    let shell_name = shell_path.rsplit('/').next()?;
+/// Uses `std::path::Path` for platform-native path handling:
+/// - Unix: `/usr/bin/bash` -> "bash"
+/// - Windows: `C:\Program Files\Git\usr\bin\bash.exe` -> "bash"
+///
+/// Only strips `.exe` extension (not other extensions like `.9` in `zsh-5.9`).
+pub fn extract_filename_from_path(path: &str) -> Option<&str> {
+    let filename = std::path::Path::new(path).file_name()?.to_str()?;
 
+    // Strip .exe extension (case-insensitive for Windows)
+    // Don't use file_stem() because it would strip version numbers like ".9" from "zsh-5.9"
+    // Handle all case variants: .exe, .EXE, .Exe, .eXe, etc.
+    if filename.len() > 4 && filename[filename.len() - 4..].eq_ignore_ascii_case(".exe") {
+        Some(&filename[..filename.len() - 4])
+    } else {
+        Some(filename)
+    }
+}
+
+/// Determine Shell variant from a shell name (without path or extension).
+///
+/// Handles versioned/prefixed binaries like `zsh-5.9` or `bash5`
+/// by checking if the name starts with a known shell.
+fn shell_from_name(shell_name: &str) -> Option<Shell> {
     // Try exact match first
     if let Ok(shell) = shell_name.parse() {
         return Some(shell);
@@ -674,6 +690,21 @@ pub fn current_shell() -> Option<Shell> {
     } else {
         None
     }
+}
+
+/// Get the current shell from `$SHELL` environment variable.
+///
+/// Returns `None` if `$SHELL` is not set or doesn't match a known shell.
+/// Handles versioned/prefixed binaries like `/nix/store/.../zsh-5.9` or `bash5`
+/// by checking if the name starts with a known shell.
+///
+/// Works on both Unix and Windows:
+/// - Unix: `/usr/bin/bash` -> Bash
+/// - Windows Git Bash: `C:\Program Files\Git\usr\bin\bash.exe` -> Bash
+pub fn current_shell() -> Option<Shell> {
+    let shell_path = std::env::var("SHELL").ok()?;
+    let shell_name = extract_filename_from_path(&shell_path)?;
+    shell_from_name(shell_name)
 }
 
 #[cfg(test)]
@@ -704,6 +735,60 @@ mod tests {
         assert_eq!(Shell::Fish.to_string(), "fish");
         assert_eq!(Shell::Zsh.to_string(), "zsh");
         assert_eq!(Shell::PowerShell.to_string(), "powershell");
+    }
+
+    // ==========================================================================
+    // Path extraction tests (Issue #348)
+    // ==========================================================================
+
+    #[rstest]
+    #[case::just_name("bash", Some("bash"))]
+    #[case::just_name_exe("bash.exe", Some("bash"))]
+    #[case::mixed_case_exe_title("bash.Exe", Some("bash"))]
+    #[case::mixed_case_exe_upper("bash.EXE", Some("bash"))]
+    #[case::mixed_case_exe_camel("bash.eXe", Some("bash"))]
+    #[case::empty("", None)]
+    fn test_extract_filename_from_path_common(#[case] path: &str, #[case] expected: Option<&str>) {
+        assert_eq!(extract_filename_from_path(path), expected);
+    }
+
+    #[cfg(unix)]
+    #[rstest]
+    #[case::unix_bash("/usr/bin/bash", Some("bash"))]
+    #[case::unix_zsh("/bin/zsh", Some("zsh"))]
+    #[case::unix_fish("/usr/local/bin/fish", Some("fish"))]
+    #[case::nix_versioned("/nix/store/abc123/zsh-5.9", Some("zsh-5.9"))]
+    fn test_extract_filename_from_path_unix(#[case] path: &str, #[case] expected: Option<&str>) {
+        assert_eq!(extract_filename_from_path(path), expected);
+    }
+
+    #[cfg(windows)]
+    #[rstest]
+    #[case::windows_git_bash(r"C:\Program Files\Git\usr\bin\bash.exe", Some("bash"))]
+    #[case::windows_powershell(
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        Some("powershell")
+    )]
+    #[case::windows_pwsh(r"C:\Program Files\PowerShell\7\pwsh.exe", Some("pwsh"))]
+    #[case::windows_zsh(r"C:\msys64\usr\bin\zsh.exe", Some("zsh"))]
+    #[case::uppercase_exe(r"C:\WINDOWS\SYSTEM32\BASH.EXE", Some("BASH"))]
+    fn test_extract_filename_from_path_windows(#[case] path: &str, #[case] expected: Option<&str>) {
+        assert_eq!(extract_filename_from_path(path), expected);
+    }
+
+    #[rstest]
+    #[case::bash("bash", Some(Shell::Bash))]
+    #[case::bash_versioned("bash5", Some(Shell::Bash))]
+    #[case::zsh("zsh", Some(Shell::Zsh))]
+    #[case::zsh_versioned("zsh-5.9", Some(Shell::Zsh))]
+    #[case::fish("fish", Some(Shell::Fish))]
+    #[case::powershell("powershell", Some(Shell::PowerShell))]
+    #[case::pwsh("pwsh", Some(Shell::PowerShell))]
+    #[case::pwsh_preview("pwsh-preview", Some(Shell::PowerShell))]
+    #[case::unknown("tcsh", None)]
+    #[case::unknown_csh("csh", None)]
+    fn test_shell_from_name(#[case] name: &str, #[case] expected: Option<Shell>) {
+        assert_eq!(shell_from_name(name), expected);
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::process;
 use worktrunk::config::{WorktrunkConfig, set_config_path};
 use worktrunk::git::{Repository, exit_code, set_base_path};
 use worktrunk::path::format_path_for_display;
+use worktrunk::shell::extract_filename_from_path;
 use worktrunk::styling::{
     error_message, format_with_gutter, hint_message, info_message, println, success_message,
     warning_message,
@@ -935,7 +936,7 @@ fn main() {
                                 // Hint about restarting shell (only if current shell was affected)
                                 let current_shell = std::env::var("SHELL")
                                     .ok()
-                                    .and_then(|s| s.rsplit('/').next().map(String::from));
+                                    .and_then(|s| extract_filename_from_path(&s).map(String::from));
 
                                 let current_shell_affected =
                                     current_shell.as_ref().is_some_and(|shell_name| {
