@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0
+
+### Improved
+
+- **Shell integration prompt**: When shell integration isn't active after `wt switch`, an interactive prompt offers to install it. The prompt remembers your choice and falls back to a hint for non-TTY environments.
+- **Template variable names**: Renamed for clarity: `repo_root` → `repo_path`, `worktree` → `worktree_path`, `main_worktree` → `repo`. Added `main_worktree_path` for accessing the main worktree's absolute path. Deprecated names work with migration warnings and auto-generated `.new` config files.
+- **Shell integration warnings**: Specific diagnostic messages when shell cd won't work: "shell integration not installed", "shell requires restart", "ran ./wt; shell integration wraps wt", or "ran git wt; running through git prevents cd".
+- **RUNTIME section in `wt config show`**: Displays binary name, version, and shell integration status to help debug invocation issues.
+- **Clickable CI indicator**: The CI status indicator (●) in `wt list` output is now a clickable link to the PR in terminals that support OSC 8 hyperlinks.
+- **`wt switch` help text**: Clarifies the difference from `git switch` and documents common failure conditions.
+
+### Fixed
+
+- **Hook path display**: Hook announcements show the execution path when shell integration isn't active.
+- **Approval matching with deprecated vars**: Approvals now match regardless of whether they were saved with deprecated or current variable names.
+- **Documentation filter syntax**: Fixed incorrect Jinja filter examples that showed `~` concatenation with `|` filter without parentheses. ([#373](https://github.com/max-sixty/worktrunk/pull/373), thanks @coriocactus)
+
+### Documentation
+
+- **Pre-remove hook example**: Added pattern for cleaning up background processes (e.g., killing dev servers) when worktrees are removed.
+
 ## 0.8.5
 
 ### Improved

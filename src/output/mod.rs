@@ -25,9 +25,12 @@
 //! When not set (direct binary call):
 //! - Commands execute directly
 //! - Shell hints are shown for missing integration
+//!
+//! See [`shell_integration`] module for the complete spec of warning messages.
 
 mod global;
 pub mod handlers;
+pub mod shell_integration;
 
 // Re-export the public API
 pub use global::{
@@ -37,5 +40,8 @@ pub use global::{
 // Re-export output handlers
 pub use handlers::{
     execute_command_in_worktree, execute_user_command, handle_remove_output, handle_switch_output,
+};
+// Re-export shell integration functions
+pub use shell_integration::{
     print_shell_install_result, print_skipped_shells, prompt_shell_integration,
 };
