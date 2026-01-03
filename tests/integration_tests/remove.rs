@@ -75,6 +75,24 @@ fn test_remove_internal_mode(mut repo: TestRepo) {
     snapshot_remove_with_directive_file("remove_internal_mode", &repo, &[], Some(&worktree_path));
 }
 
+/// Test remove when running as a git subcommand (`git wt remove` instead of `wt remove`).
+///
+/// When git runs a subcommand, it sets `GIT_EXEC_PATH` in the environment.
+/// Shell integration cannot work in this case because cd directives cannot
+/// propagate through git's subprocess to the parent shell.
+#[rstest]
+fn test_remove_as_git_subcommand(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature-git-subcmd");
+
+    // Remove with GIT_EXEC_PATH set (simulating `git wt remove ...`)
+    let settings = setup_snapshot_settings(&repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "remove", &[], Some(&worktree_path));
+        cmd.env("GIT_EXEC_PATH", "/usr/lib/git-core");
+        assert_cmd_snapshot!("remove_as_git_subcommand", cmd);
+    });
+}
+
 #[rstest]
 fn test_remove_dirty_working_tree(repo: TestRepo) {
     // Create a dirty file
