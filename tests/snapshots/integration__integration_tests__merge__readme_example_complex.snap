@@ -43,7 +43,7 @@ exit_code: 0
 [107m [0m - Implement token refresh mechanism with expiry handling
 [107m [0m - Add JWT encoding/decoding with signature verification
 [107m [0m - Create test suite covering all authentication flows
-[32m✓[39m [32mSquashed @ [2mc4e25b1[22m[39m
+[32m✓[39m [32mSquashed @ [HASH][39m
 [36m◎[39m [36mRunning pre-merge [1mproject:test[22m:[39m
 [107m [0m [2m[0m[2m[34mcargo[0m[2m test
 [0m    Finished test [unoptimized + debuginfo] target(s) in 0.12s
@@ -60,8 +60,8 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 [107m [0m [2m[0m[2m[34mcargo[0m[2m clippy
 [0m    Checking worktrunk v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 1.23s
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mc4e25b1[22m (no rebase needed)[39m
-[107m [0m * [33mc4e25b1[m feat(auth): Implement JWT authentication system
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m feat(auth): Implement JWT authentication system
 [107m [0m  auth.rs      |  8 [32m++++++++[m
 [107m [0m  auth_test.rs | 17 [32m+++++++++++++++++[m
 [107m [0m  jwt.rs       |  8 [32m++++++++[m

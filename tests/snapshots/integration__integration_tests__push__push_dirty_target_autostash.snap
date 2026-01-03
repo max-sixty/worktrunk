@@ -24,6 +24,7 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
 success: true
@@ -32,8 +33,8 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mStashing changes in [1m_REPO_[22m...[39m
-[36m◎[39m [36mPushing 1 commit to [1mmain[22m @ [2mfc12499[22m[39m
-[107m [0m * [33mfc12499[m Add feature file
+[36m◎[39m [36mPushing 1 commit to [1mmain[22m @ [2m[HASH][22m[39m
+[107m [0m * [33m[HASH][m Add feature file
 [107m [0m  feature.txt | 1 [32m+[m
 [107m [0m  1 file changed, 1 insertion(+)
 [36m◎[39m [36mRestoring stashed changes in [1m_REPO_[22m...[39m

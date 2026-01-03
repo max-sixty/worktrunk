@@ -1,15 +1,3 @@
-//! Merge command integration tests
-//!
-//! ## Windows skips
-//!
-//! Some tests are skipped on Windows because Git handles file modes differently.
-//! The test template has `filemode = true`, but Windows ignores POSIX file mode bits.
-//! This causes tree hashes (and thus commit hashes) to differ between platforms.
-//!
-//! Tests with commit hashes in their snapshots (e.g., "Squashed @ abc1234") are
-//! skipped on Windows because these hashes won't match. The underlying merge
-//! functionality works correctly on Windows - only the snapshot verification differs.
-
 use crate::common::{
     TestRepo, make_snapshot_cmd, merge_scenario,
     mock_commands::{
@@ -1012,11 +1000,7 @@ pub fn refresh(refresh_token: &str) -> String {
 ///
 /// Output is used in README.md "Advanced Features" or "Project Automation" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap
-///
-/// Skipped on Windows: commit hashes differ due to filemode handling differences.
-/// See test module docs for details.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_complex(mut repo: TestRepo) {
     // Create project config with multiple hooks
     let config_dir = repo.root_path().join(".config");
@@ -1170,11 +1154,7 @@ fn test_readme_example_hooks_post_create(repo: TestRepo) {
 ///
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap
-///
-/// Skipped on Windows: commit hashes differ due to filemode handling differences.
-/// See test module docs for details.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
     // Create project config with pre-merge hooks
     let config_dir = repo.root_path().join(".config");

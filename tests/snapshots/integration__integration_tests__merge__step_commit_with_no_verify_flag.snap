@@ -40,4 +40,4 @@ exit_code: 0
 [107m [0m file1.txt
 [36m◎[39m [36mGenerating commit message and committing changes... [90m(2 files, [32m+2[39m[39m[90m)[39m[39m
 [107m [0m [1mfeat: add file[22m
-[32m✓[39m [32mCommitted changes @ [2m388183d[22m[39m
+[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m

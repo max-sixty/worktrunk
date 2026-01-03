@@ -2185,6 +2185,28 @@ fn setup_snapshot_settings_for_paths(
         "\x1b[2m $1 \x1b[0m\x1b[2m",
     );
 
+    // Normalize commit hashes throughout output.
+    // Git on Windows produces different tree hashes due to filemode handling, causing
+    // commit hashes to differ between platforms. Redact to [HASH] for consistency.
+    //
+    // Pattern 1: "Squashed @ <hash>" and "Committed @ <hash>" messages
+    // Format: "Squashed @ " + optional dim code + 7-char hex hash + optional reset
+    settings.add_filter(
+        r"(Squashed|Committed) @ (?:\x1b\[2m)?[a-f0-9]{7}(?:\x1b\[22m)?",
+        "$1 @ [HASH]",
+    );
+    // Pattern 2: "Merging/Pushing N commit(s) to branch @ <hash>" messages
+    // Format: "@ " + dim code + 7-char hex hash + reset
+    settings.add_filter(r"@ \x1b\[2m[a-f0-9]{7}\x1b\[22m", "@ \x1b[2m[HASH]\x1b[22m");
+    // Pattern 3: Git log style "* <hash> message" lines
+    // Format: "* " + yellow code + 7-char hex hash + reset
+    settings.add_filter(r"\* \x1b\[33m[a-f0-9]{7}\x1b\[m", "* \x1b[33m[HASH]\x1b[m");
+
+    // Filter out CARGO_LLVM_COV env variables from snapshot YAML headers.
+    // These are only present during coverage runs and cause snapshot mismatches.
+    settings.add_filter(r#"  CARGO_LLVM_COV: "1"\n"#, "");
+    settings.add_filter(r#"  CARGO_LLVM_COV_TARGET_DIR: "[^"]+"\n"#, "");
+
     settings
 }
 

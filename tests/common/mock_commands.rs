@@ -37,22 +37,33 @@ pub struct MockBranch {
 /// * `branches` - List of argument matches and their behavior
 /// * `default_exit` - Exit code when no branch matches
 pub fn create_mock_command(bin_dir: &Path, name: &str, branches: &[MockBranch], default_exit: i32) {
-    let mut script = String::from("#!/bin/sh\ncase \"$1\" in\n");
+    // Build case branches
+    let case_branches: String = branches
+        .iter()
+        .map(|branch| {
+            let echoes: String = branch
+                .output
+                .iter()
+                .map(|line| format!("        echo '{}'\n", escape_shell_string(line)))
+                .collect();
+            format!(
+                "    {})\n{echoes}        exit {}\n        ;;",
+                branch.arg, branch.exit_code
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    for branch in branches {
-        script.push_str(&format!("    {})\n", branch.arg));
-        for line in &branch.output {
-            let escaped = escape_shell_string(line);
-            script.push_str(&format!("        echo '{}'\n", escaped));
-        }
-        script.push_str(&format!("        exit {}\n", branch.exit_code));
-        script.push_str("        ;;\n");
-    }
-
-    script.push_str("    *)\n");
-    script.push_str(&format!("        exit {}\n", default_exit));
-    script.push_str("        ;;\n");
-    script.push_str("esac\n");
+    let script = format!(
+        r#"#!/bin/sh
+case "$1" in
+{case_branches}
+    *)
+        exit {default_exit}
+        ;;
+esac
+"#
+    );
 
     write_mock_script(bin_dir, name, &script);
 }
@@ -61,15 +72,18 @@ pub fn create_mock_command(bin_dir: &Path, name: &str, branches: &[MockBranch], 
 ///
 /// Useful for simple mocks like `llm` that just return canned output.
 pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &[&str], exit_code: i32) {
-    let mut script = String::from("#!/bin/sh\n");
-    // Discard stdin (for mocks that receive piped input)
-    script.push_str("cat > /dev/null\n");
+    let echoes: String = output
+        .iter()
+        .map(|line| format!("echo '{}'\n", escape_shell_string(line)))
+        .collect();
 
-    for line in output {
-        let escaped = escape_shell_string(line);
-        script.push_str(&format!("echo '{}'\n", escaped));
-    }
-    script.push_str(&format!("exit {}\n", exit_code));
+    // cat > /dev/null discards stdin (for mocks that receive piped input)
+    let script = format!(
+        r#"#!/bin/sh
+cat > /dev/null
+{echoes}exit {exit_code}
+"#
+    );
 
     write_mock_script(bin_dir, name, &script);
 }

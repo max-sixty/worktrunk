@@ -38,4 +38,4 @@ exit_code: 0
 [2m↳[22m [2mBackup created @ 6aa1805[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1msquash: combined commits[22m
-[32m✓[39m [32mSquashed @ [2m7335b29[22m[39m
+[32m✓[39m [32mSquashed @ [HASH][39m

@@ -34,9 +34,9 @@ exit_code: 0
 [36m◎[39m [36mSquashing 2 commits into a single commit [90m(1 file, [32m+1[39m[39m[90m)[39m...[39m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1mfeat: implement user authentication system[22m
-[32m✓[39m [32mSquashed @ [2m785d1ff[22m[39m
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m785d1ff[22m (no rebase needed)[39m
-[107m [0m * [33m785d1ff[m feat: implement user authentication system
+[32m✓[39m [32mSquashed @ [HASH][39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m feat: implement user authentication system
 [107m [0m  auth.txt | 1 [32m+[m
 [107m [0m  1 file changed, 1 insertion(+)
 [32m✓[39m [32mMerged to [1mmain[22m [90m(1 commit, 1 file, [32m+1[39m[39m[90m)[39m[39m

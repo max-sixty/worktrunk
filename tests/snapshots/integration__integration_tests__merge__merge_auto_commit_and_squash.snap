@@ -35,9 +35,9 @@ exit_code: 0
 [2m↳[22m [2mBackup created @ 14fc72d[22m
 [36m◎[39m [36mGenerating squash commit message...[39m
 [107m [0m [1mfix: update file 1 content[22m
-[32m✓[39m [32mSquashed @ [2mf1c474c[22m[39m
-[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2mf1c474c[22m (no rebase needed)[39m
-[107m [0m * [33mf1c474c[m fix: update file 1 content
+[32m✓[39m [32mSquashed @ [HASH][39m
+[36m◎[39m [36mMerging 1 commit to [1mmain[22m @ [2m[HASH][22m (no rebase needed)[39m
+[107m [0m * [33m[HASH][m fix: update file 1 content
 [107m [0m  file1.txt | 1 [32m+[m
 [107m [0m  file2.txt | 1 [32m+[m
 [107m [0m  2 files changed, 2 insertions(+)

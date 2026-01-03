@@ -38,4 +38,4 @@ exit_code: 0
 [2m○[22m Skipping pre-commit hooks ([90m--no-verify[39m)
 [36m◎[39m [36mGenerating commit message and committing tracked changes... [90m(1 file, [32m+1[39m, [31m-1[39m[39m[90m)[39m[39m
 [107m [0m [1mfix: update file[22m
-[32m✓[39m [32mCommitted changes @ [2mb92c41b[22m[39m
+[32m✓[39m [32mCommitted changes @ [2m[HASH][22m[39m
