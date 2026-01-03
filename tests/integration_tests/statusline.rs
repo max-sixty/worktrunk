@@ -123,15 +123,18 @@ fn test_statusline_commits_ahead(mut repo: TestRepo) {
 
 // --- Claude Code Mode Tests ---
 
-/// Create snapshot settings that filter fish-style abbreviated paths.
+/// Create snapshot settings that normalize path output for statusline tests.
 ///
-/// The statusline uses fish-style path abbreviation (e.g., `/p/v/f/.../repo`)
-/// which the auto-bound path filters don't catch. This filter replaces any
-/// abbreviated temp path ending in `repo` with `[PATH]`.
+/// The statusline output varies by platform:
+/// - Linux: Raw path is filtered by auto-bound settings to `_REPO_`
+/// - macOS: Fish-style abbreviation (e.g., `/p/v/f/.../repo`) bypasses auto-bound filters
+///
+/// This function normalizes both cases to a consistent `[PATH]` placeholder.
 fn claude_code_snapshot_settings() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
-    // Fish abbreviates paths like /private/var/folders/.../repo to /p/v/f/.../repo
-    // Match any path that ends with /repo (fish-abbreviated temp paths)
+    // Normalize _REPO_ (from auto-bound filters on Linux) to [PATH]
+    settings.add_filter(r"_REPO_", "[PATH]");
+    // Normalize fish-abbreviated paths (on macOS) to [PATH]
     settings.add_filter(r"/[a-zA-Z0-9/._-]+/repo", "[PATH]");
     // Strip leading ANSI reset code if present (output starts with [0m)
     settings.add_filter(r"^\x1b\[0m ", "");
