@@ -1,7 +1,11 @@
 use crate::common::{
-    TestRepo, make_snapshot_cmd, merge_scenario, repo, repo_with_alternate_primary,
-    repo_with_feature_worktree, repo_with_main_worktree, repo_with_multi_commit_feature,
-    setup_snapshot_settings,
+    TestRepo, make_snapshot_cmd, merge_scenario,
+    mock_commands::{
+        create_mock_cargo, create_mock_llm_api, create_mock_llm_auth, create_mock_pytest,
+        create_mock_ruff, create_mock_uv_pytest_ruff, create_mock_uv_sync,
+    },
+    repo, repo_with_alternate_primary, repo_with_feature_worktree, repo_with_main_worktree,
+    repo_with_multi_commit_feature, setup_snapshot_settings,
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
@@ -42,6 +46,40 @@ fn snapshot_merge_with_env(
         }
         assert_cmd_snapshot!(test_name, cmd);
     });
+}
+
+fn snapshot_switch_with_env(
+    test_name: &str,
+    repo: &TestRepo,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+    env_vars: &[(&str, &str)],
+) {
+    let settings = setup_snapshot_settings(repo);
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(repo, "switch", args, cwd);
+        for (key, value) in env_vars {
+            cmd.env(key, value);
+        }
+        assert_cmd_snapshot!(test_name, cmd);
+    });
+}
+
+/// Create a PATH string with the given mock bin directory prepended.
+///
+/// Uses `std::env::join_paths` for robust cross-platform path handling.
+/// This ensures mock commands take precedence while preserving access to
+/// essential tools like git that may be in non-standard locations.
+fn make_path_with_mock_bin(bin_dir: &Path) -> String {
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    paths.insert(0, bin_dir.to_path_buf());
+    std::env::join_paths(&paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[rstest]
@@ -969,83 +1007,19 @@ pub fn refresh(refresh_token: &str) -> String {
 ///
 /// Output is used in README.md "Advanced Features" or "Project Automation" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_complex.snap
-///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_complex(mut repo: TestRepo) {
     // Create project config with multiple hooks
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
 
-    // Create mock commands for realistic output
+    // Create mock commands for realistic output (cross-platform)
     let bin_dir = repo.root_path().join(".bin");
     fs::create_dir_all(&bin_dir).unwrap();
 
-    // Mock cargo that handles both test and clippy subcommands
-    let cargo_script = r#"#!/bin/sh
-if [ "$1" = "test" ]; then
-    echo "    Finished test [unoptimized + debuginfo] target(s) in 0.12s"
-    echo "     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)"
-    echo ""
-    echo "running 18 tests"
-    echo "test auth::tests::test_jwt_decode ... ok"
-    echo "test auth::tests::test_jwt_encode ... ok"
-    echo "test auth::tests::test_token_refresh ... ok"
-    echo "test auth::tests::test_token_validation ... ok"
-    echo ""
-    echo "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s"
-    exit 0
-elif [ "$1" = "clippy" ]; then
-    echo "    Checking worktrunk v0.1.0"
-    echo "    Finished dev [unoptimized + debuginfo] target(s) in 1.23s"
-    exit 0
-elif [ "$1" = "install" ]; then
-    echo "  Installing worktrunk v0.1.0"
-    echo "   Compiling worktrunk v0.1.0"
-    echo "    Finished release [optimized] target(s) in 2.34s"
-    echo "  Installing ~/.cargo/bin/wt"
-    echo "   Installed package \`worktrunk v0.1.0\` (executable \`wt\`)"
-    exit 0
-else
-    echo "cargo: unknown subcommand '$1'"
-    exit 1
-fi
-"#;
-    fs::write(bin_dir.join("cargo"), cargo_script).unwrap();
-
-    // Mock llm command that generates a high-quality commit message
-    let llm_script = r#"#!/bin/sh
-# Read stdin (the prompt) but ignore it for deterministic output
-cat > /dev/null
-
-# Return a realistic, high-quality squash commit message
-cat << 'EOF'
-feat(auth): Implement JWT authentication system
-
-Add comprehensive JWT token handling including validation, refresh logic,
-and authentication tests. This establishes the foundation for secure
-API authentication.
-
-- Implement token refresh mechanism with expiry handling
-- Add JWT encoding/decoding with signature verification
-- Create test suite covering all authentication flows
-EOF
-"#;
-    fs::write(bin_dir.join("llm"), llm_script).unwrap();
-
-    // Make scripts executable (Unix only - Windows doesn't use executable bits)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(bin_dir.join("cargo")).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(bin_dir.join("cargo"), perms).unwrap();
-
-        let mut perms = fs::metadata(bin_dir.join("llm")).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(bin_dir.join("llm"), perms).unwrap();
-    }
+    // Create cross-platform mock commands
+    create_mock_cargo(&bin_dir);
+    create_mock_llm_auth(&bin_dir);
 
     let config_content = r#"
 [pre-merge]
@@ -1117,30 +1091,19 @@ mod tests {
     repo.run_git_in(&feature_wt, &["commit", "-m", "Add authentication tests"]);
 
     // Configure LLM in worktrunk config for deterministic, high-quality commit messages
+    // On Windows, use forward slashes in the config for shell compatibility
     let llm_path = bin_dir.join("llm");
+    let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
     let worktrunk_config = format!(
         r#"
 [commit-generation]
-command = "{}"
-"#,
-        llm_path.display()
+command = "{llm_path_str}"
+"#
     );
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Merge with --yes to skip approval prompts for commands
-    // This test explicitly sets PATH (which will be captured in snapshot) because it needs
-    // to find mock commands in .bin directory. We use a clean, minimal PATH to avoid leaking
-    // user-specific paths like ~/.cargo/bin into the snapshot.
-    //
-    // TODO: This hardcoded PATH works on macOS and Linux CI, but may not work on all
-    // environments (e.g., Windows, other package managers like nixpkgs). We should
-    // reassess whether there's a better approach that doesn't require hardcoding
-    // system paths. Ideally we'd avoid setting PATH entirely, but this test needs it
-    // for mock commands.
-    let path_with_bin = format!(
-        "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        bin_dir.display()
-    );
+    let path_with_bin = make_path_with_mock_bin(&bin_dir);
     snapshot_merge_with_env(
         "readme_example_complex",
         &repo,
@@ -1155,45 +1118,17 @@ command = "{}"
 ///
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_post_create.snap
-///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_post_create(repo: TestRepo) {
     // Create project config with post-create and post-start hooks
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
 
-    // Create mock commands for realistic output
+    // Create mock commands for realistic output (cross-platform)
     let bin_dir = repo.root_path().join(".bin");
     fs::create_dir_all(&bin_dir).unwrap();
 
-    // Mock uv command that simulates dependency installation
-    let uv_script = r#"#!/bin/sh
-if [ "$1" = "sync" ]; then
-    echo ""
-    echo "  Resolved 24 packages in 145ms"
-    echo "  Installed 24 packages in 1.2s"
-    exit 0
-elif [ "$1" = "run" ] && [ "$2" = "dev" ]; then
-    echo ""
-    echo "  Starting dev server on http://localhost:3000..."
-    exit 0
-else
-    echo "uv: unknown command '$1 $2'"
-    exit 1
-fi
-"#;
-    fs::write(bin_dir.join("uv"), uv_script).unwrap();
-
-    // Make scripts executable (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(bin_dir.join("uv")).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(bin_dir.join("uv"), perms).unwrap();
-    }
+    create_mock_uv_sync(&bin_dir);
 
     let config_content = r#"
 [post-create]
@@ -1210,17 +1145,14 @@ fi
     repo.run_git(&["commit", "-m", "Add project hooks"]);
 
     // Set PATH to include mock commands and run switch --create with --yes
-    let path_with_bin = format!(
-        "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        bin_dir.display()
+    let path_with_bin = make_path_with_mock_bin(&bin_dir);
+    snapshot_switch_with_env(
+        "readme_example_hooks_post_create",
+        &repo,
+        &["--create", "feature-x", "--yes"],
+        None,
+        &[("PATH", &path_with_bin)],
     );
-
-    let settings = setup_snapshot_settings(&repo);
-    settings.bind(|| {
-        let mut cmd = make_snapshot_cmd(&repo, "switch", &["--create", "feature-x", "--yes"], None);
-        cmd.env("PATH", &path_with_bin);
-        assert_cmd_snapshot!("readme_example_hooks_post_create", cmd);
-    });
 }
 
 /// Generate README example: Merging with pre-merge hooks (test and lint)
@@ -1228,87 +1160,20 @@ fi
 ///
 /// Output is used in README.md "Project Hooks" section.
 /// Source: tests/snapshots/integration__integration_tests__merge__readme_example_hooks_pre_merge.snap
-///
-/// Skipped on Windows: Uses Unix shell commands (chmod, echo) for mock command scripts.
 #[rstest]
-#[cfg_attr(windows, ignore)]
 fn test_readme_example_hooks_pre_merge(mut repo: TestRepo) {
     // Create project config with pre-merge hooks
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();
 
-    // Create mock commands for realistic output
+    // Create mock commands for realistic output (cross-platform)
     let bin_dir = repo.root_path().join(".bin");
     fs::create_dir_all(&bin_dir).unwrap();
 
-    // Mock pytest command
-    let pytest_script = r#"#!/bin/sh
-cat << 'EOF'
-
-============================= test session starts ==============================
-collected 3 items
-
-tests/test_auth.py::test_login_success PASSED                            [ 33%]
-tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
-tests/test_auth.py::test_token_validation PASSED                         [100%]
-
-============================== 3 passed in 0.8s ===============================
-
-EOF
-exit 0
-"#;
-    fs::write(bin_dir.join("pytest"), pytest_script).unwrap();
-
-    // Mock ruff command
-    let ruff_script = r#"#!/bin/sh
-if [ "$1" = "check" ]; then
-    echo ""
-    echo "All checks passed!"
-    echo ""
-    exit 0
-else
-    echo "ruff: unknown command '$1'"
-    exit 1
-fi
-"#;
-    fs::write(bin_dir.join("ruff"), ruff_script).unwrap();
-
-    // Mock llm command for commit message
-    let llm_script = r#"#!/bin/sh
-cat > /dev/null
-cat << 'EOF'
-feat(api): Add user authentication endpoints
-
-Implement login and token refresh endpoints with JWT validation.
-Includes comprehensive test coverage and input validation.
-EOF
-"#;
-    fs::write(bin_dir.join("llm"), llm_script).unwrap();
-
-    // Mock uv command for running pytest and ruff
-    let uv_script = r#"#!/bin/sh
-if [ "$1" = "run" ] && [ "$2" = "pytest" ]; then
-    exec pytest
-elif [ "$1" = "run" ] && [ "$2" = "ruff" ]; then
-    shift 2
-    exec ruff "$@"
-else
-    echo "uv: unknown command '$1 $2'"
-    exit 1
-fi
-"#;
-    fs::write(bin_dir.join("uv"), uv_script).unwrap();
-
-    // Make scripts executable (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for script in &["pytest", "ruff", "llm", "uv"] {
-            let mut perms = fs::metadata(bin_dir.join(script)).unwrap().permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(bin_dir.join(script), perms).unwrap();
-        }
-    }
+    create_mock_pytest(&bin_dir);
+    create_mock_ruff(&bin_dir);
+    create_mock_llm_api(&bin_dir);
+    create_mock_uv_pytest_ruff(&bin_dir);
 
     let config_content = r#"
 [pre-merge]
@@ -1409,21 +1274,19 @@ def refresh_token(token: str) -> Optional[Dict]:
     repo.run_git_in(&feature_wt, &["commit", "-m", "Add validation"]);
 
     // Configure LLM in worktrunk config
+    // On Windows, use forward slashes in the config for shell compatibility
     let llm_path = bin_dir.join("llm");
+    let llm_path_str = llm_path.to_string_lossy().replace('\\', "/");
     let worktrunk_config = format!(
         r#"
 [commit-generation]
-command = "{}"
-"#,
-        llm_path.display()
+command = "{llm_path_str}"
+"#
     );
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Set PATH and merge with --yes
-    let path_with_bin = format!(
-        "{}:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        bin_dir.display()
-    );
+    let path_with_bin = make_path_with_mock_bin(&bin_dir);
     snapshot_merge_with_env(
         "readme_example_hooks_pre_merge",
         &repo,
