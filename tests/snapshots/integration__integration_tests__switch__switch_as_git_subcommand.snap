@@ -32,6 +32,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[33m▲[39m [33mWorktree for [1mgit-subcommand-test[22m @ [1m_REPO_.git-subcommand-test[22m, but cannot change directory — git runs subcommands as subprocesses[39m
+[33m▲[39m [33mWorktree for [1mgit-subcommand-test[22m @ [1m_REPO_.git-subcommand-test[22m, but cannot change directory — ran git wt; running through git prevents cd[39m
 [2m↳[22m [2mUse [90mgit-wt[39m directly (via shell function) for automatic cd[22m
-[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

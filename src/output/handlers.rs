@@ -493,6 +493,13 @@ pub fn prompt_shell_integration(
     use std::io::IsTerminal;
     use worktrunk::shell::current_shell;
 
+    // Skip when running as git subcommand - shell integration can't help there
+    // (running through git prevents cd, so the shell wrapper won't intercept)
+    // The git subcommand warning is already shown by the caller
+    if crate::is_git_subcommand() {
+        return Ok(false);
+    }
+
     let is_tty = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
     // Check the current shell (from $SHELL)
@@ -607,7 +614,7 @@ fn print_switch_message_if_changed(
     } else if crate::is_git_subcommand() {
         // Running as `git wt` - explain why cd can't work
         super::print(warning_message(
-            "Cannot change directory — git runs subcommands as subprocesses",
+            "Cannot change directory — ran git wt; running through git prevents cd",
         ))?;
         super::print(hint_message(git_subcommand_warning()))?;
     } else {
@@ -623,16 +630,41 @@ fn print_switch_message_if_changed(
 
 /// Compute the shell warning reason for display in messages.
 ///
-/// Used in the standard warning pattern: `Cannot change directory — {reason}`
+/// # Shell Integration Warning Messages (Complete Spec)
 ///
-/// # Reasons
+/// When shell integration is not active, warn that cd won't happen.
+///
+/// ## Switch to Existing Worktree (`wt switch X` where X exists)
+///
+/// | Condition | Warning | Hint |
+/// |-----------|---------|------|
+/// | Not installed | `▲ Worktree for X @ path, but cannot change directory — shell integration not installed` | `↳ To enable automatic cd, run wt config shell install` |
+/// | Needs restart | `▲ Worktree for X @ path, but cannot change directory — shell requires restart` | `↳ Restart shell to activate shell integration` |
+/// | Explicit path | `▲ Worktree for X @ path, but cannot change directory — ran ./wt; shell integration wraps wt` | (none) |
+/// | Git subcommand | `▲ Worktree for X @ path, but cannot change directory — ran git wt; running through git prevents cd` | `↳ Use git-wt directly (via shell function) for automatic cd` |
+///
+/// ## After Merge/Remove (switching to main worktree)
+///
+/// | Condition | Warning | Hint |
+/// |-----------|---------|------|
+/// | Git subcommand | `▲ Cannot change directory — ran git wt; running through git prevents cd` | `↳ Use git-wt directly (via shell function) for automatic cd` |
+/// | Other | `▲ Cannot change directory — {reason}` | `↳ To enable automatic cd, run wt config shell install` |
+///
+/// ## Success Case (shell integration active)
+///
+/// ```text
+/// ○ Switched to worktree for X @ path
+/// ```
+///
+/// # Reason Values (returned by this function)
 ///
 /// | Reason | Meaning |
 /// |--------|---------|
 /// | `shell integration not installed` | Shell config doesn't have the `eval` line |
 /// | `shell requires restart` | Shell config has `eval` line but wrapper not active |
 /// | `ran X; shell integration wraps Y` | Invoked with explicit path (e.g., `./target/debug/wt`) |
-/// | `git runs subcommands as subprocesses` | Running as `git wt` (handled separately, not by this fn) |
+///
+/// Note: The git subcommand case (`ran git wt; ...`) is handled separately via `is_git_subcommand()`.
 fn compute_shell_warning_reason() -> String {
     use worktrunk::shell::Shell;
 
@@ -704,7 +736,7 @@ pub fn handle_switch_output(
     let shell_warning_reason: Option<String> = if is_shell_integration_active {
         None
     } else if is_git_subcommand {
-        Some("git runs subcommands as subprocesses".to_string())
+        Some("ran git wt; running through git prevents cd".to_string())
     } else {
         Some(compute_shell_warning_reason())
     };
@@ -731,14 +763,17 @@ pub fn handle_switch_output(
         }
         SwitchResult::Existing(_) => {
             if let Some(reason) = &shell_warning_reason {
-                // Shell integration not active — warn that shell won't cd
+                // Shell integration not active — single warning with context
+                if let Some(warning) = path_mismatch_warning {
+                    super::print(warning)?;
+                }
                 if let Some(cmd) = execute_command {
-                    // --execute: command will run in target dir, but shell stays put
+                    // --execute: command runs in target dir, but shell stays put
                     super::print(warning_message(cformat!(
                         "Executing <bold>{cmd}</> @ <bold>{path_display}</>, but shell directory unchanged — {reason}"
                     )))?;
                 } else {
-                    // No --execute: user expected to cd but won't
+                    // No --execute: what exists + why cd won't happen
                     super::print(warning_message(cformat!(
                         "Worktree for <bold>{branch}</> @ <bold>{path_display}</>, but cannot change directory — {reason}"
                     )))?;
@@ -747,13 +782,10 @@ pub fn handle_switch_output(
                 if is_git_subcommand {
                     super::print(hint_message(git_subcommand_warning()))?;
                 }
-                if let Some(warning) = path_mismatch_warning {
-                    super::print(warning)?;
-                }
                 // User won't be there - show path in hook announcements
                 Some(path.clone())
             } else {
-                // Shell integration active — cd will happen automatically
+                // Shell integration active — user actually switched
                 super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
