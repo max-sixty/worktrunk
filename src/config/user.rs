@@ -417,11 +417,21 @@ impl WorktrunkConfig {
         expand_template(&self.worktree_path(), &vars, false)
     }
 
-    /// Check if a command is approved for the given project
+    /// Check if a command is approved for the given project.
+    ///
+    /// Normalizes both the stored approvals and the incoming command to canonical
+    /// variable names before comparing. This allows approvals to match regardless
+    /// of whether they were saved with deprecated variable names (e.g., `repo_root`)
+    /// or current names (e.g., `repo_path`).
     pub fn is_command_approved(&self, project: &str, command: &str) -> bool {
+        let normalized_command = super::deprecation::normalize_template_vars(command);
         self.projects
             .get(project)
-            .map(|p| p.approved_commands.iter().any(|c| c == command))
+            .map(|p| {
+                p.approved_commands
+                    .iter()
+                    .any(|c| super::deprecation::normalize_template_vars(c) == normalized_command)
+            })
             .unwrap_or(false)
     }
 
@@ -927,6 +937,77 @@ rename-tab = "echo 'switched'"
         assert!(config.is_command_approved("github.com/user/repo", "npm test"));
         assert!(!config.is_command_approved("github.com/user/repo", "rm -rf /"));
         assert!(!config.is_command_approved("other/project", "npm install"));
+    }
+
+    #[test]
+    fn test_is_command_approved_normalizes_deprecated_vars() {
+        // Approval saved with deprecated variable should match command with new variable
+        let mut config = WorktrunkConfig::default();
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                approved_commands: vec![
+                    "ln -sf {{ repo_root }}/node_modules".to_string(), // old var
+                ],
+            },
+        );
+
+        // Should match when checking with new variable name
+        assert!(config.is_command_approved(
+            "github.com/user/repo",
+            "ln -sf {{ repo_path }}/node_modules" // new var
+        ));
+
+        // Should still match exact old name too
+        assert!(config.is_command_approved(
+            "github.com/user/repo",
+            "ln -sf {{ repo_root }}/node_modules" // old var
+        ));
+    }
+
+    #[test]
+    fn test_is_command_approved_normalizes_new_approval_matches_old_command() {
+        // Approval saved with new variable should match command with deprecated variable
+        let mut config = WorktrunkConfig::default();
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                approved_commands: vec![
+                    "cd {{ worktree_path }} && npm install".to_string(), // new var
+                ],
+            },
+        );
+
+        // Should match when checking with old variable name
+        assert!(config.is_command_approved(
+            "github.com/user/repo",
+            "cd {{ worktree }} && npm install" // old var
+        ));
+    }
+
+    #[test]
+    fn test_is_command_approved_normalizes_multiple_vars() {
+        let mut config = WorktrunkConfig::default();
+        config.projects.insert(
+            "github.com/user/repo".to_string(),
+            UserProjectConfig {
+                approved_commands: vec![
+                    "ln -sf {{ repo_root }}/modules {{ worktree }}/modules".to_string(),
+                ],
+            },
+        );
+
+        // Should match with all new variable names
+        assert!(config.is_command_approved(
+            "github.com/user/repo",
+            "ln -sf {{ repo_path }}/modules {{ worktree_path }}/modules"
+        ));
+
+        // Should match with mixed old/new (both normalize to same canonical form)
+        assert!(config.is_command_approved(
+            "github.com/user/repo",
+            "ln -sf {{ repo_path }}/modules {{ worktree }}/modules"
+        ));
     }
 
     #[test]

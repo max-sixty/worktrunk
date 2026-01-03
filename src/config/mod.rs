@@ -27,6 +27,7 @@ mod user;
 // Re-export public types
 pub use commands::{Command, CommandConfig};
 pub use deprecation::check_and_migrate as check_deprecated_vars;
+pub use deprecation::normalize_template_vars;
 pub use expansion::{expand_template, sanitize_branch_name};
 pub use hooks::HooksConfig;
 pub use project::{

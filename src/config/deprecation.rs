@@ -24,6 +24,32 @@ const DEPRECATED_VARS: &[(&str, &str)] = &[
     ("main_worktree", "repo"),
 ];
 
+/// Normalize a template string by replacing deprecated variables with their canonical names.
+///
+/// This allows approval matching to work regardless of whether the command was saved
+/// with old or new variable names. For example, `{{ repo_root }}` and `{{ repo_path }}`
+/// will both normalize to `{{ repo_path }}`.
+///
+/// Returns `Cow::Borrowed` if no replacements needed, avoiding allocation.
+pub fn normalize_template_vars(template: &str) -> Cow<'_, str> {
+    use regex::Regex;
+
+    // Quick check: if none of the deprecated vars appear, return borrowed
+    if !DEPRECATED_VARS
+        .iter()
+        .any(|(old, _)| template.contains(old))
+    {
+        return Cow::Borrowed(template);
+    }
+
+    let mut result = template.to_string();
+    for &(old, new) in DEPRECATED_VARS {
+        let re = Regex::new(&format!(r"\b{}\b", regex::escape(old))).unwrap();
+        result = re.replace_all(&result, new).into_owned();
+    }
+    Cow::Owned(result)
+}
+
 /// Find all deprecated variables used in the content
 ///
 /// Parses TOML to extract string values, then uses minijinja to detect
@@ -377,6 +403,103 @@ post-create = "echo hello"
         assert_eq!(
             result,
             r#"cmd = "{% if repo_path %}echo {{ repo_path }}{% endif %}""#
+        );
+    }
+
+    // Tests for normalize_template_vars (single template string normalization)
+
+    #[test]
+    fn test_normalize_no_deprecated_vars() {
+        let template = "ln -sf {{ repo_path }}/node_modules";
+        let result = normalize_template_vars(template);
+        assert!(matches!(result, Cow::Borrowed(_)), "Should not allocate");
+        assert_eq!(result, template);
+    }
+
+    #[test]
+    fn test_normalize_repo_root() {
+        let template = "ln -sf {{ repo_root }}/node_modules";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "ln -sf {{ repo_path }}/node_modules");
+    }
+
+    #[test]
+    fn test_normalize_worktree() {
+        let template = "cd {{ worktree }} && npm install";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "cd {{ worktree_path }} && npm install");
+    }
+
+    #[test]
+    fn test_normalize_main_worktree() {
+        let template = "../{{ main_worktree }}.{{ branch }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "../{{ repo }}.{{ branch }}");
+    }
+
+    #[test]
+    fn test_normalize_multiple_vars() {
+        let template = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules";
+        let result = normalize_template_vars(template);
+        assert_eq!(
+            result,
+            "ln -sf {{ repo_path }}/node_modules {{ worktree_path }}/node_modules"
+        );
+    }
+
+    #[test]
+    fn test_normalize_does_not_match_suffix() {
+        // Should NOT replace "worktree_path" when looking for "worktree"
+        let template = "cd {{ worktree_path }}";
+        let result = normalize_template_vars(template);
+        // Note: may allocate due to coarse quick check, but result is unchanged
+        assert_eq!(result, template);
+    }
+
+    #[test]
+    fn test_normalize_with_filter() {
+        let template = "{{ repo_root | sanitize }}";
+        let result = normalize_template_vars(template);
+        assert_eq!(result, "{{ repo_path | sanitize }}");
+    }
+
+    // Tests for approved-commands array handling
+
+    #[test]
+    fn test_find_deprecated_vars_in_approved_commands() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = [
+    "ln -sf {{ repo_root }}/node_modules",
+    "cd {{ worktree }} && npm install",
+]
+"#;
+        let found = find_deprecated_vars(content);
+        assert_eq!(
+            found,
+            vec![("repo_root", "repo_path"), ("worktree", "worktree_path"),]
+        );
+    }
+
+    #[test]
+    fn test_replace_deprecated_vars_in_approved_commands() {
+        let content = r#"
+[projects."github.com/user/repo"]
+approved-commands = [
+    "ln -sf {{ repo_root }}/node_modules",
+    "cd {{ worktree }} && npm install",
+]
+"#;
+        let result = replace_deprecated_vars(content);
+        assert_eq!(
+            result,
+            r#"
+[projects."github.com/user/repo"]
+approved-commands = [
+    "ln -sf {{ repo_path }}/node_modules",
+    "cd {{ worktree_path }} && npm install",
+]
+"#
         );
     }
 }
