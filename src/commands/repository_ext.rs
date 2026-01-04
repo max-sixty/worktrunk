@@ -5,7 +5,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::worktree::{BranchDeletionMode, RemoveResult};
 use anyhow::Context;
 use color_print::cformat;
-use worktrunk::config::ProjectConfig;
 use worktrunk::git::{
     GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
 };
@@ -24,9 +23,6 @@ pub enum RemoveTarget<'a> {
 /// CLI-only helpers implemented on [`Repository`] via an extension trait so we can keep orphan
 /// implementations inside the binary crate.
 pub trait RepositoryCliExt {
-    /// Load the project configuration if it exists.
-    fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>>;
-
     /// Warn about untracked files being auto-staged.
     fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()>;
 
@@ -60,13 +56,6 @@ pub trait RepositoryCliExt {
 }
 
 impl RepositoryCliExt for Repository {
-    fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
-        match self.worktree_root() {
-            Ok(root) => ProjectConfig::load(root).context("Failed to load project config"),
-            Err(_) => Ok(None), // Not in a worktree, no project config
-        }
-    }
-
     fn warn_if_auto_staging_untracked(&self) -> anyhow::Result<()> {
         // Use -z for NUL-separated output to handle filenames with spaces/newlines
         let status = self

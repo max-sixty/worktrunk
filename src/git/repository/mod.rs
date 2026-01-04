@@ -9,6 +9,8 @@ use normalize_path::NormalizePath;
 
 use dunce::canonicalize;
 
+use crate::config::ProjectConfig;
+
 // Import types and functions from parent module (mod.rs)
 use super::{
     BranchCategory, CompletionBranch, DefaultBranchName, DiffStats, GitError, GitRemoteUrl,
@@ -71,6 +73,8 @@ struct RepoCache {
     worktree_base: OnceCell<PathBuf>,
     /// Whether this is a bare repository
     is_bare: OnceCell<bool>,
+    /// Project config (loaded from .config/wt.toml, cached per Repository instance)
+    project_config: OnceCell<Option<ProjectConfig>>,
 }
 
 /// Repository context for git operations.
@@ -1651,6 +1655,22 @@ impl Repository {
                 Ok(repo_name.to_string())
             })
             .map(String::as_str)
+    }
+
+    /// Load the project configuration (.config/wt.toml) if it exists.
+    ///
+    /// Result is cached for the lifetime of this Repository instance.
+    /// Returns `None` if not in a worktree or if no config file exists.
+    pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
+        self.cache
+            .project_config
+            .get_or_try_init(|| {
+                match self.worktree_root() {
+                    Ok(root) => ProjectConfig::load(root).context("Failed to load project config"),
+                    Err(_) => Ok(None), // Not in a worktree, no project config
+                }
+            })
+            .cloned()
     }
 
     /// Get a short display name for this repository, used in logging context.

@@ -19,7 +19,6 @@
 
 use super::hooks::{HookSource, ParsedFilter};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
-use super::repository_ext::RepositoryCliExt;
 use crate::output;
 use anyhow::Context;
 use color_print::cformat;

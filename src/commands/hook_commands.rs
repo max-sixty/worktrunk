@@ -28,7 +28,6 @@ use super::merge::{
     execute_post_merge_commands, execute_pre_remove_commands, run_pre_merge_commands,
 };
 use super::project_config::collect_commands_for_hooks;
-use super::repository_ext::RepositoryCliExt;
 
 /// Handle `wt hook` command
 ///
