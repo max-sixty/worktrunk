@@ -33,7 +33,7 @@ wt step push
 - `commit` — Stage and commit with [LLM-generated message](@/llm-commits.md)
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
-- `push` — Push to target branch (defaults to the default branch)
+- `push` — Fast-forward target to current branch
 - `for-each` — [experimental] Run a command in every worktree
 
 ## See also
@@ -51,7 +51,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 <b><span class=g>Commands:</span></b>
   <b><span class=c>commit</span></b>    Commit changes with LLM commit message
   <b><span class=c>squash</span></b>    Squash commits since target
-  <b><span class=c>push</span></b>      Push changes to local target branch
+  <b><span class=c>push</span></b>      Fast-forward target to current branch
   <b><span class=c>rebase</span></b>    Rebase onto target
   <b><span class=c>for-each</span></b>  [experimental] Run command in each worktree
 

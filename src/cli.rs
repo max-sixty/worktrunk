@@ -917,9 +917,10 @@ pub enum StepCommand {
         show_prompt: bool,
     },
 
-    /// Push changes to local target branch
+    /// Fast-forward target to current branch
     ///
-    /// Fast-forwards the target branch to include current commits.
+    /// Updates the local target branch (e.g., main) to include current commits.
+    /// Equivalent to `git push . HEAD:main`.
     Push {
         /// Target branch
         ///
@@ -1466,7 +1467,7 @@ wt step push
 - `commit` — Stage and commit with [LLM-generated message](@/llm-commits.md)
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
-- `push` — Push to target branch (defaults to the default branch)
+- `push` — Fast-forward target to current branch
 - `for-each` — [experimental] Run a command in every worktree
 
 ## See also
