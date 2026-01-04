@@ -15,7 +15,7 @@ use worktrunk::config::ProjectConfig;
 use worktrunk::git::{Repository, Worktree};
 use worktrunk::styling::{get_terminal_width, truncate_visible};
 
-use super::list::{self, CollectOptions};
+use super::list::{self, CollectOptions, StatuslineSegment};
 
 #[derive(serde::Deserialize, Default)]
 struct ClaudeCodeContextJson {
@@ -123,6 +123,14 @@ fn format_directory_fish_style(path: &Path) -> String {
     }
 }
 
+/// Priority for directory segment (Claude Code only).
+/// Highest priority - directory context is essential.
+const PRIORITY_DIRECTORY: u8 = 0;
+
+/// Priority for model name segment (Claude Code only).
+/// Same as Branch - model identity is important.
+const PRIORITY_MODEL: u8 = 1;
+
 /// Run the statusline command.
 ///
 /// Output uses `output::stdout()` for raw stdout (bypasses anstream color detection).
@@ -144,89 +152,116 @@ pub fn run(claude_code: bool) -> Result<()> {
         )
     };
 
-    // Build output string
-    let mut output = String::new();
+    // Build segments with priorities
+    let mut segments: Vec<StatuslineSegment> = Vec::new();
 
-    // Directory (claude-code mode only)
+    // Directory (claude-code mode only) - priority 0
     let dir_str = if claude_code {
         let formatted = format_directory_fish_style(&cwd);
-        output = formatted.clone();
+        // Only push non-empty directory segments (empty can happen if cwd is ".")
+        if !formatted.is_empty() {
+            segments.push(StatuslineSegment::new(
+                formatted.clone(),
+                PRIORITY_DIRECTORY,
+            ));
+        }
         Some(formatted)
     } else {
         None
     };
 
-    // Git status (skip links in claude-code mode - OSC 8 not supported)
+    // Git status segments (skip links in claude-code mode - OSC 8 not supported)
     let repo = Repository::at(&cwd);
-    if repo.git_dir().is_ok()
-        && let Some(status_line) = get_git_status(&repo, &cwd, !claude_code)?
-    {
-        // In claude-code mode, skip branch name if directory matches worktrunk template
-        // TODO: Use actual configured template from config instead of hardcoding ".{branch}"
-        // Template: {repo}.{branch} - so directory should end with ".{branch}"
-        let status_to_show = if let Some(ref dir) = dir_str {
-            // status_line format: "branch  rest..." - check if dir ends with .branch
-            if let Some((branch, rest)) = status_line.split_once("  ") {
-                // Normalize branch name for comparison (slashes become dashes in paths)
-                let normalized_branch = worktrunk::config::sanitize_branch_name(branch);
-                let pattern = format!(".{normalized_branch}");
-                if dir.ends_with(&pattern) {
-                    // Directory already shows branch via worktrunk template, skip it
-                    rest.to_string()
-                } else {
-                    status_line
-                }
-            } else {
-                status_line
-            }
+    if repo.git_dir().is_ok() {
+        let git_segments = get_git_status_segments(&repo, &cwd, !claude_code)?;
+
+        // In claude-code mode, skip branch segment if directory matches worktrunk template
+        let git_segments = if let Some(ref dir) = dir_str {
+            filter_redundant_branch(git_segments, dir)
         } else {
-            status_line
+            git_segments
         };
 
-        if !status_to_show.is_empty() {
-            if !output.is_empty() {
-                output.push_str("  ");
-            }
-            output.push_str(&status_to_show);
-        }
+        segments.extend(git_segments);
     }
 
-    // Model name (claude-code mode only)
+    // Model name (claude-code mode only) - priority 1 (same as Branch)
     if let Some(model) = model_name {
-        output.push_str("  | ");
-        output.push_str(&model);
+        // Use "| " prefix to visually separate from git status
+        segments.push(StatuslineSegment::new(format!("| {model}"), PRIORITY_MODEL));
     }
 
-    // Output via data() - shell prompts and Claude Code always expect ANSI codes
-    if !output.is_empty() {
-        use worktrunk::styling::fix_dim_after_color_reset;
-        let reset = anstyle::Reset;
-        let output = fix_dim_after_color_reset(&output);
-
-        // Truncate to terminal width (Claude Code passes correct COLUMNS)
-        let max_width = get_terminal_width();
-        let output = truncate_visible(&format!("{reset} {output}"), max_width);
-
-        output::stdout(output)?;
+    if segments.is_empty() {
+        return Ok(());
     }
+
+    // Fit segments to terminal width using priority-based dropping
+    let max_width = get_terminal_width();
+    // Reserve 1 char for leading space (ellipsis handled by truncate_visible fallback)
+    let content_budget = max_width.saturating_sub(1);
+    let fitted_segments = StatuslineSegment::fit_to_width(segments, content_budget);
+
+    // Join and apply final truncation as fallback
+    let output = StatuslineSegment::join(&fitted_segments);
+
+    use worktrunk::styling::fix_dim_after_color_reset;
+    let reset = anstyle::Reset;
+    let output = fix_dim_after_color_reset(&output);
+    let output = truncate_visible(&format!("{reset} {output}"), max_width);
+
+    output::stdout(output)?;
 
     Ok(())
 }
 
-/// Get git status line for the current worktree
+/// Filter out branch segment if directory already shows it via worktrunk template.
+fn filter_redundant_branch(segments: Vec<StatuslineSegment>, dir: &str) -> Vec<StatuslineSegment> {
+    use super::list::columns::ColumnKind;
+    use ansi_str::AnsiStr;
+
+    // Find the branch segment by its column kind (not priority, which could be shared)
+    if let Some(branch_seg) = segments.iter().find(|s| s.kind == Some(ColumnKind::Branch)) {
+        // Strip ANSI codes in case branch becomes styled in future
+        let raw_branch = branch_seg.content.ansi_strip();
+        // Normalize branch name for comparison (slashes become dashes in paths)
+        let normalized_branch = worktrunk::config::sanitize_branch_name(&raw_branch);
+        let pattern = format!(".{normalized_branch}");
+
+        if dir.ends_with(&pattern) {
+            // Directory already shows branch via worktrunk template, skip branch segment
+            return segments
+                .into_iter()
+                .filter(|s| s.kind != Some(ColumnKind::Branch))
+                .collect();
+        }
+    }
+
+    segments
+}
+
+/// Get git status as prioritized segments for the current worktree.
 ///
 /// When `include_links` is true, CI status includes clickable OSC 8 hyperlinks.
-fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<Option<String>> {
+fn get_git_status_segments(
+    repo: &Repository,
+    cwd: &Path,
+    include_links: bool,
+) -> Result<Vec<StatuslineSegment>> {
+    use super::list::columns::ColumnKind;
+
     // Get current worktree info
     let worktrees = repo.list_worktrees()?;
     let current_worktree = worktrees.iter().find(|wt| cwd.starts_with(&wt.path));
 
     let Some(wt) = current_worktree else {
-        // Not in a worktree - just show branch name
+        // Not in a worktree - just show branch name as a segment
         if let Ok(Some(branch)) = repo.current_branch() {
-            return Ok(Some(branch.to_string()));
+            return Ok(vec![StatuslineSegment::from_column(
+                branch.to_string(),
+                ColumnKind::Branch,
+            )]);
         }
-        return Ok(None);
+        return Ok(vec![]);
     };
 
     // Get default branch for comparisons
@@ -234,7 +269,10 @@ fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<
         Ok(b) => b,
         Err(_) => {
             // Can't determine default branch - just show current branch
-            return Ok(Some(wt.branch.as_deref().unwrap_or("HEAD").to_string()));
+            return Ok(vec![StatuslineSegment::from_column(
+                wt.branch.as_deref().unwrap_or("HEAD").to_string(),
+                ColumnKind::Branch,
+            )]);
         }
     };
     // Effective target for integration checks: upstream if ahead of local, else local.
@@ -264,19 +302,23 @@ fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<
         ..Default::default()
     };
 
-    // Populate computed fields (parallel git operations) and format status_line
+    // Populate computed fields (parallel git operations)
     // Compute everything (same as --full) for complete status symbols
     // Pass default_branch for stable informational stats,
     // and integration_target for integration status checks.
     list::populate_item(&mut item, &default_branch, &integration_target, options)?;
 
-    // Format statusline with link control
-    let statusline = item.format_statusline_with_options(include_links);
-    if statusline.is_empty() {
+    // Get prioritized segments
+    let segments = item.format_statusline_segments(include_links);
+
+    if segments.is_empty() {
         // Fallback: just show branch name
-        Ok(Some(wt.branch.as_deref().unwrap_or("HEAD").to_string()))
+        Ok(vec![StatuslineSegment::from_column(
+            wt.branch.as_deref().unwrap_or("HEAD").to_string(),
+            ColumnKind::Branch,
+        )])
     } else {
-        Ok(Some(statusline))
+        Ok(segments)
     }
 }
 
