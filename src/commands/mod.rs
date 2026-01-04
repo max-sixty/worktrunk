@@ -7,6 +7,7 @@ pub mod configure_shell;
 pub mod context;
 mod for_each;
 mod hook_commands;
+mod hook_filter;
 mod hooks;
 pub mod init;
 pub mod list;

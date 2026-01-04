@@ -924,7 +924,8 @@ pub fn handle_push(
     }
 
     // Check for conflicting changes in target worktree (auto-stash safe changes)
-    let mut target_worktree_stash =
+    // The stash guard auto-restores on drop (error paths), or explicitly via restore_now()
+    let mut stash_guard =
         repo.prepare_target_worktree(target_worktree_path.as_ref(), &target_branch)?;
 
     // Count commits and show what will be pushed
@@ -998,28 +999,26 @@ pub fn handle_push(
     // Get git common dir for the push
     let git_common_dir = repo.git_common_dir()?;
 
-    // Perform the push
+    // Perform the push - stash guard will auto-restore on any exit path
     // Use --receive-pack to pass config to the receiving end without permanently mutating repo config
     let push_target = format!("HEAD:{}", target_branch);
-    if let Err(e) = repo.run_command(&[
+    repo.run_command(&[
         "push",
         "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
         git_common_dir.to_str().unwrap(),
         &push_target,
-    ]) {
-        if let Some(stash) = target_worktree_stash.take() {
-            stash.restore()?;
-        }
+    ])
+    .map_err(|e| {
         // CommandFailed contains raw git output, wrap in PushFailed for proper formatting
-        return Err(GitError::PushFailed {
+        GitError::PushFailed {
             target_branch: target_branch.clone(),
             error: e.to_string(),
         }
-        .into());
-    }
+    })?;
 
-    if let Some(stash) = target_worktree_stash.take() {
-        stash.restore()?;
+    // Restore stash before success message (Drop handles error paths automatically)
+    if let Some(guard) = stash_guard.as_mut() {
+        guard.restore_now();
     }
 
     // Show success message after push completes

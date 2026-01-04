@@ -17,7 +17,7 @@
 //! This ensures approval happens exactly once at the command entry point,
 //! eliminating the need to thread `auto_trust` through execution layers.
 
-use super::hooks::{HookSource, ParsedFilter};
+use super::hook_filter::{HookSource, ParsedFilter};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
 use crate::output;
 use anyhow::Context;
