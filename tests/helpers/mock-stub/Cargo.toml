@@ -1,0 +1,21 @@
+# Windows-compatible mock executable stub for integration tests.
+#
+# On Windows, Rust's Command::new() uses CreateProcessW which only finds .exe files.
+# This stub executable delegates to bash with a companion shell script:
+#   gh.exe + gh (script) -> gh.exe runs: bash gh <args>
+#
+# WHY A SEPARATE PACKAGE?
+# See dev-detach/Cargo.toml for explanation of cargo-dist compatibility.
+#
+# HOW THE BINARY GETS BUILT:
+# Has a dummy integration test (tests/builds.rs) that triggers binary compilation
+# when running `cargo test`. See dev-detach for details.
+[package]
+name = "mock-stub"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "mock-stub"
+path = "src/main.rs"

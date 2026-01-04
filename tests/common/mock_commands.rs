@@ -4,7 +4,7 @@
 // All mock logic is written as shell scripts (#!/bin/sh).
 //
 // On Unix: shell scripts are directly executable via shebang
-// On Windows: thin .bat/.cmd shims invoke the scripts via bash
+// On Windows: mock-stub.exe delegates to bash + shell script
 //
 // Requirements:
 // - On Windows, Git Bash must be installed and `bash` must be in PATH
@@ -17,10 +17,22 @@
 use std::fs;
 use std::path::Path;
 
+/// Path to the mock-stub.exe binary, built by `cargo test`.
+#[cfg(windows)]
+fn mock_stub_exe() -> std::path::PathBuf {
+    // The mock-stub binary is built by cargo test (via its dummy integration test)
+    // and lives in the same target directory as the test binary.
+    let mut path = std::env::current_exe().expect("failed to get test executable path");
+    path.pop(); // Remove test binary name
+    path.pop(); // Remove deps/
+    path.push("mock-stub.exe");
+    path
+}
+
 /// Write a mock shell script, with platform-appropriate setup.
 ///
 /// On Unix: writes directly as executable script
-/// On Windows: writes script (no extension) for Git Bash + .bat/.cmd shims for CMD
+/// On Windows: writes script + copies mock-stub.exe as name.exe
 pub fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
     #[cfg(unix)]
     {
@@ -32,14 +44,18 @@ pub fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
 
     #[cfg(windows)]
     {
-        // Write the shell script without extension (for Git Bash)
-        // Git Bash executes files with shebangs directly, no extension needed
+        // Write the shell script (no extension) - mock-stub.exe will invoke this via bash
         let script_path = bin_dir.join(name);
         fs::write(&script_path, script).unwrap();
 
-        // Create .bat and .cmd shims (for CMD/PowerShell)
-        // %~dp0 expands to the directory containing the batch file
-        // %* forwards all arguments
+        // Copy mock-stub.exe as name.exe (for Rust's Command::new which uses CreateProcessW)
+        let exe_path = bin_dir.join(format!("{}.exe", name));
+        fs::copy(mock_stub_exe(), &exe_path)
+            .expect("failed to copy mock-stub.exe - did `cargo test` build it?");
+
+        // Create .bat/.cmd shims for CMD/PowerShell invocations.
+        // Not strictly required for our tests (Command::new finds .exe, Git Bash finds scripts),
+        // but provides a fallback if anyone debugs tests from cmd.exe.
         let shim = format!("@bash \"%~dp0{}\" %*\n", name);
         fs::write(bin_dir.join(format!("{}.cmd", name)), &shim).unwrap();
         fs::write(bin_dir.join(format!("{}.bat", name)), &shim).unwrap();
@@ -244,6 +260,7 @@ mod tests {
         #[cfg(windows)]
         {
             assert!(bin_dir.join("test-cmd").exists());
+            assert!(bin_dir.join("test-cmd.exe").exists());
             assert!(bin_dir.join("test-cmd.cmd").exists());
             assert!(bin_dir.join("test-cmd.bat").exists());
         }
@@ -262,6 +279,7 @@ mod tests {
         #[cfg(windows)]
         {
             assert!(bin_dir.join("simple-cmd").exists());
+            assert!(bin_dir.join("simple-cmd.exe").exists());
             assert!(bin_dir.join("simple-cmd.cmd").exists());
             assert!(bin_dir.join("simple-cmd.bat").exists());
         }
