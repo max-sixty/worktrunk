@@ -1631,7 +1631,15 @@ exit 1
     /// caller's PATH instead of a hardcoded minimal list.
     pub fn configure_mock_commands(&self, cmd: &mut Command) {
         if let Some(mock_bin) = &self.mock_bin_path {
-            let mut paths: Vec<PathBuf> = std::env::var_os("PATH")
+            // On Windows, env vars are case-insensitive but Rust stores them
+            // case-sensitively. Find the actual PATH variable name to avoid
+            // creating a duplicate with different case.
+            let (path_var_name, current_path) = std::env::vars_os()
+                .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+                .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+                .unwrap_or(("PATH".to_string(), None));
+
+            let mut paths: Vec<PathBuf> = current_path
                 .as_deref()
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
@@ -1639,7 +1647,7 @@ exit 1
             // Prepend mock bin to PATH so our mocks are found first
             paths.insert(0, mock_bin.clone());
             let new_path = std::env::join_paths(&paths).unwrap();
-            cmd.env("PATH", new_path);
+            cmd.env(&path_var_name, new_path);
         }
     }
 
