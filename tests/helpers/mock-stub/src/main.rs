@@ -146,7 +146,12 @@ fn main() {
     // Find Git Bash on Windows (avoid WSL bash wrapper)
     let bash_path = find_bash();
     debug_log!("bash_path: {}", bash_path.display());
-    debug_log!("calling: {} {} {:?}", bash_path.display(), script_path_str, args);
+    debug_log!(
+        "calling: {} {} {:?}",
+        bash_path.display(),
+        script_path_str,
+        args
+    );
 
     // Debug: Show what we're about to execute (only when MOCK_DEBUG is set)
     if env::var("MOCK_DEBUG").is_ok() {
@@ -174,8 +179,15 @@ fn main() {
         .stderr(Stdio::piped())
         .output()
         .unwrap_or_else(|e| {
-            debug_log!("ERROR: failed to execute bash at {}: {}", bash_path.display(), e);
-            eprintln!("mock-stub: failed to execute bash at {}: {e}", bash_path.display());
+            debug_log!(
+                "ERROR: failed to execute bash at {}: {}",
+                bash_path.display(),
+                e
+            );
+            eprintln!(
+                "mock-stub: failed to execute bash at {}: {e}",
+                bash_path.display()
+            );
             eprintln!("Is Git Bash installed?");
             exit(1);
         });
