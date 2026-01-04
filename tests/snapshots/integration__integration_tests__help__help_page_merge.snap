@@ -99,8 +99,7 @@ lint = "cargo clippy"
 ```
 wt merge - Merge worktree into target branch[0m
 [0m
-Squashes commits, rebases, runs hooks, merges to target, and removes the
-worktree.[0m
+Squash & rebase, fast-forward target, remove the worktree.[0m
 
 Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET][0m
 

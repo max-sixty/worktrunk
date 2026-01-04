@@ -88,8 +88,7 @@ lint = "cargo clippy"
 {% terminal() %}
 wt merge - Merge worktree into target branch
 
-Squashes commits, rebases, runs hooks, merges to target, and removes the
-worktree.
+Squash &amp; rebase, fast-forward target, remove the worktree.
 
 Usage: <b><span class=c>wt merge</span></b> <span class=c>[OPTIONS]</span> <span class=c>[TARGET]</span>
 

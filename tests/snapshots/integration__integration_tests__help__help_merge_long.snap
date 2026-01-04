@@ -12,6 +12,7 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -20,7 +21,7 @@ exit_code: 0
 ----- stderr -----
 wt merge - Merge worktree into target branch
 
-Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
+Squash & rebase, fast-forward target, remove the worktree.
 
 Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
 

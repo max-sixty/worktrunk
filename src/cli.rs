@@ -888,7 +888,7 @@ pub enum StepCommand {
         show_prompt: bool,
     },
 
-    /// Squash commits since target
+    /// Squash commits since branching
     ///
     /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
     Squash {
@@ -1962,7 +1962,7 @@ fi
 
     /// Interactive worktree selector
     ///
-    /// Toggle preview tabs with 1/2/3 keys. Toggle preview visibility with alt-p.
+    /// Browse and switch worktrees with live preview.
     #[cfg_attr(not(unix), command(hide = true))]
     #[command(
         after_long_help = r#"Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
@@ -2489,7 +2489,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
     /// Merge worktree into target branch
     ///
-    /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
+    /// Squash & rebase, fast-forward target, remove the worktree.
     #[command(
         after_long_help = r#"Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
 <!-- demo: wt-merge.gif 1600x900 -->
