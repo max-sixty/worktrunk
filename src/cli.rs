@@ -2091,7 +2091,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⤴` | Rebase in progress |
 | | `⤵` | Merge in progress |
 | | `/` | Branch without worktree |
-| | `⚑` | Worktree path doesn't match branch name |
+| | `⚑` | Branch-worktree mismatch (branch name doesn't match worktree path) |
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
@@ -2196,7 +2196,7 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | string | `"path_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
+| `state` | string | `"branch_worktree_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 

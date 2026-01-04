@@ -90,10 +90,10 @@ pub struct WorktreeData {
     /// Whether this was the previous worktree (from WT_PREVIOUS_BRANCH)
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_previous: bool,
-    /// Whether the worktree path doesn't match what the template would generate.
+    /// Whether the worktree is at an unexpected location (branch-worktree mismatch).
     /// Only true when: has branch name, not main worktree, and path differs from template.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub path_mismatch: bool,
+    pub branch_worktree_mismatch: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_diff_display: Option<String>,
 }
@@ -494,9 +494,9 @@ impl ListItem {
             ItemKind::Worktree(data) => {
                 // Full status computation for worktrees
 
-                // Worktree location state - priority: path_mismatch > prunable > locked
-                let worktree_state = if data.path_mismatch {
-                    WorktreeState::PathMismatch
+                // Worktree location state - priority: branch_worktree_mismatch > prunable > locked
+                let worktree_state = if data.branch_worktree_mismatch {
+                    WorktreeState::BranchWorktreeMismatch
                 } else if data.prunable.is_some() {
                     WorktreeState::Prunable
                 } else if data.locked.is_some() {
@@ -727,15 +727,15 @@ impl Divergence {
 /// - For worktrees: whether the path matches the template, or has issues
 /// - For branches (without worktree): shows / to distinguish from worktrees
 ///
-/// Priority order for worktrees: PathMismatch > Prunable > Locked
+/// Priority order for worktrees: BranchWorktreeMismatch > Prunable > Locked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum WorktreeState {
     #[strum(serialize = "")]
     /// Normal worktree (path matches template, not locked or prunable)
     #[default]
     None,
-    /// Path doesn't match what the template would generate (red flag = "not at home")
-    PathMismatch,
+    /// Branch-worktree mismatch: path doesn't match what the template would generate
+    BranchWorktreeMismatch,
     /// Prunable (worktree directory missing)
     Prunable,
     /// Locked (protected from removal)
@@ -748,7 +748,7 @@ impl std::fmt::Display for WorktreeState {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::None => Ok(()),
-            Self::PathMismatch => write!(f, "⚑"),
+            Self::BranchWorktreeMismatch => write!(f, "⚑"),
             Self::Prunable => write!(f, "⊟"),
             Self::Locked => write!(f, "⊞"),
             Self::Branch => write!(f, "/"),
@@ -1021,7 +1021,7 @@ impl PositionMask {
             1, // STAGED: + (1 char)
             1, // MODIFIED: ! (1 char)
             1, // UNTRACKED: ? (1 char)
-            1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > path_mismatch > prunable > locked > branch)
+            1, // WORKTREE_STATE: ✘⤴⤵/⚑⊟⊞ (1 char, priority: conflicts > rebase > merge > branch_worktree_mismatch > prunable > locked > branch)
             1, // MAIN_STATE: ^✗_–⊂↕↑↓ (1 char, priority: is_main > would_conflict > empty > same_commit > integrated > diverged > ahead > behind)
             1, // UPSTREAM_DIVERGENCE: |⇡⇣⇅ (1 char)
             2, // USER_MARKER: single emoji or two chars (allocate 2)
@@ -1051,7 +1051,7 @@ impl PositionMask {
 /// - ✘: Actual conflicts (must resolve)
 /// - ⤴: Rebase in progress
 /// - ⤵: Merge in progress
-/// - ⚑: Worktree path doesn't match branch name
+/// - ⚑: Branch-worktree mismatch
 /// - ⊟: Prunable (directory missing)
 /// - ⊞: Locked worktree
 /// - /: Branch without worktree
@@ -1207,8 +1207,10 @@ impl StatusSymbols {
                 WorktreeState::None => (String::new(), false),
                 // Branch indicator (/) is informational (dimmed)
                 WorktreeState::Branch => (cformat!("<dim>{}</>", self.worktree_state), true),
-                // Path mismatch (⚑) is a stronger warning (red)
-                WorktreeState::PathMismatch => (cformat!("<red>{}</>", self.worktree_state), true),
+                // Branch-worktree mismatch (⚑) is a stronger warning (red)
+                WorktreeState::BranchWorktreeMismatch => {
+                    (cformat!("<red>{}</>", self.worktree_state), true)
+                }
                 // Other worktree attrs (⊟⊞) are warnings (yellow)
                 _ => (cformat!("<yellow>{}</>", self.worktree_state), true),
             }
@@ -1634,7 +1636,7 @@ mod tests {
     #[test]
     fn test_worktree_state_display() {
         assert_eq!(format!("{}", WorktreeState::None), "");
-        assert_eq!(format!("{}", WorktreeState::PathMismatch), "⚑");
+        assert_eq!(format!("{}", WorktreeState::BranchWorktreeMismatch), "⚑");
         assert_eq!(format!("{}", WorktreeState::Prunable), "⊟");
         assert_eq!(format!("{}", WorktreeState::Locked), "⊞");
         assert_eq!(format!("{}", WorktreeState::Branch), "/");
@@ -1646,7 +1648,7 @@ mod tests {
         let json = serde_json::to_string(&WorktreeState::None).unwrap();
         assert_eq!(json, "\"\"");
 
-        let json = serde_json::to_string(&WorktreeState::PathMismatch).unwrap();
+        let json = serde_json::to_string(&WorktreeState::BranchWorktreeMismatch).unwrap();
         assert_eq!(json, "\"⚑\"");
 
         let json = serde_json::to_string(&WorktreeState::Branch).unwrap();

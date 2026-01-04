@@ -352,7 +352,7 @@ impl SwitchResult {
 pub struct SwitchBranchInfo {
     /// The branch being switched to
     pub branch: String,
-    /// Expected path when there's a path mismatch (None = path matches template)
+    /// Expected path when there's a branch-worktree mismatch (None = path matches template)
     pub expected_path: Option<PathBuf>,
 }
 
@@ -495,9 +495,9 @@ pub fn handle_switch(
             .map(|cur| cur == &canonical_path)
             .unwrap_or(false);
 
-        // Check if the actual path matches the expected path.
+        // Check if the actual path matches the expected path (branch-worktree mismatch detection).
         let canonical_expected = canonicalize(&expected_path).unwrap_or(expected_path.clone());
-        let path_mismatch = if canonical_path != canonical_expected {
+        let mismatch_path = if canonical_path != canonical_expected {
             Some(expected_path.clone())
         } else {
             None
@@ -510,7 +510,7 @@ pub fn handle_switch(
         };
         let branch_info = SwitchBranchInfo {
             branch: resolved_branch.clone(),
-            expected_path: path_mismatch,
+            expected_path: mismatch_path,
         };
         (result, branch_info)
     };

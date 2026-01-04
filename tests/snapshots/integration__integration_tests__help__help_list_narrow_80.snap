@@ -132,19 +132,20 @@ to view or clear.
 The Status column has multiple subcolumns. Within each, only the first matching
 symbol is shown (listed in priority order):
 
-      Subcolumn     Symbol                 Meaning                 
-   ──────────────── ────── ─────────────────────────────────────── 
-   Working tree (1) +      Staged files                            
-   Working tree (2) !      Modified files (unstaged)               
-   Working tree (3) ?      Untracked files                         
-   Worktree         ✘      Merge conflicts                         
-                    ⤴      Rebase in progress                      
-                    ⤵      Merge in progress                       
-                    /      Branch without worktree                 
-                    ⚑      Worktree path doesn't match branch name 
-                    ⊟      Prunable (directory missing)            
-                    ⊞      Locked worktree                         
-   Default branch   ^      Is the default branch                   
+      Subcolumn     Symbol                       Meaning                        
+   ──────────────── ────── ──────────────────────────────────────────────────── 
+   Working tree (1) +      Staged files                                         
+   Working tree (2) !      Modified files (unstaged)                            
+   Working tree (3) ?      Untracked files                                      
+   Worktree         ✘      Merge conflicts                                      
+                    ⤴      Rebase in progress                                   
+                    ⤵      Merge in progress                                    
+                    /      Branch without worktree                              
+                    ⚑      Branch-worktree mismatch (branch name doesn't match  
+                           worktree path)                                       
+                    ⊟      Prunable (directory missing)                         
+                    ⊞      Locked worktree                                      
+   Default branch   ^      Is the default branch                                
 | | [33m✗[0m | Would conflict if merged to the default branch (with [2m--full[0m,
 includes uncommitted changes) |
         _         Same commit as the default branch, clean        
@@ -255,8 +256,8 @@ deleted}[2m |
 
    Field Type Description 
    ───── ──── ─────────── 
-| [2mstate[0m | string | [2m"path_mismatch"[0m, [2m"prunable"[0m, [2m"locked"[0m (absent when
-normal) |
+| [2mstate[0m | string | [2m"branch_worktree_mismatch"[0m, [2m"prunable"[0m, [2m"locked"
+(absent when normal) |
     reason  string  Reason for locked/prunable state 
    detached boolean         HEAD is detached         
 
