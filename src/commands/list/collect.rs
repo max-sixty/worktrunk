@@ -759,12 +759,12 @@ pub fn collect(
 
             // Check if worktree is at its expected path based on config template
             // Use optimized variant with pre-computed default_branch and is_bare
-            let path_mismatch =
+            let branch_worktree_mismatch =
                 !is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare);
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
-            worktree_data.path_mismatch = path_mismatch;
+            worktree_data.branch_worktree_mismatch = branch_worktree_mismatch;
 
             // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {
