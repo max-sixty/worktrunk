@@ -315,6 +315,21 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn test_compute_hooks_display_path_same_location() {
+        let path = PathBuf::from("/repo/worktree");
+        let result = compute_hooks_display_path(&path, &path);
+        assert!(result.is_none(), "Should return None when paths match");
+    }
+
+    #[test]
+    fn test_compute_hooks_display_path_different_location() {
+        let hooks_run_at = PathBuf::from("/repo/feature");
+        let user_location = PathBuf::from("/repo/main");
+        let result = compute_hooks_display_path(&hooks_run_at, &user_location);
+        assert_eq!(result, Some(hooks_run_at.as_path()));
+    }
+
+    #[test]
     fn test_lazy_init_does_not_panic() {
         // Verify lazy initialization doesn't panic.
         // State is lazily initialized on first access.
