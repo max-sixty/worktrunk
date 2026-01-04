@@ -57,7 +57,7 @@ Branches without worktrees are included — selecting one creates a worktree. (`
 {% terminal() %}
 wt select - Interactive worktree selector
 
-Toggle preview tabs with 1/2/3 keys. Toggle preview visibility with alt-p.
+Browse and switch worktrees with live preview.
 
 Usage: <b><span class=c>wt select</span></b> <span class=c>[OPTIONS]</span>
 

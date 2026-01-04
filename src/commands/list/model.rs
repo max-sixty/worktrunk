@@ -436,6 +436,11 @@ impl ListItem {
             parts.push(pr_status.format_indicator_with_options(include_links));
         }
 
+        // 8. URL (from project config template)
+        if let Some(ref url) = self.url {
+            parts.push(url.clone());
+        }
+
         parts.join("  ")
     }
 

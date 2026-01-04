@@ -464,7 +464,13 @@ main {
     }
 }
 
+// Wrapper for code blocks - enables fixed copy button during horizontal scroll
+.code-block-wrapper {
+    position: relative;
+}
+
 // Copy button for code blocks
+// Positioned on the wrapper (not the pre) so it stays fixed when code scrolls horizontally
 .code-copy-btn {
     position: absolute;
     top: 0.5rem;
@@ -478,6 +484,7 @@ main {
     opacity: 0;
     transition: opacity 150ms, background 150ms, color 150ms;
     line-height: 0;
+    z-index: 1;
 
     &:hover {
         background: var(--wt-color-bg);
@@ -489,7 +496,7 @@ main {
     }
 }
 
-.content pre:hover .code-copy-btn {
+.code-block-wrapper:hover .code-copy-btn {
     opacity: 1;
 }
 

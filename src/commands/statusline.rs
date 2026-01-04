@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
+use worktrunk::config::ProjectConfig;
 use worktrunk::git::{Repository, Worktree};
 
 use super::list::{self, CollectOptions};
@@ -243,16 +244,25 @@ fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<
     // Build item with identity fields
     let mut item = list::build_worktree_item(wt, is_home, true, false);
 
+    // Load URL template from project config (if configured)
+    let url_template = repo
+        .worktree_root()
+        .ok()
+        .and_then(|root| ProjectConfig::load(root).ok().flatten())
+        .and_then(|config| config.list)
+        .and_then(|list| list.url);
+
+    // Build collect options with URL template
+    let options = CollectOptions {
+        url_template,
+        ..Default::default()
+    };
+
     // Populate computed fields (parallel git operations) and format status_line
     // Compute everything (same as --full) for complete status symbols
     // Pass default_branch for stable informational stats,
     // and integration_target for integration status checks.
-    list::populate_item(
-        &mut item,
-        &default_branch,
-        &integration_target,
-        CollectOptions::default(),
-    )?;
+    list::populate_item(&mut item, &default_branch, &integration_target, options)?;
 
     // Format statusline with link control
     let statusline = item.format_statusline_with_options(include_links);

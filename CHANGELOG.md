@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.2
+
+### Fixed
+
+- **Locked worktree detection**: `wt remove` now detects locked worktrees upfront and shows a clear error with unlock instructions, instead of reporting success but silently failing. ([#408](https://github.com/max-sixty/worktrunk/pull/408), [#412](https://github.com/max-sixty/worktrunk/pull/412))
+- **Windows Git Bash shell integration**: Shell detection now handles Windows-style paths in `$SHELL` (e.g., `C:\Program Files\Git\usr\bin\bash.exe`). Fixes [#348](https://github.com/max-sixty/worktrunk/issues/348). ([#398](https://github.com/max-sixty/worktrunk/pull/398))
+
+### Documentation
+
+- **CLI help text clarity**: Improved descriptions for `wt`, `wt list`, `wt step push`, `wt step squash`, `wt remove`, and `wt config state`. ([#410](https://github.com/max-sixty/worktrunk/pull/410))
+- **Installation commands**: Removed `$` prefixes from install commands for easier copy-paste. ([#405](https://github.com/max-sixty/worktrunk/pull/405), thanks @muzzlol)
+
+### Internal
+
+- **Home worktree lookup**: Centralized with `find_home()` and `home_path()` methods for more consistent behavior with bare repos.
+- **Windows CI**: Added cross-platform mock infrastructure for testing Windows-specific behavior.
+
 ## 0.9.1
 
 ### Improved
