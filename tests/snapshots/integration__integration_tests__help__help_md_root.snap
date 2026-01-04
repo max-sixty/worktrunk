@@ -16,7 +16,7 @@ info:
 success: true
 exit_code: 0
 ----- stdout -----
-wt - Git worktree management
+wt - Git worktree management for parallel AI agent workflows
 
 Usage: wt [OPTIONS] [COMMAND]
 
@@ -25,7 +25,7 @@ Commands:
   step    Run individual workflow operations
   hook    Run hooks independently
   select  Interactive worktree selector
-  list    List worktrees and optionally branches
+  list    List worktrees and their status
   switch  Switch to a worktree
   remove  Remove worktree and branch (if merged)
   merge   Merge worktree into target branch

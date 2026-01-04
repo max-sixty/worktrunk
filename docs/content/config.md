@@ -261,7 +261,7 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>shell</span></b>   Shell integration setup
   <b><span class=c>create</span></b>  Create configuration file
   <b><span class=c>show</span></b>    Show configuration files &amp; locations
-  <b><span class=c>state</span></b>   Get, set, or clear stored state
+  <b><span class=c>state</span></b>   Manage internal data and cache
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
@@ -723,7 +723,7 @@ wt config state clear
 ### Command reference
 
 {% terminal() %}
-wt config state - Get, set, or clear stored state
+wt config state - Manage internal data and cache
 
 Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 

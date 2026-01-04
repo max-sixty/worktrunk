@@ -266,7 +266,7 @@ Missing a field that would be generally useful? [Open an issue](https://github.c
 ## Command reference
 
 {% terminal() %}
-wt list - List worktrees and optionally branches
+wt list - List worktrees and their status
 
 Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
        <b><span class=c>wt list</span></b> <span class=c>&lt;COMMAND&gt;</span>
@@ -287,7 +287,7 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
           Include remote branches
 
       <b><span class=c>--full</span></b>
-          Show CI, merge-base diffstat, and working tree conflict check
+          Include CI status and diff analysis (slower)
 
       <b><span class=c>--progressive</span></b>
           Show fast info immediately, update with slow info
