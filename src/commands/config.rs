@@ -202,7 +202,11 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     } else {
         "inactive"
     };
-    writeln!(out, "{}", info_message(format!("Hyperlinks: {status}")))?;
+    writeln!(
+        out,
+        "{}",
+        info_message(cformat!("Hyperlinks: <bold>{status}</>"))
+    )?;
 
     Ok(())
 }
