@@ -1567,18 +1567,35 @@ esac
         std::fs::write(&pr_json_file, pr_json).unwrap();
         std::fs::write(&run_json_file, run_json).unwrap();
 
-        // Use dirname "$0" to find JSON files relative to script.
-        // This works on both Unix and Windows because:
-        // - On Unix: $0 is the script path as invoked
-        // - On Windows: mock-stub.exe converts the path to MSYS2 format before invoking bash
-        write_mock_script(
-            &mock_bin,
-            "gh",
-            r#"#!/bin/sh
+        // Convert mock_bin path to a format bash can read.
+        // On Windows, convert D:\foo\bar to /d/foo/bar (MSYS2 style).
+        // On Unix, just use the path as-is.
+        let script_dir = {
+            let path_str = mock_bin.to_string_lossy();
+            #[cfg(windows)]
+            {
+                let chars: Vec<char> = path_str.chars().collect();
+                if chars.len() >= 2 && chars[1] == ':' {
+                    // D:\foo\bar -> /d/foo/bar
+                    let drive = chars[0].to_ascii_lowercase();
+                    format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
+                } else {
+                    path_str.replace('\\', "/")
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                path_str.to_string()
+            }
+        };
+
+        // Embed SCRIPT_DIR directly to avoid path resolution issues on Windows.
+        // Debug mode: set MOCK_GH_DEBUG=1 to see path resolution info.
+        let script = format!(
+            r#"#!/bin/bash
 # Mock gh command that returns configured JSON data
 # JSON files are in the same directory as this script
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="{script_dir}"
 
 case "$1" in
     --version)
@@ -1603,8 +1620,9 @@ case "$1" in
         exit 1
         ;;
 esac
-"#,
+"#
         );
+        write_mock_script(&mock_bin, "gh", &script);
 
         // Create mock glab script (fails immediately - no GitLab support in this mock)
         write_mock_script(

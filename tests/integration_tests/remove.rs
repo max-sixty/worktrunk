@@ -74,6 +74,87 @@ fn test_remove_dirty_working_tree(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_remove_locked_worktree(mut repo: TestRepo) {
+    // Create a worktree and lock it
+    let _worktree_path = repo.add_worktree("locked-feature");
+    repo.lock_worktree("locked-feature", Some("Testing lock"));
+
+    // Try to remove the locked worktree - should fail with helpful error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["locked-feature"],
+        None
+    ));
+}
+
+#[rstest]
+fn test_remove_locked_worktree_no_reason(mut repo: TestRepo) {
+    // Create a worktree and lock it without a reason
+    let _worktree_path = repo.add_worktree("locked-no-reason");
+    repo.lock_worktree("locked-no-reason", None);
+
+    // Try to remove - should show error without parenthesized reason
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["locked-no-reason"],
+        None
+    ));
+}
+
+#[rstest]
+fn test_remove_locked_current_worktree(mut repo: TestRepo) {
+    // Create a worktree, switch to it, and lock it
+    let worktree_path = repo.add_worktree("locked-current");
+    repo.lock_worktree("locked-current", Some("Do not remove"));
+
+    // Try to remove current (locked) worktree - should fail
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[],
+        Some(&worktree_path)
+    ));
+}
+
+#[rstest]
+fn test_remove_locked_detached_worktree(mut repo: TestRepo) {
+    // Create a worktree, detach HEAD, and lock it
+    let worktree_path = repo.add_worktree("locked-detached");
+    repo.detach_head_in_worktree("locked-detached");
+    repo.lock_worktree("locked-detached", Some("Detached and locked"));
+
+    // Try to remove from within the locked detached worktree - should fail
+    // This exercises the RemoveTarget::Current path for locked worktrees
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[],
+        Some(&worktree_path)
+    ));
+}
+
+#[rstest]
+fn test_remove_locked_detached_multi(mut repo: TestRepo) {
+    // Test multi-remove where current worktree (@ target) is locked and detached
+    let _other_worktree = repo.add_worktree("other");
+    let _locked_worktree = repo.add_worktree("locked-detached");
+    repo.detach_head_in_worktree("locked-detached");
+    repo.lock_worktree("locked-detached", Some("Locked detached"));
+
+    // From the locked detached worktree, try to remove @ and other
+    // The @ resolves to current (locked-detached) which is locked
+    let locked_path = repo.worktree_path("locked-detached");
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["@", "other"],
+        Some(locked_path)
+    ));
+}
+
+#[rstest]
 fn test_remove_by_name_from_main(mut repo: TestRepo) {
     // Create a worktree
     let _worktree_path = repo.add_worktree("feature-a");

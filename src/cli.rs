@@ -888,9 +888,9 @@ pub enum StepCommand {
         show_prompt: bool,
     },
 
-    /// Squash commits down to target
+    /// Squash commits since target
     ///
-    /// Stages working tree changes, combines all commits since the target into a single commit, generates message with LLM.
+    /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
     Squash {
         /// Target branch
         ///
@@ -2433,7 +2433,7 @@ Worktrunk checks five conditions (in order of cost):
 4. **Trees match** — Branch tree SHA equals target tree SHA. Shows `⊂`.
 5. **Merge adds nothing** — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows `⊂`.
 
-Check 1 compares against the default branch. Checks 2-5 compare against **target** — the default branch, or its upstream (for example, `origin/main`) when it's strictly ahead (catching branches merged remotely before pulling).
+The "same commit" check uses the local default branch; for other checks, **target** means the default branch, or its upstream (e.g., `origin/main`) when strictly ahead.
 
 Branches showing `_` or `⊂` are dimmed as safe to delete.
 

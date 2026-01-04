@@ -759,51 +759,6 @@ pub fn handle_remove_current(
     )
 }
 
-/// Handle removing a worktree by path (for detached non-current worktrees).
-///
-/// This is used when a worktree is in detached HEAD state and we're not
-/// currently in it. We can still remove the worktree, we just don't know
-/// which branch (if any) to delete. Branch deletion is not attempted
-/// since no branch is associated with a detached HEAD worktree.
-pub fn handle_remove_by_path(
-    path: &std::path::Path,
-    branch: Option<String>,
-    force_worktree: bool,
-    background: bool,
-) -> anyhow::Result<RemoveResult> {
-    let repo = Repository::current();
-
-    if !background {
-        crate::output::print(progress_message(cformat!(
-            "Removing worktree @ <bold>{}</>...",
-            worktrunk::path::format_path_for_display(path)
-        )))?;
-    }
-
-    // Check that the worktree is clean
-    let target_repo = Repository::at(path);
-    target_repo
-        .ensure_clean_working_tree("remove worktree", branch.as_deref())
-        .context("Failed to verify worktree status")?;
-
-    // We're not in this worktree, so no directory change needed
-    let current_path = repo
-        .worktree_root()
-        .context("Failed to determine current worktree")?
-        .to_path_buf();
-
-    Ok(RemoveResult::RemovedWorktree {
-        main_path: current_path,
-        worktree_path: path.to_path_buf(),
-        changed_directory: false,
-        branch_name: branch,
-        deletion_mode: BranchDeletionMode::Keep, // Can't delete branch for detached worktree
-        target_branch: None,
-        integration_reason: None, // Not applicable for detached worktrees
-        force_worktree,
-    })
-}
-
 impl<'a> CommandContext<'a> {
     /// Execute post-create commands sequentially (blocking)
     ///

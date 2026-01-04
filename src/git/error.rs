@@ -89,6 +89,10 @@ pub enum GitError {
         error: String,
     },
     CannotRemoveMainWorktree,
+    WorktreeLocked {
+        branch: String,
+        reason: Option<String>,
+    },
 
     // Merge/push errors
     ConflictingChanges {
@@ -316,6 +320,23 @@ impl std::fmt::Display for GitError {
                     f,
                     "{}",
                     error_message("The main worktree cannot be removed")
+                )
+            }
+
+            GitError::WorktreeLocked { branch, reason } => {
+                let reason_text = match reason {
+                    Some(r) if !r.is_empty() => format!(" ({r})"),
+                    _ => String::new(),
+                };
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(cformat!(
+                        "Cannot remove <bold>{branch}</>, worktree is locked{reason_text}"
+                    )),
+                    hint_message(cformat!(
+                        "To unlock, run <bright-black>git worktree unlock {branch}</>"
+                    ))
                 )
             }
 
@@ -971,6 +992,38 @@ mod tests {
         let err = GitError::CannotRemoveMainWorktree;
         let display = err.to_string();
         assert!(display.contains("main worktree"));
+    }
+
+    #[test]
+    fn test_git_error_worktree_locked_with_reason() {
+        let err = GitError::WorktreeLocked {
+            branch: "feature".into(),
+            reason: Some("Testing lock".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("Cannot remove"));
+        assert!(display.contains("feature"));
+        assert!(display.contains(", worktree is locked"));
+        assert!(display.contains("(Testing lock)"));
+        assert!(display.contains("git worktree unlock"));
+    }
+
+    #[test]
+    fn test_git_error_worktree_locked_no_reason() {
+        // When git outputs "locked" without a reason, we get Some("")
+        let err = GitError::WorktreeLocked {
+            branch: "feature".into(),
+            reason: Some("".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("Cannot remove"));
+        assert!(display.contains("feature"));
+        assert!(display.contains(", worktree is locked"));
+        assert!(
+            !display.contains("locked ("),
+            "should not show parentheses without reason"
+        );
+        assert!(display.contains("git worktree unlock"));
     }
 
     #[test]

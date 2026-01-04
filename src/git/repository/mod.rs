@@ -980,15 +980,13 @@ impl Repository {
         // Parse output: "<behind>\t<ahead>" format
         // Example: "5\t3" means 5 commits behind, 3 commits ahead
         // git rev-list --left-right outputs left (base) first, then right (head)
-        let parts: Vec<&str> = output.trim().split('\t').collect();
-        anyhow::ensure!(
-            parts.len() == 2,
-            "Unexpected rev-list output format: {}",
-            output
-        );
+        let (behind_str, ahead_str) = output
+            .trim()
+            .split_once('\t')
+            .ok_or_else(|| anyhow::anyhow!("Unexpected rev-list output format: {}", output))?;
 
-        let behind: usize = parts[0].parse().context("Failed to parse behind count")?;
-        let ahead: usize = parts[1].parse().context("Failed to parse ahead count")?;
+        let behind: usize = behind_str.parse().context("Failed to parse behind count")?;
+        let ahead: usize = ahead_str.parse().context("Failed to parse ahead count")?;
 
         Ok((ahead, behind))
     }
@@ -1005,12 +1003,8 @@ impl Repository {
         let branches: Vec<(String, String)> = output
             .lines()
             .filter_map(|line| {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() == 2 {
-                    Some((parts[0].to_string(), parts[1].to_string()))
-                } else {
-                    None
-                }
+                let (branch, sha) = line.split_once(' ')?;
+                Some((branch.to_string(), sha.to_string()))
             })
             .collect();
 
@@ -1031,17 +1025,12 @@ impl Repository {
         let branches: Vec<(String, String)> = output
             .lines()
             .filter_map(|line| {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() == 2 {
-                    let branch_name = parts[0];
-                    // Skip <remote>/HEAD (symref)
-                    if branch_name.ends_with("/HEAD") {
-                        None
-                    } else {
-                        Some((branch_name.to_string(), parts[1].to_string()))
-                    }
-                } else {
+                let (branch_name, sha) = line.split_once(' ')?;
+                // Skip <remote>/HEAD (symref)
+                if branch_name.ends_with("/HEAD") {
                     None
+                } else {
+                    Some((branch_name.to_string(), sha.to_string()))
                 }
             })
             .collect();

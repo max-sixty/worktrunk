@@ -95,8 +95,8 @@ Worktrunk checks five conditions (in order of cost):
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
 
-Check 1 compares against the default branch. Checks 2-5 compare against [1mtarget[0m — the default branch, or its upstream (for example, [2morigin/main[0m)
-when it's strictly ahead (catching branches merged remotely before pulling).
+The "same commit" check uses the local default branch; for other checks, [1mtarget[0m means the default branch, or its upstream (e.g., [2morigin/main[0m)
+when strictly ahead.
 
 Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
 
