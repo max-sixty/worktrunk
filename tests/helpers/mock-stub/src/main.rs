@@ -10,7 +10,27 @@
 //! 3. Command::new("gh") now works on Windows
 
 use std::env;
+use std::path::Path;
 use std::process::{Command, exit};
+
+/// Convert Windows path to MSYS2/Git Bash style path.
+///
+/// Git Bash expects Unix-style paths. When we pass a Windows path like
+/// `D:\temp\bin\gh` to bash, it doesn't understand it. Convert to `/d/temp/bin/gh`.
+fn to_msys_path(path: &Path) -> String {
+    let path_str = path.to_string_lossy();
+
+    // Check for Windows drive letter (e.g., "D:\...")
+    let chars: Vec<char> = path_str.chars().collect();
+    if chars.len() >= 2 && chars[1] == ':' {
+        // D:\foo\bar -> /d/foo/bar
+        let drive = chars[0].to_ascii_lowercase();
+        format!("/{}{}", drive, path_str[2..].replace('\\', "/"))
+    } else {
+        // Already Unix-style or relative path
+        path_str.replace('\\', "/")
+    }
+}
 
 fn main() {
     let exe_path = env::current_exe().expect("failed to get executable path");
@@ -29,11 +49,14 @@ fn main() {
         exit(1);
     }
 
+    // Convert to MSYS2-style path for bash on Windows
+    let script_path_str = to_msys_path(&script_path);
+
     // Forward all arguments to bash with the script
     let args: Vec<String> = env::args().skip(1).collect();
 
     let status = Command::new("bash")
-        .arg(&script_path)
+        .arg(&script_path_str)
         .args(&args)
         .status()
         .unwrap_or_else(|e| {
