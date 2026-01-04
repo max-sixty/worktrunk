@@ -495,4 +495,48 @@ mod tests {
             assert_eq!(format!("{hook}"), expected);
         }
     }
+
+    #[test]
+    fn test_find_home() {
+        let make_wt = |branch: Option<&str>| Worktree {
+            path: PathBuf::from(format!("/repo.{}", branch.unwrap_or("detached"))),
+            head: "abc123".into(),
+            branch: branch.map(String::from),
+            bare: false,
+            detached: branch.is_none(),
+            locked: None,
+            prunable: None,
+        };
+
+        // Empty list returns None
+        assert!(Worktree::find_home(&[], "main").is_none());
+
+        // Single worktree on default branch
+        let wts = vec![make_wt(Some("main"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            Some("/repo.main")
+        );
+
+        // Default branch not first - should still find it
+        let wts = vec![make_wt(Some("feature")), make_wt(Some("main"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            Some("/repo.main")
+        );
+
+        // No default branch match - returns first
+        let wts = vec![make_wt(Some("feature")), make_wt(Some("bugfix"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            Some("/repo.feature")
+        );
+
+        // Empty default branch - returns first
+        let wts = vec![make_wt(Some("feature"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "").unwrap().path.to_str(),
+            Some("/repo.feature")
+        );
+    }
 }
