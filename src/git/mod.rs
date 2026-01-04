@@ -326,6 +326,25 @@ impl Worktree {
     pub fn dir_name(&self) -> &str {
         path_dir_name(&self.path)
     }
+
+    /// Find the "home" worktree - the default branch's worktree if it exists,
+    /// otherwise the first worktree in the list.
+    ///
+    /// This is the preferred destination when we need to cd somewhere
+    /// (e.g., after removing the current worktree, or after merge removes the worktree).
+    ///
+    /// For normal repos, `worktrees[0]` is usually the default branch's worktree,
+    /// so the fallback rarely matters. For bare repos, there's no semantic "main"
+    /// worktree, so preferring the default branch's worktree provides consistency.
+    ///
+    /// Returns `None` only if `worktrees` is empty. If `default_branch` is empty
+    /// or doesn't match any worktree, returns the first worktree.
+    pub fn find_home<'a>(worktrees: &'a [Worktree], default_branch: &str) -> Option<&'a Worktree> {
+        worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some(default_branch))
+            .or_else(|| worktrees.first())
+    }
 }
 
 // Helper functions for worktree parsing
