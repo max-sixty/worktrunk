@@ -11,7 +11,8 @@
 
 use std::env;
 use std::io;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio, exit};
 
 /// Convert Windows path to MSYS2/Git Bash style path.
@@ -33,11 +34,62 @@ fn to_msys_path(path: &Path) -> String {
     }
 }
 
+/// Find Git Bash on Windows.
+///
+/// On Windows, there are multiple "bash" executables:
+/// - `C:\Windows\System32\bash.exe` - WSL wrapper (fails if WSL not installed)
+/// - `C:\Program Files\Git\bin\bash.exe` - Git Bash (what we want)
+/// - `C:\Program Files\Git\usr\bin\bash.exe` - Also Git Bash
+///
+/// We need to find Git Bash specifically, not the WSL wrapper.
+#[cfg(windows)]
+fn find_bash() -> PathBuf {
+    // Common Git installation paths on Windows
+    let candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Git\bin\bash.exe",
+    ];
+
+    for candidate in &candidates {
+        let path = PathBuf::from(candidate);
+        if path.exists() {
+            return path;
+        }
+    }
+
+    // Fallback: try to find git in PATH and derive bash location from it
+    if let Ok(output) = Command::new("where").arg("git.exe").output() {
+        if output.status.success() {
+            let git_path = String::from_utf8_lossy(&output.stdout);
+            if let Some(first_line) = git_path.lines().next() {
+                // git.exe is typically in Git\cmd\git.exe or Git\bin\git.exe
+                // bash.exe is in Git\bin\bash.exe
+                let git_exe = PathBuf::from(first_line);
+                if let Some(git_dir) = git_exe.parent().and_then(|p| p.parent()) {
+                    let bash_path = git_dir.join("bin").join("bash.exe");
+                    if bash_path.exists() {
+                        return bash_path;
+                    }
+                }
+            }
+        }
+    }
+
+    // Last resort: just use "bash" and hope for the best
+    PathBuf::from("bash")
+}
+
+#[cfg(not(windows))]
+fn find_bash() -> PathBuf {
+    // On Unix, bash is bash
+    PathBuf::from("bash")
+}
+
 fn main() {
     // Always write a debug marker for CI debugging
     // This tells us if mock-stub.exe even starts running
     use std::fs::OpenOptions;
-    use std::io::Write;
     // Use TEMP on Windows, /tmp on Unix
     let debug_log_path =
         env::var("TEMP").unwrap_or_else(|_| "/tmp".to_string()) + "/mock-stub-debug.log";
@@ -90,7 +142,11 @@ fn main() {
 
     // Forward all arguments to bash with the script
     let args: Vec<String> = env::args().skip(1).collect();
-    debug_log!("calling: bash {} {:?}", script_path_str, args);
+
+    // Find Git Bash on Windows (avoid WSL bash wrapper)
+    let bash_path = find_bash();
+    debug_log!("bash_path: {}", bash_path.display());
+    debug_log!("calling: {} {} {:?}", bash_path.display(), script_path_str, args);
 
     // Debug: Show what we're about to execute (only when MOCK_DEBUG is set)
     if env::var("MOCK_DEBUG").is_ok() {
@@ -99,6 +155,7 @@ fn main() {
         eprintln!("mock-stub: script_path_str={}", script_path_str);
         eprintln!("mock-stub: script_dir={}", script_dir.display());
         eprintln!("mock-stub: script_dir_str={}", script_dir_str);
+        eprintln!("mock-stub: bash_path={}", bash_path.display());
         eprintln!("mock-stub: args={:?}", args);
     }
 
@@ -108,7 +165,7 @@ fn main() {
     //
     // Pass MOCK_SCRIPT_DIR so scripts can reliably find sibling files.
     // This avoids $0/dirname/pwd issues in Git Bash on Windows CI.
-    let output = Command::new("bash")
+    let output = Command::new(&bash_path)
         .arg(&script_path_str)
         .args(&args)
         .env("MOCK_SCRIPT_DIR", &script_dir_str)
@@ -117,9 +174,9 @@ fn main() {
         .stderr(Stdio::piped())
         .output()
         .unwrap_or_else(|e| {
-            debug_log!("ERROR: failed to execute bash: {}", e);
-            eprintln!("mock-stub: failed to execute bash: {e}");
-            eprintln!("Is Git Bash installed and in PATH?");
+            debug_log!("ERROR: failed to execute bash at {}: {}", bash_path.display(), e);
+            eprintln!("mock-stub: failed to execute bash at {}: {e}", bash_path.display());
+            eprintln!("Is Git Bash installed?");
             exit(1);
         });
 
