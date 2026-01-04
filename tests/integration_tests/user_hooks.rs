@@ -776,6 +776,48 @@ fn test_standalone_hook_pre_commit(repo: TestRepo) {
     assert!(content.contains("STANDALONE_PRE_COMMIT"));
 }
 
+/// Test `wt hook post-merge` standalone execution
+#[rstest]
+fn test_standalone_hook_post_merge(repo: TestRepo) {
+    // Write project config with post-merge hook
+    repo.write_project_config(r#"post-merge = "echo 'STANDALONE_POST_MERGE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-merge", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt hook post-merge should succeed");
+
+    // Hook should have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "post-merge hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_POST_MERGE"));
+}
+
+/// Test `wt hook pre-remove` standalone execution
+#[rstest]
+fn test_standalone_hook_pre_remove(repo: TestRepo) {
+    // Write project config with pre-remove hook
+    repo.write_project_config(r#"pre-remove = "echo 'STANDALONE_PRE_REMOVE' > hook_ran.txt""#);
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "pre-remove", "--yes"]);
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success(), "wt hook pre-remove should succeed");
+
+    // Hook should have run
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(marker.exists(), "pre-remove hook should have run");
+    let content = fs::read_to_string(&marker).unwrap();
+    assert!(content.contains("STANDALONE_PRE_REMOVE"));
+}
+
 /// Test `wt hook post-create` fails when no hooks configured
 #[rstest]
 fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
