@@ -33,55 +33,20 @@ fn to_msys_path(path: &Path) -> String {
     }
 }
 
-/// Find Git Bash on Windows.
-///
-/// On Windows, there are multiple "bash" executables:
-/// - `C:\Windows\System32\bash.exe` - WSL wrapper (fails if WSL not installed)
-/// - `C:\Program Files\Git\bin\bash.exe` - Git Bash (what we want)
-/// - `C:\Program Files\Git\usr\bin\bash.exe` - Also Git Bash
-///
-/// We need to find Git Bash specifically, not the WSL wrapper.
+/// Find Git Bash on Windows (avoid WSL bash wrapper at `C:\Windows\System32\bash.exe`).
 #[cfg(windows)]
 fn find_bash() -> PathBuf {
-    // Common Git installation paths on Windows
-    let candidates = [
-        r"C:\Program Files\Git\bin\bash.exe",
-        r"C:\Program Files (x86)\Git\bin\bash.exe",
-        r"C:\Git\bin\bash.exe",
-    ];
-
-    for candidate in &candidates {
-        let path = PathBuf::from(candidate);
-        if path.exists() {
-            return path;
-        }
+    // GitHub Actions and most Windows installations have Git here
+    let git_bash = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
+    if git_bash.exists() {
+        git_bash
+    } else {
+        PathBuf::from("bash")
     }
-
-    // Fallback: try to find git in PATH and derive bash location from it
-    if let Ok(output) = Command::new("where").arg("git.exe").output()
-        && output.status.success()
-    {
-        let git_path = String::from_utf8_lossy(&output.stdout);
-        if let Some(first_line) = git_path.lines().next() {
-            // git.exe is typically in Git\cmd\git.exe or Git\bin\git.exe
-            // bash.exe is in Git\bin\bash.exe
-            let git_exe = PathBuf::from(first_line);
-            if let Some(git_dir) = git_exe.parent().and_then(|p| p.parent()) {
-                let bash_path = git_dir.join("bin").join("bash.exe");
-                if bash_path.exists() {
-                    return bash_path;
-                }
-            }
-        }
-    }
-
-    // Last resort: just use "bash" and hope for the best
-    PathBuf::from("bash")
 }
 
 #[cfg(not(windows))]
 fn find_bash() -> PathBuf {
-    // On Unix, bash is bash
     PathBuf::from("bash")
 }
 
