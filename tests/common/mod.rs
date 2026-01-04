@@ -1493,13 +1493,15 @@ impl TestRepo {
     /// - `glab --version`: succeeds (installed)
     /// - `glab auth status`: fails (not authenticated)
     pub fn setup_mock_ci_tools_unauthenticated(&mut self) {
+        use crate::common::mock_commands::write_mock_script;
+
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
         // Create mock gh script - installed but not authenticated
-        let gh_script = mock_bin.join("gh");
-        std::fs::write(
-            &gh_script,
+        write_mock_script(
+            &mock_bin,
+            "gh",
             r#"#!/bin/sh
 # Mock gh: installed but not authenticated
 
@@ -1517,47 +1519,12 @@ case "$1" in
         ;;
 esac
 "#,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file version of gh mock (unauthenticated)
-        #[cfg(windows)]
-        {
-            let gh_cmd = mock_bin.join("gh.cmd");
-            // Use goto-based structure for reliable exit codes on Windows.
-            // Single-line `if ... exit /b N` can have inconsistent behavior
-            // when scripts are invoked via `cmd /c`.
-            std::fs::write(
-                &gh_cmd,
-                r#"@echo off
-if "%1"=="--version" goto version
-if "%1"=="auth" goto auth
-goto fail
-
-:version
-echo gh version 2.0.0 (mock)
-exit /b 0
-
-:auth
-exit /b 1
-
-:fail
-exit /b 1
-"#,
-            )
-            .unwrap();
-        }
+        );
 
         // Create mock glab script - installed but not authenticated
-        let glab_script = mock_bin.join("glab");
-        std::fs::write(
-            &glab_script,
+        write_mock_script(
+            &mock_bin,
+            "glab",
             r#"#!/bin/sh
 # Mock glab: installed but not authenticated
 
@@ -1575,40 +1542,7 @@ case "$1" in
         ;;
 esac
 "#,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file version of glab mock (unauthenticated)
-        #[cfg(windows)]
-        {
-            let glab_cmd = mock_bin.join("glab.cmd");
-            // Use goto-based structure for reliable exit codes on Windows.
-            std::fs::write(
-                &glab_cmd,
-                r#"@echo off
-if "%1"=="--version" goto version
-if "%1"=="auth" goto auth
-goto fail
-
-:version
-echo glab version 1.0.0 (mock)
-exit /b 0
-
-:auth
-exit /b 1
-
-:fail
-exit /b 1
-"#,
-            )
-            .unwrap();
-        }
+        );
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1622,6 +1556,8 @@ exit /b 1
     /// * `pr_json` - JSON string to return for `gh pr list --json ...`
     /// * `run_json` - JSON string to return for `gh run list --json ...`
     pub fn setup_mock_gh_with_ci_data(&mut self, pr_json: &str, run_json: &str) {
+        use crate::common::mock_commands::write_mock_script;
+
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
@@ -1632,12 +1568,14 @@ exit /b 1
         std::fs::write(&run_json_file, run_json).unwrap();
 
         // Create mock gh script that returns JSON data
-        let gh_script = mock_bin.join("gh");
-        std::fs::write(
-            &gh_script,
-            format!(
-                r#"#!/bin/sh
+        // Uses relative paths from script directory so it works cross-platform
+        write_mock_script(
+            &mock_bin,
+            "gh",
+            r#"#!/bin/sh
 # Mock gh command that returns configured JSON data
+# Use script directory for relative paths (works on Unix and via mock-stub.exe on Windows)
+SCRIPT_DIR="$(dirname "$0")"
 
 case "$1" in
     --version)
@@ -1650,12 +1588,12 @@ case "$1" in
         ;;
     pr)
         # gh pr list - return PR data from file
-        cat "{pr_json}"
+        cat "$SCRIPT_DIR/pr_data.json"
         exit 0
         ;;
     run)
         # gh run list - return run data from file
-        cat "{run_json}"
+        cat "$SCRIPT_DIR/run_data.json"
         exit 0
         ;;
     *)
@@ -1663,75 +1601,17 @@ case "$1" in
         ;;
 esac
 "#,
-                pr_json = pr_json_file.display(),
-                run_json = run_json_file.display(),
-            ),
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&gh_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        // Create Windows batch file versions of gh mock (.bat and .cmd)
-        // Both are needed because different resolution methods may prefer different extensions.
-        // Use %~dp0 (directory containing the batch file) for reliable relative paths.
-        #[cfg(windows)]
-        {
-            let batch_content = r#"@echo off
-if "%1"=="--version" goto version
-if "%1"=="auth" goto auth
-if "%1"=="pr" goto pr
-if "%1"=="run" goto run
-goto fail
-
-:version
-echo gh version 2.0.0 (mock)
-exit /b 0
-
-:auth
-exit /b 0
-
-:pr
-type "%~dp0pr_data.json"
-exit /b 0
-
-:run
-type "%~dp0run_data.json"
-exit /b 0
-
-:fail
-exit /b 1
-"#;
-            std::fs::write(mock_bin.join("gh.cmd"), batch_content).unwrap();
-            std::fs::write(mock_bin.join("gh.bat"), batch_content).unwrap();
-        }
+        );
 
         // Create mock glab script (fails immediately - no GitLab support in this mock)
-        let glab_script = mock_bin.join("glab");
-        std::fs::write(
-            &glab_script,
+        write_mock_script(
+            &mock_bin,
+            "glab",
             r#"#!/bin/sh
 # Mock glab command that fails fast
 exit 1
 "#,
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&glab_script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        #[cfg(windows)]
-        {
-            let glab_content = "@echo off\nexit /b 1\n";
-            std::fs::write(mock_bin.join("glab.cmd"), glab_content).unwrap();
-            std::fs::write(mock_bin.join("glab.bat"), glab_content).unwrap();
-        }
+        );
 
         self.mock_bin_path = Some(mock_bin);
     }
@@ -1741,9 +1621,8 @@ exit 1
     /// Must call `setup_mock_gh()` first. Prepends the mock bin directory to PATH
     /// so gh/glab commands are intercepted.
     ///
-    /// On Windows, this also removes directories containing real gh.exe/glab.exe
-    /// from PATH and sets PATHEXT to prefer .BAT/.CMD before .EXE. This ensures
-    /// our mock .bat/.cmd scripts are found instead of any real gh.exe.
+    /// On Windows, the mock commands have .exe files (via mock-stub) so they're
+    /// found directly by CreateProcessW without needing PATHEXT manipulation.
     ///
     /// Metadata redactions keep PATH private in snapshots, so we can reuse the
     /// caller's PATH instead of a hardcoded minimal list.
@@ -1754,21 +1633,7 @@ exit 1
                 .map(|p| std::env::split_paths(p).collect())
                 .unwrap_or_default();
 
-            // On Windows, Rust's Command::new looks for executables with .exe extension.
-            // We need a gh.exe in mock_bin, but creating real executables is complex.
-            // Instead, create a gh.bat (which Windows will execute for "gh" if .bat
-            // comes before .exe in PATHEXT) and modify PATHEXT accordingly.
-            // Also remove directories containing real gh.exe from PATH.
-            #[cfg(windows)]
-            {
-                paths.retain(|dir| !dir.join("gh.exe").exists() && !dir.join("glab.exe").exists());
-                // Put .BAT before .EXE so our gh.bat is found
-                cmd.env(
-                    "PATHEXT",
-                    ".BAT;.CMD;.COM;.EXE;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC",
-                );
-            }
-
+            // Prepend mock bin to PATH so our mocks are found first
             paths.insert(0, mock_bin.clone());
             let new_path = std::env::join_paths(&paths).unwrap();
             cmd.env("PATH", new_path);
