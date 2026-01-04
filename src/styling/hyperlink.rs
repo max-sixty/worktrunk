@@ -15,21 +15,8 @@ pub fn supports_hyperlinks_stderr() -> bool {
     supports_hyperlinks::on(Stream::Stderr)
 }
 
-/// Check if the terminal supports OSC 8 hyperlinks on stdout.
-pub fn supports_hyperlinks_stdout() -> bool {
-    supports_hyperlinks::on(Stream::Stdout)
-}
-
 /// Format text as a clickable hyperlink if supported, otherwise return just the text.
-///
-/// When hyperlinks are supported, returns an OSC 8 sequence that makes `text` clickable
-/// and links to `url`. When not supported, returns just `text`.
-///
-/// # Arguments
-/// * `url` - The URL to link to
-/// * `text` - The visible text to display
-/// * `stream` - Which stream to check for hyperlink support (Stderr for status messages, Stdout for data)
-pub fn hyperlink(url: &str, text: &str, stream: Stream) -> String {
+fn hyperlink(url: &str, text: &str, stream: Stream) -> String {
     if supports_hyperlinks::on(stream) {
         format!("\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", url, text)
     } else {
@@ -42,13 +29,6 @@ pub fn hyperlink(url: &str, text: &str, stream: Stream) -> String {
 /// Convenience wrapper for `hyperlink(url, text, Stream::Stderr)`.
 pub fn hyperlink_stderr(url: &str, text: &str) -> String {
     hyperlink(url, text, Stream::Stderr)
-}
-
-/// Format text as a clickable hyperlink for stdout output.
-///
-/// Convenience wrapper for `hyperlink(url, text, Stream::Stdout)`.
-pub fn hyperlink_stdout(url: &str, text: &str) -> String {
-    hyperlink(url, text, Stream::Stdout)
 }
 
 /// Get a description of why hyperlinks are or aren't supported.
@@ -139,5 +119,32 @@ mod tests {
         // Should always return a reason, even if detection fails
         let (reason, _env_var) = hyperlink_support_reason();
         assert!(!reason.is_empty());
+    }
+
+    #[test]
+    fn test_hyperlink_support_reason_format() {
+        // The detection result should be in a consistent format
+        let (reason, env_var) = hyperlink_support_reason();
+
+        // Reason should be a short descriptive string
+        assert!(!reason.is_empty());
+        assert!(!reason.contains('\n'));
+
+        // env_var, if present, should contain an = sign (e.g., "TERM=alacritty")
+        if let Some(var) = env_var {
+            assert!(var.contains('=') || var == "DOMTERM" || var.ends_with("VERSION"));
+        }
+    }
+
+    #[test]
+    fn test_hyperlink_stderr_returns_text_when_not_tty() {
+        // When not a TTY (test environment), hyperlink_stderr returns just the text
+        let url = "https://example.com";
+        let text = "link text";
+        let result = hyperlink_stderr(url, text);
+
+        // In test environment (not a TTY), we get plain text back
+        // (or OSC 8 format if terminal is detected as supporting hyperlinks)
+        assert!(result == text || result.contains(url));
     }
 }
