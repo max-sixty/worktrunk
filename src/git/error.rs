@@ -91,6 +91,7 @@ pub enum GitError {
     CannotRemoveMainWorktree,
     WorktreeLocked {
         branch: String,
+        path: PathBuf,
         reason: Option<String>,
     },
 
@@ -323,11 +324,16 @@ impl std::fmt::Display for GitError {
                 )
             }
 
-            GitError::WorktreeLocked { branch, reason } => {
+            GitError::WorktreeLocked {
+                branch,
+                path,
+                reason,
+            } => {
                 let reason_text = match reason {
                     Some(r) if !r.is_empty() => format!(" ({r})"),
                     _ => String::new(),
                 };
+                let path_display = format_path_for_display(path);
                 write!(
                     f,
                     "{}\n{}",
@@ -335,7 +341,7 @@ impl std::fmt::Display for GitError {
                         "Cannot remove <bold>{branch}</>, worktree is locked{reason_text}"
                     )),
                     hint_message(cformat!(
-                        "To unlock, run <bright-black>git worktree unlock {branch}</>"
+                        "To unlock, run <bright-black>git worktree unlock {path_display}</>"
                     ))
                 )
             }
@@ -998,6 +1004,7 @@ mod tests {
     fn test_git_error_worktree_locked_with_reason() {
         let err = GitError::WorktreeLocked {
             branch: "feature".into(),
+            path: PathBuf::from("/tmp/repo.feature"),
             reason: Some("Testing lock".into()),
         };
         let display = err.to_string();
@@ -1005,7 +1012,7 @@ mod tests {
         assert!(display.contains("feature"));
         assert!(display.contains(", worktree is locked"));
         assert!(display.contains("(Testing lock)"));
-        assert!(display.contains("git worktree unlock"));
+        assert!(display.contains("git worktree unlock /tmp/repo.feature"));
     }
 
     #[test]
@@ -1013,6 +1020,7 @@ mod tests {
         // When git outputs "locked" without a reason, we get Some("")
         let err = GitError::WorktreeLocked {
             branch: "feature".into(),
+            path: PathBuf::from("/tmp/repo.feature"),
             reason: Some("".into()),
         };
         let display = err.to_string();
@@ -1023,7 +1031,7 @@ mod tests {
             !display.contains("locked ("),
             "should not show parentheses without reason"
         );
-        assert!(display.contains("git worktree unlock"));
+        assert!(display.contains("git worktree unlock /tmp/repo.feature"));
     }
 
     #[test]

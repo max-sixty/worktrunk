@@ -34,4 +34,4 @@ exit_code: 1
 ----- stderr -----
 [36m◎ Removing [1mother[22m worktree & branch in background (same commit as [1mmain[22m,[39m [2m_[22m[36m)[39m
 [31m✗[39m [31mCannot remove [1mrepo.locked-detached[22m, worktree is locked (Locked detached)[39m
-[2m↳[22m [2mTo unlock, run [90mgit worktree unlock repo.locked-detached[39m[22m
+[2m↳[22m [2mTo unlock, run [90mgit worktree unlock _REPO_.locked-detached[39m[22m

@@ -93,6 +93,7 @@ impl RepositoryCliExt for Repository {
                         if wt.locked.is_some() {
                             return Err(GitError::WorktreeLocked {
                                 branch: branch.into(),
+                                path: wt.path.clone(),
                                 reason: wt.locked.clone(),
                             }
                             .into());
@@ -139,6 +140,7 @@ impl RepositoryCliExt for Repository {
                         .unwrap_or_else(|| wt.dir_name().to_string());
                     return Err(GitError::WorktreeLocked {
                         branch: name,
+                        path: wt.path.clone(),
                         reason: wt.locked.clone(),
                     }
                     .into());
