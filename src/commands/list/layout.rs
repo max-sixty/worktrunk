@@ -95,7 +95,7 @@
 //! which means empty penalties don't apply in progressive mode.
 //!
 //! Exceptions that we can compute instantly from items:
-//! - `path`: true only if any worktree has `path_mismatch` (computed from items)
+//! - `path`: true only if any worktree has `branch_worktree_mismatch` (computed from items)
 //! - `branch_diff`/`ci_status`: false if their required task is skipped
 //!
 //! Other columns (status, working_diff, ahead_behind, upstream) require expensive git operations,
@@ -258,7 +258,7 @@ pub struct ColumnDataFlags {
     pub upstream: bool,
     pub url: bool,
     pub ci_status: bool,
-    pub path: bool, // True if any worktree has path_mismatch (path doesn't match template)
+    pub path: bool, // True if any worktree has branch_worktree_mismatch
 }
 
 /// Layout metadata including position mask for Status column
@@ -559,7 +559,7 @@ fn estimate_url_width(url_template: Option<&str>, longest_branch: Option<&str>) 
 fn build_estimated_widths(
     max_branch: usize,
     skip_tasks: &HashSet<TaskKind>,
-    has_path_mismatch: bool,
+    has_branch_worktree_mismatch: bool,
     url_width: usize,
 ) -> LayoutMetadata {
     // Fixed widths for slow columns (require expensive git operations)
@@ -580,7 +580,7 @@ fn build_estimated_widths(
     // before the data arrives, so empty penalties don't apply properly.
     //
     // Exceptions that we can compute instantly from items:
-    // - path: true only if any worktree has path_mismatch (path doesn't match template)
+    // - path: true only if any worktree has branch_worktree_mismatch
     // - branch_diff/ci_status: false if their required task is skipped
     let data_flags = ColumnDataFlags {
         status: true,
@@ -590,7 +590,7 @@ fn build_estimated_widths(
         upstream: true,
         url: !skip_tasks.contains(&TaskKind::UrlStatus),
         ci_status: !skip_tasks.contains(&TaskKind::CiStatus),
-        path: has_path_mismatch,
+        path: has_branch_worktree_mismatch,
     };
 
     // URL width estimated from template + longest branch (or fallback)
@@ -880,18 +880,23 @@ pub fn calculate_layout_with_width(
         .unwrap_or(0);
     let max_path_width = fit_header(ColumnKind::Path.header(), path_data_width);
 
-    // Check if any worktree has a path that doesn't match the expected template.
+    // Check if any worktree has a branch-worktree mismatch.
     // Path column is only useful when there's a mismatch; otherwise it's redundant with branch.
-    let has_path_mismatch = items
+    let has_branch_worktree_mismatch = items
         .iter()
         .filter_map(|item| item.worktree_data())
-        .any(|data| data.path_mismatch);
+        .any(|data| data.branch_worktree_mismatch);
 
     // Estimate URL width from template + longest branch
     let url_width = estimate_url_width(url_template, longest_branch);
 
     // Build pre-allocated width estimates (same as buffered mode)
-    let metadata = build_estimated_widths(max_branch, skip_tasks, has_path_mismatch, url_width);
+    let metadata = build_estimated_widths(
+        max_branch,
+        skip_tasks,
+        has_branch_worktree_mismatch,
+        url_width,
+    );
 
     let commit_width = fit_header(ColumnKind::Commit.header(), COMMIT_HASH_WIDTH);
 
@@ -1129,7 +1134,7 @@ mod tests {
     fn test_pre_allocated_width_estimates() {
         // Test that build_estimated_widths() returns correct pre-allocated estimates
         // Empty skip set means all tasks are computed (equivalent to --full)
-        // has_path_mismatch=true to test the path flag is passed through
+        // has_branch_worktree_mismatch=true to test the path flag is passed through
         // url_width=0 since we're not testing URL column here
         let metadata = build_estimated_widths(20, &HashSet::new(), true, 0);
         let widths = metadata.widths;
@@ -1238,7 +1243,7 @@ mod tests {
                 is_main: false,
                 is_current: false,
                 is_previous: false,
-                path_mismatch: false,
+                branch_worktree_mismatch: false,
                 working_diff_display: None,
             })),
         };
@@ -1336,7 +1341,7 @@ mod tests {
                 is_main: true, // Primary worktree: no ahead/behind shown
                 is_current: false,
                 is_previous: false,
-                path_mismatch: false,
+                branch_worktree_mismatch: false,
                 working_diff_display: None,
             })),
         };

@@ -456,6 +456,7 @@ Once detected, the result is cached in `worktrunk.default-branch` for fast acces
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
+- For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
 - Looks for common names: main, master, develop, trunk
 
@@ -888,7 +889,7 @@ pub enum StepCommand {
         show_prompt: bool,
     },
 
-    /// Squash commits since target
+    /// Squash commits since branching
     ///
     /// Stages working tree changes, squashes all commits since diverging from target into one, generates message with LLM.
     Squash {
@@ -1962,7 +1963,7 @@ fi
 
     /// Interactive worktree selector
     ///
-    /// Toggle preview tabs with 1/2/3 keys. Toggle preview visibility with alt-p.
+    /// Browse and switch worktrees with live preview.
     #[cfg_attr(not(unix), command(hide = true))]
     #[command(
         after_long_help = r#"Interactive worktree picker with live preview. Navigate worktrees with keyboard shortcuts and press Enter to switch.
@@ -2090,7 +2091,7 @@ The Status column has multiple subcolumns. Within each, only the first matching 
 | | `⤴` | Rebase in progress |
 | | `⤵` | Merge in progress |
 | | `/` | Branch without worktree |
-| | `⚑` | Worktree path doesn't match branch name |
+| | `⚑` | Branch-worktree mismatch (branch name doesn't match worktree path) |
 | | `⊟` | Prunable (directory missing) |
 | | `⊞` | Locked worktree |
 | Default branch | `^` | Is the default branch |
@@ -2195,7 +2196,7 @@ wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_st
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | string | `"path_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
+| `state` | string | `"branch_worktree_mismatch"`, `"prunable"`, `"locked"` (absent when normal) |
 | `reason` | string | Reason for locked/prunable state |
 | `detached` | boolean | HEAD is detached |
 
@@ -2489,7 +2490,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
     /// Merge worktree into target branch
     ///
-    /// Squashes commits, rebases, runs hooks, merges to target, and removes the worktree.
+    /// Squash & rebase, fast-forward target, remove the worktree.
     #[command(
         after_long_help = r#"Run from a feature worktree to merge into the default branch — like clicking "Merge pull request" on GitHub.
 <!-- demo: wt-merge.gif 1600x900 -->

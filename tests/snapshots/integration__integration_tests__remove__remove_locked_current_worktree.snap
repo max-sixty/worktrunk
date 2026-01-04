@@ -31,4 +31,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot remove [1mlocked-current[22m, worktree is locked (Do not remove)[39m
-[2m↳[22m [2mTo unlock, run [90mgit worktree unlock locked-current[39m[22m
+[2m↳[22m [2mTo unlock, run [90mgit worktree unlock _REPO_.locked-current[39m[22m

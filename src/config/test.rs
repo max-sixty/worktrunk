@@ -55,7 +55,7 @@ fn test_expand_template_branch_escaping() {
 fn snapshot_expand_template_branch_with_quotes() {
     let vars = vars_with_branch("feature'test");
     let result = expand_template("echo '{{ branch }}'", &vars, true).unwrap();
-    insta::assert_snapshot!(result, @"echo ''feature'\\''test''");
+    insta::assert_snapshot!(result, @r"echo ''feature'\''test''");
 }
 
 #[test]

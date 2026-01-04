@@ -176,6 +176,8 @@ fn test_get_default_branch_no_remote_fails_when_no_match(repo: TestRepo) {
     repo.git_command().args(["branch", "def"]).status().unwrap();
 
     // Now we have: xyz, abc, def - no common names, no init.defaultBranch
+    // In normal repos (not bare), symbolic-ref HEAD isn't used because HEAD
+    // points to the current branch, not the default branch.
     // Should fail with an error
     let result = Repository::at(repo.root_path()).default_branch();
     assert!(result.is_err());

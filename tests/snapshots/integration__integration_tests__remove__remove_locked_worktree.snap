@@ -32,4 +32,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mCannot remove [1mlocked-feature[22m, worktree is locked (Testing lock)[39m
-[2m↳[22m [2mTo unlock, run [90mgit worktree unlock locked-feature[39m[22m
+[2m↳[22m [2mTo unlock, run [90mgit worktree unlock _REPO_.locked-feature[39m[22m

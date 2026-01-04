@@ -754,7 +754,7 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
     let log_contents = fs::read_to_string(log_file).unwrap();
 
     // Verify both stdout and stderr were captured
-    assert_snapshot!(log_contents, @r"
+    assert_snapshot!(log_contents, @"
     stdout output
     stderr output
     ");
@@ -977,7 +977,7 @@ approved-commands = ["""
     wait_for_file_lines(output_file.as_path(), 3, Duration::from_secs(5));
 
     let contents = fs::read_to_string(&output_file).unwrap();
-    assert_snapshot!(contents, @r"
+    assert_snapshot!(contents, @"
     first line
     second line
     third line
