@@ -129,7 +129,7 @@ pub enum OutputFormat {
 
 #[derive(Parser)]
 #[command(name = "wt")]
-#[command(about = "Git worktree management", long_about = None)]
+#[command(about = "Git worktree management for parallel AI agent workflows", long_about = None)]
 #[command(version = version_str())]
 #[command(disable_help_subcommand = true)]
 #[command(styles = help_styles())]
@@ -379,7 +379,7 @@ This tests:
         full: bool,
     },
 
-    /// Get, set, or clear stored state
+    /// Manage internal data and cache
     #[command(
         after_long_help = r#"State is stored in `.git/` (config entries and log files), separate from configuration files.
 Use `wt config show` to view file-based configuration.
@@ -2006,7 +2006,7 @@ Branches without worktrees are included — selecting one creates a worktree. (`
     )]
     Select,
 
-    /// List worktrees and optionally branches
+    /// List worktrees and their status
     #[command(
         after_long_help = r#"Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
 <!-- demo: wt-list.gif 1600x900 -->
@@ -2250,7 +2250,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
         #[arg(long)]
         remotes: bool,
 
-        /// Show CI, merge-base diffstat, and working tree conflict check
+        /// Include CI status and diff analysis (slower)
         #[arg(long)]
         full: bool,
 
