@@ -50,7 +50,6 @@ tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
 tests/test_auth.py::test_token_validation PASSED                         [100%]
 
 ============================== 3 passed in 0.8s ===============================
-
 [36m◎[39m [36mRunning pre-merge [1mproject:lint[22m:[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m run ruff check
 

@@ -17,87 +17,11 @@
 use std::fs;
 use std::path::Path;
 
-/// A branch in a mock command's logic.
-///
-/// Each branch matches an argument and produces output with an exit code.
-pub struct MockBranch {
-    /// The argument to match (e.g., "test", "clippy", "--version")
-    pub arg: &'static str,
-    /// Lines of output to print (each line is echoed)
-    pub output: Vec<&'static str>,
-    /// Exit code (0 for success)
-    pub exit_code: i32,
-}
-
-/// Create a mock command that switches on the first argument.
-///
-/// # Arguments
-/// * `bin_dir` - Directory to create the mock in (should be in PATH)
-/// * `name` - Command name (e.g., "cargo", "gh")
-/// * `branches` - List of argument matches and their behavior
-/// * `default_exit` - Exit code when no branch matches
-pub fn create_mock_command(bin_dir: &Path, name: &str, branches: &[MockBranch], default_exit: i32) {
-    // Build case branches
-    let case_branches: String = branches
-        .iter()
-        .map(|branch| {
-            let echoes: String = branch
-                .output
-                .iter()
-                .map(|line| format!("        echo '{}'\n", escape_shell_string(line)))
-                .collect();
-            format!(
-                "    {})\n{echoes}        exit {}\n        ;;",
-                branch.arg, branch.exit_code
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let script = format!(
-        r#"#!/bin/sh
-case "$1" in
-{case_branches}
-    *)
-        exit {default_exit}
-        ;;
-esac
-"#
-    );
-
-    write_mock_script(bin_dir, name, &script);
-}
-
-/// Create a mock command that outputs fixed content regardless of arguments.
-///
-/// Useful for simple mocks like `llm` that just return canned output.
-pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &[&str], exit_code: i32) {
-    let echoes: String = output
-        .iter()
-        .map(|line| format!("echo '{}'\n", escape_shell_string(line)))
-        .collect();
-
-    // cat > /dev/null discards stdin (for mocks that receive piped input)
-    let script = format!(
-        r#"#!/bin/sh
-cat > /dev/null
-{echoes}exit {exit_code}
-"#
-    );
-
-    write_mock_script(bin_dir, name, &script);
-}
-
-/// Escape single quotes in shell strings.
-fn escape_shell_string(s: &str) -> String {
-    s.replace('\'', "'\"'\"'")
-}
-
 /// Write a mock shell script, with platform-appropriate setup.
 ///
 /// On Unix: writes directly as executable script
 /// On Windows: writes script (no extension) for Git Bash + .bat/.cmd shims for CMD
-fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
+pub fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -122,53 +46,69 @@ fn write_mock_script(bin_dir: &Path, name: &str, script: &str) {
     }
 }
 
+/// Create a mock command that outputs fixed lines and exits.
+///
+/// Each line is echoed. Stdin is discarded (for mocks that receive piped input).
+pub fn create_simple_mock(bin_dir: &Path, name: &str, output: &str, exit_code: i32) {
+    let echoes: String = output
+        .lines()
+        .map(|line| format!("echo '{}'\n", escape_shell_string(line)))
+        .collect();
+
+    let script = format!(
+        r#"#!/bin/sh
+cat > /dev/null
+{echoes}exit {exit_code}
+"#
+    );
+
+    write_mock_script(bin_dir, name, &script);
+}
+
+/// Escape single quotes in shell strings.
+fn escape_shell_string(s: &str) -> String {
+    s.replace('\'', "'\"'\"'")
+}
+
 // === High-level mock helpers for common test scenarios ===
 
 /// Create a mock cargo command for tests.
 ///
 /// Handles: test, clippy, install subcommands with realistic output.
 pub fn create_mock_cargo(bin_dir: &Path) {
-    create_mock_command(
+    write_mock_script(
         bin_dir,
         "cargo",
-        &[
-            MockBranch {
-                arg: "test",
-                output: vec![
-                    "    Finished test [unoptimized + debuginfo] target(s) in 0.12s",
-                    "     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)",
-                    "",
-                    "running 18 tests",
-                    "test auth::tests::test_jwt_decode ... ok",
-                    "test auth::tests::test_jwt_encode ... ok",
-                    "test auth::tests::test_token_refresh ... ok",
-                    "test auth::tests::test_token_validation ... ok",
-                    "",
-                    "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
-                ],
-                exit_code: 0,
-            },
-            MockBranch {
-                arg: "clippy",
-                output: vec![
-                    "    Checking worktrunk v0.1.0",
-                    "    Finished dev [unoptimized + debuginfo] target(s) in 1.23s",
-                ],
-                exit_code: 0,
-            },
-            MockBranch {
-                arg: "install",
-                output: vec![
-                    "  Installing worktrunk v0.1.0",
-                    "   Compiling worktrunk v0.1.0",
-                    "    Finished release [optimized] target(s) in 2.34s",
-                    "  Installing ~/.cargo/bin/wt",
-                    "   Installed package `worktrunk v0.1.0` (executable `wt`)",
-                ],
-                exit_code: 0,
-            },
-        ],
-        1,
+        r#"#!/bin/sh
+case "$1" in
+    test)
+        echo '    Finished test [unoptimized + debuginfo] target(s) in 0.12s'
+        echo '     Running unittests src/lib.rs (target/debug/deps/worktrunk-abc123)'
+        echo ''
+        echo 'running 18 tests'
+        echo 'test auth::tests::test_jwt_decode ... ok'
+        echo 'test auth::tests::test_jwt_encode ... ok'
+        echo 'test auth::tests::test_token_refresh ... ok'
+        echo 'test auth::tests::test_token_validation ... ok'
+        echo ''
+        echo 'test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s'
+        ;;
+    clippy)
+        echo '    Checking worktrunk v0.1.0'
+        echo '    Finished dev [unoptimized + debuginfo] target(s) in 1.23s'
+        ;;
+    install)
+        echo '  Installing worktrunk v0.1.0'
+        echo '   Compiling worktrunk v0.1.0'
+        echo '    Finished release [optimized] target(s) in 2.34s'
+        echo '  Installing ~/.cargo/bin/wt'
+        echo '   Installed package `worktrunk v0.1.0` (executable `wt`)'
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+"#,
     );
 }
 
@@ -179,17 +119,15 @@ pub fn create_mock_llm_auth(bin_dir: &Path) {
     create_simple_mock(
         bin_dir,
         "llm",
-        &[
-            "feat(auth): Implement JWT authentication system",
-            "",
-            "Add comprehensive JWT token handling including validation, refresh logic,",
-            "and authentication tests. This establishes the foundation for secure",
-            "API authentication.",
-            "",
-            "- Implement token refresh mechanism with expiry handling",
-            "- Add JWT encoding/decoding with signature verification",
-            "- Create test suite covering all authentication flows",
-        ],
+        r#"feat(auth): Implement JWT authentication system
+
+Add comprehensive JWT token handling including validation, refresh logic,
+and authentication tests. This establishes the foundation for secure
+API authentication.
+
+- Implement token refresh mechanism with expiry handling
+- Add JWT encoding/decoding with signature verification
+- Create test suite covering all authentication flows"#,
         0,
     );
 }
@@ -199,12 +137,10 @@ pub fn create_mock_llm_api(bin_dir: &Path) {
     create_simple_mock(
         bin_dir,
         "llm",
-        &[
-            "feat(api): Add user authentication endpoints",
-            "",
-            "Implement login and token refresh endpoints with JWT validation.",
-            "Includes comprehensive test coverage and input validation.",
-        ],
+        r#"feat(api): Add user authentication endpoints
+
+Implement login and token refresh endpoints with JWT validation.
+Includes comprehensive test coverage and input validation."#,
         0,
     );
 }
@@ -213,27 +149,31 @@ pub fn create_mock_llm_api(bin_dir: &Path) {
 ///
 /// Handles: `uv sync` (1 arg) and `uv run dev` (2 args).
 pub fn create_mock_uv_sync(bin_dir: &Path) {
-    let script = r#"#!/bin/sh
+    write_mock_script(
+        bin_dir,
+        "uv",
+        r#"#!/bin/sh
 if [ "$1" = "sync" ]; then
-    echo ""
-    echo "  Resolved 24 packages in 145ms"
-    echo "  Installed 24 packages in 1.2s"
-    exit 0
+    echo ''
+    echo '  Resolved 24 packages in 145ms'
+    echo '  Installed 24 packages in 1.2s'
 elif [ "$1" = "run" ] && [ "$2" = "dev" ]; then
-    echo ""
-    echo "  Starting dev server on http://localhost:3000..."
-    exit 0
+    echo ''
+    echo '  Starting dev server on http://localhost:3000...'
 else
     echo "uv: unknown command '$1 $2'"
     exit 1
 fi
-"#;
-    write_mock_script(bin_dir, "uv", script);
+"#,
+    );
 }
 
 /// Create mock uv that delegates to pytest/ruff commands.
 pub fn create_mock_uv_pytest_ruff(bin_dir: &Path) {
-    let script = r#"#!/bin/sh
+    write_mock_script(
+        bin_dir,
+        "uv",
+        r#"#!/bin/sh
 if [ "$1" = "run" ] && [ "$2" = "pytest" ]; then
     exec pytest
 elif [ "$1" = "run" ] && [ "$2" = "ruff" ]; then
@@ -243,8 +183,8 @@ else
     echo "uv: unknown command '$1 $2'"
     exit 1
 fi
-"#;
-    write_mock_script(bin_dir, "uv", script);
+"#,
+    );
 }
 
 /// Create a mock pytest command with test output.
@@ -252,33 +192,37 @@ pub fn create_mock_pytest(bin_dir: &Path) {
     create_simple_mock(
         bin_dir,
         "pytest",
-        &[
-            "",
-            "============================= test session starts ==============================",
-            "collected 3 items",
-            "",
-            "tests/test_auth.py::test_login_success PASSED                            [ 33%]",
-            "tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]",
-            "tests/test_auth.py::test_token_validation PASSED                         [100%]",
-            "",
-            "============================== 3 passed in 0.8s ===============================",
-            "",
-        ],
+        r#"
+============================= test session starts ==============================
+collected 3 items
+
+tests/test_auth.py::test_login_success PASSED                            [ 33%]
+tests/test_auth.py::test_login_invalid_password PASSED                   [ 66%]
+tests/test_auth.py::test_token_validation PASSED                         [100%]
+
+============================== 3 passed in 0.8s ===============================
+"#,
         0,
     );
 }
 
 /// Create a mock ruff command.
 pub fn create_mock_ruff(bin_dir: &Path) {
-    create_mock_command(
+    write_mock_script(
         bin_dir,
         "ruff",
-        &[MockBranch {
-            arg: "check",
-            output: vec!["", "All checks passed!", ""],
-            exit_code: 0,
-        }],
-        1,
+        r#"#!/bin/sh
+case "$1" in
+    check)
+        echo ''
+        echo 'All checks passed!'
+        echo ''
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+"#,
     );
 }
 
@@ -288,34 +232,18 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_create_mock_command() {
+    fn test_write_mock_script() {
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path();
 
-        create_mock_command(
-            bin_dir,
-            "test-cmd",
-            &[
-                MockBranch {
-                    arg: "hello",
-                    output: vec!["Hello, World!"],
-                    exit_code: 0,
-                },
-                MockBranch {
-                    arg: "fail",
-                    output: vec!["Error occurred"],
-                    exit_code: 1,
-                },
-            ],
-            2,
-        );
+        write_mock_script(bin_dir, "test-cmd", "#!/bin/sh\necho 'hello'\n");
 
         #[cfg(unix)]
         assert!(bin_dir.join("test-cmd").exists());
 
         #[cfg(windows)]
         {
-            assert!(bin_dir.join("test-cmd").exists()); // Shell script for Git Bash
+            assert!(bin_dir.join("test-cmd").exists());
             assert!(bin_dir.join("test-cmd.cmd").exists());
             assert!(bin_dir.join("test-cmd.bat").exists());
         }
@@ -326,14 +254,14 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path();
 
-        create_simple_mock(bin_dir, "simple-cmd", &["Line 1", "Line 2", "Line 3"], 0);
+        create_simple_mock(bin_dir, "simple-cmd", "Line 1\nLine 2\nLine 3", 0);
 
         #[cfg(unix)]
         assert!(bin_dir.join("simple-cmd").exists());
 
         #[cfg(windows)]
         {
-            assert!(bin_dir.join("simple-cmd").exists()); // Shell script for Git Bash
+            assert!(bin_dir.join("simple-cmd").exists());
             assert!(bin_dir.join("simple-cmd.cmd").exists());
             assert!(bin_dir.join("simple-cmd.bat").exists());
         }
