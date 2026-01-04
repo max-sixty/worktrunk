@@ -88,8 +88,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 .as_ref()
                 .and_then(|c| c.hooks.post_create.as_ref());
             require_hooks(user_config, project_config, hook_type)?;
-            // Manual wt hook: user is always at cwd (no cd happens)
-            let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
+            // Manual wt hook: user stays at cwd (no cd happens)
             run_hook_with_filter(
                 &ctx,
                 user_config,
@@ -98,7 +97,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &[],
                 HookFailureStrategy::FailFast,
                 name_filter,
-                crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
+                crate::output::pre_hook_display_path(ctx.worktree_path),
             )
         }
         HookType::PostStart => {
@@ -152,8 +151,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 .into_iter()
                 .map(|t| ("target", t))
                 .collect();
-            // Manual wt hook: user is always at cwd (no cd happens)
-            let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
+            // Manual wt hook: user stays at cwd (no cd happens)
             run_hook_with_filter(
                 &ctx,
                 user_config,
@@ -162,7 +160,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &extra_vars,
                 HookFailureStrategy::FailFast,
                 name_filter,
-                crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
+                crate::output::pre_hook_display_path(ctx.worktree_path),
             )
         }
         HookType::PreMerge => {
@@ -173,23 +171,20 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
             run_pre_merge_commands(&project_cfg, &ctx, ctx.branch_or_head(), name_filter)
         }
         HookType::PostMerge => {
-            // Use current branch as target (matches approval prompt for wt hook)
-            // Manual wt hook: user is always at cwd (no cd happens)
-            let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
+            // Manual wt hook: user stays at cwd (no cd happens)
             execute_post_merge_commands(
                 &ctx,
                 ctx.branch_or_head(),
                 name_filter,
-                crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
+                crate::output::pre_hook_display_path(ctx.worktree_path),
             )
         }
         HookType::PreRemove => {
-            // Manual wt hook: user is always at cwd (no cd happens)
-            let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
+            // Manual wt hook: user stays at cwd (no cd happens)
             execute_pre_remove_commands(
                 &ctx,
                 name_filter,
-                crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
+                crate::output::pre_hook_display_path(ctx.worktree_path),
             )
         }
     }

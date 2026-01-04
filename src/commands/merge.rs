@@ -254,20 +254,13 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             yes,
         );
         // Show path when user's shell won't be in the destination directory where hooks run.
-        let display_path = if in_main || on_target {
-            // User is already in the destination directory
-            None
-        } else if !remove_effective {
-            // Worktree preserved — user's shell stays in feature worktree
-            Some(destination_path.as_path())
+        let display_path = if remove_effective && !in_main && !on_target {
+            // Worktree removed, user will cd to destination
+            crate::output::post_hook_display_path(&destination_path)
         } else {
-            // Worktree removed — show path only if shell integration won't cd there
-            // Post-hook: user will be at destination if shell integration active
-            if crate::output::is_shell_integration_active() {
-                None // Shell will cd there
-            } else {
-                Some(destination_path.as_path())
-            }
+            // No cd happens — user stays at cwd (either already at destination,
+            // or worktree preserved so they stay in feature)
+            crate::output::pre_hook_display_path(&destination_path)
         };
         execute_post_merge_commands(&ctx, &target_branch, None, display_path)?;
     }
@@ -285,8 +278,6 @@ pub fn run_pre_merge_commands(
     target_branch: &str,
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
-    // Pre-hook: user is at cwd when hooks run
-    let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
     run_hook_with_filter(
         ctx,
         ctx.config.hooks.pre_merge.as_ref(),
@@ -295,7 +286,7 @@ pub fn run_pre_merge_commands(
         &[("target", target_branch)],
         HookFailureStrategy::FailFast,
         name_filter,
-        crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
+        crate::output::pre_hook_display_path(ctx.worktree_path),
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }

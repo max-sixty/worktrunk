@@ -519,13 +519,7 @@ fn spawn_post_switch_after_remove(
         &repo_root,
         false, // force=false for CommandContext
     );
-    // Post-hook: user will be at main_path if shell integration active
-    let display_path = if super::is_shell_integration_active() {
-        None // Shell will cd there
-    } else {
-        Some(main_path)
-    };
-    ctx.spawn_post_switch_commands(display_path)
+    ctx.spawn_post_switch_commands(super::post_hook_display_path(main_path))
 }
 
 /// Handle output for RemovedWorktree removal

@@ -65,46 +65,33 @@ in their native styling (see "Symbol styling" below).
 
 **Show path when hooks run in a different directory:** When hooks run in a
 worktree other than the user's current (or eventual) location, show the path.
-Use `output::compute_hooks_display_path(hooks_run_at, user_location)` which
-returns `Some(hooks_run_at)` when different from `user_location`, or `None`
-when they match.
+Use the appropriate helper function:
 
-There are two cases for determining `user_location`:
+1. **Pre-hooks and manual `wt hook`** — User is at cwd, no cd happens.
+   Use `output::pre_hook_display_path(hooks_run_at)`.
+   Examples: pre-commit, pre-merge, pre-remove, manual `wt hook post-merge`.
 
-1. **Pre-hooks** — User is at cwd when hooks run. Use cwd as user_location.
-   Example: `wt step commit` runs pre-commit hooks in the current worktree.
-
-2. **Post-hooks** — User will be at destination if shell integration is active.
-   Check `is_shell_integration_active()` to determine user_location.
-   Examples: post-switch, post-start, post-create, post-merge hooks.
+2. **Post-hooks** — User will cd to destination if shell integration is active.
+   Use `output::post_hook_display_path(destination)`.
+   Examples: post-create, post-switch, post-start, post-merge (after removal).
 
 ```rust
-// Pre-hooks: user is at cwd when hooks run
-let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
-let display_path = crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd);
+// Pre-hooks: user is at cwd, no cd happens
+run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path))?;
 
-// Post-hooks: user will be at destination if shell integration active
-let user_location = if crate::output::is_shell_integration_active() {
-    destination_path.to_path_buf()
-} else {
-    std::env::current_dir().unwrap_or_else(|_| destination_path.to_path_buf())
-};
-let display_path = crate::output::compute_hooks_display_path(&destination_path, &user_location);
+// Post-hooks: user will cd to destination if shell integration active
+ctx.spawn_post_start_commands(crate::output::post_hook_display_path(&destination))?;
 
-// Simpler post-hook case when destination == worktree_path
-let display_path = if crate::output::is_shell_integration_active() {
-    None // Shell will cd there
+// Complex case: cd only happens under certain conditions
+let display_path = if will_cd_to_destination {
+    crate::output::post_hook_display_path(&destination_path)
 } else {
-    Some(destination_path.as_path())
+    crate::output::pre_hook_display_path(&destination_path)
 };
 ```
 
-Omit the path when the user is (or will be) in the worktree where hooks run:
-
-- **User is already there and will stay**: Pre-merge hooks, pre-commit hooks
-  when cwd matches worktree_path
-- **User will cd there via shell integration**: Post-switch, post-start, and
-  post-merge hooks when shell integration is active
+These helpers encapsulate the shell integration check internally, so callers
+don't need to check `is_shell_integration_active()` directly
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something

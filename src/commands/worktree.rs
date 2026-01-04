@@ -763,12 +763,6 @@ impl<'a> CommandContext<'a> {
     /// won't cd to the new worktree, so they need to know where hooks ran).
     pub fn execute_post_create_commands(&self) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
-        // Post-hook: user will be at worktree_path if shell integration active
-        let user_location = if crate::output::is_shell_integration_active() {
-            self.worktree_path.to_path_buf()
-        } else {
-            std::env::current_dir().unwrap_or_else(|_| self.worktree_path.to_path_buf())
-        };
         super::hooks::run_hook_with_filter(
             self,
             self.config.hooks.post_create.as_ref(),
@@ -779,7 +773,7 @@ impl<'a> CommandContext<'a> {
             &[],
             HookFailureStrategy::Warn,
             None,
-            crate::output::compute_hooks_display_path(self.worktree_path, &user_location),
+            crate::output::post_hook_display_path(self.worktree_path),
         )
     }
 
