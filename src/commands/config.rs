@@ -2,7 +2,6 @@ use anyhow::Context;
 use color_print::cformat;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::fmt::Write as _;
-use std::io::IsTerminal;
 use std::path::PathBuf;
 use worktrunk::config::WorktrunkConfig;
 use worktrunk::config::{find_unknown_project_keys, find_unknown_user_keys};
@@ -196,35 +195,14 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_with_gutter(&debug_text, None))?;
 
     // Show hyperlink support status (separate from shell integration)
-    // Note: supports_hyperlinks_stderr() checks BOTH terminal capability AND TTY status.
+    // supports_hyperlinks_stderr() checks BOTH terminal capability AND TTY status
     let hyperlinks_supported = worktrunk::styling::supports_hyperlinks_stderr();
-    let (reason, env_var) = worktrunk::styling::hyperlink_support_reason();
-    let is_stderr_tty = std::io::stderr().is_terminal();
-
-    // Build explanation based on detection result and TTY status
-    let explanation = if hyperlinks_supported {
-        // Active: show terminal detection
-        if let Some(var) = env_var {
-            cformat!("active ({reason}, <bold>{var}</>)")
-        } else {
-            format!("active ({reason})")
-        }
-    } else if !is_stderr_tty {
-        // Terminal detected but not a TTY (common when piping or in pagers)
-        if let Some(var) = env_var {
-            cformat!("inactive (not a TTY; terminal: {reason}, <bold>{var}</>)")
-        } else {
-            format!("inactive (not a TTY; terminal: {reason})")
-        }
+    let status = if hyperlinks_supported {
+        "active"
     } else {
-        // TTY but terminal not detected
-        format!("inactive ({reason})")
+        "inactive"
     };
-    writeln!(
-        out,
-        "{}",
-        info_message(format!("Hyperlinks: {explanation}"))
-    )?;
+    writeln!(out, "{}", info_message(format!("Hyperlinks: {status}")))?;
 
     Ok(())
 }
