@@ -685,6 +685,16 @@ pub fn collect(
             }
         }
     );
+    // TODO: Make default_branch optional so wt list can gracefully degrade when detection fails.
+    // Currently, ambiguous repos (multiple non-standard branches, no remote) fail entirely.
+    // With symbolic-ref HEAD heuristic added, this is less common but still possible.
+    // Required changes:
+    // 1. Make default_branch Option<String> here
+    // 2. find_home() already handles empty default_branch (falls back to first)
+    // 3. Make main_worktree optional or use first worktree when default_branch is None
+    // 4. Update TaskContext.require_default_branch() callers to handle None gracefully
+    //    (skip ahead/behind, integration status, etc. instead of failing)
+    // 5. Show warning when default_branch couldn't be determined
     let default_branch = default_branch?;
     let branches_without_worktrees = branches_without_worktrees?;
     let remote_branches = remote_branches?;
@@ -759,12 +769,12 @@ pub fn collect(
 
             // Check if worktree is at its expected path based on config template
             // Use optimized variant with pre-computed default_branch and is_bare
-            let path_mismatch =
+            let branch_worktree_mismatch =
                 !is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare);
 
             let mut worktree_data =
                 WorktreeData::from_worktree(wt, is_main, is_current, is_previous);
-            worktree_data.path_mismatch = path_mismatch;
+            worktree_data.branch_worktree_mismatch = branch_worktree_mismatch;
 
             // URL expanded post-skeleton to minimize time-to-skeleton
             ListItem {

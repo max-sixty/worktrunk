@@ -62,6 +62,23 @@ fn test_format_indicator_with_url() {
 
 If tests need a convenience wrapper, define it in the test module. The production API should be the same API tests exercise.
 
+## Documentation
+
+**Behavior changes require documentation updates.** This is not optional.
+
+When changing:
+- Detection logic
+- CLI flags or their defaults
+- Error conditions or messages
+
+Ask: "Does `--help` still describe what the code does?" If not, update `src/cli.rs` first.
+
+After modifying `cli.rs`, sync the doc pages:
+
+```bash
+cargo test --test integration test_command_pages_are_in_sync
+```
+
 ## Data Safety
 
 Never risk data loss without explicit user consent. Err on the side of failing safely.

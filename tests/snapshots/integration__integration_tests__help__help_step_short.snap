@@ -25,7 +25,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
   [1m[36mcommit[0m    Commit changes with LLM commit message
-  [1m[36msquash[0m    Squash commits since target
+  [1m[36msquash[0m    Squash commits since branching
   [1m[36mpush[0m      Fast-forward target to current branch
   [1m[36mrebase[0m    Rebase onto target
   [1m[36mfor-each[0m  [experimental] Run command in each worktree

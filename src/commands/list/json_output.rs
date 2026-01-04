@@ -191,7 +191,7 @@ pub struct JsonRemote {
 /// Worktree-specific state
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonWorktree {
-    /// Worktree state: "no_worktree", "path_mismatch", "prunable", "locked" (absent when normal)
+    /// Worktree state: "no_worktree", "branch_worktree_mismatch", "prunable", "locked" (absent when normal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
 
@@ -384,7 +384,9 @@ fn worktree_state_to_json(
         match symbols.worktree_state {
             WorktreeState::None => {}
             WorktreeState::Branch => return (Some("no_worktree"), None),
-            WorktreeState::PathMismatch => return (Some("path_mismatch"), None),
+            WorktreeState::BranchWorktreeMismatch => {
+                return (Some("branch_worktree_mismatch"), None);
+            }
             WorktreeState::Prunable => return (Some("prunable"), data.prunable.clone()),
             WorktreeState::Locked => return (Some("locked"), data.locked.clone()),
         }
@@ -631,7 +633,7 @@ mod tests {
             working_tree_diff: None,
             working_tree_diff_with_main: None,
             git_operation: GitOperationState::None,
-            path_mismatch: false,
+            branch_worktree_mismatch: false,
             working_diff_display: None,
         }
     }
@@ -666,11 +668,12 @@ mod tests {
     }
 
     #[test]
-    fn test_worktree_state_to_json_path_mismatch() {
+    fn test_worktree_state_to_json_branch_worktree_mismatch() {
         let data = make_worktree_data();
-        let symbols = make_status_symbols_with_worktree_state(WorktreeState::PathMismatch);
+        let symbols =
+            make_status_symbols_with_worktree_state(WorktreeState::BranchWorktreeMismatch);
         let (state, reason) = worktree_state_to_json(&data, Some(&symbols));
-        assert_eq!(state, Some("path_mismatch"));
+        assert_eq!(state, Some("branch_worktree_mismatch"));
         assert!(reason.is_none());
     }
 

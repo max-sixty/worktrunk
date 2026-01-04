@@ -766,6 +766,7 @@ Once detected, the result is cached in `worktrunk.default-branch` for fast acces
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
+- For bare repos or empty repos, checks `symbolic-ref HEAD`
 - Checks `git config init.defaultBranch`
 - Looks for common names: main, master, develop, trunk
 

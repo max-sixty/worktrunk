@@ -11,7 +11,9 @@ use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
+use worktrunk::config::ProjectConfig;
 use worktrunk::git::{Repository, Worktree};
+use worktrunk::styling::{get_terminal_width, truncate_visible};
 
 use super::list::{self, CollectOptions};
 
@@ -200,7 +202,12 @@ pub fn run(claude_code: bool) -> Result<()> {
         use worktrunk::styling::fix_dim_after_color_reset;
         let reset = anstyle::Reset;
         let output = fix_dim_after_color_reset(&output);
-        output::stdout(format!("{reset} {output}"))?;
+
+        // Truncate to terminal width (Claude Code passes correct COLUMNS)
+        let max_width = get_terminal_width();
+        let output = truncate_visible(&format!("{reset} {output}"), max_width);
+
+        output::stdout(output)?;
     }
 
     Ok(())
@@ -243,16 +250,25 @@ fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<
     // Build item with identity fields
     let mut item = list::build_worktree_item(wt, is_home, true, false);
 
+    // Load URL template from project config (if configured)
+    let url_template = repo
+        .worktree_root()
+        .ok()
+        .and_then(|root| ProjectConfig::load(root).ok().flatten())
+        .and_then(|config| config.list)
+        .and_then(|list| list.url);
+
+    // Build collect options with URL template
+    let options = CollectOptions {
+        url_template,
+        ..Default::default()
+    };
+
     // Populate computed fields (parallel git operations) and format status_line
     // Compute everything (same as --full) for complete status symbols
     // Pass default_branch for stable informational stats,
     // and integration_target for integration status checks.
-    list::populate_item(
-        &mut item,
-        &default_branch,
-        &integration_target,
-        CollectOptions::default(),
-    )?;
+    list::populate_item(&mut item, &default_branch, &integration_target, options)?;
 
     // Format statusline with link control
     let statusline = item.format_statusline_with_options(include_links);
@@ -394,6 +410,42 @@ mod tests {
             dir,
             pattern,
             branch
+        );
+    }
+
+    #[test]
+    fn test_statusline_truncation() {
+        use color_print::cformat;
+        use worktrunk::styling::truncate_visible;
+
+        // Simulate a long statusline with styled content
+        let long_line =
+            cformat!("main  <cyan>?</><dim>^</>  http://very-long-branch-name.localhost:3000");
+
+        // Truncate to 30 visible characters
+        let truncated = truncate_visible(&long_line, 30);
+
+        // Should end with ellipsis and be shorter
+        assert!(
+            truncated.contains('…'),
+            "Truncated line should contain ellipsis: {truncated}"
+        );
+
+        // Visible width should be <= 30
+        let visible: String = truncated
+            .chars()
+            .filter(|c| !c.is_ascii_control())
+            .collect();
+        // Simple check: the truncated output should be shorter than original
+        let original_visible: String = long_line
+            .chars()
+            .filter(|c| !c.is_ascii_control())
+            .collect();
+        assert!(
+            visible.len() < original_visible.len(),
+            "Truncated should be shorter: {} vs {}",
+            visible.len(),
+            original_visible.len()
         );
     }
 }

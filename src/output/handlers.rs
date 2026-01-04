@@ -297,11 +297,12 @@ pub fn handle_switch_output(
         Some(compute_shell_warning_reason())
     };
 
-    // Show path mismatch warning after the main message
-    let path_mismatch_warning = branch_info.expected_path.as_ref().map(|expected| {
+    // Show branch-worktree mismatch warning after the main message
+    let branch_worktree_mismatch_warning = branch_info.expected_path.as_ref().map(|expected| {
         let expected_display = format_path_for_display(expected);
+        let branch = &branch_info.branch;
         warning_message(cformat!(
-            "Worktree path doesn't match branch name; expected <bold>{expected_display}</> <red>⚑</>"
+            "Branch-worktree mismatch; expected <bold>{branch}</> @ <bold>{expected_display}</> <red>⚑</>"
         ))
     });
 
@@ -311,7 +312,7 @@ pub fn handle_switch_output(
             super::print(info_message(cformat!(
                 "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
             )))?;
-            if let Some(warning) = path_mismatch_warning {
+            if let Some(warning) = branch_worktree_mismatch_warning {
                 super::print(warning)?;
             }
             // User is already there - no path annotation needed
@@ -320,7 +321,7 @@ pub fn handle_switch_output(
         SwitchResult::Existing(_) => {
             if let Some(reason) = &shell_warning_reason {
                 // Shell integration not active — single warning with context
-                if let Some(warning) = path_mismatch_warning {
+                if let Some(warning) = branch_worktree_mismatch_warning {
                     super::print(warning)?;
                 }
                 if let Some(cmd) = execute_command {
@@ -345,7 +346,7 @@ pub fn handle_switch_output(
                 super::print(info_message(format_switch_message(
                     branch, path, false, None, None,
                 )))?;
-                if let Some(warning) = path_mismatch_warning {
+                if let Some(warning) = branch_worktree_mismatch_warning {
                     super::print(warning)?;
                 }
                 // cd will happen - no path annotation needed
@@ -389,7 +390,7 @@ pub fn handle_switch_output(
                 // cd will happen - no path annotation needed
                 None
             }
-            // Note: No path_mismatch_warning — created worktrees are always at
+            // Note: No branch_worktree_mismatch_warning — created worktrees are always at
             // the expected path (SwitchBranchInfo::expected_path is None)
         }
     };

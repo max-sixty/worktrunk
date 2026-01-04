@@ -1,10 +1,17 @@
 // Copy-to-clipboard for code blocks
 // Strips leading `$ ` from terminal blocks
+// Wraps pre in a container so copy button stays fixed during horizontal scroll
 
 document.addEventListener('DOMContentLoaded', function() {
   const codeBlocks = document.querySelectorAll('.content pre');
 
   codeBlocks.forEach(function(block) {
+    // Wrap pre in a container for proper button positioning
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-block-wrapper';
+    block.parentNode.insertBefore(wrapper, block);
+    wrapper.appendChild(block);
+
     const button = document.createElement('button');
     button.className = 'code-copy-btn';
     button.setAttribute('aria-label', 'Copy code');
@@ -36,6 +43,7 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     });
 
-    block.appendChild(button);
+    // Add button to wrapper (outside the scrollable pre)
+    wrapper.appendChild(button);
   });
 });

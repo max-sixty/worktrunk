@@ -14,6 +14,7 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
@@ -56,6 +57,7 @@ Once detected, the result is cached in [2mworktrunk.default-branch[0m for fast
 
 The local inference fallback uses these heuristics in order:
 - If only one local branch exists, uses it
+- For bare repos or empty repos, checks [2msymbolic-ref HEAD
 - Checks [2mgit config init.defaultBranch
 - Looks for common names: main, master, develop, trunk
 
