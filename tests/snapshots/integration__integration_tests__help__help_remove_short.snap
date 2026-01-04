@@ -12,13 +12,14 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt remove - Remove worktree and branch
+wt remove - Remove worktree and branch (if merged)
 
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
 

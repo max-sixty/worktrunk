@@ -8,7 +8,7 @@ group = "Commands"
 
 <!-- ⚠️ AUTO-GENERATED from `wt remove --help-page` — edit cli.rs to update -->
 
-Removes worktrees and their branches. Without arguments, removes the current worktree and returns to the main worktree.
+Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
 
 ## Examples
 
@@ -39,7 +39,7 @@ wt remove -D experimental
 
 ## Branch cleanup
 
-Branches delete automatically when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
+By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but file changes match.
 
 Worktrunk checks five conditions (in order of cost):
 
@@ -71,7 +71,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 ## Command reference
 
 {% terminal() %}
-wt remove - Remove worktree and branch
+wt remove - Remove worktree and branch (if merged)
 
 Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <span class=c>[BRANCHES]...</span>
 

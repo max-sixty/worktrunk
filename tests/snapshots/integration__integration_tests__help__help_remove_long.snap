@@ -12,13 +12,14 @@ info:
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
 success: true
 exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-wt remove - Remove worktree and branch
+wt remove - Remove worktree and branch (if merged)
 
 Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
 
@@ -60,7 +61,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Removes worktrees and their branches. Without arguments, removes the current worktree and returns to the main worktree.
+Removes worktrees and their branches (if merged), returning to the main worktree. Defaults to removing the current worktree.
 
 [32mExamples
 
@@ -83,8 +84,8 @@ Force-delete an unmerged branch:
 
 [32mBranch cleanup
 
-Branches delete automatically when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs but
-file changes match.
+By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs
+but file changes match.
 
 Worktrunk checks five conditions (in order of cost):
 
