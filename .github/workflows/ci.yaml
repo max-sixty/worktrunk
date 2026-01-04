@@ -100,16 +100,6 @@ jobs:
     - name: 🧪 Pre-merge hooks
       run: wt hook pre-merge --yes
 
-    - name: 🔍 Debug mock output (Windows only)
-      if: failure() && runner.os == 'Windows'
-      shell: bash
-      run: |
-        echo "=== Mock stub debug log (native Windows path) ==="
-        cat "$TEMP/mock-stub-debug.log" 2>/dev/null || echo "No mock-stub debug log found"
-        echo ""
-        echo "=== Mock gh debug log (MSYS /tmp) ==="
-        cat /tmp/mock-gh-debug.log 2>/dev/null || echo "No mock-gh debug log found"
-
   # Check if Cargo files changed (for conditional jobs below)
   changes:
     runs-on: ubuntu-latest

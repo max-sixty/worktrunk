@@ -1597,24 +1597,6 @@ esac
 # JSON files are in the same directory as this script
 SCRIPT_DIR="{script_dir}"
 
-# Debug output to /tmp which definitely exists in Git Bash
-# This file will be read by the test on failure
-DEBUG_LOG="/tmp/mock-gh-debug.log"
-echo "=== mock-gh invocation $(date) ===" >> "$DEBUG_LOG"
-echo "args: $*" >> "$DEBUG_LOG"
-echo "SCRIPT_DIR: $SCRIPT_DIR" >> "$DEBUG_LOG"
-echo "pwd: $(pwd)" >> "$DEBUG_LOG"
-echo "--- ls SCRIPT_DIR ---" >> "$DEBUG_LOG"
-ls -la "$SCRIPT_DIR" >> "$DEBUG_LOG" 2>&1
-echo "--- test pr_data.json ---" >> "$DEBUG_LOG"
-if [ -f "$SCRIPT_DIR/pr_data.json" ]; then
-    echo "file exists, first 200 bytes:" >> "$DEBUG_LOG"
-    head -c 200 "$SCRIPT_DIR/pr_data.json" >> "$DEBUG_LOG" 2>&1
-else
-    echo "FILE NOT FOUND: $SCRIPT_DIR/pr_data.json" >> "$DEBUG_LOG"
-fi
-echo "" >> "$DEBUG_LOG"
-
 case "$1" in
     --version)
         echo "gh version 2.0.0 (mock)"
