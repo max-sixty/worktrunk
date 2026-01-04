@@ -88,6 +88,13 @@ impl RepositoryCliExt for Repository {
                             }
                             .into());
                         }
+                        if wt.locked.is_some() {
+                            return Err(GitError::WorktreeLocked {
+                                branch: branch.into(),
+                                reason: wt.locked.clone(),
+                            }
+                            .into());
+                        }
                         let is_current = current_path == wt.path;
                         (wt.path.clone(), Some(branch.to_string()), is_current)
                     }
@@ -122,6 +129,18 @@ impl RepositoryCliExt for Repository {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Current worktree not found in worktree list")
                     })?;
+                if wt.locked.is_some() {
+                    // Use branch name if available, otherwise use directory name
+                    let name = wt
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| wt.dir_name().to_string());
+                    return Err(GitError::WorktreeLocked {
+                        branch: name,
+                        reason: wt.locked.clone(),
+                    }
+                    .into());
+                }
                 (wt.path.clone(), wt.branch.clone(), true)
             }
         };

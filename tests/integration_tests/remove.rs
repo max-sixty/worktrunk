@@ -74,6 +74,51 @@ fn test_remove_dirty_working_tree(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_remove_locked_worktree(mut repo: TestRepo) {
+    // Create a worktree and lock it
+    let _worktree_path = repo.add_worktree("locked-feature");
+    repo.lock_worktree("locked-feature", Some("Testing lock"));
+
+    // Try to remove the locked worktree - should fail with helpful error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["locked-feature"],
+        None
+    ));
+}
+
+#[rstest]
+fn test_remove_locked_worktree_no_reason(mut repo: TestRepo) {
+    // Create a worktree and lock it without a reason
+    let _worktree_path = repo.add_worktree("locked-no-reason");
+    repo.lock_worktree("locked-no-reason", None);
+
+    // Try to remove - should show error without parenthesized reason
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["locked-no-reason"],
+        None
+    ));
+}
+
+#[rstest]
+fn test_remove_locked_current_worktree(mut repo: TestRepo) {
+    // Create a worktree, switch to it, and lock it
+    let worktree_path = repo.add_worktree("locked-current");
+    repo.lock_worktree("locked-current", Some("Do not remove"));
+
+    // Try to remove current (locked) worktree - should fail
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &[],
+        Some(&worktree_path)
+    ));
+}
+
+#[rstest]
 fn test_remove_by_name_from_main(mut repo: TestRepo) {
     // Create a worktree
     let _worktree_path = repo.add_worktree("feature-a");

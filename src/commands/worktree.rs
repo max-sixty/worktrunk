@@ -771,7 +771,25 @@ pub fn handle_remove_by_path(
     force_worktree: bool,
     background: bool,
 ) -> anyhow::Result<RemoveResult> {
+    use worktrunk::git::{GitError, path_dir_name};
+
     let repo = Repository::current();
+
+    // Check if this worktree is locked
+    let worktrees = repo.list_worktrees()?;
+    if let Some(wt) = worktrees.iter().find(|wt| wt.path == path)
+        && wt.locked.is_some()
+    {
+        let name = wt
+            .branch
+            .clone()
+            .unwrap_or_else(|| path_dir_name(path).to_string());
+        return Err(GitError::WorktreeLocked {
+            branch: name,
+            reason: wt.locked.clone(),
+        }
+        .into());
+    }
 
     if !background {
         crate::output::print(progress_message(cformat!(
