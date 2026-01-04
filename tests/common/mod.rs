@@ -1561,20 +1561,27 @@ esac
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Flatten JSON to single line to avoid multiline/line-ending issues on Windows.
-        // Single-line JSON with printf is the most portable approach across shells.
-        let pr_json_flat = pr_json
-            .chars()
-            .filter(|c| *c != '\n' && *c != '\r')
-            .collect::<String>();
-        let run_json_flat = run_json
-            .chars()
-            .filter(|c| *c != '\n' && *c != '\r')
-            .collect::<String>();
+        // Write JSON to separate files to avoid all escaping issues
+        let pr_json_file = mock_bin.join("pr_data.json");
+        let run_json_file = mock_bin.join("run_data.json");
+        std::fs::write(&pr_json_file, pr_json).unwrap();
+        std::fs::write(&run_json_file, run_json).unwrap();
 
-        // Escape single quotes for shell embedding
-        let pr_json_escaped = pr_json_flat.replace('\'', "'\"'\"'");
-        let run_json_escaped = run_json_flat.replace('\'', "'\"'\"'");
+        // Get the mock_bin directory as a Unix-style path for bash
+        // On Windows, we need to convert C:\foo\bar to /c/foo/bar
+        let mock_bin_str = mock_bin.to_string_lossy();
+        let mock_bin_unix = if cfg!(windows) {
+            // Convert Windows path to MSYS2 style: C:\foo -> /c/foo
+            let chars: Vec<char> = mock_bin_str.chars().collect();
+            if chars.len() >= 2 && chars[1] == ':' {
+                let drive = chars[0].to_ascii_lowercase();
+                format!("/{}{}", drive, mock_bin_str[2..].replace('\\', "/"))
+            } else {
+                mock_bin_str.replace('\\', "/")
+            }
+        } else {
+            mock_bin_str.to_string()
+        };
 
         write_mock_script(
             &mock_bin,
@@ -1582,6 +1589,9 @@ esac
             &format!(
                 r#"#!/bin/sh
 # Mock gh command that returns configured JSON data
+# JSON files are stored at absolute path to avoid escaping issues
+
+MOCK_DIR="{mock_bin}"
 
 case "$1" in
     --version)
@@ -1593,13 +1603,13 @@ case "$1" in
         exit 0
         ;;
     pr)
-        # gh pr list - return PR data (single line JSON)
-        printf '%s\n' '{pr_json}'
+        # gh pr list - return PR data from file
+        cat "$MOCK_DIR/pr_data.json"
         exit 0
         ;;
     run)
-        # gh run list - return run data (single line JSON)
-        printf '%s\n' '{run_json}'
+        # gh run list - return run data from file
+        cat "$MOCK_DIR/run_data.json"
         exit 0
         ;;
     *)
@@ -1607,8 +1617,7 @@ case "$1" in
         ;;
 esac
 "#,
-                pr_json = pr_json_escaped,
-                run_json = run_json_escaped,
+                mock_bin = mock_bin_unix,
             ),
         );
 
