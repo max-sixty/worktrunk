@@ -56,6 +56,14 @@ fn main() {
     // Forward all arguments to bash with the script
     let args: Vec<String> = env::args().skip(1).collect();
 
+    // Debug: Show what we're about to execute (only when MOCK_DEBUG is set)
+    if env::var("MOCK_DEBUG").is_ok() {
+        eprintln!("mock-stub: exe_path={}", exe_path.display());
+        eprintln!("mock-stub: script_path={}", script_path.display());
+        eprintln!("mock-stub: script_path_str={}", script_path_str);
+        eprintln!("mock-stub: args={:?}", args);
+    }
+
     // Use .output() to capture stdout/stderr, then forward them.
     // This is more reliable than relying on handle inheritance on Windows,
     // which can fail silently when pipes are involved.
@@ -71,6 +79,22 @@ fn main() {
             eprintln!("Is Git Bash installed and in PATH?");
             exit(1);
         });
+
+    // Debug: Show exit code and output lengths
+    if env::var("MOCK_DEBUG").is_ok() {
+        eprintln!(
+            "mock-stub: exit={} stdout_len={} stderr_len={}",
+            output.status.code().unwrap_or(-1),
+            output.stdout.len(),
+            output.stderr.len()
+        );
+        if !output.stderr.is_empty() {
+            eprintln!(
+                "mock-stub: stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     // Forward captured output to our stdout/stderr
     io::stdout().write_all(&output.stdout).unwrap();

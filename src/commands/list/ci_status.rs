@@ -686,29 +686,20 @@ fn configure_non_interactive(cmd: &mut Command) {
 
 /// Check if a CLI tool is available
 ///
-/// On Windows, this uses `cmd.exe /c` to properly resolve batch files (.cmd/.bat)
-/// that may be in PATH, since Rust's Command::new doesn't search PATHEXT.
+/// On Windows, CreateProcessW (via Command::new) searches PATH for .exe files.
+/// We provide .exe mocks in tests via mock-stub, so this works consistently.
 ///
 /// Uses `Stdio::null()` for stdin to prevent tools like `gh` from prompting
 /// for user input when they detect a TTY.
 fn tool_available(tool: &str, args: &[&str]) -> bool {
     use std::process::Stdio;
 
-    #[cfg(windows)]
-    let mut cmd = {
-        let cmd_str = format!("{} {}", tool, args.join(" "));
-        let mut c = Command::new("cmd");
-        c.args(["/c", &cmd_str]);
-        c.stdin(Stdio::null());
-        c
-    };
-    #[cfg(not(windows))]
-    let mut cmd = {
-        let mut c = Command::new(tool);
-        c.args(args);
-        c.stdin(Stdio::null());
-        c
-    };
+    // Use Command::new(tool) directly on all platforms.
+    // On Windows, CreateProcessW searches PATH for .exe files.
+    // This is simpler and more reliable than going through cmd.exe.
+    let mut cmd = Command::new(tool);
+    cmd.args(args);
+    cmd.stdin(Stdio::null());
 
     run(&mut cmd, None)
         .map(|o| o.status.success())
