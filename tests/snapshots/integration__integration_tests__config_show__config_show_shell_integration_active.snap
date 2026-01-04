@@ -46,4 +46,4 @@ exit_code: 0
 [36mRUNTIME[39m  wt [VERSION]
 [2m○[22m Shell integration active
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
-[107m [0m Explicit path: yes (contains path separator)
+[2m○[22m Hyperlinks: inactive (not a TTY; terminal: Detected, [1mTERM=alacritty[22m)

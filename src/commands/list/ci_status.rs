@@ -236,7 +236,8 @@ mod tests {
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
         };
 
-        let formatted = pr_with_url.format_indicator();
+        // Call format_indicator_with_options(true) directly
+        let formatted = pr_with_url.format_indicator_with_options(true);
         // Should contain OSC 8 hyperlink escape sequences
         assert!(formatted.contains("\x1b]8;;"), "Should contain OSC 8 start");
         assert!(
@@ -255,7 +256,8 @@ mod tests {
             url: None,
         };
 
-        let formatted = pr_no_url.format_indicator();
+        // Call format_indicator_with_options(true) directly
+        let formatted = pr_no_url.format_indicator_with_options(true);
         // Should NOT contain OSC 8 hyperlink
         assert!(
             !formatted.contains("\x1b]8;;"),
@@ -582,7 +584,8 @@ mod tests {
             is_stale: false,
             url: None,
         };
-        let formatted = status.format_indicator();
+        // Call format_indicator_with_options directly
+        let formatted = status.format_indicator_with_options(false);
         assert!(formatted.contains("●"));
 
         // Stale status gets dimmed
@@ -1036,14 +1039,6 @@ impl PrStatus {
                 CiSource::Branch => "●",
             },
         }
-    }
-
-    /// Format CI status as a colored indicator with clickable link.
-    ///
-    /// Returns a string like "●" with appropriate ANSI color.
-    /// If a PR URL is available, adds underline and wraps in an OSC 8 hyperlink.
-    pub fn format_indicator(&self) -> String {
-        self.format_indicator_with_options(true)
     }
 
     /// Format CI status with control over link inclusion.

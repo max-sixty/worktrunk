@@ -38,6 +38,30 @@ Example of escalating instead of suppressing:
 fn parse_config() { ... }
 ```
 
+### No Test Code in Library Code
+
+Never use `#[cfg(test)]` to add test-only convenience methods to library code. This conflates production and test code.
+
+```rust
+// BAD — test code in library
+impl PrStatus {
+    #[cfg(test)]
+    fn format_indicator(&self) -> String {
+        self.format_indicator_with_options(true)
+    }
+}
+
+// GOOD — tests call the real API directly
+#[test]
+fn test_format_indicator_with_url() {
+    let pr = PrStatus { ... };
+    let formatted = pr.format_indicator_with_options(true);  // Direct call
+    assert!(formatted.contains("●"));
+}
+```
+
+If tests need a convenience wrapper, define it in the test module. The production API should be the same API tests exercise.
+
 ## Data Safety
 
 Never risk data loss without explicit user consent. Err on the side of failing safely.

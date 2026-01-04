@@ -671,7 +671,7 @@ impl Task for UrlStatusTask {
 }
 
 /// Parse port number from a URL string (e.g., "http://localhost:12345" -> 12345)
-fn parse_port_from_url(url: &str) -> Option<u16> {
+pub(crate) fn parse_port_from_url(url: &str) -> Option<u16> {
     // Strip scheme
     let url = url
         .strip_prefix("http://")
