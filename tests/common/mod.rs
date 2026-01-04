@@ -1561,21 +1561,19 @@ esac
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Write JSON files to be read by the script
-        let pr_json_file = mock_bin.join("pr_data.json");
-        let run_json_file = mock_bin.join("run_data.json");
-        std::fs::write(&pr_json_file, pr_json).unwrap();
-        std::fs::write(&run_json_file, run_json).unwrap();
+        // Embed JSON data directly in the script to avoid path issues on Windows.
+        // When mock-stub.exe invokes bash, path conversion for file reads is unreliable.
+        // Escape single quotes in JSON for shell embedding.
+        let pr_json_escaped = pr_json.replace('\'', "'\"'\"'");
+        let run_json_escaped = run_json.replace('\'', "'\"'\"'");
 
         // Create mock gh script that returns JSON data
-        // Uses relative paths from script directory so it works cross-platform
         write_mock_script(
             &mock_bin,
             "gh",
-            r#"#!/bin/sh
+            &format!(
+                r#"#!/bin/sh
 # Mock gh command that returns configured JSON data
-# Use script directory for relative paths (works on Unix and via mock-stub.exe on Windows)
-SCRIPT_DIR="$(dirname "$0")"
 
 case "$1" in
     --version)
@@ -1587,13 +1585,13 @@ case "$1" in
         exit 0
         ;;
     pr)
-        # gh pr list - return PR data from file
-        cat "$SCRIPT_DIR/pr_data.json"
+        # gh pr list - return PR data
+        echo '{pr_json}'
         exit 0
         ;;
     run)
-        # gh run list - return run data from file
-        cat "$SCRIPT_DIR/run_data.json"
+        # gh run list - return run data
+        echo '{run_json}'
         exit 0
         ;;
     *)
@@ -1601,6 +1599,9 @@ case "$1" in
         ;;
 esac
 "#,
+                pr_json = pr_json_escaped,
+                run_json = run_json_escaped,
+            ),
         );
 
         // Create mock glab script (fails immediately - no GitLab support in this mock)
