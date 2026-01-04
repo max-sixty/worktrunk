@@ -29,21 +29,30 @@ fn snapshot_switch_with_env(
     });
 }
 
-/// Create a PATH string with the given mock bin directory prepended.
+/// Create a PATH with the given mock bin directory prepended, preserving variable case.
 ///
-/// Uses `std::env::join_paths` for robust cross-platform path handling.
-/// This ensures mock commands take precedence while preserving access to
-/// essential tools like git that may be in non-standard locations.
-fn make_path_with_mock_bin(bin_dir: &Path) -> String {
-    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+/// Returns (variable_name, value) where variable_name preserves the case found
+/// in the environment (important for Windows where env vars are case-insensitive
+/// but Rust stores them case-sensitively - using "PATH" when the system has "Path"
+/// creates a duplicate).
+fn make_path_with_mock_bin(bin_dir: &Path) -> (String, String) {
+    // Find the actual PATH variable name to avoid creating a duplicate with different case
+    let (path_var_name, current_path) = std::env::vars_os()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), Some(v)))
+        .unwrap_or(("PATH".to_string(), None));
+
+    let mut paths: Vec<PathBuf> = current_path
         .as_deref()
         .map(|p| std::env::split_paths(p).collect())
         .unwrap_or_default();
     paths.insert(0, bin_dir.to_path_buf());
-    std::env::join_paths(&paths)
+    let new_path = std::env::join_paths(&paths)
         .unwrap()
         .to_string_lossy()
-        .into_owned()
+        .into_owned();
+
+    (path_var_name, new_path)
 }
 
 fn snapshot_merge_with_env(
@@ -1097,13 +1106,13 @@ command = "{llm_path_str}"
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Merge with --yes to skip approval prompts for commands
-    let path_with_bin = make_path_with_mock_bin(&bin_dir);
+    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
     snapshot_merge_with_env(
         "readme_example_complex",
         &repo,
         &["main", "--yes"],
         Some(&feature_wt),
-        &[("PATH", &path_with_bin)],
+        &[(&path_var, &path_with_bin)],
     );
 }
 
@@ -1139,13 +1148,13 @@ fn test_readme_example_hooks_post_create(repo: TestRepo) {
     repo.run_git(&["commit", "-m", "Add project hooks"]);
 
     // Set PATH to include mock commands and run switch --create with --yes
-    let path_with_bin = make_path_with_mock_bin(&bin_dir);
+    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
     snapshot_switch_with_env(
         "readme_example_hooks_post_create",
         &repo,
         &["--create", "feature-x", "--yes"],
         None,
-        &[("PATH", &path_with_bin)],
+        &[(&path_var, &path_with_bin)],
     );
 }
 
@@ -1281,13 +1290,13 @@ command = "{llm_path_str}"
     fs::write(repo.test_config_path(), worktrunk_config).unwrap();
 
     // Set PATH and merge with --yes
-    let path_with_bin = make_path_with_mock_bin(&bin_dir);
+    let (path_var, path_with_bin) = make_path_with_mock_bin(&bin_dir);
     snapshot_merge_with_env(
         "readme_example_hooks_pre_merge",
         &repo,
         &["main", "--yes"],
         Some(&feature_wt),
-        &[("PATH", &path_with_bin)],
+        &[(&path_var, &path_with_bin)],
     );
 }
 

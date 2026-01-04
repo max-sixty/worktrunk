@@ -96,9 +96,12 @@ fn main() {
         }
     }
 
-    // Forward captured output to our stdout/stderr
+    // Forward captured output to our stdout/stderr.
+    // Must flush before exit() since exit() doesn't run destructors.
     io::stdout().write_all(&output.stdout).unwrap();
+    io::stdout().flush().unwrap();
     io::stderr().write_all(&output.stderr).unwrap();
+    io::stderr().flush().unwrap();
 
     exit(output.status.code().unwrap_or(1));
 }
