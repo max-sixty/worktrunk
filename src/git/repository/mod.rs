@@ -595,6 +595,25 @@ impl Repository {
             .cloned()
     }
 
+    /// Find the "home" path - where to cd when leaving a worktree.
+    ///
+    /// This is the preferred destination after removing the current worktree
+    /// or after merge removes the worktree. Priority:
+    /// 1. The default branch's worktree (if it exists)
+    /// 2. The first worktree in the list
+    /// 3. The repo base directory (for bare repos with no worktrees)
+    pub fn home_path(&self) -> anyhow::Result<PathBuf> {
+        let worktrees = self.list_worktrees()?;
+        let default_branch = self.default_branch().unwrap_or_default();
+
+        if let Some(home) = Worktree::find_home(&worktrees, &default_branch) {
+            return Ok(home.path.clone());
+        }
+
+        // No worktrees - fall back to repo base (bare repo case)
+        self.worktree_base()
+    }
+
     /// Check if this is a bare repository (no working tree).
     ///
     /// Bare repositories have no main worktree — all worktrees are linked

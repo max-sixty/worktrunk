@@ -689,12 +689,11 @@ pub fn collect(
     let branches_without_worktrees = branches_without_worktrees?;
     let remote_branches = remote_branches?;
 
-    // Main worktree is the worktree on the default branch (if exists), else first worktree
-    let main_worktree = worktrees
-        .iter()
-        .find(|wt| wt.branch.as_deref() == Some(default_branch.as_str()))
+    // Main worktree is the worktree on the default branch (if exists), else first worktree.
+    // find_home returns None only if worktrees is empty, which shouldn't happen for wt list.
+    let main_worktree = Worktree::find_home(&worktrees, &default_branch)
         .cloned()
-        .unwrap_or_else(|| worktrees[0].clone());
+        .ok_or_else(|| anyhow::anyhow!("No worktrees found"))?;
 
     // Defer previous_branch lookup until after skeleton - set is_previous later
     // (skeleton shows placeholder gutter, actual symbols appear when data loads)

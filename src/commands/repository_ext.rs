@@ -72,7 +72,9 @@ impl RepositoryCliExt for Repository {
     ) -> anyhow::Result<RemoveResult> {
         let current_path = self.worktree_root()?.to_path_buf();
         let worktrees = self.list_worktrees()?;
-        let main_worktree_path = worktrees[0].path.clone();
+        // Home worktree: prefer default branch's worktree, fall back to first worktree,
+        // then repo base for bare repos with no worktrees.
+        let home_worktree_path = self.home_path()?;
 
         // Resolve target to worktree path and branch
         let (worktree_path, branch_name, is_current) = match target {
@@ -85,6 +87,13 @@ impl RepositoryCliExt for Repository {
                         if !wt.path.exists() {
                             return Err(GitError::WorktreeMissing {
                                 branch: branch.into(),
+                            }
+                            .into());
+                        }
+                        if wt.locked.is_some() {
+                            return Err(GitError::WorktreeLocked {
+                                branch: branch.into(),
+                                reason: wt.locked.clone(),
                             }
                             .into());
                         }
@@ -122,6 +131,18 @@ impl RepositoryCliExt for Repository {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Current worktree not found in worktree list")
                     })?;
+                if wt.locked.is_some() {
+                    // Use branch name if available, otherwise use directory name
+                    let name = wt
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| wt.dir_name().to_string());
+                    return Err(GitError::WorktreeLocked {
+                        branch: name,
+                        reason: wt.locked.clone(),
+                    }
+                    .into());
+                }
                 (wt.path.clone(), wt.branch.clone(), true)
             }
         };
@@ -139,13 +160,14 @@ impl RepositoryCliExt for Repository {
 
         // Compute main_path and changed_directory based on whether we're removing current
         let (main_path, changed_directory) = if is_current {
-            (main_worktree_path, true)
+            (home_worktree_path, true)
         } else {
             (current_path, false)
         };
 
-        // Resolve default branch for integration reason display
+        // Resolve target branch for integration reason display
         // Skip if removing the default branch itself (avoids tautological "main (ancestor of main)")
+        // Use .ok() to treat errors as unknown - safer than empty string for integration checks
         let default_branch = self.default_branch().ok();
         let target_branch = match (&default_branch, &branch_name) {
             (Some(db), Some(bn)) if db == bn => None,

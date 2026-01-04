@@ -95,7 +95,6 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
-    let worktrees = repo.list_worktrees()?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 
@@ -192,10 +191,11 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         }),
     )?;
 
-    // Destination: prefer the target branch's worktree; fall back to main when absent
-    let destination_path = target_worktree_path
-        .clone()
-        .unwrap_or_else(|| worktrees[0].path.clone());
+    // Destination: prefer the target branch's worktree; fall back to home path.
+    let destination_path = match target_worktree_path {
+        Some(path) => path,
+        None => repo.home_path()?,
+    };
 
     // Finish worktree unless --no-remove was specified
     if remove_effective {

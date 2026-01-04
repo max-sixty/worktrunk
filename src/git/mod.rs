@@ -326,6 +326,25 @@ impl Worktree {
     pub fn dir_name(&self) -> &str {
         path_dir_name(&self.path)
     }
+
+    /// Find the "home" worktree - the default branch's worktree if it exists,
+    /// otherwise the first worktree in the list.
+    ///
+    /// This is the preferred destination when we need to cd somewhere
+    /// (e.g., after removing the current worktree, or after merge removes the worktree).
+    ///
+    /// For normal repos, `worktrees[0]` is usually the default branch's worktree,
+    /// so the fallback rarely matters. For bare repos, there's no semantic "main"
+    /// worktree, so preferring the default branch's worktree provides consistency.
+    ///
+    /// Returns `None` only if `worktrees` is empty. If `default_branch` is empty
+    /// or doesn't match any worktree, returns the first worktree.
+    pub fn find_home<'a>(worktrees: &'a [Worktree], default_branch: &str) -> Option<&'a Worktree> {
+        worktrees
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some(default_branch))
+            .or_else(|| worktrees.first())
+    }
 }
 
 // Helper functions for worktree parsing
@@ -475,5 +494,49 @@ mod tests {
         for (hook, expected) in cases {
             assert_eq!(format!("{hook}"), expected);
         }
+    }
+
+    #[test]
+    fn test_find_home() {
+        let make_wt = |branch: Option<&str>| Worktree {
+            path: PathBuf::from(format!("/repo.{}", branch.unwrap_or("detached"))),
+            head: "abc123".into(),
+            branch: branch.map(String::from),
+            bare: false,
+            detached: branch.is_none(),
+            locked: None,
+            prunable: None,
+        };
+
+        // Empty list returns None
+        assert!(Worktree::find_home(&[], "main").is_none());
+
+        // Single worktree on default branch
+        let wts = vec![make_wt(Some("main"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            Some("/repo.main")
+        );
+
+        // Default branch not first - should still find it
+        let wts = vec![make_wt(Some("feature")), make_wt(Some("main"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            Some("/repo.main")
+        );
+
+        // No default branch match - returns first
+        let wts = vec![make_wt(Some("feature")), make_wt(Some("bugfix"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "main").unwrap().path.to_str(),
+            Some("/repo.feature")
+        );
+
+        // Empty default branch - returns first
+        let wts = vec![make_wt(Some("feature"))];
+        assert_eq!(
+            Worktree::find_home(&wts, "").unwrap().path.to_str(),
+            Some("/repo.feature")
+        );
     }
 }

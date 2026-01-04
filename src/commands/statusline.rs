@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use std::env;
 use std::io::{self, Read};
 use std::path::Path;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, Worktree};
 
 use super::list::{self, CollectOptions};
 
@@ -233,15 +233,15 @@ fn get_git_status(repo: &Repository, cwd: &Path, include_links: bool) -> Result<
     // Effective target for integration checks: upstream if ahead of local, else local.
     let integration_target = repo.effective_integration_target(&default_branch);
 
-    // Determine if this is the main worktree
-    let main_worktree = worktrees
-        .iter()
-        .find(|w| w.branch.as_deref() == Some(default_branch.as_str()))
-        .unwrap_or(&worktrees[0]);
-    let is_main = wt.path == main_worktree.path;
+    // Determine if this is the home worktree (default branch's worktree, or first if none)
+    // Use the already-fetched worktrees to avoid a redundant git command
+    // Note: called `is_home` here because bare repos have no git "main worktree" -
+    // all worktrees are linked. The `is_main` param in build_worktree_item is for display.
+    let home_worktree = Worktree::find_home(&worktrees, &default_branch);
+    let is_home = home_worktree.is_some_and(|hw| wt.path == hw.path);
 
     // Build item with identity fields
-    let mut item = list::build_worktree_item(wt, is_main, true, false);
+    let mut item = list::build_worktree_item(wt, is_home, true, false);
 
     // Populate computed fields (parallel git operations) and format status_line
     // Compute everything (same as --full) for complete status symbols

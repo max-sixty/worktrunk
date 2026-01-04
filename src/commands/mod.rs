@@ -38,9 +38,8 @@ pub use step_commands::{
     RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_show_squash_prompt,
 };
 pub use worktree::{
-    ResolutionContext, compute_worktree_path, handle_remove, handle_remove_by_path,
-    handle_remove_current, handle_switch, is_worktree_at_expected_path_with, resolve_worktree_arg,
-    worktree_display_name,
+    ResolutionContext, compute_worktree_path, handle_remove, handle_remove_current, handle_switch,
+    is_worktree_at_expected_path_with, resolve_worktree_arg, worktree_display_name,
 };
 
 // Re-export Shell from the canonical location
