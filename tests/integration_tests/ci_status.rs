@@ -2,18 +2,6 @@
 //!
 //! These tests verify that the CI status parsing code correctly handles
 //! JSON responses from GitHub (gh) and GitLab (glab) CLI tools.
-//!
-//! ## Windows support
-//!
-//! These tests are currently skipped on Windows because the mock gh command
-//! infrastructure doesn't work reliably with the bash->JSON file reading
-//! pipeline. The mock-stub.exe successfully invokes bash, but the SCRIPT_DIR
-//! path resolution and JSON file reading fails in CI.
-//!
-//! See: https://github.com/max-sixty/worktrunk/issues/401
-//!
-//! Tests that only need simple mock behavior (e.g., `wt config show` which
-//! just checks if gh --version succeeds) work fine on Windows.
 
 use crate::common::{TestRepo, make_snapshot_cmd, repo, setup_snapshot_settings};
 use insta_cmd::assert_cmd_snapshot;
@@ -26,7 +14,6 @@ fn get_branch_sha(repo: &TestRepo, branch: &str) -> String {
 
 /// Test CI status detection with GitHub PR showing passed checks
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -68,7 +55,6 @@ fn test_list_full_with_github_pr_passed(mut repo: TestRepo) {
 
 /// Test CI status detection with GitHub PR showing failed checks
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -110,7 +96,6 @@ fn test_list_full_with_github_pr_failed(mut repo: TestRepo) {
 
 /// Test CI status detection with GitHub PR showing running checks
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -152,7 +137,6 @@ fn test_list_full_with_github_pr_running(mut repo: TestRepo) {
 
 /// Test CI status detection with GitHub PR showing conflicts
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -194,7 +178,6 @@ fn test_list_full_with_github_pr_conflicts(mut repo: TestRepo) {
 
 /// Test CI status detection with StatusContext (external CI like pre-commit.ci)
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -236,7 +219,6 @@ fn test_list_full_with_status_context_pending(mut repo: TestRepo) {
 
 /// Test CI status detection with StatusContext failure (external CI)
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -278,7 +260,6 @@ fn test_list_full_with_status_context_failure(mut repo: TestRepo) {
 
 /// Test CI status detection with no PR but workflow run
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -316,7 +297,6 @@ fn test_list_full_with_github_workflow_run(mut repo: TestRepo) {
 
 /// Test CI status detection with workflow run in progress
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -354,7 +334,6 @@ fn test_list_full_with_github_workflow_running(mut repo: TestRepo) {
 
 /// Test CI status with stale PR (local HEAD differs from PR HEAD)
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_stale_pr(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -397,7 +376,6 @@ fn test_list_full_with_stale_pr(mut repo: TestRepo) {
 
 /// Test CI status detection with mixed CheckRun and StatusContext results
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -441,7 +419,6 @@ fn test_list_full_with_mixed_check_types(mut repo: TestRepo) {
 
 /// Test CI status detection when PR has no checks configured
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
     // Add GitHub remote
     repo.run_git(&[
@@ -481,7 +458,6 @@ fn test_list_full_with_no_ci_checks(mut repo: TestRepo) {
 
 /// Test filtering PRs by repository owner
 #[rstest]
-#[cfg_attr(windows, ignore = "mock gh JSON reading fails on Windows CI")]
 fn test_list_full_filters_by_repo_owner(mut repo: TestRepo) {
     // Add GitHub remote with specific owner
     repo.run_git(&[
