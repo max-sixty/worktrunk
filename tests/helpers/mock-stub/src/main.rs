@@ -59,18 +59,18 @@ fn find_bash() -> PathBuf {
     }
 
     // Fallback: try to find git in PATH and derive bash location from it
-    if let Ok(output) = Command::new("where").arg("git.exe").output() {
-        if output.status.success() {
-            let git_path = String::from_utf8_lossy(&output.stdout);
-            if let Some(first_line) = git_path.lines().next() {
-                // git.exe is typically in Git\cmd\git.exe or Git\bin\git.exe
-                // bash.exe is in Git\bin\bash.exe
-                let git_exe = PathBuf::from(first_line);
-                if let Some(git_dir) = git_exe.parent().and_then(|p| p.parent()) {
-                    let bash_path = git_dir.join("bin").join("bash.exe");
-                    if bash_path.exists() {
-                        return bash_path;
-                    }
+    if let Ok(output) = Command::new("where").arg("git.exe").output()
+        && output.status.success()
+    {
+        let git_path = String::from_utf8_lossy(&output.stdout);
+        if let Some(first_line) = git_path.lines().next() {
+            // git.exe is typically in Git\cmd\git.exe or Git\bin\git.exe
+            // bash.exe is in Git\bin\bash.exe
+            let git_exe = PathBuf::from(first_line);
+            if let Some(git_dir) = git_exe.parent().and_then(|p| p.parent()) {
+                let bash_path = git_dir.join("bin").join("bash.exe");
+                if bash_path.exists() {
+                    return bash_path;
                 }
             }
         }
