@@ -104,7 +104,7 @@ A demo with some advanced features:
 **Homebrew (macOS & Linux):**
 
 ```bash
-$ brew install max-sixty/worktrunk/wt && wt config shell install
+brew install max-sixty/worktrunk/wt && wt config shell install
 ```
 
 Shell integration allows commands to change directories.
@@ -112,7 +112,7 @@ Shell integration allows commands to change directories.
 **Cargo:**
 
 ```bash
-$ cargo install worktrunk && wt config shell install
+cargo install worktrunk && wt config shell install
 ```
 
 ## Next steps
