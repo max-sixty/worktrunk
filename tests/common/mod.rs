@@ -1561,13 +1561,10 @@ esac
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Embed JSON data directly in the script to avoid path issues on Windows.
-        // When mock-stub.exe invokes bash, path conversion for file reads is unreliable.
-        // Escape single quotes in JSON for shell embedding.
-        let pr_json_escaped = pr_json.replace('\'', "'\"'\"'");
-        let run_json_escaped = run_json.replace('\'', "'\"'\"'");
-
-        // Create mock gh script that returns JSON data
+        // Embed JSON data directly in the script using heredoc syntax.
+        // Heredocs are more robust for multiline content than echo with quotes,
+        // especially on Windows where line endings and shell escaping can be tricky.
+        // Using quoted delimiter ('PREOF') prevents variable expansion.
         write_mock_script(
             &mock_bin,
             "gh",
@@ -1586,12 +1583,16 @@ case "$1" in
         ;;
     pr)
         # gh pr list - return PR data
-        echo '{pr_json}'
+        cat <<'PREOF'
+{pr_json}
+PREOF
         exit 0
         ;;
     run)
         # gh run list - return run data
-        echo '{run_json}'
+        cat <<'RUNEOF'
+{run_json}
+RUNEOF
         exit 0
         ;;
     *)
@@ -1599,8 +1600,8 @@ case "$1" in
         ;;
 esac
 "#,
-                pr_json = pr_json_escaped,
-                run_json = run_json_escaped,
+                pr_json = pr_json,
+                run_json = run_json,
             ),
         );
 
