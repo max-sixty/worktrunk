@@ -1561,10 +1561,21 @@ esac
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
 
-        // Embed JSON data directly in the script using heredoc syntax.
-        // Heredocs are more robust for multiline content than echo with quotes,
-        // especially on Windows where line endings and shell escaping can be tricky.
-        // Using quoted delimiter ('PREOF') prevents variable expansion.
+        // Flatten JSON to single line to avoid multiline/line-ending issues on Windows.
+        // Single-line JSON with printf is the most portable approach across shells.
+        let pr_json_flat = pr_json
+            .chars()
+            .filter(|c| *c != '\n' && *c != '\r')
+            .collect::<String>();
+        let run_json_flat = run_json
+            .chars()
+            .filter(|c| *c != '\n' && *c != '\r')
+            .collect::<String>();
+
+        // Escape single quotes for shell embedding
+        let pr_json_escaped = pr_json_flat.replace('\'', "'\"'\"'");
+        let run_json_escaped = run_json_flat.replace('\'', "'\"'\"'");
+
         write_mock_script(
             &mock_bin,
             "gh",
@@ -1582,17 +1593,13 @@ case "$1" in
         exit 0
         ;;
     pr)
-        # gh pr list - return PR data
-        cat <<'PREOF'
-{pr_json}
-PREOF
+        # gh pr list - return PR data (single line JSON)
+        printf '%s\n' '{pr_json}'
         exit 0
         ;;
     run)
-        # gh run list - return run data
-        cat <<'RUNEOF'
-{run_json}
-RUNEOF
+        # gh run list - return run data (single line JSON)
+        printf '%s\n' '{run_json}'
         exit 0
         ;;
     *)
@@ -1600,8 +1607,8 @@ RUNEOF
         ;;
 esac
 "#,
-                pr_json = pr_json,
-                run_json = run_json,
+                pr_json = pr_json_escaped,
+                run_json = run_json_escaped,
             ),
         );
 
