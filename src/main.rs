@@ -32,8 +32,8 @@ use commands::{
     MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals, approve_hooks,
     clear_approvals, compute_worktree_path, handle_config_create, handle_config_show,
     handle_configure_shell, handle_hook_show, handle_init, handle_list, handle_merge,
-    handle_rebase, handle_remove, handle_remove_by_path, handle_remove_current, handle_show_theme,
-    handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_rebase, handle_remove, handle_remove_current, handle_show_theme, handle_squash,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
     handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
     step_commit, step_for_each,
 };
@@ -1418,33 +1418,25 @@ fn main() {
                     }
 
                     // Remove other worktrees first (approval was handled at the gate)
-                    for (path, branch) in &others {
-                        if let Some(branch_name) = branch {
-                            match handle_remove(
-                                branch_name,
-                                !delete_branch,
-                                force_delete,
-                                force,
-                                background,
-                            ) {
-                                Ok(result) => {
-                                    handle_remove_output(&result, background, verify)?;
-                                }
-                                Err(e) => {
-                                    output::print(e.to_string())?;
-                                    all_errors.push(e);
-                                }
+                    for (_path, branch) in &others {
+                        // Branch is always Some for non-current worktrees - detached worktrees
+                        // can only be referenced via "@" which resolves to current
+                        let branch_name = branch
+                            .as_ref()
+                            .expect("non-current worktree should have branch");
+                        match handle_remove(
+                            branch_name,
+                            !delete_branch,
+                            force_delete,
+                            force,
+                            background,
+                        ) {
+                            Ok(result) => {
+                                handle_remove_output(&result, background, verify)?;
                             }
-                        } else {
-                            // Non-current worktree is detached - remove by path (no branch to delete)
-                            match handle_remove_by_path(path, None, force, background) {
-                                Ok(result) => {
-                                    handle_remove_output(&result, background, verify)?;
-                                }
-                                Err(e) => {
-                                    output::print(e.to_string())?;
-                                    all_errors.push(e);
-                                }
+                            Err(e) => {
+                                output::print(e.to_string())?;
+                                all_errors.push(e);
                             }
                         }
                     }
