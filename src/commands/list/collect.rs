@@ -685,6 +685,16 @@ pub fn collect(
             }
         }
     );
+    // TODO: Make default_branch optional so wt list can gracefully degrade when detection fails.
+    // Currently, ambiguous repos (multiple non-standard branches, no remote) fail entirely.
+    // With symbolic-ref HEAD heuristic added, this is less common but still possible.
+    // Required changes:
+    // 1. Make default_branch Option<String> here
+    // 2. find_home() already handles empty default_branch (falls back to first)
+    // 3. Make main_worktree optional or use first worktree when default_branch is None
+    // 4. Update TaskContext.require_default_branch() callers to handle None gracefully
+    //    (skip ahead/behind, integration status, etc. instead of failing)
+    // 5. Show warning when default_branch couldn't be determined
     let default_branch = default_branch?;
     let branches_without_worktrees = branches_without_worktrees?;
     let remote_branches = remote_branches?;

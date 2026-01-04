@@ -58,6 +58,10 @@ pub enum GitError {
     },
 
     // Worktree errors
+    NotInWorktree {
+        /// The action that requires being in a worktree
+        action: Option<String>,
+    },
     WorktreeMissing {
         branch: String,
     },
@@ -203,6 +207,21 @@ impl std::fmt::Display for GitError {
                     error_message(cformat!("Branch <bold>{reference}</> not found")),
                     hint_message(cformat!(
                         "To create a new branch, run <bright-black>{create_cmd}</>; to list branches, run <bright-black>{list_cmd}</>"
+                    ))
+                )
+            }
+
+            GitError::NotInWorktree { action } => {
+                let message = match action {
+                    Some(action) => format!("Cannot {action}: not in a worktree"),
+                    None => "Not in a worktree".to_string(),
+                };
+                write!(
+                    f,
+                    "{}\n{}",
+                    error_message(&message),
+                    hint_message(cformat!(
+                        "Run this command from inside a worktree, or specify a branch name"
                     ))
                 )
             }
@@ -896,6 +915,23 @@ mod tests {
         assert!(display.contains("nonexistent"));
         assert!(display.contains("not found"));
         assert!(display.contains("--create"));
+    }
+
+    #[test]
+    fn test_git_error_not_in_worktree() {
+        // With action
+        let err = GitError::NotInWorktree {
+            action: Some("resolve '@'".into()),
+        };
+        let display = err.to_string();
+        assert!(display.contains("Cannot resolve '@'"));
+        assert!(display.contains("not in a worktree"));
+        assert!(display.contains("specify a branch name"));
+
+        // Without action
+        let err = GitError::NotInWorktree { action: None };
+        let display = err.to_string();
+        assert!(display.contains("Not in a worktree"));
     }
 
     #[test]

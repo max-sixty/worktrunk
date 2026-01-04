@@ -369,13 +369,19 @@ impl Repository {
         match name {
             "@" => {
                 // Current worktree by path - works even in detached HEAD
-                let path = self.worktree_root()?.to_path_buf();
+                // If worktree_root fails (e.g., in bare repo directory), give a clear error
+                let path = self.worktree_root().map_err(|_| GitError::NotInWorktree {
+                    action: Some("resolve '@'".into()),
+                })?;
                 let worktrees = self.list_worktrees()?;
                 let branch = worktrees
                     .iter()
                     .find(|wt| wt.path == path)
                     .and_then(|wt| wt.branch.clone());
-                Ok(ResolvedWorktree::Worktree { path, branch })
+                Ok(ResolvedWorktree::Worktree {
+                    path: path.to_path_buf(),
+                    branch,
+                })
             }
             _ => {
                 // Resolve to branch name first, then find its worktree
@@ -471,9 +477,10 @@ impl Repository {
     ///
     /// Uses local heuristics when no remote is available:
     /// 1. If only one local branch exists, use it
-    /// 2. Check user's git config init.defaultBranch
-    /// 3. Look for common branch names (main, master, develop, trunk)
-    /// 4. Fail if none of the above work
+    /// 2. Check symbolic-ref HEAD (authoritative for bare repos, works before first commit)
+    /// 3. Check user's git config init.defaultBranch (if branch exists)
+    /// 4. Look for common branch names (main, master, develop, trunk)
+    /// 5. Fail if none of the above work
     fn infer_default_branch_locally(&self) -> anyhow::Result<String> {
         // 1. If there's only one local branch, use it
         let branches = self.local_branches()?;
@@ -481,7 +488,21 @@ impl Repository {
             return Ok(branches[0].clone());
         }
 
-        // 2. Check git config init.defaultBranch
+        // 2. Check symbolic-ref HEAD - authoritative for bare repos and empty repos
+        // - Bare repo directory: HEAD always points to the default branch
+        // - Empty repos: No branches exist yet, but HEAD tells us the intended default
+        // - Linked worktrees: HEAD points to CURRENT branch, so skip this heuristic
+        // - Normal repos: HEAD points to CURRENT branch, so skip this heuristic
+        let is_bare = self.is_bare().unwrap_or(false);
+        let in_worktree = self.is_in_worktree().unwrap_or(false);
+        if ((is_bare && !in_worktree) || branches.is_empty())
+            && let Ok(head_ref) = self.run_command(&["symbolic-ref", "HEAD"])
+            && let Some(branch) = head_ref.trim().strip_prefix("refs/heads/")
+        {
+            return Ok(branch.to_string());
+        }
+
+        // 3. Check git config init.defaultBranch (if branch exists)
         if let Ok(default) = self.run_command(&["config", "--get", "init.defaultBranch"]) {
             let branch = default.trim().to_string();
             if !branch.is_empty() && branches.contains(&branch) {
@@ -489,14 +510,14 @@ impl Repository {
             }
         }
 
-        // 3. Look for common branch names
+        // 4. Look for common branch names
         for name in ["main", "master", "develop", "trunk"] {
             if branches.contains(&name.to_string()) {
                 return Ok(name.to_string());
             }
         }
 
-        // 4. Give up — can't infer
+        // 5. Give up — can't infer
         Err(GitError::Other {
             message:
                 "Could not infer default branch. Please specify target branch explicitly or set up a remote."

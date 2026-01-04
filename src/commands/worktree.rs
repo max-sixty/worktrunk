@@ -147,20 +147,9 @@ pub fn resolve_worktree_arg(
     config: &WorktrunkConfig,
     context: ResolutionContext,
 ) -> anyhow::Result<ResolvedWorktree> {
-    // Special symbols
+    // Special symbols - delegate to Repository for consistent error handling
     match name {
-        "@" => {
-            // Current worktree by path - works even in detached HEAD
-            let path = repo.worktree_root()?.to_path_buf();
-            let worktrees = repo.list_worktrees()?;
-            let branch = worktrees
-                .iter()
-                .find(|wt| wt.path == path)
-                .and_then(|wt| wt.branch.clone());
-            return Ok(ResolvedWorktree::Worktree { path, branch });
-        }
-        "-" | "^" => {
-            // These resolve to branch names, use standard branch-based lookup
+        "@" | "-" | "^" => {
             return repo.resolve_worktree(name);
         }
         _ => {}
@@ -609,7 +598,14 @@ pub fn handle_switch(
     let base_for_creation = if create {
         match resolved_base {
             Some(b) => Some(b),
-            None => repo.resolve_target_branch(None).ok(),
+            None => {
+                // Try to use default branch as base, but only if it actually exists
+                // (has commits). For empty repos, the default branch is unborn and
+                // git will automatically create an orphan worktree.
+                repo.resolve_target_branch(None)
+                    .ok()
+                    .filter(|b| repo.local_branch_exists(b).unwrap_or(false))
+            }
         }
     } else {
         None
