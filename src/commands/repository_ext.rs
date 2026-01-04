@@ -543,4 +543,35 @@ mod tests {
         // All files are tracked (modified, staged, etc.)
         assert!(parse_untracked_files(" M file1.txt\0M  file2.txt\0").is_empty());
     }
+
+    #[test]
+    fn test_stash_guard_restore_now_clears_inner() {
+        // Create a guard - note: this doesn't actually create a stash since we're not
+        // in a real git repo with that stash ref. We're just testing the state machine.
+        let mut guard = TargetWorktreeStash::new(std::path::Path::new("/tmp"), "stash@{0}".into());
+
+        // Inner should be populated
+        assert!(guard.inner.is_some());
+
+        // restore_now() should clear inner (the restore itself will fail since no real repo,
+        // but that's expected - we're testing the state transition)
+        guard.restore_now();
+
+        // Inner should now be None
+        assert!(guard.inner.is_none());
+
+        // Calling restore_now() again is a no-op
+        guard.restore_now();
+        assert!(guard.inner.is_none());
+    }
+
+    #[test]
+    fn test_stash_guard_drop_clears_inner() {
+        // Test that Drop also consumes the inner
+        let guard = TargetWorktreeStash::new(std::path::Path::new("/tmp"), "stash@{0}".into());
+
+        // Just drop it - the restore will fail (no real repo) but Drop shouldn't panic
+        drop(guard);
+        // If we get here, Drop worked without panicking
+    }
 }
