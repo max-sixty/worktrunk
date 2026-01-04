@@ -262,7 +262,12 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             Some(destination_path.as_path())
         } else {
             // Worktree removed — show path only if shell integration won't cd there
-            crate::output::hooks_display_path(&destination_path)
+            // Post-hook: user will be at destination if shell integration active
+            if crate::output::is_shell_integration_active() {
+                None // Shell will cd there
+            } else {
+                Some(destination_path.as_path())
+            }
         };
         execute_post_merge_commands(&ctx, &target_branch, None, display_path)?;
     }
@@ -280,6 +285,8 @@ pub fn run_pre_merge_commands(
     target_branch: &str,
     name_filter: Option<&str>,
 ) -> anyhow::Result<()> {
+    // Pre-hook: user is at cwd when hooks run
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
     run_hook_with_filter(
         ctx,
         ctx.config.hooks.pre_merge.as_ref(),
@@ -288,7 +295,7 @@ pub fn run_pre_merge_commands(
         &[("target", target_branch)],
         HookFailureStrategy::FailFast,
         name_filter,
-        None, // No path display - running in expected directory
+        crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }
@@ -298,8 +305,8 @@ pub fn run_pre_merge_commands(
 /// Runs user hooks first, then project hooks.
 /// Approval is handled at the gate (command entry point).
 ///
-/// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
-/// the worktree is preserved and the user's shell remains in a different directory.
+/// `display_path`: Pass `ctx.hooks_display_path()` for automatic detection, or
+/// explicit `Some(path)` when hooks run somewhere the user won't be cd'd to.
 pub fn execute_post_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
@@ -329,9 +336,13 @@ pub fn execute_post_merge_commands(
 /// Runs user hooks first, then project hooks.
 /// Runs before a worktree is removed. Non-zero exit aborts the removal.
 /// Approval is handled at the gate (command entry point).
+///
+/// `display_path`: Pass `ctx.hooks_display_path()` for automatic detection, or
+/// explicit `Some(path)` when hooks run somewhere the user won't be cd'd to.
 pub fn execute_pre_remove_commands(
     ctx: &CommandContext,
     name_filter: Option<&str>,
+    display_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     let project_config = ctx.repo.load_project_config()?;
 
@@ -345,7 +356,7 @@ pub fn execute_pre_remove_commands(
         &[],
         HookFailureStrategy::FailFast,
         name_filter,
-        None, // No path display - running in expected directory
+        display_path,
     )
     .map_err(worktrunk::git::add_hook_skip_hint)
 }

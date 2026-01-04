@@ -63,6 +63,49 @@ Stats are truly optional context. Reasons answer "why is this safe/happening?"
 and belong with the main message. Symbols within reason parentheses still render
 in their native styling (see "Symbol styling" below).
 
+**Show path when hooks run in a different directory:** When hooks run in a
+worktree other than the user's current (or eventual) location, show the path.
+Use `output::compute_hooks_display_path(hooks_run_at, user_location)` which
+returns `Some(hooks_run_at)` when different from `user_location`, or `None`
+when they match.
+
+There are two cases for determining `user_location`:
+
+1. **Pre-hooks** — User is at cwd when hooks run. Use cwd as user_location.
+   Example: `wt step commit` runs pre-commit hooks in the current worktree.
+
+2. **Post-hooks** — User will be at destination if shell integration is active.
+   Check `is_shell_integration_active()` to determine user_location.
+   Examples: post-switch, post-start, post-create, post-merge hooks.
+
+```rust
+// Pre-hooks: user is at cwd when hooks run
+let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
+let display_path = crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd);
+
+// Post-hooks: user will be at destination if shell integration active
+let user_location = if crate::output::is_shell_integration_active() {
+    destination_path.to_path_buf()
+} else {
+    std::env::current_dir().unwrap_or_else(|_| destination_path.to_path_buf())
+};
+let display_path = crate::output::compute_hooks_display_path(&destination_path, &user_location);
+
+// Simpler post-hook case when destination == worktree_path
+let display_path = if crate::output::is_shell_integration_active() {
+    None // Shell will cd there
+} else {
+    Some(destination_path.as_path())
+};
+```
+
+Omit the path when the user is (or will be) in the worktree where hooks run:
+
+- **User is already there and will stay**: Pre-merge hooks, pre-commit hooks
+  when cwd matches worktree_path
+- **User will cd there via shell integration**: Post-switch, post-start, and
+  post-merge hooks when shell integration is active
+
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something
 mentioned in the error message.
