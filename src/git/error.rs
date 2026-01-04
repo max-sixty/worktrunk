@@ -325,14 +325,14 @@ impl std::fmt::Display for GitError {
 
             GitError::WorktreeLocked { branch, reason } => {
                 let reason_text = match reason {
-                    Some(r) if !r.is_empty() => format!(": {r}"),
+                    Some(r) if !r.is_empty() => format!(" ({r})"),
                     _ => String::new(),
                 };
                 write!(
                     f,
                     "{}\n{}",
                     error_message(cformat!(
-                        "Cannot remove <bold>{branch}</> (locked{reason_text})"
+                        "Cannot remove <bold>{branch}</>, worktree is locked{reason_text}"
                     )),
                     hint_message(cformat!(
                         "To unlock, run <bright-black>git worktree unlock {branch}</>"
@@ -1003,8 +1003,8 @@ mod tests {
         let display = err.to_string();
         assert!(display.contains("Cannot remove"));
         assert!(display.contains("feature"));
-        assert!(display.contains("locked"));
-        assert!(display.contains("Testing lock"));
+        assert!(display.contains(", worktree is locked"));
+        assert!(display.contains("(Testing lock)"));
         assert!(display.contains("git worktree unlock"));
     }
 
@@ -1018,10 +1018,10 @@ mod tests {
         let display = err.to_string();
         assert!(display.contains("Cannot remove"));
         assert!(display.contains("feature"));
-        assert!(display.contains("locked"));
+        assert!(display.contains(", worktree is locked"));
         assert!(
-            !display.contains("locked:"),
-            "should not show colon without reason"
+            !display.contains("locked ("),
+            "should not show parentheses without reason"
         );
         assert!(display.contains("git worktree unlock"));
     }
