@@ -329,7 +329,7 @@ command = "npm install"
         // Use fixed width for consistent testing (80 columns)
         let result = format_with_gutter(commit_msg, Some(80));
 
-        insta::assert_snapshot!(result, @r"
+        insta::assert_snapshot!(result, @"
         [107m [0m This commit refactors the authentication system to use a more secure
         [107m [0m token-based approach instead of the previous session-based system which had
         [107m [0m several security vulnerabilities that were identified during the security
