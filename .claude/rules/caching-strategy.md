@@ -22,6 +22,7 @@ Everything else (remote URLs, project config, branch metadata) is read-only.
 - `current_branch()` — we don't switch branches within a worktree
 - `project_identifier()` — derived from remote URL
 - `primary_remote()` — git config, doesn't change
+- `default_branch()` — from git config or detection, doesn't change
 
 **Not cached (intentionally):**
 - `is_dirty()` — changes as we stage/commit

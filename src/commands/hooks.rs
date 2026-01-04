@@ -88,38 +88,31 @@ pub fn prepare_hook_commands(
 
     let display_path = display_path.map(|p| p.to_path_buf());
 
-    if let Some(config) = user_config {
-        // Skip user commands if filter specifies project source
-        if parsed_filter
-            .as_ref()
-            .is_none_or(|f| f.matches_source(HookSource::User))
-        {
-            let prepared = prepare_commands(config, ctx, extra_vars, hook_type)?;
-            let filtered = filter_by_name(prepared, parsed_filter.as_ref().map(|f| f.name));
-            commands.extend(filtered.into_iter().map(|p| SourcedCommand {
-                prepared: p,
-                source: HookSource::User,
-                hook_type,
-                display_path: display_path.clone(),
-            }));
-        }
-    }
+    // Process user config first, then project config (execution order)
+    let sources = [
+        (HookSource::User, user_config),
+        (HookSource::Project, project_config),
+    ];
 
-    if let Some(config) = project_config {
-        // Skip project commands if filter specifies user source
-        if parsed_filter
+    for (source, config) in sources {
+        let Some(config) = config else { continue };
+
+        // Skip if filter specifies a different source
+        if !parsed_filter
             .as_ref()
-            .is_none_or(|f| f.matches_source(HookSource::Project))
+            .is_none_or(|f| f.matches_source(source))
         {
-            let prepared = prepare_commands(config, ctx, extra_vars, hook_type)?;
-            let filtered = filter_by_name(prepared, parsed_filter.as_ref().map(|f| f.name));
-            commands.extend(filtered.into_iter().map(|p| SourcedCommand {
-                prepared: p,
-                source: HookSource::Project,
-                hook_type,
-                display_path: display_path.clone(),
-            }));
+            continue;
         }
+
+        let prepared = prepare_commands(config, ctx, extra_vars, hook_type)?;
+        let filtered = filter_by_name(prepared, parsed_filter.as_ref().map(|f| f.name));
+        commands.extend(filtered.into_iter().map(|p| SourcedCommand {
+            prepared: p,
+            source,
+            hook_type,
+            display_path: display_path.clone(),
+        }));
     }
 
     Ok(commands)
@@ -208,27 +201,24 @@ pub(crate) fn check_name_filter_matched(
         let parsed = ParsedFilter::parse(filter_str);
         let mut available = Vec::new();
 
-        // Only show commands from sources that match the filter
-        if parsed.matches_source(HookSource::User)
-            && let Some(config) = user_config
-        {
+        // Collect available commands from sources that match the filter
+        let sources = [
+            (HookSource::User, user_config),
+            (HookSource::Project, project_config),
+        ];
+        for (source, config) in sources {
+            let Some(config) = config else { continue };
+            if !parsed.matches_source(source) {
+                continue;
+            }
             available.extend(
                 config
                     .commands()
                     .iter()
-                    .filter_map(|c| c.name.as_ref().map(|n| format!("user:{n}"))),
+                    .filter_map(|c| c.name.as_ref().map(|n| format!("{source}:{n}"))),
             );
         }
-        if parsed.matches_source(HookSource::Project)
-            && let Some(config) = project_config
-        {
-            available.extend(
-                config
-                    .commands()
-                    .iter()
-                    .filter_map(|c| c.name.as_ref().map(|n| format!("project:{n}"))),
-            );
-        }
+
         return Err(worktrunk::git::GitError::HookCommandNotFound {
             name: filter_str.to_string(),
             available,

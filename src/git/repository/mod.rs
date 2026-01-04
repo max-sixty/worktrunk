@@ -75,6 +75,8 @@ struct RepoCache {
     is_bare: OnceCell<bool>,
     /// Project config (loaded from .config/wt.toml, cached per Repository instance)
     project_config: OnceCell<Option<ProjectConfig>>,
+    /// Default branch (main, master, etc.) - cached from git config or detection
+    default_branch: OnceCell<String>,
 }
 
 /// Repository context for git operations.
@@ -406,18 +408,25 @@ impl Repository {
     ///
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
     pub fn default_branch(&self) -> anyhow::Result<String> {
-        // Fast path: check worktrunk's own cache (single git config read)
-        if let Ok(branch) = self.run_command(&["config", "--get", "worktrunk.default-branch"]) {
-            let branch = branch.trim();
-            if !branch.is_empty() {
-                return Ok(branch.to_string());
-            }
-        }
+        self.cache
+            .default_branch
+            .get_or_try_init(|| {
+                // Fast path: check worktrunk's persistent cache (git config)
+                if let Ok(branch) =
+                    self.run_command(&["config", "--get", "worktrunk.default-branch"])
+                {
+                    let branch = branch.trim();
+                    if !branch.is_empty() {
+                        return Ok(branch.to_string());
+                    }
+                }
 
-        // Detect and cache the default branch
-        let branch = self.detect_default_branch()?;
-        let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
-        Ok(branch)
+                // Detect and persist to git config for future processes
+                let branch = self.detect_default_branch()?;
+                let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
+                Ok(branch)
+            })
+            .cloned()
     }
 
     /// Detect the default branch without using worktrunk's cache.

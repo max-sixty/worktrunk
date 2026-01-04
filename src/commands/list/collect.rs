@@ -1181,13 +1181,16 @@ fn sort_by_timestamp_desc_with_cache<T, F>(
 where
     F: Fn(&T) -> &str,
 {
-    let mut indexed: Vec<_> = items.into_iter().enumerate().collect();
-    let item_timestamps: Vec<i64> = indexed
-        .iter()
-        .map(|(_, item)| *timestamps.get(get_sha(item)).unwrap_or(&0))
+    // Embed timestamp in tuple to avoid parallel Vec and index lookups
+    let mut with_ts: Vec<_> = items
+        .into_iter()
+        .map(|item| {
+            let ts = *timestamps.get(get_sha(&item)).unwrap_or(&0);
+            (item, ts)
+        })
         .collect();
-    indexed.sort_by_key(|(idx, _)| std::cmp::Reverse(item_timestamps[*idx]));
-    indexed.into_iter().map(|(_, item)| item).collect()
+    with_ts.sort_by_key(|(_, ts)| std::cmp::Reverse(*ts));
+    with_ts.into_iter().map(|(item, _)| item).collect()
 }
 
 /// Sort worktrees: current first, main second, then by timestamp descending.
@@ -1198,24 +1201,24 @@ fn sort_worktrees_with_cache(
     current_path: Option<&std::path::PathBuf>,
     timestamps: &std::collections::HashMap<String, i64>,
 ) -> Vec<Worktree> {
-    let mut indexed: Vec<_> = worktrees.into_iter().enumerate().collect();
-    let wt_timestamps: Vec<i64> = indexed
-        .iter()
-        .map(|(_, wt)| *timestamps.get(&wt.head).unwrap_or(&0))
+    // Embed timestamp and priority in tuple to avoid parallel Vec and index lookups
+    let mut with_sort_key: Vec<_> = worktrees
+        .into_iter()
+        .map(|wt| {
+            let priority = if current_path.is_some_and(|cp| &wt.path == cp) {
+                0 // Current first
+            } else if wt.path == main_worktree.path {
+                1 // Main second
+            } else {
+                2 // Rest by timestamp
+            };
+            let ts = *timestamps.get(&wt.head).unwrap_or(&0);
+            (wt, priority, ts)
+        })
         .collect();
 
-    indexed.sort_by_key(|(idx, wt)| {
-        let priority = if current_path.is_some_and(|cp| &wt.path == cp) {
-            0 // Current first
-        } else if wt.path == main_worktree.path {
-            1 // Main second
-        } else {
-            2 // Rest by timestamp
-        };
-        (priority, std::cmp::Reverse(wt_timestamps[*idx]))
-    });
-
-    indexed.into_iter().map(|(_, wt)| wt).collect()
+    with_sort_key.sort_by_key(|(_, priority, ts)| (*priority, std::cmp::Reverse(*ts)));
+    with_sort_key.into_iter().map(|(wt, _, _)| wt).collect()
 }
 
 // ============================================================================
