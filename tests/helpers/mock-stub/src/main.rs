@@ -10,8 +10,9 @@
 //! 3. Command::new("gh") now works on Windows
 
 use std::env;
+use std::io::{self, Write};
 use std::path::Path;
-use std::process::{Command, exit};
+use std::process::{Command, Stdio, exit};
 
 /// Convert Windows path to MSYS2/Git Bash style path.
 ///
@@ -55,15 +56,25 @@ fn main() {
     // Forward all arguments to bash with the script
     let args: Vec<String> = env::args().skip(1).collect();
 
-    let status = Command::new("bash")
+    // Use .output() to capture stdout/stderr, then forward them.
+    // This is more reliable than relying on handle inheritance on Windows,
+    // which can fail silently when pipes are involved.
+    let output = Command::new("bash")
         .arg(&script_path_str)
         .args(&args)
-        .status()
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
         .unwrap_or_else(|e| {
             eprintln!("mock-stub: failed to execute bash: {e}");
             eprintln!("Is Git Bash installed and in PATH?");
             exit(1);
         });
 
-    exit(status.code().unwrap_or(1));
+    // Forward captured output to our stdout/stderr
+    io::stdout().write_all(&output.stdout).unwrap();
+    io::stderr().write_all(&output.stderr).unwrap();
+
+    exit(output.status.code().unwrap_or(1));
 }
