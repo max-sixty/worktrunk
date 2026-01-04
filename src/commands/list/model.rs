@@ -928,10 +928,12 @@ impl serde::Serialize for WorktreeState {
 ///
 /// The `Integrated` variant carries an [`IntegrationReason`] explaining how the
 /// content was integrated (ancestor, trees match, no added changes, or merge adds nothing).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum MainState {
     /// Normal working branch (up-to-date with main, no special state)
     #[default]
+    #[strum(serialize = "")]
     None,
     /// This IS the main branch
     IsMain,
@@ -942,6 +944,7 @@ pub enum MainState {
     /// Branch HEAD is same commit as main but has uncommitted changes
     SameCommit,
     /// Content is integrated into main via different history
+    #[strum(serialize = "integrated")]
     Integrated(IntegrationReason),
     /// Both ahead and behind main
     Diverged,
@@ -993,17 +996,8 @@ impl MainState {
 
     /// Returns the JSON string representation for main_state field.
     pub fn as_json_str(self) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::IsMain => Some("is_main"),
-            Self::WouldConflict => Some("would_conflict"),
-            Self::Empty => Some("empty"),
-            Self::SameCommit => Some("same_commit"),
-            Self::Integrated(_) => Some("integrated"),
-            Self::Diverged => Some("diverged"),
-            Self::Ahead => Some("ahead"),
-            Self::Behind => Some("behind"),
-        }
+        let s: &'static str = self.into();
+        if s.is_empty() { None } else { Some(s) }
     }
 
     /// Compute from divergence counts, integration state, and same-commit-dirty flag.
@@ -1051,10 +1045,12 @@ impl serde::Serialize for MainState {
 /// These take priority over all other states in the Worktree column.
 ///
 /// Priority: Conflicts (✘) > Rebase (⤴) > Merge (⤵)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum OperationState {
     /// No operation in progress
     #[default]
+    #[strum(serialize = "")]
     None,
     /// Actual merge conflicts (unmerged paths in working tree)
     Conflicts,
@@ -1092,12 +1088,8 @@ impl OperationState {
 
     /// Returns the JSON string representation.
     pub fn as_json_str(self) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::Conflicts => Some("conflicts"),
-            Self::Rebase => Some("rebase"),
-            Self::Merge => Some("merge"),
-        }
+        let s: &'static str = self.into();
+        if s.is_empty() { None } else { Some(s) }
     }
 }
 
