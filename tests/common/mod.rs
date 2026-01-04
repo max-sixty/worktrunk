@@ -1567,31 +1567,18 @@ esac
         std::fs::write(&pr_json_file, pr_json).unwrap();
         std::fs::write(&run_json_file, run_json).unwrap();
 
-        // Get the mock_bin directory as a Unix-style path for bash
-        // On Windows, we need to convert C:\foo\bar to /c/foo/bar
-        let mock_bin_str = mock_bin.to_string_lossy();
-        let mock_bin_unix = if cfg!(windows) {
-            // Convert Windows path to MSYS2 style: C:\foo -> /c/foo
-            let chars: Vec<char> = mock_bin_str.chars().collect();
-            if chars.len() >= 2 && chars[1] == ':' {
-                let drive = chars[0].to_ascii_lowercase();
-                format!("/{}{}", drive, mock_bin_str[2..].replace('\\', "/"))
-            } else {
-                mock_bin_str.replace('\\', "/")
-            }
-        } else {
-            mock_bin_str.to_string()
-        };
-
+        // Use dirname "$0" to find JSON files relative to script.
+        // This works on both Unix and Windows because:
+        // - On Unix: $0 is the script path as invoked
+        // - On Windows: mock-stub.exe converts the path to MSYS2 format before invoking bash
         write_mock_script(
             &mock_bin,
             "gh",
-            &format!(
-                r#"#!/bin/sh
+            r#"#!/bin/sh
 # Mock gh command that returns configured JSON data
-# JSON files are stored at absolute path to avoid escaping issues
+# JSON files are in the same directory as this script
 
-MOCK_DIR="{mock_bin}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 case "$1" in
     --version)
@@ -1604,12 +1591,12 @@ case "$1" in
         ;;
     pr)
         # gh pr list - return PR data from file
-        cat "$MOCK_DIR/pr_data.json"
+        cat "$SCRIPT_DIR/pr_data.json"
         exit 0
         ;;
     run)
         # gh run list - return run data from file
-        cat "$MOCK_DIR/run_data.json"
+        cat "$SCRIPT_DIR/run_data.json"
         exit 0
         ;;
     *)
@@ -1617,8 +1604,6 @@ case "$1" in
         ;;
 esac
 "#,
-                mock_bin = mock_bin_unix,
-            ),
         );
 
         // Create mock glab script (fails immediately - no GitLab support in this mock)
