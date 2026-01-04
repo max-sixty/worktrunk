@@ -276,3 +276,42 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
         "statusline should not show 'feature' in detached HEAD, got: {output}"
     );
 }
+
+// --- URL Display Tests ---
+
+/// Test that statusline shows URL when project config has URL template.
+#[rstest]
+fn test_statusline_with_url(repo: TestRepo) {
+    // Configure URL template with simple branch variable (no hash_port for deterministic output)
+    repo.write_project_config(
+        r#"[list]
+url = "http://{{ branch }}.localhost:3000"
+"#,
+    );
+
+    let output = run_statusline(&repo, &[], None);
+    // Shows `?` because writing project config creates uncommitted file
+    assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m  http://main.localhost:3000");
+}
+
+/// Test that statusline URL uses branch name in feature worktree.
+#[rstest]
+fn test_statusline_url_in_feature_worktree(mut repo: TestRepo) {
+    // Configure URL template with simple branch variable
+    repo.write_project_config(
+        r#"[list]
+url = "http://{{ branch }}.localhost:3000"
+"#,
+    );
+
+    // Commit the project config so it's visible in worktrees
+    repo.run_git(&["add", ".config/wt.toml"]);
+    repo.run_git(&["commit", "-m", "Add project config"]);
+
+    // Create feature worktree
+    let feature_path = repo.add_worktree("feature");
+
+    // Run statusline from feature worktree
+    let output = run_statusline_from_dir(&repo, &[], None, &feature_path);
+    assert_snapshot!(output, @"[0m feature  [2m_[22m  http://feature.localhost:3000");
+}
