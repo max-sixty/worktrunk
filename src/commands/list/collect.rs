@@ -929,7 +929,7 @@ pub fn collect(
         if main_repo.is_builtin_fsmonitor_enabled() {
             for wt in &sorted_worktrees {
                 // Skip prunable worktrees (directory missing)
-                if wt.prunable.is_none() {
+                if !wt.is_prunable() {
                     Repository::at(&wt.path).start_fsmonitor_daemon();
                 }
             }
@@ -1102,7 +1102,7 @@ pub fn collect(
     for item in &mut all_items {
         if item.status_symbols.is_none()
             && let Some(data) = item.worktree_data()
-            && data.prunable.is_some()
+            && data.is_prunable()
         {
             // Use default context - no tasks ran, so no conflict/status info
             let ctx = StatusContext::default();

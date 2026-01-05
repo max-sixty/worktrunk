@@ -725,7 +725,7 @@ pub fn collect_worktree_progressive(
 ) {
     // Skip git operations for prunable worktrees (directory missing).
     // Git operations would fail anyway since the directory doesn't exist.
-    if wt.prunable.is_some() {
+    if wt.is_prunable() {
         return;
     }
 

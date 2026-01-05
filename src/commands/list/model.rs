@@ -221,6 +221,11 @@ pub struct WorktreeData {
 }
 
 impl WorktreeData {
+    /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
+    pub fn is_prunable(&self) -> bool {
+        self.prunable.is_some()
+    }
+
     /// Create WorktreeData from a Worktree, with all computed fields set to None.
     pub(crate) fn from_worktree(
         wt: &worktrunk::git::Worktree,
@@ -643,7 +648,7 @@ impl ListItem {
                 // Worktree location state - priority: branch_worktree_mismatch > prunable > locked
                 let worktree_state = if data.branch_worktree_mismatch {
                     WorktreeState::BranchWorktreeMismatch
-                } else if data.prunable.is_some() {
+                } else if data.is_prunable() {
                     WorktreeState::Prunable
                 } else if data.locked.is_some() {
                     WorktreeState::Locked

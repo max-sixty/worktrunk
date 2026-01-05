@@ -318,6 +318,14 @@ pub fn path_dir_name(path: &std::path::Path) -> &str {
 }
 
 impl Worktree {
+    /// Returns true if this worktree is prunable (directory deleted but git still tracks metadata).
+    ///
+    /// Prunable worktrees cannot be operated on - the directory doesn't exist.
+    /// Most iteration over worktrees should skip prunable ones.
+    pub fn is_prunable(&self) -> bool {
+        self.prunable.is_some()
+    }
+
     /// Returns the worktree directory name.
     ///
     /// This is the filesystem directory name (e.g., "repo.feature" from "/path/to/repo.feature").
@@ -348,9 +356,9 @@ impl Worktree {
         // Can't cd to a worktree that doesn't exist.
         worktrees
             .iter()
-            .filter(|wt| wt.prunable.is_none())
+            .filter(|wt| !wt.is_prunable())
             .find(|wt| wt.branch.as_deref() == Some(default_branch))
-            .or_else(|| worktrees.iter().find(|wt| wt.prunable.is_none()))
+            .or_else(|| worktrees.iter().find(|wt| !wt.is_prunable()))
     }
 }
 
