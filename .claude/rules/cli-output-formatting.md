@@ -355,7 +355,7 @@ output::print(hint_message(cformat!("Run <bright-black>wt merge</> to continue")
 **color-print tags:** `<bold>`, `<dim>`, `<bright-black>`, `<red>`, `<green>`,
 `<yellow>`, `<cyan>`, `<magenta>`
 
-**Branch names** should be bolded in messages.
+**Branch names and status values** should be bolded in messages.
 
 **Symbol constants in cformat!:** For messages that bypass output:: functions
 (e.g., `GitError` Display impl), use symbol constants directly:

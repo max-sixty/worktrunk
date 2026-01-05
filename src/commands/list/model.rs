@@ -577,7 +577,7 @@ impl ListItem {
         // 7. CI status (priority 9)
         if let Some(Some(ref pr_status)) = self.pr_status {
             segments.push(StatuslineSegment::from_column(
-                pr_status.format_indicator_with_options(include_links),
+                pr_status.format_indicator(include_links),
                 ColumnKind::CiStatus,
             ));
         }

@@ -218,7 +218,6 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     // Show invocation details that help diagnose issues like https://github.com/max-sixty/worktrunk/pull/387
     let invocation = crate::invocation_path();
     let is_git_subcommand = crate::is_git_subcommand();
-    let is_explicit_path = crate::was_invoked_with_explicit_path();
 
     // Build debug lines
     let mut debug_lines = Vec::new();
@@ -226,15 +225,12 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     // Always show how wt was invoked
     debug_lines.push(cformat!("Invoked as: <bold>{invocation}</>"));
 
-    // Show relevant detection flags
+    // Show if running as git subcommand (affects shell integration)
     if is_git_subcommand {
         debug_lines.push("Git subcommand: yes (GIT_EXEC_PATH set)".to_string());
     }
-    if is_explicit_path {
-        debug_lines.push("Explicit path: yes (contains path separator)".to_string());
-    }
 
-    // Show all debug info in a gutter
+    // Show shell integration debug info in a gutter
     let debug_text = debug_lines.join("\n");
     writeln!(out, "{}", format_with_gutter(&debug_text, None))?;
 
@@ -258,6 +254,20 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
             ))
         )?;
     }
+
+    // Show hyperlink support status (separate from shell integration)
+    let hyperlinks_supported =
+        worktrunk::styling::supports_hyperlinks(worktrunk::styling::Stream::Stderr);
+    let status = if hyperlinks_supported {
+        "active"
+    } else {
+        "inactive"
+    };
+    writeln!(
+        out,
+        "{}",
+        info_message(cformat!("Hyperlinks: <bold>{status}</>"))
+    )?;
 
     Ok(())
 }

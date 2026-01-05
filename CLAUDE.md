@@ -217,3 +217,7 @@ Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or
 // TODO(config-validation): Used by upcoming config validation
 fn validate_config() { ... }
 ```
+
+### No Test Code in Library Code
+
+Never use `#[cfg(test)]` to add test-only convenience methods to library code. Tests should call the real API directly. If tests need helpers, define them in the test module.

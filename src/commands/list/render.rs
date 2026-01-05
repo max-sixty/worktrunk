@@ -2,9 +2,10 @@ use crate::display::{format_relative_time_short, shorten_path, truncate_to_width
 use anstyle::Style;
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::StyledLine;
+use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
 
 use super::ci_status::PrStatus;
+use super::collect_progressive_impl::parse_port_from_url;
 use super::columns::{ColumnKind, DiffVariant};
 use super::layout::{ColumnFormat, ColumnLayout, DiffColumnConfig, LayoutConfig};
 use super::model::{
@@ -14,9 +15,13 @@ use worktrunk::git::LineDiff;
 
 impl PrStatus {
     /// Render indicator as a StyledLine for table column rendering.
+    ///
+    /// Uses OSC 8 hyperlinks when the terminal supports them; falls back to
+    /// plain colored indicator otherwise.
     fn render_indicator(&self) -> StyledLine {
         let mut segment = StyledLine::new();
-        segment.push_raw(self.format_indicator());
+        let include_link = supports_hyperlinks(Stream::Stdout);
+        segment.push_raw(self.format_indicator(include_link));
         segment
     }
 }
@@ -518,6 +523,8 @@ impl ColumnLayout {
             }
             ColumnKind::Url => {
                 // URL column: shows dev server URL from project config template
+                // - When hyperlinks supported: show ":port" as clickable link
+                // - When hyperlinks not supported: show full URL
                 // - dim if not available/active
                 // - normal if available and active
                 match (&ctx.item.url, ctx.item.url_active) {
@@ -525,13 +532,15 @@ impl ColumnLayout {
                     (Some(url), Some(true)) => {
                         // Active: normal styling
                         let mut cell = StyledLine::new();
-                        cell.push_raw(url.clone());
+                        cell.push_raw(format_url_cell(url));
                         cell.truncate_to_width(self.width)
                     }
                     (Some(url), _) => {
                         // Not active or unknown: dim styling
                         let mut cell = StyledLine::new();
-                        cell.push_styled(url.clone(), Style::new().dimmed());
+                        let formatted = format_url_cell(url);
+                        // Apply dim to the formatted text (which may contain OSC 8 sequences)
+                        cell.push_styled(formatted, Style::new().dimmed());
                         cell.truncate_to_width(self.width)
                     }
                 }
@@ -587,6 +596,21 @@ impl ColumnLayout {
             }
         }
     }
+}
+
+/// Format URL cell with optional hyperlink.
+///
+/// When the terminal supports OSC 8 hyperlinks, shows just the port (e.g., `:3000`)
+/// as a clickable link. Otherwise, shows the full URL.
+fn format_url_cell(url: &str) -> String {
+    if supports_hyperlinks(Stream::Stdout) {
+        // Extract port from URL for compact display
+        if let Some(port) = parse_port_from_url(url) {
+            return hyperlink_stdout(url, &format!(":{port}"));
+        }
+    }
+    // Fallback: show full URL
+    url.to_string()
 }
 
 #[cfg(test)]

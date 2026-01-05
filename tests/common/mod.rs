@@ -549,6 +549,8 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
     cmd.env("COLUMNS", "150");
+    // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate
+    cmd.env("TERM", "alacritty");
     // Enable warn-level logging so diagnostics show up in test failures
     cmd.env("RUST_LOG", "warn");
     // Skip URL health checks to avoid flaky tests from random local processes
