@@ -146,18 +146,37 @@ pub fn format_with_gutter(content: &str, max_width: Option<usize>) -> String {
 /// IMPORTANT: wrap_ansi only restores foreground colors on continuation lines,
 /// not text attributes like dim. We detect this and prepend dim (\x1b[2m) to
 /// continuation lines that start with a color code, ensuring consistent dimming.
+///
+/// Leading indentation is preserved: if the input starts with spaces, continuation
+/// lines will have the same indentation (wrapping happens within the remaining width).
 pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![styled.to_string()];
     }
 
+    // Detect leading indentation (spaces before any content or ANSI codes)
+    let leading_spaces = styled.chars().take_while(|c| *c == ' ').count();
+    let indent = " ".repeat(leading_spaces);
+    let content = &styled[leading_spaces..];
+
+    // Handle whitespace-only or empty content
+    if content.is_empty() {
+        return vec![styled.to_string()];
+    }
+
+    // Calculate width for content (excluding indent)
+    let content_width = max_width.saturating_sub(leading_spaces);
+    if content_width < 10 {
+        // Width too narrow for meaningful wrapping
+        return vec![styled.to_string()];
+    }
+
+    // wrap_ansi returns a string with '\n' at wrap points, preserving ANSI styles
     // Preserve leading whitespace (wrap_ansi's default trims it)
     let options = wrap_ansi::WrapOptions::builder()
         .trim_whitespace(false)
         .build();
-
-    // wrap_ansi returns a string with '\n' at wrap points, preserving ANSI styles
-    let wrapped = wrap_ansi::wrap_ansi(styled, max_width, Some(options));
+    let wrapped = wrap_ansi::wrap_ansi(content, content_width, Some(options));
 
     if wrapped.is_empty() {
         return vec![String::new()];
@@ -189,12 +208,14 @@ pub fn wrap_styled_text(styled: &str, max_width: usize) -> Vec<String> {
         // We restore dim for lines that start with a color code. This is safe
         // because format_bash_with_gutter_impl always starts lines with dim,
         // so any wrapped continuation should also be dimmed.
-        if i > 0 && trimmed.starts_with("\x1b[3") {
-            // Prepend dim before the color code
-            result.push(format!("\x1b[2m{trimmed}"));
+        let with_dim = if i > 0 && trimmed.starts_with("\x1b[3") {
+            format!("\x1b[2m{trimmed}")
         } else {
-            result.push(trimmed.to_owned());
-        }
+            trimmed.to_owned()
+        };
+
+        // Add the original indentation to all lines
+        result.push(format!("{indent}{with_dim}"));
     }
 
     result
@@ -423,6 +444,24 @@ mod tests {
     fn test_wrap_styled_text_only_whitespace() {
         let result = wrap_styled_text("          ", 80);
         assert_eq!(result, vec!["          "]);
+    }
+
+    #[test]
+    fn test_wrap_styled_text_preserves_indent_on_wrap() {
+        // Force wrapping by using a narrow width - text should wrap and preserve indent
+        let result = wrap_styled_text(
+            "          This is a longer text that should wrap across multiple lines",
+            40,
+        );
+        assert!(result.len() > 1, "Should have wrapped");
+        // All lines should have the 10-space indent
+        for line in &result {
+            assert!(
+                line.starts_with("          "),
+                "Line should start with 10 spaces: {:?}",
+                line
+            );
+        }
     }
 
     #[test]

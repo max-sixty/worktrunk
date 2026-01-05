@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -62,9 +63,8 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
 
 Show all worktrees with their status. The table includes uncommitted changes, divergence from the default branch and remote, and optional CI status.
 
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as
-background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results
-arrive.
+The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as 
+background git operations complete. With [2m--full[0m, CI status fetches from the network — the table displays instantly and CI fills in as results arrive.
 
 [32mExamples
 
@@ -117,8 +117,8 @@ The CI column shows GitHub/GitLab pipeline status:
    ⚠ yellow  Fetch error (rate limit, network) 
    (blank)   No upstream or no PR/MR           
 
-CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs
-are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60
+CI indicators are clickable links to the PR or pipeline page. Any CI dot appears dimmed when there are unpushed local changes (stale status). PRs/MRs 
+are checked first, then branch workflows/pipelines for branches with an upstream. Local-only branches show blank. Results are cached for 30-60 
 seconds; use [2mwt config state[0m to view or clear.
 
 [32mStatus symbols

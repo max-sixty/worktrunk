@@ -85,7 +85,7 @@ Force-delete an unmerged branch:
 
 [32mBranch cleanup
 
-By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs
+By default, branches are deleted when merging them would add nothing. This works with squash-merge and rebase workflows where commit history differs 
 but file changes match.
 
 Worktrunk checks five conditions (in order of cost):
@@ -96,8 +96,8 @@ Worktrunk checks five conditions (in order of cost):
 4. [1mTrees match[0m — Branch tree SHA equals target tree SHA. Shows [2m⊂[0m.
 5. [1mMerge adds nothing[0m — Simulated merge produces the same tree as target. Handles squash-merged branches where target has advanced. Shows [2m⊂[0m.
 
-The "same commit" check uses the local default branch; for other checks, [1mtarget[0m means the default branch, or its upstream (e.g., [2morigin/main[0m)
-when strictly ahead.
+The "same commit" check uses the local default branch; for other checks, [1mtarget[0m means the default branch, or its upstream (e.g., [2morigin/main[0m) when 
+strictly ahead.
 
 Branches showing [2m_[0m or [2m⊂[0m are dimmed as safe to delete.
 
@@ -105,8 +105,8 @@ Use [2m-D[0m to force-delete branches with unmerged changes. Use [2m--no-dele
 
 [32mBackground removal
 
-Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run
-in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run in 
+the foreground.
 
 [32mShortcuts
 

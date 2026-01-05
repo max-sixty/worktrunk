@@ -390,9 +390,10 @@ pub fn handle_switch_output(
                     .map(|c| c.has_custom_worktree_path())
                     .unwrap_or(false);
                 if !has_custom_config && !repo.has_shown_hint("worktree-path") {
-                    super::print(hint_message(cformat!(
+                    let hint = hint_message(cformat!(
                         "Customize worktree locations: <bright-black>wt config create</>"
-                    )))?;
+                    ));
+                    super::print(hint)?;
                     let _ = repo.mark_hint_shown("worktree-path");
                 }
             }

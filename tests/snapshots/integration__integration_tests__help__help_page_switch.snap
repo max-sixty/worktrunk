@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -28,7 +29,7 @@ Change directory to a worktree, creating one if needed.
 </picture>
 </figure>
 
-Worktrees are addressed by branch name; paths are computed from a template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
 ## Examples
 

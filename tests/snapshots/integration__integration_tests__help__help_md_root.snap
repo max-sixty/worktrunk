@@ -51,7 +51,7 @@ Global Options:
 Getting started
 
   wt switch --create feature    Create worktree and branch
-  wt switch feature             Switch to existing worktree
+  wt switch feature             Switch to worktree
   wt list                       Show all worktrees
   wt merge                      Squash, rebase, and merge to default branch
 

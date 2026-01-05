@@ -17,7 +17,7 @@ Change directory to a worktree, creating one if needed.
 </picture>
 </figure>
 
-Worktrees are addressed by branch name; paths are computed from a template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
+Worktrees are addressed by branch name; paths are computed from a configurable template. Unlike `git switch`, this navigates between worktrees rather than changing branches in place.
 
 ## Examples
 

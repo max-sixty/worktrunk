@@ -146,7 +146,7 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
   [2m[projects."my-project"]
   [2mapproved-commands = ["npm ci", "npm test"]
 
-Manage approvals with [2mwt hook approvals add[0m to review and pre-approve commands, and [2mwt hook approvals clear[0m to reset (add [2m--global[0m to clear all
+Manage approvals with [2mwt hook approvals add[0m to review and pre-approve commands, and [2mwt hook approvals clear[0m to reset (add [2m--global[0m to clear all 
 projects).
 
 [1mUser hooks
@@ -185,7 +185,7 @@ The [2m[list][0m section adds a URL column to [2mwt list[0m:
   [2m[list]
   [2murl = "http://localhost:{{ branch | hash_port }}"
 
-URLs are dimmed when the port isn't listening. The template supports [2m{{ branch }}[0m with filters [2mhash_port[0m (port 10000-19999) and [2msanitize
+URLs are dimmed when the port isn't listening. The template supports [2m{{ branch }}[0m with filters [2mhash_port[0m (port 10000-19999) and [2msanitize[0m 
 (filesystem-safe).
 
 [32mShell integration
@@ -213,8 +213,7 @@ All user config options can be overridden with environment variables using the 
 
 [1mNaming convention
 
-Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens
-automatically.
+Config keys use kebab-case ([2mworktree-path[0m), while env vars use SCREAMING_SNAKE_CASE ([2mWORKTRUNK_WORKTREE_PATH[0m). The conversion happens automatically.
 
 For nested config sections, use double underscores to separate levels:
 

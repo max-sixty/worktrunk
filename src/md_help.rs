@@ -105,6 +105,7 @@ pub fn render_markdown_in_help_with_width(help: &str, width: Option<usize>) -> S
             // Prose text - wrap if width is specified
             let formatted = render_inline_formatting(line);
             if let Some(w) = width {
+                // wrap_styled_text preserves leading indentation on continuation lines
                 for wrapped_line in wrap_styled_text(&formatted, w) {
                     result.push_str(&wrapped_line);
                     result.push('\n');
@@ -710,5 +711,35 @@ mod tests {
         assert!(result.contains("1"));
         // Should NOT have separator line
         assert!(!result.contains('─'));
+    }
+
+    #[test]
+    fn test_render_markdown_in_help_table_wrapping() {
+        // Test the full render_markdown_in_help_with_width function
+        // which is what actually runs on the help text
+        let help = r#"### Other environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `WORKTRUNK_BIN` | Override binary path for shell wrappers (useful for testing dev builds) |
+| WORKTRUNK_CONFIG_PATH | Override user config file location |
+| `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting resource limits. |
+| NO_COLOR | Disable colored output (standard) |
+"#;
+        let rendered = render_markdown_in_help_with_width(help, Some(80));
+
+        // Check for pipe characters
+        for line in rendered.lines() {
+            assert!(
+                !line.trim_start().starts_with("| "),
+                "Line should not start with '| ': {:?}",
+                line
+            );
+            assert!(
+                !line.trim_end().ends_with(" |"),
+                "Line should not end with ' |': {:?}",
+                line
+            );
+        }
     }
 }

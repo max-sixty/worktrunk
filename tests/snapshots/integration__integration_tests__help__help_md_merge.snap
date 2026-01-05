@@ -109,30 +109,23 @@ wt merge --no-commit
 
 `wt merge` runs these steps:
 
-1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to
-control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted
-changes become a separate commit and individual commits are preserved.
+1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted changes become a separate commit and individual commits are preserved.
 2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [wt hook](@/hook.md).
 4. **Merge** — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
 5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
-6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree,
-the worktree is preserved.
+6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
 7. **Post-merge hooks** — Hooks run after cleanup. Failures are logged but don't abort.
 
-Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is
-passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
+Use `--no-commit` to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless `--no-rebase` is passed. Useful after preparing commits manually with `wt step`. Requires a clean working tree.
 
 ## Local CI
 
-For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes
-instead of fewer large ones.
+For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes instead of fewer large ones.
 
-Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it
-guaranteed validation happened. `wt merge` brings that guarantee local.
+Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it guaranteed validation happened. `wt merge` brings that guarantee local.
 
-The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge
-hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run `wt merge`, move on. Pre-merge hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
 ```toml
 [pre-merge]
