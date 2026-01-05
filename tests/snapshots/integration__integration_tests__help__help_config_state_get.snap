@@ -13,6 +13,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -50,6 +51,7 @@ Shows all stored state including:
 - [1mPrevious branch[0m: Previous branch for [2mwt switch -
 - [1mBranch markers[0m: User-defined branch notes
 - [1mCI status[0m: Cached GitHub/GitLab CI status per branch (30s TTL)
+- [1mHints[0m: One-time hints that have been shown
 - [1mLog files[0m: Background operation logs
 
 CI cache entries show status, age, and the commit SHA they were fetched for.

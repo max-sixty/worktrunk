@@ -308,6 +308,54 @@ impl Repository {
             .filter(|s| !s.is_empty())
     }
 
+    /// Check if a hint has been shown in this repo.
+    ///
+    /// Hints are stored as `worktrunk.hints.<name> = true`.
+    /// TODO: Could move to global git config if we accumulate more global hints.
+    pub fn has_shown_hint(&self, name: &str) -> bool {
+        self.run_command(&["config", "--get", &format!("worktrunk.hints.{name}")])
+            .is_ok()
+    }
+
+    /// Mark a hint as shown in this repo.
+    pub fn mark_hint_shown(&self, name: &str) -> anyhow::Result<()> {
+        self.run_command(&["config", &format!("worktrunk.hints.{name}"), "true"])?;
+        Ok(())
+    }
+
+    /// Clear a hint so it will show again.
+    pub fn clear_hint(&self, name: &str) -> anyhow::Result<bool> {
+        match self.run_command(&["config", "--unset", &format!("worktrunk.hints.{name}")]) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false), // Key didn't exist
+        }
+    }
+
+    /// List all hints that have been shown in this repo.
+    pub fn list_shown_hints(&self) -> Vec<String> {
+        self.run_command(&["config", "--get-regexp", r"^worktrunk\.hints\."])
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                // Format: "worktrunk.hints.worktree-path true"
+                line.split_whitespace()
+                    .next()
+                    .and_then(|key| key.strip_prefix("worktrunk.hints."))
+                    .map(String::from)
+            })
+            .collect()
+    }
+
+    /// Clear all hints so they will show again.
+    pub fn clear_all_hints(&self) -> anyhow::Result<usize> {
+        let hints = self.list_shown_hints();
+        let count = hints.len();
+        for hint in hints {
+            self.clear_hint(&hint)?;
+        }
+        Ok(count)
+    }
+
     /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.
     ///
     /// # Arguments

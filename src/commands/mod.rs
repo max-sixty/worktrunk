@@ -23,8 +23,9 @@ pub mod worktree;
 
 pub use command_approval::approve_hooks;
 pub use config::{
-    handle_config_create, handle_config_show, handle_state_clear, handle_state_clear_all,
-    handle_state_get, handle_state_set, handle_state_show,
+    handle_config_create, handle_config_show, handle_hints_clear, handle_hints_get,
+    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
+    handle_state_show,
 };
 pub use configure_shell::{handle_configure_shell, handle_show_theme, handle_unconfigure_shell};
 pub use for_each::step_for_each;

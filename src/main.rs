@@ -31,17 +31,17 @@ use commands::worktree::{SwitchResult, handle_push};
 use commands::{
     MergeOptions, RebaseResult, ResolutionContext, SquashResult, add_approvals, approve_hooks,
     clear_approvals, compute_worktree_path, handle_config_create, handle_config_show,
-    handle_configure_shell, handle_hook_show, handle_init, handle_list, handle_merge,
-    handle_rebase, handle_remove, handle_remove_current, handle_show_theme, handle_squash,
-    handle_state_clear, handle_state_clear_all, handle_state_get, handle_state_set,
-    handle_state_show, handle_switch, handle_unconfigure_shell, resolve_worktree_arg, run_hook,
-    step_commit, step_for_each,
+    handle_configure_shell, handle_hints_clear, handle_hints_get, handle_hook_show, handle_init,
+    handle_list, handle_merge, handle_rebase, handle_remove, handle_remove_current,
+    handle_show_theme, handle_squash, handle_state_clear, handle_state_clear_all, handle_state_get,
+    handle_state_set, handle_state_show, handle_switch, handle_unconfigure_shell,
+    resolve_worktree_arg, run_hook, step_commit, step_for_each,
 };
 use output::{execute_user_command, handle_remove_output, handle_switch_output};
 
 use cli::{
     ApprovalsCommand, CiStatusAction, Cli, Commands, ConfigCommand, ConfigShellCommand,
-    DefaultBranchAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
+    DefaultBranchAction, HintsAction, HookCommand, ListSubcommand, LogsAction, MarkerAction,
     PreviousBranchAction, StateCommand, StepCommand,
 };
 use worktrunk::HookType;
@@ -1007,6 +1007,10 @@ fn main() {
                     Some(LogsAction::Get) | None => handle_state_get("logs", false, None),
                     Some(LogsAction::Clear) => handle_state_clear("logs", None, false),
                 },
+                StateCommand::Hints { action } => match action {
+                    Some(HintsAction::Get) | None => handle_hints_get(),
+                    Some(HintsAction::Clear { name }) => handle_hints_clear(name),
+                },
                 StateCommand::Get { format } => handle_state_show(format),
                 StateCommand::Clear => handle_state_clear_all(),
             },
@@ -1260,6 +1264,7 @@ fn main() {
 
                 // Show success message (temporal locality: immediately after worktree operation)
                 // Returns path to display in hooks when user's shell won't be in the worktree
+                // Also shows worktree-path hint on first --create (before shell integration warning)
                 let hooks_display_path =
                     handle_switch_output(&result, &branch_info, execute.as_deref())?;
 

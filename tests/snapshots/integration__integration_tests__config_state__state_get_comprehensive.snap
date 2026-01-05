@@ -19,6 +19,9 @@ expression: "normalize_log_path(&String::from_utf8_lossy(&output.stderr))"
  ─────── ────── ─── ──────── 
  feature passed now abc12345
 
+[36mHINTS[39m
+[107m [0m (none)
+
 [36mLOG FILES[39m  @ <PATH>
             File            Size  Age   
  ────────────────────────── ──── ────── 

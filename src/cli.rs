@@ -142,7 +142,8 @@ Getting started
   wt list                       Show all worktrees
   wt merge                      Squash, rebase, and merge to default branch
 
-Run `wt config shell` to set up directory switching.
+Run `wt config shell install` to set up directory switching.
+Run `wt config create` to customize worktree locations.
 
 Docs: https://worktrunk.dev
 GitHub: https://github.com/max-sixty/worktrunk")]
@@ -619,6 +620,30 @@ wt config state logs clear
         action: Option<LogsAction>,
     },
 
+    /// One-time hints shown in this repo
+    #[command(
+        after_long_help = r#"Some hints show once per repo on first use, then are recorded in git config
+as `worktrunk.hints.<name> = true`.
+
+## Current hints
+
+| Name | Trigger | Message |
+|------|---------|---------|
+| `worktree-path` | First `wt switch --create` | Customize worktree locations: wt config create |
+
+## Examples
+
+```console
+wt config state hints              # list shown hints
+wt config state hints clear        # re-show all hints
+wt config state hints clear NAME   # re-show specific hint
+```"#
+    )]
+    Hints {
+        #[command(subcommand)]
+        action: Option<HintsAction>,
+    },
+
     /// Get all stored state
     #[command(after_long_help = r#"Shows all stored state including:
 
@@ -626,6 +651,7 @@ wt config state logs clear
 - **Previous branch**: Previous branch for `wt switch -`
 - **Branch markers**: User-defined branch notes
 - **CI status**: Cached GitHub/GitLab CI status per branch (30s TTL)
+- **Hints**: One-time hints that have been shown
 - **Log files**: Background operation logs
 
 CI cache entries show status, age, and the commit SHA they were fetched for."#)]
@@ -642,6 +668,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - Previous branch
 - All branch markers
 - All CI status cache
+- All hints
 - All log files
 
 Use individual subcommands (`default-branch clear`, `ci-status clear --all`, etc.)
@@ -861,6 +888,43 @@ wt config state logs
 
     /// Clear background operation logs
     Clear,
+}
+
+#[derive(Subcommand)]
+pub enum HintsAction {
+    /// List hints that have been shown
+    #[command(
+        after_long_help = r#"Lists which one-time hints have been shown in this repository.
+
+## Examples
+
+List shown hints:
+```console
+wt config state hints
+```"#
+    )]
+    Get,
+
+    /// Clear hints (re-show on next trigger)
+    #[command(
+        after_long_help = r#"Clears hint state so hints will show again on next trigger.
+
+## Examples
+
+Clear all hints:
+```console
+wt config state hints clear
+```
+
+Clear a specific hint:
+```console
+wt config state hints clear worktree-path
+```"#
+    )]
+    Clear {
+        /// Specific hint to clear (clears all if not specified)
+        name: Option<String>,
+    },
 }
 
 /// Run individual operations

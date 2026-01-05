@@ -637,6 +637,9 @@ fn test_state_get_empty(repo: TestRepo) {
     [36mCI STATUS CACHE[39m
     [107m [0m (none)
 
+    [36mHINTS[39m
+    [107m [0m (none)
+
     [36mLOG FILES[39m  @ <PATH>
     [107m [0m (none)
     ");
@@ -731,6 +734,7 @@ fn test_state_get_json_empty(repo: TestRepo) {
     assert_eq!(json["previous_branch"], serde_json::Value::Null);
     assert_eq!(json["markers"], serde_json::json!([]));
     assert_eq!(json["ci_status"], serde_json::json!([]));
+    assert_eq!(json["hints"], serde_json::json!([]));
     assert_eq!(json["logs"], serde_json::json!([]));
 }
 

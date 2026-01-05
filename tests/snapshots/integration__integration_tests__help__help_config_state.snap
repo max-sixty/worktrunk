@@ -12,6 +12,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -30,6 +31,7 @@ Usage: [1m[36mwt config state[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36mci-status[0m        CI status cache
   [1m[36mmarker[0m           Branch markers
   [1m[36mlogs[0m             Background operation logs
+  [1m[36mhints[0m            One-time hints shown in this repo
   [1m[36mget[0m              Get all stored state
   [1m[36mclear[0m            Clear all stored state
 

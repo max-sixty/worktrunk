@@ -13,6 +13,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -45,6 +46,7 @@ Clears all stored state:
 - Previous branch
 - All branch markers
 - All CI status cache
+- All hints
 - All log files
 
 Use individual subcommands ([2mdefault-branch clear[0m, [2mci-status clear --all[0m, etc.)

@@ -1159,10 +1159,64 @@ pub fn handle_state_clear_all() -> anyhow::Result<()> {
         cleared_any = true;
     }
 
+    // Clear all hints
+    let hints_cleared = repo.clear_all_hints()?;
+    if hints_cleared > 0 {
+        cleared_any = true;
+    }
+
     if cleared_any {
         crate::output::print(success_message("Cleared all stored state"))?;
     } else {
         crate::output::print(info_message("No stored state to clear"))?;
+    }
+
+    Ok(())
+}
+
+/// Handle the hints get command (list shown hints)
+pub fn handle_hints_get() -> anyhow::Result<()> {
+    let repo = Repository::current();
+    let hints = repo.list_shown_hints();
+
+    if hints.is_empty() {
+        crate::output::print(info_message("No hints have been shown"))?;
+    } else {
+        for hint in hints {
+            crate::output::stdout(&hint)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle the hints clear command
+pub fn handle_hints_clear(name: Option<String>) -> anyhow::Result<()> {
+    let repo = Repository::current();
+
+    match name {
+        Some(hint_name) => {
+            if repo.clear_hint(&hint_name)? {
+                crate::output::print(success_message(cformat!(
+                    "Cleared hint <bold>{hint_name}</>"
+                )))?;
+            } else {
+                crate::output::print(info_message(cformat!(
+                    "Hint <bold>{hint_name}</> was not set"
+                )))?;
+            }
+        }
+        None => {
+            let cleared = repo.clear_all_hints()?;
+            if cleared == 0 {
+                crate::output::print(info_message("No hints to clear"))?;
+            } else {
+                crate::output::print(success_message(cformat!(
+                    "Cleared <bold>{cleared}</> hint{}",
+                    if cleared == 1 { "" } else { "s" }
+                )))?;
+            }
+        }
     }
 
     Ok(())
@@ -1264,12 +1318,16 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         vec![]
     };
 
+    // Get hints
+    let hints = repo.list_shown_hints();
+
     let output = serde_json::json!({
         "default_branch": default_branch,
         "previous_branch": previous_branch,
         "markers": markers,
         "ci_status": ci_status,
-        "logs": logs
+        "logs": logs,
+        "hints": hints
     });
 
     crate::output::stdout(serde_json::to_string_pretty(&output)?)?;
@@ -1348,6 +1406,18 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
 
         let rendered = crate::md_help::render_markdown_table(&table);
         writeln!(out, "{}", rendered.trim_end())?;
+    }
+    writeln!(out)?;
+
+    // Show hints
+    writeln!(out, "{}", format_heading("HINTS", None))?;
+    let hints = repo.list_shown_hints();
+    if hints.is_empty() {
+        writeln!(out, "{}", format_with_gutter("(none)", None))?;
+    } else {
+        for hint in hints {
+            writeln!(out, "{}", format_with_gutter(&hint, None))?;
+        }
     }
     writeln!(out)?;
 

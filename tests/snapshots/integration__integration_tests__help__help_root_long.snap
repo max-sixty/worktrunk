@@ -57,7 +57,8 @@ Getting started
   wt list                       Show all worktrees
   wt merge                      Squash, rebase, and merge to default branch
 
-Run [2mwt config shell[0m to set up directory switching.
+Run [2mwt config shell install[0m to set up directory switching.
+Run [2mwt config create[0m to customize worktree locations.
 
 Docs: https://worktrunk.dev
 GitHub: https://github.com/max-sixty/worktrunk
