@@ -2,7 +2,7 @@ use crate::display::{format_relative_time_short, shorten_path, truncate_to_width
 use anstyle::Style;
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::{StyledLine, hyperlink_stdout, supports_hyperlinks_stdout};
+use worktrunk::styling::{Stream, StyledLine, hyperlink_stdout, supports_hyperlinks};
 
 use super::ci_status::PrStatus;
 use super::collect_progressive_impl::parse_port_from_url;
@@ -20,7 +20,7 @@ impl PrStatus {
     /// plain colored indicator otherwise.
     fn render_indicator(&self) -> StyledLine {
         let mut segment = StyledLine::new();
-        let include_link = supports_hyperlinks_stdout();
+        let include_link = supports_hyperlinks(Stream::Stdout);
         segment.push_raw(self.format_indicator_with_options(include_link));
         segment
     }
@@ -603,7 +603,7 @@ impl ColumnLayout {
 /// When the terminal supports OSC 8 hyperlinks, shows just the port (e.g., `:3000`)
 /// as a clickable link. Otherwise, shows the full URL.
 fn format_url_cell(url: &str) -> String {
-    if supports_hyperlinks_stdout() {
+    if supports_hyperlinks(Stream::Stdout) {
         // Extract port from URL for compact display
         if let Some(port) = parse_port_from_url(url) {
             return hyperlink_stdout(url, &format!(":{port}"));

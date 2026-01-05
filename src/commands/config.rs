@@ -195,8 +195,8 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     writeln!(out, "{}", format_with_gutter(&debug_text, None))?;
 
     // Show hyperlink support status (separate from shell integration)
-    // supports_hyperlinks_stderr() checks BOTH terminal capability AND TTY status
-    let hyperlinks_supported = worktrunk::styling::supports_hyperlinks_stderr();
+    let hyperlinks_supported =
+        worktrunk::styling::supports_hyperlinks(worktrunk::styling::Stream::Stderr);
     let status = if hyperlinks_supported {
         "active"
     } else {

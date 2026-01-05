@@ -32,9 +32,7 @@ pub use constants::*;
 pub(crate) use format::format_bash_with_gutter_at_width;
 pub use format::{GUTTER_OVERHEAD, format_bash_with_gutter, format_with_gutter, wrap_styled_text};
 pub use highlighting::format_toml;
-pub use hyperlink::{
-    hyperlink_stderr, hyperlink_stdout, supports_hyperlinks_stderr, supports_hyperlinks_stdout,
-};
+pub use hyperlink::{Stream, hyperlink_stdout, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
 pub use suggest::suggest_command;
 
