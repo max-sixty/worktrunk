@@ -9,7 +9,6 @@
 
 #![cfg(windows)]
 
-use crate::common::{TestRepo, repo};
 use std::process::Command;
 
 /// Issue #348: Shell function name must include .exe suffix on Windows.
@@ -22,12 +21,12 @@ use std::process::Command;
 /// This ensures that when a user has `alias wt="wt.exe"` in their bashrc,
 /// the alias expands to `wt.exe` which matches the shell function name.
 #[test]
-fn test_shell_init_preserves_exe_suffix_on_windows(repo: TestRepo) {
+fn test_shell_init_preserves_exe_suffix_on_windows() {
     // Run wt.exe config shell init bash
     // On Windows, CARGO_BIN_EXE_wt points to wt.exe
+    // Note: This command doesn't need a git repo - it just generates shell init code
     let output = Command::new(env!("CARGO_BIN_EXE_wt"))
         .args(["config", "shell", "init", "bash"])
-        .current_dir(repo.root_path())
         .output()
         .expect("Failed to run wt config shell init");
 
@@ -82,11 +81,11 @@ fn test_shell_init_preserves_exe_suffix_on_windows(repo: TestRepo) {
 /// Users installing via WinGet get `git-wt.exe`. The same principle applies:
 /// the shell function must match the invocation name.
 #[test]
-fn test_shell_init_git_wt_preserves_exe_suffix_on_windows(repo: TestRepo) {
+fn test_shell_init_git_wt_preserves_exe_suffix_on_windows() {
     // Run git-wt.exe config shell init bash
+    // Note: This command doesn't need a git repo - it just generates shell init code
     let output = Command::new(env!("CARGO_BIN_EXE_git-wt"))
         .args(["config", "shell", "init", "bash"])
-        .current_dir(repo.root_path())
         .output()
         .expect("Failed to run git-wt config shell init");
 
