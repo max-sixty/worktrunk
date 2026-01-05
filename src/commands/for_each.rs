@@ -46,12 +46,16 @@ use crate::output;
 /// All template variables from hooks are available, and context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current();
-    let worktrees = repo.list_worktrees()?;
+    // Filter out prunable worktrees (directory deleted) - can't run commands there
+    let worktrees: Vec<_> = repo
+        .list_worktrees()?
+        .into_iter()
+        .filter(|wt| !wt.is_prunable())
+        .collect();
     let config = WorktrunkConfig::load()?;
 
     let mut failed: Vec<String> = Vec::new();
-    // Count only non-prunable worktrees (prunable ones are skipped)
-    let total = worktrees.iter().filter(|wt| !wt.is_prunable()).count();
+    let total = worktrees.len();
 
     // Join args into a template string (will be expanded per-worktree)
     let command_template = args.join(" ");
@@ -60,12 +64,6 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let repo_root = repo.worktree_base()?;
 
     for wt in &worktrees {
-        // Skip prunable worktrees (directory deleted but git still tracks metadata).
-        // Can't run commands in a directory that doesn't exist.
-        if wt.is_prunable() {
-            continue;
-        }
-
         let display_name = worktree_display_name(wt, &repo, &config);
         output::print(progress_message(format!("Running in {display_name}...")))?;
 
