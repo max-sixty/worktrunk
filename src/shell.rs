@@ -122,6 +122,10 @@ pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
         return false;
     }
 
+    // Config lines use command name without .exe suffix (see config_line() docs).
+    // On Windows, cmd may be "wt.exe" but config has "wt config shell init".
+    let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
+
     // Check for eval/source line pattern
     has_init_invocation(trimmed, cmd)
 }
@@ -267,6 +271,10 @@ fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
     let reader = BufReader::new(file);
     let mut matched_lines = Vec::new();
     let mut unmatched_candidates = Vec::new();
+
+    // Config lines use command name without .exe suffix (see config_line() docs).
+    // On Windows, cmd may be "wt.exe" but config has "wt config shell init".
+    let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
 
     for (line_number, line) in reader.lines().map_while(Result::ok).enumerate() {
         let line_number = line_number + 1; // 1-based
@@ -452,7 +460,14 @@ impl Shell {
     ///
     /// Note: The generated line does not include `--cmd` because `binary_name()` already
     /// detects the command name from argv\[0\] at runtime.
+    ///
+    /// On Windows, `cmd` may include `.exe` suffix (e.g., `wt.exe`), but the config line
+    /// uses the base name without `.exe` — MSYS2/Git Bash handles the resolution.
+    /// The `.exe` suffix is preserved in the shell function name (in templates) to match
+    /// alias expansion, but not needed here.
     pub fn config_line(&self, cmd: &str) -> String {
+        // Strip .exe for config line — MSYS2/Git Bash resolves wt → wt.exe automatically
+        let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
         match self {
             Self::Bash | Self::Zsh => {
                 format!(
