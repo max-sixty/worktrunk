@@ -193,6 +193,37 @@ None of this is tracked by git or pushed to remotes.
 - No modifications to `~/.gitconfig`
 - No background processes or daemons
 
+## What can Worktrunk delete?
+
+Worktrunk can delete **worktrees** and **branches**. Both have safeguards.
+
+### Worktree removal
+
+`wt remove` mirrors `git worktree remove`: it refuses to remove worktrees with uncommitted changes (staged, modified, or untracked files). The `--force` flag overrides the untracked-files check for build artifacts that weren't cleaned up.
+
+For worktrees containing precious ignored data (databases, caches, large assets), use `git worktree lock`:
+
+```bash
+git worktree lock ../myproject.feature --reason "Contains local database"
+```
+
+Locked worktrees show `⊞` in `wt list`. Neither `git worktree remove` nor `wt remove` (even with `--force`) will delete them. Unlock with `git worktree unlock`.
+
+### Branch deletion
+
+By default, `wt remove` only deletes branches whose content is already in the default branch. Branches showing `_` (same commit) or `⊂` (integrated) in `wt list` are safe to delete.
+
+For the full algorithm, see [Branch cleanup](@/remove.md#branch-cleanup) — it handles squash-merge and rebase workflows where commit history differs but file changes match.
+
+Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch` to keep the branch regardless of status.
+
+### Other cleanup
+
+- `wt config state clear` — removes cached state from `.git/config` and clears CI cache/logs
+- `wt config shell uninstall` — removes shell integration from rc files
+
+See [What files does Worktrunk create?](#what-files-does-worktrunk-create) for details.
+
 ## Running tests (for contributors)
 
 ### Quick tests
