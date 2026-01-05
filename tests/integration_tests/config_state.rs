@@ -961,3 +961,128 @@ fn test_state_clear_marker_all_single(repo: TestRepo) {
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m marker[39m");
 }
+
+// ============================================================================
+// hints
+// ============================================================================
+
+#[rstest]
+fn test_state_hints_get_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No hints have been shown");
+}
+
+#[rstest]
+fn test_state_hints_get_with_hints(repo: TestRepo) {
+    // Set hints via git config (as the code stores them)
+    repo.git_command()
+        .args(["config", "worktrunk.hints.worktree-path", "true"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.hints.another-hint", "true"])
+        .status()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "hints", "get", &[]).output().unwrap();
+    assert!(output.status.success());
+    // Output goes to stdout
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("worktree-path"));
+    assert!(stdout.contains("another-hint"));
+}
+
+#[rstest]
+fn test_state_hints_clear_empty(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No hints to clear");
+}
+
+#[rstest]
+fn test_state_hints_clear_all(repo: TestRepo) {
+    // Set hints
+    repo.git_command()
+        .args(["config", "worktrunk.hints.worktree-path", "true"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.hints.another-hint", "true"])
+        .status()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "hints", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m hints[39m");
+
+    // Verify hints were cleared
+    let output = repo
+        .git_command()
+        .args(["config", "--get-regexp", r"^worktrunk\.hints\."])
+        .output()
+        .unwrap();
+    assert!(!output.status.success()); // No matches
+}
+
+#[rstest]
+fn test_state_hints_clear_single(repo: TestRepo) {
+    // Set a single hint
+    repo.git_command()
+        .args(["config", "worktrunk.hints.worktree-path", "true"])
+        .status()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "hints", "clear", &[])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m hint[39m");
+}
+
+#[rstest]
+fn test_state_hints_clear_specific(repo: TestRepo) {
+    // Set hints
+    repo.git_command()
+        .args(["config", "worktrunk.hints.worktree-path", "true"])
+        .status()
+        .unwrap();
+    repo.git_command()
+        .args(["config", "worktrunk.hints.another-hint", "true"])
+        .status()
+        .unwrap();
+
+    let output = wt_state_cmd(&repo, "hints", "clear", &["worktree-path"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared hint [1mworktree-path[22m[39m");
+
+    // Verify only that hint was cleared
+    let output = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.hints.worktree-path"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success()); // Cleared
+
+    let output = repo
+        .git_command()
+        .args(["config", "--get", "worktrunk.hints.another-hint"])
+        .output()
+        .unwrap();
+    assert!(output.status.success()); // Still there
+}
+
+#[rstest]
+fn test_state_hints_clear_specific_not_set(repo: TestRepo) {
+    let output = wt_state_cmd(&repo, "hints", "clear", &["nonexistent"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m Hint [1mnonexistent[22m was not set");
+}
