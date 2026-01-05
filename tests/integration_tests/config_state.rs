@@ -995,9 +995,7 @@ fn test_state_hints_get_with_hints(repo: TestRepo) {
 
 #[rstest]
 fn test_state_hints_clear_empty(repo: TestRepo) {
-    let output = wt_state_cmd(&repo, "hints", "clear", &[])
-        .output()
-        .unwrap();
+    let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[2m○[22m No hints to clear");
 }
@@ -1014,9 +1012,7 @@ fn test_state_hints_clear_all(repo: TestRepo) {
         .status()
         .unwrap();
 
-    let output = wt_state_cmd(&repo, "hints", "clear", &[])
-        .output()
-        .unwrap();
+    let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m2[22m hints[39m");
 
@@ -1037,9 +1033,7 @@ fn test_state_hints_clear_single(repo: TestRepo) {
         .status()
         .unwrap();
 
-    let output = wt_state_cmd(&repo, "hints", "clear", &[])
-        .output()
-        .unwrap();
+    let output = wt_state_cmd(&repo, "hints", "clear", &[]).output().unwrap();
     assert!(output.status.success());
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[32m✓[39m [32mCleared [1m1[22m hint[39m");
 }
