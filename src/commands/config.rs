@@ -1624,4 +1624,3 @@ mod tests {
         assert!(path.ends_with("worktrunk/config.toml"));
     }
 }
-
