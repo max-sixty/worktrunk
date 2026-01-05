@@ -1094,6 +1094,19 @@ pub fn collect(
         crate::output::print(warning_message(diag))?;
     }
 
+    // Compute status symbols for prunable worktrees (skipped during task spawning).
+    // They didn't receive any task results, so status_symbols is still None.
+    for item in &mut all_items {
+        if item.status_symbols.is_none()
+            && let Some(data) = item.worktree_data()
+            && data.prunable.is_some()
+        {
+            // Use default context - no tasks ran, so no conflict/status info
+            let ctx = StatusContext::default();
+            ctx.apply_to(item, integration_target.as_str());
+        }
+    }
+
     // Finalize progressive table or render buffered output
     if let Some(mut table) = progressive_table {
         // Build final summary string

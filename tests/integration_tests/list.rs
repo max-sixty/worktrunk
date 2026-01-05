@@ -2324,3 +2324,31 @@ fn test_list_handles_orphan_branch(repo: TestRepo) {
         cmd
     });
 }
+
+/// Test that prunable worktrees (directory deleted) don't generate error spam.
+///
+/// When a worktree directory is deleted but git still knows about it, the worktree
+/// is marked as "prunable". We should skip git operations for these worktrees
+/// rather than showing confusing "Failed to execute" errors.
+#[rstest]
+fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+
+    // Delete the worktree directory (making it prunable)
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+
+    // Verify git sees it as prunable
+    let output = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("prunable"),
+        "Expected worktree to be prunable after deleting directory"
+    );
+
+    // wt list should show the prunable worktree with ⊟ symbol but NO error warnings
+    assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
+}
