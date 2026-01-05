@@ -759,6 +759,8 @@ impl<'a> CommandContext<'a> {
     /// Execute post-create commands sequentially (blocking)
     ///
     /// Runs user hooks first, then project hooks.
+    /// Shows path in hook announcements when shell integration isn't active (user's shell
+    /// won't cd to the new worktree, so they need to know where hooks ran).
     pub fn execute_post_create_commands(&self) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
         super::hooks::run_hook_with_filter(
@@ -771,7 +773,7 @@ impl<'a> CommandContext<'a> {
             &[],
             HookFailureStrategy::Warn,
             None,
-            None, // No path display - running in expected directory
+            crate::output::post_hook_display_path(self.worktree_path),
         )
     }
 

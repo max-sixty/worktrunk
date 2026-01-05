@@ -276,17 +276,78 @@ pub fn is_shell_integration_active() -> bool {
     has_directive_file()
 }
 
-/// Returns `Some(path)` when shell integration isn't active, `None` otherwise.
+/// Compute whether to show "@ path" in hook announcements.
 ///
-/// Use this to decide whether hook announcements should show "@ path".
-/// When shell integration is active, the user's shell will cd to the path automatically,
-/// so no annotation is needed. When inactive, showing the path helps users understand
-/// where hooks are running.
-pub fn hooks_display_path(path: &std::path::Path) -> Option<&std::path::Path> {
-    if is_shell_integration_active() {
+/// Returns `Some(hooks_run_at)` when the user's shell is (or will be) somewhere
+/// else, so the path annotation helps them understand where hooks executed.
+/// Returns `None` when no annotation is needed because the user is (or will be)
+/// at the hook location.
+///
+/// # Arguments
+///
+/// * `hooks_run_at` - The directory where hooks will execute
+/// * `user_location` - Where the user's shell is (or will be) when they see the output
+///
+/// # Higher-level helpers
+///
+/// For most cases, use the convenience functions instead of computing `user_location` manually:
+/// - [`pre_hook_display_path`] - for pre-hooks and manual `wt hook` invocations
+/// - [`post_hook_display_path`] - for post-hooks (handles shell integration internally)
+pub fn compute_hooks_display_path<'a>(
+    hooks_run_at: &'a std::path::Path,
+    user_location: &std::path::Path,
+) -> Option<&'a std::path::Path> {
+    if hooks_run_at == user_location {
         None
     } else {
-        Some(path)
+        Some(hooks_run_at)
+    }
+}
+
+/// Display path for pre-hooks and manual `wt hook` invocations.
+///
+/// Pre-hooks run while the user is at cwd, and no cd will happen after.
+/// Manual `wt hook` commands also run at cwd with no cd.
+///
+/// Shows the path if hooks run somewhere other than cwd.
+///
+/// # Examples
+///
+/// ```ignore
+/// // In pre-commit, pre-merge, pre-remove hooks:
+/// run_hook_with_filter(..., pre_hook_display_path(ctx.worktree_path))?;
+///
+/// // In manual wt hook commands (even for post-* hook types):
+/// run_hook_with_filter(..., pre_hook_display_path(ctx.worktree_path))?;
+/// ```
+pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::path::Path> {
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return None, // Can't determine cwd, don't show path
+    };
+    compute_hooks_display_path(hooks_run_at, &cwd)
+}
+
+/// Display path for post-hooks.
+///
+/// Post-hooks run after the operation completes. If shell integration is active,
+/// the user will be cd'd to the destination, so no path needs to be shown.
+/// Without shell integration, shows the path if user is elsewhere.
+///
+/// # Examples
+///
+/// ```ignore
+/// // In post-create, post-switch, post-merge hooks:
+/// ctx.spawn_post_start_commands(post_hook_display_path(&destination))?;
+///
+/// // After remove when switching to main:
+/// ctx.spawn_post_switch_commands(post_hook_display_path(main_path))?;
+/// ```
+pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {
+    if is_shell_integration_active() {
+        None // Shell will cd user to destination
+    } else {
+        pre_hook_display_path(destination)
     }
 }
 
@@ -294,6 +355,68 @@ pub fn hooks_display_path(path: &std::path::Path) -> Option<&std::path::Path> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_compute_hooks_display_path_same_location() {
+        let path = PathBuf::from("/repo/worktree");
+        let result = compute_hooks_display_path(&path, &path);
+        assert!(result.is_none(), "Should return None when paths match");
+    }
+
+    #[test]
+    fn test_compute_hooks_display_path_different_location() {
+        let hooks_run_at = PathBuf::from("/repo/feature");
+        let user_location = PathBuf::from("/repo/main");
+        let result = compute_hooks_display_path(&hooks_run_at, &user_location);
+        assert_eq!(result, Some(hooks_run_at.as_path()));
+    }
+
+    #[test]
+    fn test_pre_hook_display_path_at_cwd() {
+        // When hooks run at cwd, no path annotation needed
+        let cwd = std::env::current_dir().unwrap();
+        let result = pre_hook_display_path(&cwd);
+        assert!(result.is_none(), "Should return None when hooks run at cwd");
+    }
+
+    #[test]
+    fn test_pre_hook_display_path_elsewhere() {
+        // When hooks run elsewhere, show the path
+        let elsewhere = PathBuf::from("/some/other/path");
+        let result = pre_hook_display_path(&elsewhere);
+        assert_eq!(
+            result,
+            Some(elsewhere.as_path()),
+            "Should return path when hooks run elsewhere"
+        );
+    }
+
+    #[test]
+    fn test_post_hook_display_path_no_shell_integration() {
+        // Without shell integration, post_hook_display_path behaves like pre_hook_display_path
+        // (This test runs without WORKTRUNK_DIRECTIVE_FILE set)
+        let elsewhere = PathBuf::from("/some/destination");
+        let result = post_hook_display_path(&elsewhere);
+        // If cwd != elsewhere, should return Some
+        // If cwd == elsewhere (unlikely), should return None
+        let cwd = std::env::current_dir().unwrap();
+        if cwd == elsewhere {
+            assert!(result.is_none());
+        } else {
+            assert_eq!(result, Some(elsewhere.as_path()));
+        }
+    }
+
+    #[test]
+    fn test_post_hook_display_path_at_cwd_no_shell_integration() {
+        // Without shell integration, if destination == cwd, no path needed
+        let cwd = std::env::current_dir().unwrap();
+        let result = post_hook_display_path(&cwd);
+        assert!(
+            result.is_none(),
+            "Should return None when destination is cwd (no shell integration)"
+        );
+    }
 
     #[test]
     fn test_lazy_init_does_not_panic() {

@@ -27,53 +27,13 @@ When making decisions, prioritize:
 
 Use deprecation warnings to get there smoothly when external interfaces must change.
 
-## Code Quality
-
-Claude commonly makes the mistake of adding `#[allow(dead_code)]` when writing code that isn't immediately used. Don't suppress the warning—either delete the code or add a TODO comment explaining when it will be used.
-
-Example of escalating instead of suppressing:
-
-```rust
-// TODO(feature-name): Used by upcoming config validation
-fn parse_config() { ... }
-```
-
-## Documentation
-
-**Behavior changes require documentation updates.** This is not optional.
-
-When changing:
-- Detection logic
-- CLI flags or their defaults
-- Error conditions or messages
-
-Ask: "Does `--help` still describe what the code does?" If not, update `src/cli.rs` first.
-
-After modifying `cli.rs`, sync the doc pages:
-
-```bash
-cargo test --test integration test_command_pages_are_in_sync
-```
-
-## Data Safety
-
-Never risk data loss without explicit user consent. Err on the side of failing safely.
-
-- **Prefer failure over silent data loss** — If an operation might destroy untracked files, uncommitted changes, or user data, fail with an error rather than proceeding
-- **Explicit consent for destructive operations** — Operations that force-remove data (like `--force` on remove) require the user to explicitly request that behavior
-- **Time-of-check vs time-of-use** — If there's a gap between checking safety and performing an operation, be conservative. Example: `wt merge` verifies the worktree is clean before rebasing, but files could be added before cleanup — don't force-remove during cleanup
-
-A failed command that preserves data is always better than a "successful" command that silently destroys work.
-
 ## Terminology
 
 Use consistent terminology in documentation, help text, and code comments:
 
-- **main worktree** — when referring to the primary worktree (the original git directory)
-- **default branch** — when referring to the branch (main, master, etc.)
-- **target** — the destination branch for merge/rebase/push operations (e.g., "merge target", "rebase onto target"). Do NOT use "target" to refer to worktrees being operated on — use "worktree" or "worktrees" instead.
-
-Avoid mixing: "main/default branch worktree" is confusing. Use "main worktree" for worktrees and "default branch" for branches.
+- **main worktree** — the primary worktree (the original git directory), not "main branch worktree"
+- **default branch** — the branch (main, master, etc.), not "main branch"
+- **target** — the destination for merge/rebase/push (e.g., "merge target"). Don't use "target" to mean worktrees — say "worktree" or "worktrees"
 
 ## Testing
 
@@ -84,9 +44,7 @@ Avoid mixing: "main/default branch worktree" is confusing. Use "main worktree" f
 cargo run -- hook pre-merge --yes
 ```
 
-The pre-merge hook runs lints and the full test suite.
-
-**For faster iteration during development:**
+**For faster iteration:**
 
 ```bash
 # Lints only
@@ -101,8 +59,6 @@ cargo test --test integration
 # Integration tests with shell tests (requires bash/zsh/fish)
 cargo test --test integration --features shell-integration-tests
 ```
-
-**Shell integration tests** require bash, zsh, and fish.
 
 ### Claude Code Web Environment
 
@@ -134,11 +90,36 @@ PTY-based tests (approval prompts, TUI select, progressive rendering, shell wrap
 
 The pre-merge hook (`wt hook pre-merge --yes`) already sets `NEXTEST_NO_INPUT_HANDLER=1` automatically.
 
+## Documentation
+
+**Behavior changes require documentation updates.**
+
+When changing:
+- Detection logic
+- CLI flags or their defaults
+- Error conditions or messages
+
+Ask: "Does `--help` still describe what the code does?" If not, update `src/cli.rs` first.
+
+After modifying `cli.rs`, sync the doc pages:
+
+```bash
+cargo test --test integration test_command_pages_are_in_sync
+```
+
+## Data Safety
+
+Never risk data loss without explicit user consent. A failed command that preserves data is better than a "successful" command that silently destroys work.
+
+- **Prefer failure over silent data loss** — If an operation might destroy untracked files, uncommitted changes, or user data, fail with an error
+- **Explicit consent for destructive operations** — Operations that force-remove data (like `--force` on remove) require the user to explicitly request that behavior
+- **Time-of-check vs time-of-use** — Be conservative when there's a gap between checking safety and performing an operation. Example: `wt merge` verifies the worktree is clean before rebasing, but files could be added before cleanup — don't force-remove during cleanup
+
 ## Command Execution Principles
 
 ### All Commands Through `shell_exec::run`
 
-All external command execution must go through `shell_exec::run()`. This ensures consistent logging and tracing for every command:
+All external commands go through `shell_exec::run()` for consistent logging and tracing:
 
 ```rust
 use crate::shell_exec::run;
@@ -149,15 +130,13 @@ let output = run(&mut cmd, Some("worktree-name"))?;  // context for git commands
 let output = run(&mut cmd, None)?;                   // None for standalone tools
 ```
 
-Never use `cmd.output()` directly. The `run()` function provides:
-- Debug logging: `$ git status [worktree-name]`
-- Timing traces: `[wt-trace] cmd="..." dur=12.3ms ok=true`
+Never use `cmd.output()` directly. `run()` provides debug logging (`$ git status [worktree-name]`) and timing traces (`[wt-trace] cmd="..." dur=12.3ms ok=true`).
 
-For git commands, use `Repository::run_command()` which wraps `shell_exec::run` with worktree context.
+For git commands, prefer `Repository::run_command()` which wraps `shell_exec::run` with worktree context.
 
 ### Real-time Output Streaming
 
-Command output must stream in real-time. Never buffer external command output.
+Stream command output in real-time — never buffer:
 
 ```rust
 // ✅ GOOD - streaming
@@ -171,66 +150,54 @@ let lines: Vec<_> = reader.lines().collect();
 
 ## Background Operation Logs
 
-### Unified Logging Location
+All background logs are centralized in `.git/wt-logs/` (main worktree's git directory):
 
-All background operation logs are centralized in `.git/wt-logs/` (main worktree's git directory):
-
-- **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source is `user` or `project`)
+- **Post-start commands**: `{branch}-{source}-post-start-{command}.log` (source: `user` or `project`)
 - **Background removal**: `{branch}-remove.log`
 
-Examples (where command names are from config):
-- `feature-user-post-start-npm.log`
-- `feature-project-post-start-build.log`
-- `bugfix-remove.log`
+Examples: `feature-user-post-start-npm.log`, `feature-project-post-start-build.log`, `bugfix-remove.log`
 
 ### Log Behavior
 
 - **Centralized**: All logs go to main worktree's `.git/wt-logs/`, shared across all worktrees
 - **Overwrites**: Same operation on same branch overwrites previous log (prevents accumulation)
 - **Not tracked**: Logs are in `.git/` directory, which git doesn't track
-- **Manual cleanup**: Stale logs (from deleted branches) persist but are bounded by branch count
-
-Users can clean up old logs manually or use a git hook. No automatic cleanup is provided.
+- **Manual cleanup**: Stale logs from deleted branches persist but are bounded by branch count
 
 ## Coverage
 
-We maintain high code coverage. The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them.
+The `codecov/patch` CI check enforces coverage on changed lines — respond to failures by writing tests, not by ignoring them.
 
 ### Running Coverage Locally
 
-- Install once: `cargo install cargo-llvm-cov`.
-- Run: `./dev/coverage.sh` — runs tests once, then generates HTML (`target/llvm-cov/html/index.html`) and LCOV (`target/llvm-cov/lcov.info`).
-- Pass extra args to the test run (for example to filter tests): `./dev/coverage.sh -- --test test_name`.
+- Install once: `cargo install cargo-llvm-cov`
+- Run: `./dev/coverage.sh` — generates HTML (`target/llvm-cov/html/index.html`) and LCOV
+- Filter tests: `./dev/coverage.sh -- --test test_name`
 
 ### Investigating codecov/patch Failures
 
-When `codecov/patch` fails, find which changed lines lack coverage:
-
 ```bash
-# 1. Run coverage and show uncovered lines
+# Find uncovered lines
 ./dev/coverage.sh
 cargo llvm-cov report --show-missing-lines | grep <file>
 
-# 2. Compare against your diff (use three-dot diff for PR changes)
+# Compare against your diff (three-dot for PR changes)
 git diff main...HEAD -- path/to/file.rs
 ```
 
 ## Benchmarks
 
-For detailed benchmark documentation, see `benches/CLAUDE.md`.
-
-### Quick Start
+See `benches/CLAUDE.md` for details.
 
 ```bash
-# Run fast synthetic benchmarks (skip slow ones)
+# Fast synthetic benchmarks (skip slow ones)
 cargo bench --bench list -- --skip cold --skip real
 
-# Run specific benchmark
+# Specific benchmark
 cargo bench --bench list bench_list_by_worktree_count
-cargo bench --bench completion
 ```
 
-Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter). Skip during normal development with `--skip real`.
+Real repo benchmarks clone rust-lang/rust (~2-5 min first run, cached thereafter). Skip with `--skip real`.
 
 ## JSON Output Format
 
@@ -241,3 +208,12 @@ Use `wt list --format=json` for structured data access. See `wt list --help` for
 - Worktrees are **addressed by branch name**, not by filesystem path.
 - Each worktree should map to **exactly one branch**.
 - We **never retarget an existing worktree** to a different branch; instead create/switch/remove worktrees.
+
+## Code Quality
+
+Don't suppress warnings with `#[allow(dead_code)]` — either delete the code or add a TODO explaining when it will be used:
+
+```rust
+// TODO(config-validation): Used by upcoming config validation
+fn validate_config() { ... }
+```

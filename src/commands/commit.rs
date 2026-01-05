@@ -176,8 +176,8 @@ impl CommitOptions<'_> {
                 HookType::PreCommit,
                 &extra_vars,
                 HookFailureStrategy::FailFast,
-                None, // name_filter: run all hooks
-                None, // display_path: running in expected directory
+                None,
+                crate::output::pre_hook_display_path(self.ctx.worktree_path),
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }

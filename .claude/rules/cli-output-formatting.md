@@ -63,6 +63,36 @@ Stats are truly optional context. Reasons answer "why is this safe/happening?"
 and belong with the main message. Symbols within reason parentheses still render
 in their native styling (see "Symbol styling" below).
 
+**Show path when hooks run in a different directory:** When hooks run in a
+worktree other than the user's current (or eventual) location, show the path.
+Use the appropriate helper function:
+
+1. **Pre-hooks and manual `wt hook`** — User is at cwd, no cd happens.
+   Use `output::pre_hook_display_path(hooks_run_at)`.
+   Examples: pre-commit, pre-merge, pre-remove, manual `wt hook post-merge`.
+
+2. **Post-hooks** — User will cd to destination if shell integration is active.
+   Use `output::post_hook_display_path(destination)`.
+   Examples: post-create, post-switch, post-start, post-merge (after removal).
+
+```rust
+// Pre-hooks: user is at cwd, no cd happens
+run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path))?;
+
+// Post-hooks: user will cd to destination if shell integration active
+ctx.spawn_post_start_commands(crate::output::post_hook_display_path(&destination))?;
+
+// Complex case: cd only happens under certain conditions
+let display_path = if will_cd_to_destination {
+    crate::output::post_hook_display_path(&destination_path)
+} else {
+    crate::output::pre_hook_display_path(&destination_path)
+};
+```
+
+These helpers encapsulate the shell integration check internally, so callers
+don't need to check `is_shell_integration_active()` directly
+
 **Avoid pronouns with cross-message referents:** Hints appear as separate
 messages from errors. Don't use pronouns like "it" that refer to something
 mentioned in the error message.

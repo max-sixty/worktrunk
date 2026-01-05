@@ -234,8 +234,8 @@ pub(crate) fn check_name_filter_matched(
 /// Runs user hooks first, then project hooks sequentially. Handles name filtering
 /// and returns an error if a name filter was provided but no matching command found.
 ///
-/// `display_path`: When `Some`, shows the path in hook announcements. Use when hooks
-/// run in a different directory than where the user invoked the command.
+/// `display_path`: Pass `ctx.hooks_display_path()` for automatic detection, or
+/// explicit `Some(path)` when hooks run somewhere the user won't be cd'd to.
 #[allow(clippy::too_many_arguments)]
 pub fn run_hook_with_filter(
     ctx: &CommandContext,
