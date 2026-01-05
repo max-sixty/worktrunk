@@ -21,7 +21,7 @@ impl PrStatus {
     fn render_indicator(&self) -> StyledLine {
         let mut segment = StyledLine::new();
         let include_link = supports_hyperlinks(Stream::Stdout);
-        segment.push_raw(self.format_indicator_with_options(include_link));
+        segment.push_raw(self.format_indicator(include_link));
         segment
     }
 }

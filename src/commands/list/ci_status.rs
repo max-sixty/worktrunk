@@ -237,8 +237,8 @@ mod tests {
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
         };
 
-        // Call format_indicator_with_options(true) directly
-        let formatted = pr_with_url.format_indicator_with_options(true);
+        // Call format_indicator(true) directly
+        let formatted = pr_with_url.format_indicator(true);
         // Should contain OSC 8 hyperlink escape sequences
         assert!(formatted.contains("\x1b]8;;"), "Should contain OSC 8 start");
         assert!(
@@ -257,8 +257,8 @@ mod tests {
             url: None,
         };
 
-        // Call format_indicator_with_options(true) directly
-        let formatted = pr_no_url.format_indicator_with_options(true);
+        // Call format_indicator(true) directly
+        let formatted = pr_no_url.format_indicator(true);
         // Should NOT contain OSC 8 hyperlink
         assert!(
             !formatted.contains("\x1b]8;;"),
@@ -268,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_indicator_with_options_skips_link() {
+    fn test_format_indicator_skips_link() {
         // When include_link=false, should not include OSC 8 even when URL is present
         let pr_with_url = PrStatus {
             ci_status: CiStatus::Passed,
@@ -277,8 +277,8 @@ mod tests {
             url: Some("https://github.com/owner/repo/pull/123".to_string()),
         };
 
-        let with_link = pr_with_url.format_indicator_with_options(true);
-        let without_link = pr_with_url.format_indicator_with_options(false);
+        let with_link = pr_with_url.format_indicator(true);
+        let without_link = pr_with_url.format_indicator(false);
 
         // With link should contain OSC 8
         assert!(
@@ -585,8 +585,8 @@ mod tests {
             is_stale: false,
             url: None,
         };
-        // Call format_indicator_with_options directly
-        let formatted = status.format_indicator_with_options(false);
+        // Call format_indicator directly
+        let formatted = status.format_indicator(false);
         assert!(formatted.contains("●"));
 
         // Stale status gets dimmed
@@ -1046,7 +1046,7 @@ impl PrStatus {
     ///
     /// When `include_link` is false, the indicator is colored but not clickable.
     /// Used for environments that don't support OSC 8 hyperlinks (e.g., Claude Code).
-    pub fn format_indicator_with_options(&self, include_link: bool) -> String {
+    pub fn format_indicator(&self, include_link: bool) -> String {
         let indicator = self.indicator();
         if include_link && self.url.is_some() {
             let url = self.url.as_ref().unwrap();
