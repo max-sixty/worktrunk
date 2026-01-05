@@ -499,7 +499,7 @@ post-start = "npm run build"  # Slow, background
 ## Key Commands
 
 ```bash
-wt config list                    # View project config
+wt config show                    # View project config
 cat .config/wt.toml               # Read config directly
 wt switch --create test-hooks     # Test hooks work
 ```

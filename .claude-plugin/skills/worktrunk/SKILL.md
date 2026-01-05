@@ -3,7 +3,7 @@ name: worktrunk
 description: Guidance for Worktrunk, a CLI tool for managing git worktrees. Covers configuration (user config at ~/.config/worktrunk/config.toml and project hooks at .config/wt.toml), usage, and troubleshooting. Use for "setting up LLM", "configuring hooks", "automating tasks", or general worktrunk questions.
 ---
 
-<!-- worktrunk-skill-version: 0.6.1 -->
+<!-- worktrunk-skill-version: 0.9.3 -->
 
 # Worktrunk
 
@@ -12,12 +12,12 @@ Help users work with Worktrunk, a CLI tool for managing git worktrees.
 ## Available Documentation
 
 - **SKILL.md**: Configuration workflows and common patterns
-- **reference/README.md**: Features, installation, examples, FAQ
-- **reference/*.md**: Detailed configuration and hook specifications
+- **reference/user-config.md**: User config (LLM, worktree paths, command defaults)
+- **reference/project-config.md**: Project config (lifecycle hooks)
+- **reference/hook-types-reference.md**: Detailed hook behavior and timing
+- **reference/shell-integration.md**: Shell integration debugging
 
-For general usage, consult reference/README.md. For configuration, follow the workflows below.
-
-**For command-specific options**: Run `wt <command> --help` for detailed flags and usage. This skill provides conceptual guidance; the CLI provides authoritative reference.
+For command-specific options, run `wt <command> --help`. For configuration, follow the workflows below.
 
 ## Two Types of Configuration
 
@@ -86,7 +86,7 @@ Most common request. Follow this sequence:
    Ask: "Should I add this to your config?"
 
 5. **After approval, apply**
-   - Check if config exists: `wt config list`
+   - Check if config exists: `wt config show`
    - If not, guide through `wt config create`
    - Read, modify, write preserving structure
 
@@ -185,7 +185,7 @@ Common request for workflow automation. Follow discovery process:
 
 ```bash
 # View all configuration
-wt config list
+wt config show
 
 # Create initial user config
 wt config create
@@ -196,13 +196,11 @@ wt config --help
 
 ## Loading Additional Documentation
 
-Load **reference/README.md** for general features, installation, commands, and examples.
-
 Load **reference files** for detailed configuration, hook specifications, and troubleshooting.
 
 Find specific sections with grep:
 ```bash
-grep -A 20 "## Installation" reference/README.md
 grep -A 20 "## LLM Setup" reference/user-config.md
 grep -A 30 "### post-create" reference/project-config.md
+grep -A 20 "## Warning Messages" reference/shell-integration.md
 ```
