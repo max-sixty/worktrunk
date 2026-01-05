@@ -218,6 +218,16 @@ fn is_worktree_at_expected_path(
     is_worktree_at_expected_path_with(wt, repo, config, &default_branch, is_bare)
 }
 
+/// Compare two paths for equality, canonicalizing to handle symlinks and relative paths.
+///
+/// Returns `true` if the paths resolve to the same location.
+fn paths_match(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use dunce::canonicalize;
+    let a_canonical = canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let b_canonical = canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    a_canonical == b_canonical
+}
+
 /// Check if a worktree is at its expected path, with pre-computed values.
 ///
 /// Use this when `default_branch` and `is_bare` are already known (e.g., in list command)
@@ -229,19 +239,27 @@ pub fn is_worktree_at_expected_path_with(
     default_branch: &str,
     is_bare: bool,
 ) -> bool {
-    use dunce::canonicalize;
-
     match &wt.branch {
         Some(branch) => compute_worktree_path_with(repo, branch, config, default_branch, is_bare)
-            .map(
-                |expected| match (canonicalize(&wt.path), canonicalize(&expected)) {
-                    (Ok(actual), Ok(expected)) => actual == expected,
-                    _ => wt.path == expected,
-                },
-            )
+            .map(|expected| paths_match(&wt.path, &expected))
             .unwrap_or(false),
         None => false,
     }
+}
+
+/// Returns the expected path if `actual_path` differs from the template-computed path.
+///
+/// Returns `Some(expected_path)` when there's a mismatch, `None` when paths match.
+/// Used to show path mismatch warnings in `wt remove` and `wt merge`.
+pub fn get_path_mismatch(
+    repo: &Repository,
+    branch: &str,
+    actual_path: &std::path::Path,
+    config: &WorktrunkConfig,
+) -> Option<PathBuf> {
+    compute_worktree_path(repo, branch, config)
+        .ok()
+        .filter(|expected| !paths_match(actual_path, expected))
 }
 
 /// Optimized variant of `compute_worktree_path` that accepts pre-computed values.
@@ -413,6 +431,9 @@ pub enum RemoveResult {
         integration_reason: Option<worktrunk::git::IntegrationReason>,
         /// Force git worktree removal even with untracked files.
         force_worktree: bool,
+        /// Expected path based on config template. `Some` when actual path differs
+        /// from expected (path mismatch), `None` when path matches template.
+        expected_path: Option<PathBuf>,
     },
     /// Branch exists but has no worktree - attempt branch deletion only
     BranchOnly {
@@ -496,8 +517,7 @@ pub fn handle_switch(
             .unwrap_or(false);
 
         // Check if the actual path matches the expected path (branch-worktree mismatch detection).
-        let canonical_expected = canonicalize(&expected_path).unwrap_or(expected_path.clone());
-        let mismatch_path = if canonical_path != canonical_expected {
+        let mismatch_path = if !paths_match(&path, &expected_path) {
             Some(expected_path.clone())
         } else {
             None
@@ -714,6 +734,7 @@ pub fn handle_remove(
     force_delete: bool,
     force_worktree: bool,
     background: bool,
+    config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
 
@@ -728,6 +749,7 @@ pub fn handle_remove(
         RemoveTarget::Branch(worktree_name),
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
         force_worktree,
+        config,
     )
 }
 
@@ -740,6 +762,7 @@ pub fn handle_remove_current(
     force_delete: bool,
     force_worktree: bool,
     background: bool,
+    config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
 
@@ -752,6 +775,7 @@ pub fn handle_remove_current(
         RemoveTarget::Current,
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
         force_worktree,
+        config,
     )
 }
 
@@ -1125,6 +1149,7 @@ mod tests {
             target_branch: Some("main".to_string()),
             integration_reason: Some(worktrunk::git::IntegrationReason::SameCommit),
             force_worktree: false,
+            expected_path: None,
         };
         match result {
             RemoveResult::RemovedWorktree {
@@ -1136,6 +1161,7 @@ mod tests {
                 target_branch,
                 integration_reason,
                 force_worktree,
+                expected_path,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
                 assert_eq!(worktree_path.to_str().unwrap(), "/worktree");
@@ -1146,6 +1172,7 @@ mod tests {
                 assert_eq!(target_branch.as_deref(), Some("main"));
                 assert!(integration_reason.is_some());
                 assert!(!force_worktree);
+                assert!(expected_path.is_none());
             }
             _ => panic!("Expected RemovedWorktree variant"),
         }
@@ -1181,6 +1208,7 @@ mod tests {
             target_branch: None,
             integration_reason: None, // Force delete skips integration check
             force_worktree: true,
+            expected_path: None,
         };
         match result {
             RemoveResult::RemovedWorktree {

@@ -2,9 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::worktree::{BranchDeletionMode, RemoveResult};
+use super::worktree::{BranchDeletionMode, RemoveResult, get_path_mismatch};
 use anyhow::Context;
 use color_print::cformat;
+use worktrunk::config::WorktrunkConfig;
 use worktrunk::git::{
     GitError, IntegrationReason, Repository, parse_porcelain_z, parse_untracked_files,
 };
@@ -30,11 +31,15 @@ pub trait RepositoryCliExt {
     ///
     /// Returns a `RemoveResult` describing what will be removed. The actual
     /// removal is performed by the output handler.
+    ///
+    /// The `config` parameter is used to compute the expected worktree path
+    /// for path mismatch detection.
     fn prepare_worktree_removal(
         &self,
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
+        config: &WorktrunkConfig,
     ) -> anyhow::Result<RemoveResult>;
 
     /// Prepare the target worktree for push by auto-stashing non-overlapping changes when safe.
@@ -69,6 +74,7 @@ impl RepositoryCliExt for Repository {
         target: RemoveTarget,
         deletion_mode: BranchDeletionMode,
         force_worktree: bool,
+        config: &WorktrunkConfig,
     ) -> anyhow::Result<RemoveResult> {
         let current_path = self.worktree_root()?.to_path_buf();
         let worktrees = self.list_worktrees()?;
@@ -185,6 +191,12 @@ impl RepositoryCliExt for Repository {
             deletion_mode,
         );
 
+        // Compute expected_path for path mismatch detection
+        // Only set if actual path differs from expected (path mismatch)
+        let expected_path = branch_name
+            .as_ref()
+            .and_then(|branch| get_path_mismatch(self, branch, &worktree_path, config));
+
         Ok(RemoveResult::RemovedWorktree {
             main_path,
             worktree_path,
@@ -194,6 +206,7 @@ impl RepositoryCliExt for Repository {
             target_branch,
             integration_reason,
             force_worktree,
+            expected_path,
         })
     }
 

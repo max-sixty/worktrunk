@@ -1,7 +1,7 @@
 //! Output handlers for worktree operations using the global output context
 
 use color_print::cformat;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::commands::branch_deletion::{
     BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
@@ -60,6 +60,16 @@ fn format_switch_message(
             format_path_for_display(path)
         ),
     }
+}
+
+/// Format a branch-worktree mismatch warning message.
+///
+/// Shows when a worktree is at a path that doesn't match the config template.
+fn format_path_mismatch_warning(branch: &str, expected_path: &Path) -> FormattedMessage {
+    let expected_display = format_path_for_display(expected_path);
+    warning_message(cformat!(
+        "Branch-worktree mismatch; expected <bold>{branch}</> @ <bold>{expected_display}</> <red>⚑</>"
+    ))
 }
 
 /// Handle the result of a branch deletion attempt.
@@ -298,13 +308,10 @@ pub fn handle_switch_output(
     };
 
     // Show branch-worktree mismatch warning after the main message
-    let branch_worktree_mismatch_warning = branch_info.expected_path.as_ref().map(|expected| {
-        let expected_display = format_path_for_display(expected);
-        let branch = &branch_info.branch;
-        warning_message(cformat!(
-            "Branch-worktree mismatch; expected <bold>{branch}</> @ <bold>{expected_display}</> <red>⚑</>"
-        ))
-    });
+    let branch_worktree_mismatch_warning = branch_info
+        .expected_path
+        .as_ref()
+        .map(|expected| format_path_mismatch_warning(&branch_info.branch, expected));
 
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => {
@@ -430,6 +437,7 @@ pub fn handle_remove_output(
             target_branch,
             integration_reason,
             force_worktree,
+            expected_path,
         } => handle_removed_worktree_output(
             main_path,
             worktree_path,
@@ -439,6 +447,7 @@ pub fn handle_remove_output(
             target_branch.as_deref(),
             *integration_reason,
             *force_worktree,
+            expected_path.as_ref(),
             background,
             verify,
         ),
@@ -533,6 +542,7 @@ fn handle_removed_worktree_output(
     target_branch: Option<&str>,
     pre_computed_integration: Option<IntegrationReason>,
     force_worktree: bool,
+    expected_path: Option<&PathBuf>,
     background: bool,
     verify: bool,
 ) -> anyhow::Result<()> {
@@ -655,6 +665,11 @@ fn handle_removed_worktree_output(
         };
         super::print(FormattedMessage::new(action))?;
 
+        // Show path mismatch warning if the worktree is at an unexpected location
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
+
         // Show hints for branch status
         if !should_delete_branch {
             if deletion_mode.should_keep() && branch_was_integrated {
@@ -760,6 +775,11 @@ fn handle_removed_worktree_output(
             cformat!("<green>✓ Removed <bold>{branch_name}</> worktree</>")
         };
         super::print(FormattedMessage::new(msg))?;
+
+        // Show path mismatch warning if the worktree was at an unexpected location
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
 
         // Show hints for branch status
         if !branch_deleted {

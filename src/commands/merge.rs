@@ -12,7 +12,9 @@ use super::context::CommandEnv;
 use super::hooks::{HookFailureStrategy, run_hook_with_filter};
 use super::project_config::{HookCommand, collect_commands_for_hooks};
 use super::repository_ext::RepositoryCliExt;
-use super::worktree::{BranchDeletionMode, MergeOperations, RemoveResult, handle_push};
+use super::worktree::{
+    BranchDeletionMode, MergeOperations, RemoveResult, get_path_mismatch, handle_push,
+};
 
 /// Options for the merge command
 pub struct MergeOptions<'a> {
@@ -211,6 +213,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
         let mut provider =
             worktrunk::git::LazyGitIntegration::new(&main_repo, &current_branch, &effective_target);
         let integration_reason = worktrunk::git::check_integration(&mut provider);
+        // Compute expected_path for path mismatch detection
+        let expected_path = get_path_mismatch(repo, &current_branch, &worktree_root, config);
         let remove_result = RemoveResult::RemovedWorktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -222,6 +226,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             // Don't force removal - if worktree has untracked files added after
             // commit, removal will fail and user can run `wt remove --force`
             force_worktree: false,
+            expected_path,
         };
         // Run hooks during merge removal (pass through verify flag)
         // Approval was handled at the gate (collect_merge_commands)

@@ -1353,3 +1353,62 @@ approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
         "{{ branch }} should expand to 'HEAD' for detached HEAD worktrees"
     );
 }
+
+/// Test that removing a worktree at a non-standard path shows a path mismatch warning.
+///
+/// When a worktree is created at a path that doesn't match the config template,
+/// `wt remove` should show a warning about the path mismatch.
+#[rstest]
+fn test_remove_path_mismatch_warning(repo: TestRepo) {
+    // Create a worktree at a non-standard path using raw git
+    // (wt switch --create would put it at the expected path)
+    let unexpected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("weird-path-for-feature");
+
+    repo.git_command()
+        .args([
+            "worktree",
+            "add",
+            unexpected_path.to_str().unwrap(),
+            "-b",
+            "feature",
+        ])
+        .output()
+        .unwrap();
+
+    // Remove the worktree - should show path mismatch warning
+    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
+}
+
+/// Test that removing a worktree at a non-standard path shows warning in foreground mode.
+#[rstest]
+fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
+    // Create a worktree at a non-standard path using raw git
+    let unexpected_path = repo
+        .root_path()
+        .parent()
+        .unwrap()
+        .join("another-weird-path");
+
+    repo.git_command()
+        .args([
+            "worktree",
+            "add",
+            unexpected_path.to_str().unwrap(),
+            "-b",
+            "feature-fg",
+        ])
+        .output()
+        .unwrap();
+
+    // Remove in foreground mode - should show path mismatch warning
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--no-background", "feature-fg"],
+        None
+    ));
+}
