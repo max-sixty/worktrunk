@@ -22,14 +22,14 @@ wt - Git worktree management for parallel AI agent workflows
 Usage: wt [OPTIONS] [COMMAND]
 
 Commands:
-  config  Manage configuration and shell integration
-  step    Run individual operations
-  hook    Run configured hooks
-  select  Interactive worktree selector
-  list    List worktrees and their status
   switch  Switch to a worktree
+  list    List worktrees and their status
   remove  Remove worktree; delete branch if merged
   merge   Merge worktree into target branch
+  select  Interactive worktree selector
+  step    Run individual operations
+  hook    Run configured hooks
+  config  Manage configuration and shell integration
 
 Options:
   -h, --help

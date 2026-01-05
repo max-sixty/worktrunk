@@ -2,11 +2,11 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
-config
-step
-hook
-select
-list
 switch
+list
 remove
 merge
+select
+step
+hook
+config
