@@ -154,6 +154,42 @@ pub fn handle_config_show(full: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Check if Claude Code CLI is available
+fn is_claude_available() -> bool {
+    use std::process::{Command, Stdio};
+    use worktrunk::shell_exec::run;
+
+    let mut cmd = Command::new("claude");
+    cmd.args(["--version"]);
+    cmd.stdin(Stdio::null());
+
+    run(&mut cmd, None)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if the worktrunk plugin is installed in Claude Code
+fn is_plugin_installed() -> bool {
+    // Try HOME/USERPROFILE env vars first (for tests and explicit overrides), then fall back to dirs
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir);
+
+    let Some(home) = home else {
+        return false;
+    };
+
+    let plugins_file = home.join(".claude/plugins/installed_plugins.json");
+    let Ok(content) = std::fs::read_to_string(&plugins_file) else {
+        return false;
+    };
+
+    // Look for "worktrunk@worktrunk" in the plugins object
+    content.contains("\"worktrunk@worktrunk\"")
+}
+
 /// Render runtime information (version, binary name, shell integration status)
 fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let cmd = crate::binary_name();
@@ -173,6 +209,10 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     } else {
         writeln!(out, "{}", warning_message("Shell integration not active"))?;
     }
+
+    // Cache plugin status for use after debug info
+    let plugin_installed = is_plugin_installed();
+    let claude_available = is_claude_available();
 
     // Debug info for shell integration troubleshooting
     // Show invocation details that help diagnose issues like https://github.com/max-sixty/worktrunk/pull/387
@@ -197,6 +237,27 @@ fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     // Show all debug info in a gutter
     let debug_text = debug_lines.join("\n");
     writeln!(out, "{}", format_with_gutter(&debug_text, None))?;
+
+    // Claude Code plugin status (after debug info)
+    if plugin_installed {
+        writeln!(out, "{}", success_message("Claude Code plugin installed"))?;
+    } else if claude_available {
+        writeln!(
+            out,
+            "{}",
+            hint_message("Claude Code plugin not installed. To install, run:")
+        )?;
+        let install_commands = "claude plugin marketplace add max-sixty/worktrunk\nclaude plugin install worktrunk@worktrunk";
+        writeln!(out, "{}", format_bash_with_gutter(install_commands))?;
+    } else {
+        writeln!(
+            out,
+            "{}",
+            hint_message(cformat!(
+                "Claude Code plugin not installed (<bold>claude</> not found)"
+            ))
+        )?;
+    }
 
     Ok(())
 }
@@ -1553,3 +1614,4 @@ mod tests {
         assert!(path.ends_with("worktrunk/config.toml"));
     }
 }
+

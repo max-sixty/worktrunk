@@ -1544,7 +1544,62 @@ esac
 "#,
         );
 
+        // Create mock claude script - not installed (exit 1 on --version)
+        // Tests can override with setup_mock_claude_installed() if needed
+        write_mock_script(
+            &mock_bin,
+            "claude",
+            r#"#!/bin/sh
+# Mock claude: not installed
+exit 1
+"#,
+        );
+
         self.mock_bin_path = Some(mock_bin);
+    }
+
+    /// Setup mock `claude` CLI as installed
+    ///
+    /// Call this after setup_mock_ci_tools_unauthenticated() to simulate
+    /// Claude Code being available on the system.
+    pub fn setup_mock_claude_installed(&mut self) {
+        use crate::common::mock_commands::write_mock_script;
+
+        let mock_bin = self
+            .mock_bin_path
+            .as_ref()
+            .expect("Call setup_mock_ci_tools_unauthenticated first");
+
+        write_mock_script(
+            mock_bin,
+            "claude",
+            r#"#!/bin/sh
+# Mock claude: installed
+case "$1" in
+    --version)
+        echo "Claude Code 1.0.0 (mock)"
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+"#,
+        );
+    }
+
+    /// Setup the worktrunk plugin as installed in Claude Code
+    ///
+    /// Creates the installed_plugins.json file in the temp home directory.
+    /// The temp_home must already be set up (via set_temp_home_env on the command).
+    pub fn setup_plugin_installed(temp_home: &std::path::Path) {
+        let plugins_dir = temp_home.join(".claude/plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        std::fs::write(
+            plugins_dir.join("installed_plugins.json"),
+            r#"{"version":2,"plugins":{"worktrunk@worktrunk":[{"scope":"user"}]}}"#,
+        )
+        .unwrap();
     }
 
     /// Setup mock `gh` that returns configurable PR/CI data

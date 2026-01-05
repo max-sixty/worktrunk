@@ -23,7 +23,6 @@ info:
     SOURCE_DATE_EPOCH: "1735776000"
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
-    WORKTRUNK_TEST_COMPINIT_CONFIGURED: "1"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
     XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
 ---
@@ -33,21 +32,20 @@ exit_code: 0
 
 ----- stderr -----
 [36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
-[2m↳[22m [2mEmpty file (using defaults)[22m
+[107m [0m worktree-path = [32m"../{{ repo }}.{{ branch }}"
 
 [36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
 [2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
-[2m↳[22m [2mNot configured shell extension & completions for bash @ ~/.bashrc[22m
-[2m○[22m Already configured shell extension & completions for [1mzsh[22m @ ~/.zshrc:2
-[107m [0m [2m[0m[2m[35mif[0m[2m [0m[2m[34mcommand[0m[2m [0m[2m[36m-v[0m[2m wt [0m[2m[36m>[0m[2m/dev/null [0m[2m[33m2[0m[2m>&1; [0m[2m[35mthen[0m[2m [0m[2m[34meval[0m[2m [0m[2m[32m"$([0m[2m[34mcommand[0m[2m wt config shell init zsh)"[0m[2m; [0m[2m[35mfi[0m[2m
+[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
+[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
-
-[2m↳[22m [2mTo enable shell integration, run [90mwt config shell install[39m[22m
 
 [36mRUNTIME[39m  wt [VERSION]
 [33m▲[39m [33mShell integration not active[39m
 [107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
 [107m [0m Explicit path: yes (contains path separator)
-[2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
+[2m↳[22m [2mClaude Code plugin not installed. To install, run:[22m
+[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin marketplace add max-sixty/worktrunk
+[107m [0m [2m[0m[2m[34mclaude[0m[2m plugin install worktrunk@worktrunk
