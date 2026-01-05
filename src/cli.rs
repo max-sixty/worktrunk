@@ -2613,5 +2613,4 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
         #[command(subcommand)]
         action: ConfigCommand,
     },
-
 }
