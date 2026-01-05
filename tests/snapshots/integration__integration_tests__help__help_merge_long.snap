@@ -100,29 +100,29 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 
 [2mwt merge[0m runs these steps:
 
-1. [1mSquash[0m — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use [2m--stage[0m to
-control what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, uncommitted
-changes become a separate commit and individual commits are preserved.
+1. [1mSquash[0m — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use [2m--stage[0m to control 
+what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, uncommitted changes become a 
+separate commit and individual commits are preserved.
 2. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
 3. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See wt hook.
 4. [1mMerge[0m — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
 5. [1mPre-remove hooks[0m — Hooks run before removing worktree. Failures abort.
-6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the main worktree,
-the worktree is preserved.
+6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the main worktree, the 
+worktree is preserved.
 7. [1mPost-merge hooks[0m — Hooks run after cleanup. Failures are logged but don't abort.
 
-Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is
+Use [2m--no-commit[0m to skip committing uncommitted changes and squashing; rebase still runs by default and can rewrite commits unless [2m--no-rebase[0m is 
 passed. Useful after preparing commits manually with [2mwt step[0m. Requires a clean working tree.
 
 [32mLocal CI
 
-For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes
+For personal projects, pre-merge hooks open up the possibility of a workflow with much faster iteration — an order of magnitude more small changes 
 instead of fewer large ones.
 
-Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it
+Historically, ensuring tests ran before merging was difficult to enforce locally. Remote CI was valuable for the process as much as the checks: it 
 guaranteed validation happened. [2mwt merge[0m brings that guarantee local.
 
-The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge
+The full workflow: start an agent (one of many) on a task, work elsewhere, return when it's ready. Review the diff, run [2mwt merge[0m, move on. Pre-merge 
 hooks validate before merging — if they pass, the branch goes to the default branch and the worktree cleans up.
 
   [2m[pre-merge]

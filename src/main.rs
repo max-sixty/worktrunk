@@ -214,12 +214,13 @@ fn maybe_handle_help_with_pager() -> bool {
                 ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
                     // err.render() returns a StyledStr containing ANSI codes.
                     // Use .ansi() to preserve them; .to_string() strips ANSI codes.
-                    let mut help = err.render().ansi().to_string();
+                    let clap_output = err.render().ansi().to_string();
 
-                    // Render markdown sections to ANSI, wrapping prose to terminal width
-                    // (tables stay unwrapped to preserve column alignment)
+                    // Render markdown sections (tables, code blocks, prose) with proper wrapping.
+                    // Since we disabled clap's wrapping above, our renderer controls all line breaks.
                     let width = worktrunk::styling::get_terminal_width();
-                    help = md_help::render_markdown_in_help_with_width(&help, Some(width));
+                    let help =
+                        md_help::render_markdown_in_help_with_width(&clap_output, Some(width));
 
                     // show_help_in_pager checks if stdout or stderr is a TTY.
                     // If neither is a TTY (e.g., `wt --help &>file`), it skips the pager.

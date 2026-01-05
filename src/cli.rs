@@ -134,6 +134,9 @@ pub enum OutputFormat {
 #[command(disable_help_subcommand = true)]
 #[command(styles = help_styles())]
 #[command(arg_required_else_help = true)]
+// Disable clap's text wrapping - we handle wrapping in the markdown renderer.
+// This prevents clap from breaking markdown tables by wrapping their rows.
+#[command(term_width = 0)]
 #[command(after_long_help = "\
 Getting started
 

@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -47,15 +48,15 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
           Command to run after switch
           
           Replaces the wt process with the command after switching, giving it full terminal control. Useful for launching editors, AI agents, or other
-          interactive tools.
+           interactive tools.
           
           Especially useful with shell aliases:
           
             [1m[1malias wsc='wt switch --create -x claude'
             [1mwsc feature-branch -- 'Fix GH #322'
-          [0m
-          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix
-          GH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.
+          
+          Then [1mwsc feature-branch[0m creates the worktree and launches Claude Code. Arguments after [1m--[0m are passed to the command, so [1mwsc feature -- 'Fix 
+          [1mGH #322'[0m runs [1mclaude 'Fix GH #322'[0m, starting Claude with a prompt.
 
   [1m[36m-y[0m, [1m[36m--yes
           Skip approval prompts
@@ -81,7 +82,7 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
 
 Change directory to a worktree, creating one if needed.
 
-Worktrees are addressed by branch name; paths are computed from a template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing
+Worktrees are addressed by branch name; paths are computed from a template. Unlike [2mgit switch[0m, this navigates between worktrees rather than changing 
 branches in place.
 
 [32mExamples
