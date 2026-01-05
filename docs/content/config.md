@@ -52,8 +52,8 @@ The user config stores personal preferences that apply across all repositories. 
 Controls where new worktrees are created. The template is relative to the repository root.
 
 **Available variables:**
-- `{{ main_worktree }}` — main worktree directory name
-- `{{ branch }}` — raw branch name (e.g., `feature/foo`)
+- `{{ repo }}` — repository directory name
+- `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
 **Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
@@ -61,7 +61,7 @@ Controls where new worktrees are created. The template is relative to the reposi
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
@@ -69,7 +69,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 # Nested bare repo (git clone --bare <url> project/.git)
 # Creates: ~/code/project/feature-login (sibling to .git)
@@ -127,10 +127,7 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
 
 ```toml
 [projects."my-project"]
-approved-commands = [
-    "post-create.install = npm ci",
-    "pre-merge.test = npm test",
-]
+approved-commands = ["npm ci", "npm test"]
 ```
 
 Manage approvals with `wt hook approvals add` to review and pre-approve commands, and `wt hook approvals clear` to reset (add `--global` to clear all projects).
@@ -355,7 +352,7 @@ verify = true          # Run project hooks
 # Commands approved for project hooks in this repo
 # Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
 [projects."github.com/user/repo"]
-approved-commands = ["npm install"]
+approved-commands = ["npm ci", "npm test"]
 
 # NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
 # use a separate PROJECT config file at <repo>/.config/wt.toml
@@ -368,7 +365,7 @@ approved-commands = ["npm install"]
 # NOTE: Templates are synced from src/llm.rs by `cargo test readme_sync`
 
 # Optional: Custom prompt template (inline) - Uses minijinja syntax
-# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
+# Available variables: {{ git_diff }}, {{ git_diff_stat }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
 # If not specified, uses the default template shown below:
 # <!-- DEFAULT_TEMPLATE_START -->
 # template = """
@@ -484,124 +481,94 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # Worktrunk Project Configuration
 # Copy to: <repo>/.config/wt.toml
 #
-# This file defines project-specific hooks that run automatically during
-# worktree operations. It should be checked into git and shared across all
-# developers working on the project.
+# Project-specific hooks that run automatically during worktree operations.
+# Check this file into git to share hooks across all developers.
 
-# Available template variables (all hooks):
-#   {{ repo }}           - Repository name (e.g., "my-project")
-#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
-#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
-#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
+# ============================================================================
+# Hook Formats
+# ============================================================================
+# All hooks support two formats:
 #
-# Merge-related hooks also support:
-#   {{ target }}    - Target branch for the merge (e.g., "main" default branch)
+# Single command:
+#   post-create = "npm install"
+#
+# Named table (multiple commands):
+#   [post-create]
+#   deps = "npm install"
+#   build = "npm run build"
+#
+# Named commands appear in output, making it easier to identify failures.
+
+# ============================================================================
+# Template Variables
+# ============================================================================
+# All hooks support these variables:
+#   {{ repo }}               - Repository directory name (e.g., "myproject")
+#   {{ branch }}             - Branch name (e.g., "feature/auth")
+#   {{ worktree_path }}      - Absolute path to worktree
+#   {{ main_worktree_path }} - Absolute path to main worktree
+#   {{ default_branch }}     - Default branch name (e.g., "main")
+#
+# Merge hooks (pre-commit, pre-merge, post-merge) also support:
+#   {{ target }}             - Target branch for the merge
 #
 # Filters:
-#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
-#   {{ branch | hash_port }} - Hash string to deterministic port (10000-19999)
+#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
+#   {{ branch | hash_port }} - Deterministic port 10000-19999
 
-# Post-Create Hook
-# Runs SEQUENTIALLY and BLOCKS until complete
-# The worktree switch won't complete until these finish
-# Commands run one after another in the worktree directory
+# ============================================================================
+# Hooks
+# ============================================================================
+
+# Post-Create: Runs after worktree creation, BLOCKS until complete
+# Use for: installing dependencies, setting up databases, copying configs
 #
-# Format options:
-# 1. Single string:
-#    post-create = "npm install"
-#
-# 2. Named table (runs sequentially in declaration order):
 # [post-create]
-# install = "npm install --frozen-lockfile"
-# build = "npm run build"
+# deps = "npm ci"
+# env = "cp .env.example .env"
 
-# Post-Start Hook
-# Runs in BACKGROUND as detached processes (parallel)
-# Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,
-# downloading assets too large for git (images, ML models, binaries), long-running tasks
-# The worktree switch completes immediately, these run in parallel
-# Output is logged to .git/wt-logs/{branch}-{source}-post-start-{name}.log (source: user/project)
+# Post-Start: Runs in BACKGROUND after worktree creation (parallel)
+# Use for: dev servers, file watchers, background builds
+# Output logged to .git/wt-logs/{branch}-project-post-start-{name}.log
 #
-# Format options:
-# 1. Single string:
-#    post-start = "npm run dev"
-#
-# 2. Named table (runs in parallel):
 # [post-start]
-# server = "npm run dev"
+# server = "npm run dev -- --port {{ branch | hash_port }}"
 # watch = "npm run watch"
 
-# Pre-Commit Hook
-# Runs SEQUENTIALLY before committing changes during merge (blocking, fail-fast)
-# All commands must exit with code 0 for commit to proceed
-# Runs for both squash and no-squash merge modes
-# Use for: formatters, linters, quick validation
+# Post-Switch: Runs in BACKGROUND after every switch (parallel)
+# Use for: terminal tab naming, tmux window titles, IDE notifications
 #
-# Single command:
-# pre-commit = "cargo fmt -- --check"
+# post-switch = "echo -ne '\\033]0;{{ branch }}\\007'"
+
+# Pre-Commit: Runs before committing during merge, BLOCKS (fail-fast)
+# Use for: formatters, linters, quick checks
 #
-# Multiple commands:
 # [pre-commit]
-# format = "cargo fmt -- --check"
-# lint = "cargo clippy -- -D warnings"
-
-# Pre-Merge Hook
-# Runs SEQUENTIALLY before merging to target branch (blocking, fail-fast)
-# All commands must exit with code 0 for merge to proceed
-# Use for: tests, linters, build verification before merging
-#
-# Single command:
-# pre-merge = "cargo test"
-#
-# Multiple commands:
-# [pre-merge]
-# test = "cargo test"
-# build = "cargo build --release"
-
-# Post-Merge Hook
-# Runs SEQUENTIALLY in the worktree for the target branch if it exists, otherwise the main worktree (blocking)
-# Runs after push and cleanup complete
-# Use for: updating production builds, notifications, cleanup
-#
-# Single command:
-# post-merge = "cargo install --path ."
-#
-# Multiple commands:
-# [post-merge]
-# install = "cargo install --path ."
-# notify = "echo 'Merged!'"
-
-# Example: Node.js Project
-# [post-create]
-# install = "npm ci"
-#
-# [post-start]
-# server = "npm run dev"
-#
-# [pre-merge]
+# format = "npm run format:check"
 # lint = "npm run lint"
+
+# Pre-Merge: Runs before merging to target, BLOCKS (fail-fast)
+# Use for: tests, build verification
+#
+# [pre-merge]
 # test = "npm test"
+# build = "npm run build"
 
-# Example: Rust Project
-# [post-create]
-# build = "cargo build"
+# Post-Merge: Runs after successful merge, BLOCKS
+# Use for: deployment, notifications
 #
-# [pre-merge]
-# format = "cargo fmt -- --check"
-# clippy = "cargo clippy -- -D warnings"
-# test = "cargo test"
-#
-# post-merge = "cargo install --path ."
+# post-merge = "echo 'Merged {{ branch }} to {{ target }}'"
 
-# Example: Python Project
-# [post-create]
-# venv = "python -m venv .venv"
-# install = ".venv/bin/pip install -r requirements.txt"
+# Pre-Remove: Runs before worktree removal, BLOCKS (fail-fast)
+# Use for: cleanup, stopping services
 #
-# [pre-merge]
-# format = ".venv/bin/black --check ."
-# lint = ".venv/bin/ruff check ."
-# test = ".venv/bin/pytest"
+# pre-remove = "docker compose down"
+
+# ============================================================================
+# Dev Server URL (shown in `wt list`)
+# ============================================================================
+# [list]
+# url = "http://localhost:{{ branch | hash_port }}"
 ```
 
 ### Command reference

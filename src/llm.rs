@@ -353,7 +353,7 @@ fn load_template(
 /// - `git_diff`: The diff to describe
 /// - `branch`: Current branch name
 /// - `recent_commits`: Recent commit subjects for style reference
-/// - `repo`: Repository name
+/// - `repo`: Repository directory name
 ///
 /// Squash-specific variables (empty for regular commits):
 /// - `commits`: Commits being squashed

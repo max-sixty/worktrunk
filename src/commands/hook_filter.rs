@@ -13,7 +13,7 @@
 pub enum HookSource {
     /// User hooks from ~/.config/worktrunk/config.toml (no approval required)
     User,
-    /// Project hooks from .worktrunk.toml (approval handled at gate)
+    /// Project hooks from .config/wt.toml (approval handled at gate)
     Project,
 }
 

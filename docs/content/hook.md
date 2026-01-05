@@ -140,12 +140,12 @@ Hooks can use template variables that expand at runtime:
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `{{ repo }}` | my-project | Repository directory name |
-| `{{ repo_path }}` | /path/to/my-project | Absolute path to repository root |
-| `{{ branch }}` | feature-foo | Branch name |
-| `{{ worktree_name }}` | my-project.feature-foo | Worktree directory name |
-| `{{ worktree_path }}` | /path/to/my-project.feature-foo | Absolute worktree path |
-| `{{ main_worktree_path }}` | /path/to/my-project | Default branch worktree |
+| `{{ repo }}` | myproject | Repository directory name |
+| `{{ repo_path }}` | /path/to/myproject | Absolute path to repository root |
+| `{{ branch }}` | feature/auth | Branch name |
+| `{{ worktree_name }}` | myproject.feature-auth | Worktree directory name |
+| `{{ worktree_path }}` | /path/to/myproject.feature-auth | Absolute worktree path |
+| `{{ main_worktree_path }}` | /path/to/myproject | Default branch worktree |
 | `{{ default_branch }}` | main | Default branch name |
 | `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
 | `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |

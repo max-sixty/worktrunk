@@ -1,7 +1,7 @@
 //! Output handlers for worktree operations using the global output context
 
 use color_print::cformat;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::commands::branch_deletion::{
     BranchDeletionOutcome, BranchDeletionResult, delete_branch_if_safe,
@@ -25,41 +25,55 @@ use super::shell_integration::{
     compute_shell_warning_reason, git_subcommand_warning, shell_integration_hint,
 };
 
-/// Format a switch message with a consistent location phrase
+/// Format a switch message based on what was created
 ///
-/// Both modes (with and without shell integration) use the human-friendly
-/// `"Created new worktree for {branch} from {base} @ {path}"` wording so
-/// users see the same message regardless of how worktrunk is invoked.
-///
-/// Returns unstyled text - callers wrap in success_message() for Created
-/// or info_message() for Switched (existing worktree).
+/// # Message formats
+/// - Branch + worktree created (`--create`): "Created branch X and worktree from Y @ path"
+/// - Branch from remote + worktree (DWIM): "Created branch X (tracking remote) and worktree @ path"
+/// - Worktree only created: "Created worktree for X @ path"
+/// - Switched to existing: "Switched to worktree for X @ path"
 fn format_switch_message(
     branch: &str,
     path: &Path,
+    worktree_created: bool,
     created_branch: bool,
     base_branch: Option<&str>,
     from_remote: Option<&str>,
 ) -> String {
-    // Determine action and source based on how the worktree was created
-    // Priority: explicit --create > DWIM from remote > existing local branch
-    let (action, source) = if created_branch {
-        ("Created new worktree for", base_branch)
-    } else if let Some(remote) = from_remote {
-        ("Created worktree for", Some(remote))
-    } else {
-        ("Switched to worktree for", None)
-    };
+    let path_display = format_path_for_display(path);
 
-    match source {
-        Some(src) => cformat!(
-            "{action} <bold>{branch}</> from <bold>{src}</> @ <bold>{}</>",
-            format_path_for_display(path)
-        ),
-        None => cformat!(
-            "{action} <bold>{branch}</> @ <bold>{}</>",
-            format_path_for_display(path)
-        ),
+    if created_branch {
+        // --create flag: created branch and worktree
+        match base_branch {
+            Some(base) => cformat!(
+                "Created branch <bold>{branch}</> and worktree from <bold>{base}</> @ <bold>{path_display}</>"
+            ),
+            None => {
+                cformat!("Created branch <bold>{branch}</> and worktree @ <bold>{path_display}</>")
+            }
+        }
+    } else if let Some(remote) = from_remote {
+        // DWIM from remote: created local tracking branch and worktree
+        cformat!(
+            "Created branch <bold>{branch}</> (tracking <bold>{remote}</>) and worktree @ <bold>{path_display}</>"
+        )
+    } else if worktree_created {
+        // Local branch existed, created worktree only
+        cformat!("Created worktree for <bold>{branch}</> @ <bold>{path_display}</>")
+    } else {
+        // Switched to existing worktree
+        cformat!("Switched to worktree for <bold>{branch}</> @ <bold>{path_display}</>")
     }
+}
+
+/// Format a branch-worktree mismatch warning message.
+///
+/// Shows when a worktree is at a path that doesn't match the config template.
+fn format_path_mismatch_warning(branch: &str, expected_path: &Path) -> FormattedMessage {
+    let expected_display = format_path_for_display(expected_path);
+    warning_message(cformat!(
+        "Branch-worktree mismatch; expected <bold>{branch}</> @ <bold>{expected_display}</> <red>⚑</>"
+    ))
 }
 
 /// Handle the result of a branch deletion attempt.
@@ -298,13 +312,10 @@ pub fn handle_switch_output(
     };
 
     // Show branch-worktree mismatch warning after the main message
-    let branch_worktree_mismatch_warning = branch_info.expected_path.as_ref().map(|expected| {
-        let expected_display = format_path_for_display(expected);
-        let branch = &branch_info.branch;
-        warning_message(cformat!(
-            "Branch-worktree mismatch; expected <bold>{branch}</> @ <bold>{expected_display}</> <red>⚑</>"
-        ))
-    });
+    let branch_worktree_mismatch_warning = branch_info
+        .expected_path
+        .as_ref()
+        .map(|expected| format_path_mismatch_warning(&branch_info.branch, expected));
 
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => {
@@ -344,7 +355,9 @@ pub fn handle_switch_output(
             } else {
                 // Shell integration active — user actually switched
                 super::print(info_message(format_switch_message(
-                    branch, path, false, None, None,
+                    branch, path, false, // worktree_created
+                    false, // created_branch
+                    None, None,
                 )))?;
                 if let Some(warning) = branch_worktree_mismatch_warning {
                     super::print(warning)?;
@@ -363,6 +376,7 @@ pub fn handle_switch_output(
             super::print(success_message(format_switch_message(
                 branch,
                 path,
+                true, // worktree_created
                 *created_branch,
                 base_branch.as_deref(),
                 from_remote.as_deref(),
@@ -445,6 +459,7 @@ pub fn handle_remove_output(
             target_branch,
             integration_reason,
             force_worktree,
+            expected_path,
         } => handle_removed_worktree_output(
             main_path,
             worktree_path,
@@ -454,6 +469,7 @@ pub fn handle_remove_output(
             target_branch.as_deref(),
             *integration_reason,
             *force_worktree,
+            expected_path.as_ref(),
             background,
             verify,
         ),
@@ -548,6 +564,7 @@ fn handle_removed_worktree_output(
     target_branch: Option<&str>,
     pre_computed_integration: Option<IntegrationReason>,
     force_worktree: bool,
+    expected_path: Option<&PathBuf>,
     background: bool,
     verify: bool,
 ) -> anyhow::Result<()> {
@@ -670,6 +687,11 @@ fn handle_removed_worktree_output(
         };
         super::print(FormattedMessage::new(action))?;
 
+        // Show path mismatch warning if the worktree is at an unexpected location
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
+
         // Show hints for branch status
         if !should_delete_branch {
             if deletion_mode.should_keep() && branch_was_integrated {
@@ -776,6 +798,11 @@ fn handle_removed_worktree_output(
         };
         super::print(FormattedMessage::new(msg))?;
 
+        // Show path mismatch warning if the worktree was at an unexpected location
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
+
         // Show hints for branch status
         if !branch_deleted {
             if deletion_mode.should_keep() && branch_was_integrated {
@@ -867,21 +894,31 @@ mod tests {
     fn test_format_switch_message() {
         let path = PathBuf::from("/tmp/test");
 
-        // Switched to existing worktree (no creation, no remote)
-        let msg = format_switch_message("feature", &path, false, None, None);
+        // Switched to existing worktree (no creation)
+        let msg = format_switch_message("feature", &path, false, false, None, None);
         assert!(msg.contains("Switched to worktree for"));
         assert!(msg.contains("feature"));
 
-        // Created new worktree from base branch
-        let msg = format_switch_message("feature", &path, true, Some("main"), None);
-        assert!(msg.contains("Created new worktree for"));
+        // Created branch and worktree with --create
+        let msg = format_switch_message("feature", &path, true, true, Some("main"), None);
+        assert!(msg.contains("Created branch"));
+        assert!(msg.contains("and worktree"));
         assert!(msg.contains("from"));
         assert!(msg.contains("main"));
 
-        // Created worktree from remote (DWIM)
-        let msg = format_switch_message("feature", &path, false, None, Some("origin/feature"));
-        assert!(msg.contains("Created worktree for"));
+        // Created worktree from remote (DWIM) - also creates local tracking branch
+        let msg =
+            format_switch_message("feature", &path, true, false, None, Some("origin/feature"));
+        assert!(msg.contains("Created branch"));
+        assert!(msg.contains("tracking"));
         assert!(msg.contains("origin/feature"));
+        assert!(msg.contains("and worktree"));
+
+        // Created worktree only (local branch already existed)
+        let msg = format_switch_message("feature", &path, true, false, None, None);
+        assert!(msg.contains("Created worktree for"));
+        assert!(msg.contains("feature"));
+        assert!(!msg.contains("branch")); // Should NOT mention branch creation
     }
 
     #[test]

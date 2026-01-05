@@ -109,7 +109,7 @@ fn test_switch_non_tty_shows_hint(repo: TestRepo) {
     // Verify the switch succeeded without prompting
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Created new worktree for"),
+        stderr.contains("Created branch") && stderr.contains("and worktree"),
         "Should create worktree: {stderr}"
     );
 
@@ -334,7 +334,7 @@ mod pty_tests {
 
         // Should have created the worktree
         assert!(
-            output.contains("Created new worktree for"),
+            output.contains("Created branch") && output.contains("and worktree"),
             "Should create worktree: {output}"
         );
 
@@ -381,7 +381,7 @@ mod pty_tests {
 
         // Should have created the worktree
         assert!(
-            normalized.contains("Created new worktree for"),
+            normalized.contains("Created branch") && normalized.contains("and worktree"),
             "Should create worktree: {normalized}"
         );
 

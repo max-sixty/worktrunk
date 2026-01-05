@@ -48,12 +48,12 @@ impl ProjectListConfig {
 /// # Template Variables
 ///
 /// All hooks support these template variables:
-/// - `{{ repo }}` - Repository directory name (e.g., "my-project")
-/// - `{{ repo_path }}` - Absolute path to repository root
-/// - `{{ branch }}` - Branch name (e.g., "feature-foo")
-/// - `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-foo")
-/// - `{{ worktree_path }}` - Absolute path to the worktree
-/// - `{{ main_worktree_path }}` - Absolute path to the default branch worktree
+/// - `{{ repo }}` - Repository directory name (e.g., "myproject")
+/// - `{{ repo_path }}` - Absolute path to repository root (e.g., "/path/to/myproject")
+/// - `{{ branch }}` - Branch name (e.g., "feature/auth")
+/// - `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
+/// - `{{ worktree_path }}` - Absolute path to the worktree (e.g., "/path/to/myproject.feature-auth")
+/// - `{{ main_worktree_path }}` - Absolute path to main worktree (e.g., "/path/to/myproject")
 /// - `{{ default_branch }}` - Default branch name (e.g., "main")
 /// - `{{ commit }}` - Current HEAD commit SHA (full 40-character hash)
 /// - `{{ short_commit }}` - Current HEAD commit SHA (short 7-character hash)
@@ -65,7 +65,7 @@ impl ProjectListConfig {
 ///
 /// # Filters
 ///
-/// - `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-foo")
+/// - `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., "feature-auth")
 /// - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ProjectConfig {

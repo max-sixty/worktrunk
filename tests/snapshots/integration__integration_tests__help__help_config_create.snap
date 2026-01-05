@@ -12,6 +12,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -115,7 +116,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# Commands approved for project hooks in this repo
   [2m# Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
   [2m[projects."github.com/user/repo"]
-  [2mapproved-commands = ["npm install"]
+  [2mapproved-commands = ["npm ci", "npm test"]
   [2m
   [2m# NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
   [2m# use a separate PROJECT config file at <repo>/.config/wt.toml
@@ -128,7 +129,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2m# NOTE: Templates are synced from src/llm.rs by `cargo test readme_sync`
   [2m
   [2m# Optional: Custom prompt template (inline) - Uses minijinja syntax
-  [2m# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
+  [2m# Available variables: {{ git_diff }}, {{ git_diff_stat }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
   [2m# If not specified, uses the default template shown below:
   [2m# <!-- DEFAULT_TEMPLATE_START -->
   [2m# template = """
@@ -242,121 +243,91 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# Worktrunk Project Configuration
   [2m# Copy to: <repo>/.config/wt.toml
   [2m#
-  [2m# This file defines project-specific hooks that run automatically during
-  [2m# worktree operations. It should be checked into git and shared across all
-  [2m# developers working on the project.
+  [2m# Project-specific hooks that run automatically during worktree operations.
+  [2m# Check this file into git to share hooks across all developers.
   [2m
-  [2m# Available template variables (all hooks):
-  [2m#   {{ repo }}           - Repository name (e.g., "my-project")
-  [2m#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
-  [2m#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
-  [2m#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
+  [2m# ============================================================================
+  [2m# Hook Formats
+  [2m# ============================================================================
+  [2m# All hooks support two formats:
   [2m#
-  [2m# Merge-related hooks also support:
-  [2m#   {{ target }}    - Target branch for the merge (e.g., "main" default branch)
+  [2m# Single command:
+  [2m#   post-create = "npm install"
+  [2m#
+  [2m# Named table (multiple commands):
+  [2m#   [post-create]
+  [2m#   deps = "npm install"
+  [2m#   build = "npm run build"
+  [2m#
+  [2m# Named commands appear in output, making it easier to identify failures.
+  [2m
+  [2m# ============================================================================
+  [2m# Template Variables
+  [2m# ============================================================================
+  [2m# All hooks support these variables:
+  [2m#   {{ repo }}               - Repository directory name (e.g., "myproject")
+  [2m#   {{ branch }}             - Branch name (e.g., "feature/auth")
+  [2m#   {{ worktree_path }}      - Absolute path to worktree
+  [2m#   {{ main_worktree_path }} - Absolute path to main worktree
+  [2m#   {{ default_branch }}     - Default branch name (e.g., "main")
+  [2m#
+  [2m# Merge hooks (pre-commit, pre-merge, post-merge) also support:
+  [2m#   {{ target }}             - Target branch for the merge
   [2m#
   [2m# Filters:
-  [2m#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
-  [2m#   {{ branch | hash_port }} - Hash string to deterministic port (10000-19999)
+  [2m#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
+  [2m#   {{ branch | hash_port }} - Deterministic port 10000-19999
   [2m
-  [2m# Post-Create Hook
-  [2m# Runs SEQUENTIALLY and BLOCKS until complete
-  [2m# The worktree switch won't complete until these finish
-  [2m# Commands run one after another in the worktree directory
+  [2m# ============================================================================
+  [2m# Hooks
+  [2m# ============================================================================
+  [2m
+  [2m# Post-Create: Runs after worktree creation, BLOCKS until complete
+  [2m# Use for: installing dependencies, setting up databases, copying configs
   [2m#
-  [2m# Format options:
-  [2m# 1. Single string:
-  [2m#    post-create = "npm install"
-  [2m#
-  [2m# 2. Named table (runs sequentially in declaration order):
   [2m# [post-create]
-  [2m# install = "npm install --frozen-lockfile"
-  [2m# build = "npm run build"
+  [2m# deps = "npm ci"
+  [2m# env = "cp .env.example .env"
   [2m
-  [2m# Post-Start Hook
-  [2m# Runs in BACKGROUND as detached processes (parallel)
-  [2m# Use for: uv sync, npm install, bundle install, build, dev servers, file watchers,
-  [2m# downloading assets too large for git (images, ML models, binaries), long-running tasks
-  [2m# The worktree switch completes immediately, these run in parallel
-  [2m# Output is logged to .git/wt-logs/{branch}-{source}-post-start-{name}.log (source: user/project)
+  [2m# Post-Start: Runs in BACKGROUND after worktree creation (parallel)
+  [2m# Use for: dev servers, file watchers, background builds
+  [2m# Output logged to .git/wt-logs/{branch}-project-post-start-{name}.log
   [2m#
-  [2m# Format options:
-  [2m# 1. Single string:
-  [2m#    post-start = "npm run dev"
-  [2m#
-  [2m# 2. Named table (runs in parallel):
   [2m# [post-start]
-  [2m# server = "npm run dev"
+  [2m# server = "npm run dev -- --port {{ branch | hash_port }}"
   [2m# watch = "npm run watch"
   [2m
-  [2m# Pre-Commit Hook
-  [2m# Runs SEQUENTIALLY before committing changes during merge (blocking, fail-fast)
-  [2m# All commands must exit with code 0 for commit to proceed
-  [2m# Runs for both squash and no-squash merge modes
-  [2m# Use for: formatters, linters, quick validation
+  [2m# Post-Switch: Runs in BACKGROUND after every switch (parallel)
+  [2m# Use for: terminal tab naming, tmux window titles, IDE notifications
   [2m#
-  [2m# Single command:
-  [2m# pre-commit = "cargo fmt -- --check"
+  [2m# post-switch = "echo -ne '\\033]0;{{ branch }}\\007'"
+  [2m
+  [2m# Pre-Commit: Runs before committing during merge, BLOCKS (fail-fast)
+  [2m# Use for: formatters, linters, quick checks
   [2m#
-  [2m# Multiple commands:
   [2m# [pre-commit]
-  [2m# format = "cargo fmt -- --check"
-  [2m# lint = "cargo clippy -- -D warnings"
-  [2m
-  [2m# Pre-Merge Hook
-  [2m# Runs SEQUENTIALLY before merging to target branch (blocking, fail-fast)
-  [2m# All commands must exit with code 0 for merge to proceed
-  [2m# Use for: tests, linters, build verification before merging
-  [2m#
-  [2m# Single command:
-  [2m# pre-merge = "cargo test"
-  [2m#
-  [2m# Multiple commands:
-  [2m# [pre-merge]
-  [2m# test = "cargo test"
-  [2m# build = "cargo build --release"
-  [2m
-  [2m# Post-Merge Hook
-  [2m# Runs SEQUENTIALLY in the worktree for the target branch if it exists, otherwise the main worktree (blocking)
-  [2m# Runs after push and cleanup complete
-  [2m# Use for: updating production builds, notifications, cleanup
-  [2m#
-  [2m# Single command:
-  [2m# post-merge = "cargo install --path ."
-  [2m#
-  [2m# Multiple commands:
-  [2m# [post-merge]
-  [2m# install = "cargo install --path ."
-  [2m# notify = "echo 'Merged!'"
-  [2m
-  [2m# Example: Node.js Project
-  [2m# [post-create]
-  [2m# install = "npm ci"
-  [2m#
-  [2m# [post-start]
-  [2m# server = "npm run dev"
-  [2m#
-  [2m# [pre-merge]
+  [2m# format = "npm run format:check"
   [2m# lint = "npm run lint"
+  [2m
+  [2m# Pre-Merge: Runs before merging to target, BLOCKS (fail-fast)
+  [2m# Use for: tests, build verification
+  [2m#
+  [2m# [pre-merge]
   [2m# test = "npm test"
+  [2m# build = "npm run build"
   [2m
-  [2m# Example: Rust Project
-  [2m# [post-create]
-  [2m# build = "cargo build"
+  [2m# Post-Merge: Runs after successful merge, BLOCKS
+  [2m# Use for: deployment, notifications
   [2m#
-  [2m# [pre-merge]
-  [2m# format = "cargo fmt -- --check"
-  [2m# clippy = "cargo clippy -- -D warnings"
-  [2m# test = "cargo test"
-  [2m#
-  [2m# post-merge = "cargo install --path ."
+  [2m# post-merge = "echo 'Merged {{ branch }} to {{ target }}'"
   [2m
-  [2m# Example: Python Project
-  [2m# [post-create]
-  [2m# venv = "python -m venv .venv"
-  [2m# install = ".venv/bin/pip install -r requirements.txt"
+  [2m# Pre-Remove: Runs before worktree removal, BLOCKS (fail-fast)
+  [2m# Use for: cleanup, stopping services
   [2m#
-  [2m# [pre-merge]
-  [2m# format = ".venv/bin/black --check ."
-  [2m# lint = ".venv/bin/ruff check ."
-  [2m# test = ".venv/bin/pytest"
+  [2m# pre-remove = "docker compose down"
+  [2m
+  [2m# ============================================================================
+  [2m# Dev Server URL (shown in `wt list`)
+  [2m# ============================================================================
+  [2m# [list]
+  [2m# url = "http://localhost:{{ branch | hash_port }}"

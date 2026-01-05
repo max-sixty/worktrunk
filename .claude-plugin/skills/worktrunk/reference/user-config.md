@@ -78,7 +78,7 @@ Ask: "Should I add this to your config at `~/.config/worktrunk/config.toml`?"
 ### Step 5: After Approval, Check if Config Exists
 
 ```bash
-wt config list
+wt config show
 ```
 
 If not: guide through `wt config create` first.
@@ -107,7 +107,7 @@ Users may want different worktree organization patterns.
 
 Default (parent siblings):
 ```toml
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 ```
 Result: `~/code/myproject` → `~/code/myproject.feature-auth`
 
@@ -121,7 +121,7 @@ Result: `~/code/myproject/.worktrees/feature-auth`
 
 ### Workflow
 
-1. Show current setting from `wt config list`
+1. Show current setting from `wt config show`
 2. Explain the new pattern with concrete example
 3. Warn: "Existing worktrees won't move automatically"
 4. Propose change
@@ -129,12 +129,12 @@ Result: `~/code/myproject/.worktrees/feature-auth`
 
 ### Available Variables
 
-- `{{ main_worktree }}` - Main worktree directory name
-- `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
+- `{{ repo }}` - Repository directory name
+- `{{ branch }}` - Raw branch name (e.g., `feature/auth`)
 
 ### Filters
 
-- `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., `feature-foo`)
+- `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., `feature-auth`)
 - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
 
 ### Validation Rules
@@ -178,13 +178,13 @@ template-file = "~/.config/worktrunk/commit-template.txt"
 - `{{ git_diff }}` - Staged changes
 - `{{ branch }}` - Current branch
 - `{{ recent_commits }}` - Recent commit titles
-- `{{ repo }}` - Repository name
+- `{{ repo }}` - Repository directory name
 
 **Squash commit templates**:
 - `{{ commits }}` - List of commits being squashed
 - `{{ target_branch }}` - Target branch for merge
 - `{{ branch }}` - Current branch
-- `{{ repo }}` - Repository name
+- `{{ repo }}` - Repository directory name
 
 ### Validation Rules
 
@@ -205,7 +205,7 @@ Complete reference:
 
 ```toml
 # Worktree Path Template
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # LLM Commit Generation (Optional)
 [commit-generation]
@@ -259,14 +259,14 @@ approved-commands = ["npm install"]
 **Check sequence:**
 1. Verify command exists: `which llm`
 2. Test command directly: `llm "test"`
-3. View config: `wt config list`
+3. View config: `wt config show`
 4. Check for template conflicts (both `template` and `template-file` set)
 5. If template file is used, verify it exists
 
 ### Config Not Loading
 
 **Check sequence:**
-1. View config path: `wt config list` shows location
+1. View config path: `wt config show` shows location
 2. Verify file exists: `ls -la ~/.config/worktrunk/config.toml`
 3. Check TOML syntax: `cat ~/.config/worktrunk/config.toml`
 4. Look for validation errors (path must be relative, not absolute)
@@ -351,7 +351,7 @@ verify = true      # Run project hooks
 ## Key Commands
 
 ```bash
-wt config list        # View current config
+wt config show        # View current config
 wt config create      # Create initial config file
 wt config --help      # Show LLM setup guide
 ```
