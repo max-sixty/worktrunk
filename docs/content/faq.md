@@ -141,6 +141,58 @@ $ cargo install worktrunk --no-default-features
 
 This disables bash syntax highlighting in command output but keeps all core functionality. The syntax highlighting feature requires C99 compiler support and can fail on older systems or minimal Docker images.
 
+## What files does Worktrunk create?
+
+Worktrunk creates files in four categories.
+
+### 1. Worktree directories
+
+Created by `wt switch <branch>` (or `wt select`) when switching to a branch that doesn't have a worktree. Use `wt switch --create <branch>` to create a new branch. Default location is `../<repo>.<branch>` (sibling to main repo), configurable via `worktree-path` in user config.
+
+**To remove:** `wt remove <branch>` removes the worktree directory and deletes the branch.
+
+### 2. Config files
+
+| File | Created by | Purpose |
+|------|------------|---------|
+| `~/.config/worktrunk/config.toml` | `wt config create`, or approving project commands | User preferences, approved commands |
+| `.config/wt.toml` | `wt config create --project` | Project hooks (checked into repo) |
+
+User config location: `$XDG_CONFIG_HOME/worktrunk/` (or `~/.config/worktrunk/`) on Linux/macOS, `%APPDATA%\worktrunk\` on Windows.
+
+**To remove:** Delete directly. User config: `rm ~/.config/worktrunk/config.toml`. Project config: `rm .config/wt.toml` (and commit).
+
+### 3. Shell integration
+
+Created by `wt config shell install`:
+
+- **Bash**: adds line to `~/.bashrc`
+- **Zsh**: adds line to `~/.zshrc` (or `$ZDOTDIR/.zshrc`)
+- **Fish**: creates `~/.config/fish/conf.d/wt.fish` and `~/.config/fish/completions/wt.fish`
+
+**To remove:** `wt config shell uninstall`.
+
+### 4. Metadata in `.git/` (automatic)
+
+Worktrunk stores small amounts of cache and log data in your repository's `.git/` directory:
+
+| Location | Purpose | Created by |
+|----------|---------|------------|
+| `.git/config` keys under `worktrunk.*` | Cached default branch, switch history, branch markers | Various commands |
+| `.git/wt-cache/ci-status/*.json` | CI status cache (~1KB each) | `wt list` when `gh` CLI is installed |
+| `.git/wt-logs/*.log` | Background command output | Hooks, background `wt remove` |
+
+None of this is tracked by git or pushed to remotes.
+
+**To remove:** `wt config state clear` removes all worktrunk keys from `.git/config`, deletes CI cache, and clears logs.
+
+### What Worktrunk does NOT create
+
+- No files outside `.git/`, config directories, or worktree directories
+- No global git hooks
+- No modifications to `~/.gitconfig`
+- No background processes or daemons
+
 ## Running tests (for contributors)
 
 ### Quick tests
