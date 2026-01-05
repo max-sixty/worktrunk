@@ -281,7 +281,9 @@ fn render_inline_formatting(line: &str) -> String {
                 }
                 bold_content.push(c);
             }
-            result.push_str(&format!("{bold}{bold_content}{bold:#}"));
+            // Recursively process inline formatting within bold content
+            let processed_content = render_inline_formatting(&bold_content);
+            result.push_str(&format!("{bold}{processed_content}{bold:#}"));
         } else {
             result.push(ch);
         }
@@ -634,6 +636,16 @@ mod tests {
         let result = render_inline_formatting("**bold**");
         assert!(result.contains("bold"));
         assert!(result.contains("\u{1b}[1m")); // Bold
+    }
+
+    #[test]
+    fn test_render_inline_formatting_bold_with_code() {
+        // Nested formatting: **`wt list`:** should render code inside bold
+        let result = render_inline_formatting("**`wt list`:**");
+        assert!(result.contains("wt list"));
+        assert!(result.contains("\u{1b}[1m")); // Bold
+        assert!(result.contains("\u{1b}[2m")); // Dimmed (for code)
+        assert!(!result.contains('`')); // Backticks should be consumed
     }
 
     #[test]
