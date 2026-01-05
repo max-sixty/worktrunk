@@ -219,6 +219,11 @@ impl RepositoryCliExt for Repository {
             return Ok(None);
         };
 
+        // Skip if target worktree directory is missing (prunable worktree)
+        if !wt_path.exists() {
+            return Ok(None);
+        }
+
         let wt_repo = Repository::at(wt_path);
         if !wt_repo.is_dirty()? {
             return Ok(None);

@@ -394,7 +394,7 @@ fn worktree_state_to_json(
 
     // Fallback: check direct fields when status_symbols is None
     // This can happen early in progressive rendering before status is computed
-    if data.prunable.is_some() {
+    if data.is_prunable() {
         return (Some("prunable"), data.prunable.clone());
     }
     if data.locked.is_some() {

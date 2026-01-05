@@ -46,7 +46,12 @@ use crate::output;
 /// All template variables from hooks are available, and context JSON is piped to stdin.
 pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let repo = Repository::current();
-    let worktrees = repo.list_worktrees()?;
+    // Filter out prunable worktrees (directory deleted) - can't run commands there
+    let worktrees: Vec<_> = repo
+        .list_worktrees()?
+        .into_iter()
+        .filter(|wt| !wt.is_prunable())
+        .collect();
     let config = WorktrunkConfig::load()?;
 
     let mut failed: Vec<String> = Vec::new();

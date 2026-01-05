@@ -723,6 +723,12 @@ pub fn collect_worktree_progressive(
     tx: Sender<Result<TaskResult, TaskError>>,
     expected_results: &Arc<ExpectedResults>,
 ) {
+    // Skip git operations for prunable worktrees (directory missing).
+    // Git operations would fail anyway since the directory doesn't exist.
+    if wt.is_prunable() {
+        return;
+    }
+
     // Expand URL template for this item (deferred from pre-skeleton)
     let item_url = options.url_template.as_ref().and_then(|template| {
         wt.branch.as_ref().and_then(|branch| {
