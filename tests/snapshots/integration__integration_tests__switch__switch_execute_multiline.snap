@@ -24,6 +24,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -37,7 +38,7 @@ line2
 line3
 
 ----- stderr -----
-[32m✓[39m [32mCreated new worktree for [1mmultiline-test[22m from [1mmain[22m @ [1m_REPO_.multiline-test[22m[39m
+[32m✓[39m [32mCreated branch [1mmultiline-test[22m and worktree from [1mmain[22m @ [1m_REPO_.multiline-test[22m[39m
 [33m▲[39m [33mExecuting [1mecho 'line1'
 echo 'line2'
 echo 'line3'[22m @ [1m_REPO_.multiline-test[22m, but shell directory unchanged — shell integration not installed[39m

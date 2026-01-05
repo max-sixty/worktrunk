@@ -23,6 +23,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -34,6 +35,6 @@ exit_code: 0
 
 ----- stderr -----
 [33m▲[39m [33mMoving [1m_REPO_.clobber-dir-test[22m to [1m_REPO_.clobber-dir-test.bak.20250102-000000[22m ([90m--clobber[39m)[39m
-[32m✓[39m [32mCreated new worktree for [1mclobber-dir-test[22m from [1mmain[22m @ [1m_REPO_.clobber-dir-test[22m[39m
+[32m✓[39m [32mCreated branch [1mclobber-dir-test[22m and worktree from [1mmain[22m @ [1m_REPO_.clobber-dir-test[22m[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

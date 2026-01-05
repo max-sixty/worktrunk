@@ -10,5 +10,5 @@ n
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'test command'[0m[2m
 [36m❯[39m Allow and remember? [1m[y/N][22m 
 [2m○[22m Commands declined, continuing worktree creation
-[32m✓[39m [32mCreated new worktree for [1mtest-decline[22m from [1mmain[22m @ [1m_REPO_/repo.BRANCH[22m[39m
+[32m✓[39m [32mCreated branch [1mtest-decline[22m and worktree from [1mmain[22m @ [1m_REPO_/repo.BRANCH[22m[39m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m

@@ -2,4 +2,4 @@
 source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
-[32m✓[39m [32mCreated new worktree for [1mfish-minimal[22m from [1mmain[22m @ [1m[TMPDIR]/repo.fish-minimal[22m[39m
+[32m✓[39m [32mCreated branch [1mfish-minimal[22m and worktree from [1mmain[22m @ [1m[TMPDIR]/repo.fish-minimal[22m[39m

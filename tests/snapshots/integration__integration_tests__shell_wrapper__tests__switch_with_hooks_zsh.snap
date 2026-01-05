@@ -8,7 +8,7 @@ Installing dependencies...
 [36m◎[39m [36mRunning post-create [1mproject:build[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Building project...'[0m[2m
 Building project...
-[32m✓[39m [32mCreated new worktree for [1mfeature-hooks[22m from [1mmain[22m @ [1m[TMPDIR]/repo.feature-hooks[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature-hooks[22m and worktree from [1mmain[22m @ [1m[TMPDIR]/repo.feature-hooks[22m[39m
 [36m◎[39m [36mRunning post-start [1mproject:server[22m:[39m
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Starting dev server on port 3000'[0m[2m
 [36m◎[39m [36mRunning post-start [1mproject:watch[22m:[39m

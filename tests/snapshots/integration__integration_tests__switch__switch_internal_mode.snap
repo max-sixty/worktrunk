@@ -22,6 +22,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
@@ -33,4 +34,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[32m✓[39m [32mCreated new worktree for [1minternal-test[22m from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m
+[32m✓[39m [32mCreated branch [1minternal-test[22m and worktree from [1mmain[22m @ [1m_REPO_.internal-test[22m[39m

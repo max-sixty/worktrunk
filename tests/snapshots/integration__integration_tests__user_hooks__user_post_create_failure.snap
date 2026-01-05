@@ -22,6 +22,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -35,6 +36,6 @@ exit_code: 0
 [36m◎[39m [36mRunning post-create [1muser:failing[22m @ [1m_REPO_.feature[22m:[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
 [0m[33m▲[39m [33mCommand [1mfailing[22m failed: exit status: 1[39m
-[32m✓[39m [32mCreated new worktree for [1mfeature[22m from [1mmain[22m @ [1m_REPO_.feature[22m[39m
+[32m✓[39m [32mCreated branch [1mfeature[22m and worktree from [1mmain[22m @ [1m_REPO_.feature[22m[39m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
