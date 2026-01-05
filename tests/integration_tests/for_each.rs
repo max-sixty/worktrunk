@@ -91,3 +91,31 @@ fn test_for_each_spawn_fails(mut repo: TestRepo) {
         None,
     ));
 }
+
+/// Test that prunable worktrees (directory deleted) are skipped without errors.
+#[rstest]
+fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
+    let worktree_path = repo.add_worktree("feature");
+    // Delete the worktree directory to make it prunable
+    std::fs::remove_dir_all(&worktree_path).unwrap();
+
+    // Verify git sees it as prunable
+    let output = repo
+        .git_command()
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("prunable"),
+        "Expected worktree to be prunable after deleting directory"
+    );
+
+    // wt step for-each should skip the prunable worktree and complete without errors
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["for-each", "--", "echo", "Running in {{ branch }}"],
+        None,
+    ));
+}

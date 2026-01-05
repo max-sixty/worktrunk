@@ -328,22 +328,29 @@ impl Worktree {
     }
 
     /// Find the "home" worktree - the default branch's worktree if it exists,
-    /// otherwise the first worktree in the list.
+    /// otherwise the first non-prunable worktree in the list.
     ///
     /// This is the preferred destination when we need to cd somewhere
     /// (e.g., after removing the current worktree, or after merge removes the worktree).
+    ///
+    /// Prunable worktrees (directory deleted but git still tracks metadata) are
+    /// excluded since we can't cd to a directory that doesn't exist.
     ///
     /// For normal repos, `worktrees[0]` is usually the default branch's worktree,
     /// so the fallback rarely matters. For bare repos, there's no semantic "main"
     /// worktree, so preferring the default branch's worktree provides consistency.
     ///
-    /// Returns `None` only if `worktrees` is empty. If `default_branch` is empty
-    /// or doesn't match any worktree, returns the first worktree.
+    /// Returns `None` if all worktrees are prunable or `worktrees` is empty.
+    /// If `default_branch` doesn't match any non-prunable worktree, returns the
+    /// first non-prunable worktree.
     pub fn find_home<'a>(worktrees: &'a [Worktree], default_branch: &str) -> Option<&'a Worktree> {
+        // Filter out prunable worktrees (directory deleted but git still tracks metadata).
+        // Can't cd to a worktree that doesn't exist.
         worktrees
             .iter()
+            .filter(|wt| wt.prunable.is_none())
             .find(|wt| wt.branch.as_deref() == Some(default_branch))
-            .or_else(|| worktrees.first())
+            .or_else(|| worktrees.iter().find(|wt| wt.prunable.is_none()))
     }
 }
 

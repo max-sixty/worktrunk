@@ -50,7 +50,8 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let config = WorktrunkConfig::load()?;
 
     let mut failed: Vec<String> = Vec::new();
-    let total = worktrees.len();
+    // Count only non-prunable worktrees (prunable ones are skipped)
+    let total = worktrees.iter().filter(|wt| wt.prunable.is_none()).count();
 
     // Join args into a template string (will be expanded per-worktree)
     let command_template = args.join(" ");
@@ -59,6 +60,12 @@ pub fn step_for_each(args: Vec<String>) -> anyhow::Result<()> {
     let repo_root = repo.worktree_base()?;
 
     for wt in &worktrees {
+        // Skip prunable worktrees (directory deleted but git still tracks metadata).
+        // Can't run commands in a directory that doesn't exist.
+        if wt.prunable.is_some() {
+            continue;
+        }
+
         let display_name = worktree_display_name(wt, &repo, &config);
         output::print(progress_message(format!("Running in {display_name}...")))?;
 

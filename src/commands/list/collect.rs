@@ -928,7 +928,10 @@ pub fn collect(
         let main_repo = Repository::at(&main_worktree.path);
         if main_repo.is_builtin_fsmonitor_enabled() {
             for wt in &sorted_worktrees {
-                Repository::at(&wt.path).start_fsmonitor_daemon();
+                // Skip prunable worktrees (directory missing)
+                if wt.prunable.is_none() {
+                    Repository::at(&wt.path).start_fsmonitor_daemon();
+                }
             }
         }
     }
