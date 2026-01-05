@@ -310,6 +310,11 @@ impl WorktrunkConfig {
             .unwrap_or_else(default_worktree_path)
     }
 
+    /// Returns true if the user has explicitly set a custom worktree-path.
+    pub fn has_custom_worktree_path(&self) -> bool {
+        self.worktree_path.is_some()
+    }
+
     /// Load configuration from config file and environment variables.
     ///
     /// Configuration is loaded in the following order (later sources override earlier ones):

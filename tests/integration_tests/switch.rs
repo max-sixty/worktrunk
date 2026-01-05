@@ -1046,3 +1046,23 @@ fn test_switch_clobber_path_with_extension(repo: TestRepo) {
         "file with extension"
     );
 }
+
+/// Test that worktree-path hint is suppressed when user has custom worktree-path config
+#[rstest]
+fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
+    // Set up custom worktree-path in user config
+    repo.write_test_config(r#"worktree-path = ".worktrees/{{ branch | sanitize }}""#);
+
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "test-no-hint"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Customize worktree locations"),
+        "Hint should be suppressed when user has custom worktree-path config"
+    );
+}
