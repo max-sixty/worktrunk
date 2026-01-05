@@ -29,9 +29,8 @@ if command -v {{ cmd }} >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         directive_file="$(mktemp)"
 
         # --source: use cargo run (builds from source)
-        # Always use 'wt' binary - git-wt is identical code, just different argv[0]
         if [[ "$use_source" == true ]]; then
-            WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin wt --quiet -- "${args[@]}" || exit_code=$?
+            WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin {{ cmd }} --quiet -- "${args[@]}" || exit_code=$?
         else
             WORKTRUNK_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-{{ cmd }}}" "${args[@]}" || exit_code=$?
         fi

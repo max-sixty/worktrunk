@@ -122,10 +122,6 @@ pub fn is_shell_integration_line(line: &str, cmd: &str) -> bool {
         return false;
     }
 
-    // Config lines use command name without .exe suffix (see config_line() docs).
-    // On Windows, cmd may be "wt.exe" but config has "wt config shell init".
-    let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
-
     // Check for eval/source line pattern
     has_init_invocation(trimmed, cmd)
 }
@@ -271,10 +267,6 @@ fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
     let reader = BufReader::new(file);
     let mut matched_lines = Vec::new();
     let mut unmatched_candidates = Vec::new();
-
-    // Config lines use command name without .exe suffix (see config_line() docs).
-    // On Windows, cmd may be "wt.exe" but config has "wt config shell init".
-    let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
 
     for (line_number, line) in reader.lines().map_while(Result::ok).enumerate() {
         let line_number = line_number + 1; // 1-based
@@ -460,14 +452,7 @@ impl Shell {
     ///
     /// Note: The generated line does not include `--cmd` because `binary_name()` already
     /// detects the command name from argv\[0\] at runtime.
-    ///
-    /// On Windows, `cmd` may include `.exe` suffix (e.g., `wt.exe`), but the config line
-    /// uses the base name without `.exe` — MSYS2/Git Bash handles the resolution.
-    /// The `.exe` suffix is preserved in the shell function name (in templates) to match
-    /// alias expansion, but not needed here.
     pub fn config_line(&self, cmd: &str) -> String {
-        // Strip .exe for config line — MSYS2/Git Bash resolves wt → wt.exe automatically
-        let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
         match self {
             Self::Bash | Self::Zsh => {
                 format!(
@@ -960,47 +945,16 @@ mod tests {
         insta::assert_snapshot!(init.generate().expect("Should generate with custom prefix"));
     }
 
-    /// Issue #348: Windows Git Bash shell function names must preserve .exe suffix.
-    ///
-    /// When a user invokes `git-wt.exe config shell init bash`, the generated
-    /// shell function must be named `git-wt.exe()` (not `git-wt()`). Otherwise:
-    /// 1. User has `alias gwt="git-wt.exe"` in their bashrc
-    /// 2. Old behavior: function created as `git-wt()` (stripped .exe)
-    /// 3. User runs `gwt` → alias expands to `git-wt.exe` → no function match!
-    /// 4. Binary runs directly without shell wrapper → no cd after switch
-    ///
-    /// This test verifies the template correctly uses the .exe suffix.
-    #[test]
-    fn test_shell_init_preserves_exe_suffix() {
-        // Test that .exe suffix is preserved in generated shell scripts
-        let init = ShellInit::with_prefix(Shell::Bash, "git-wt.exe".to_string());
-        let output = init.generate().expect("Should generate with .exe suffix");
-
-        // Function should be named git-wt.exe()
-        assert!(
-            output.contains("git-wt.exe()"),
-            "Generated script should define git-wt.exe() function, got:\n{output}"
-        );
-
-        // command -v check should use git-wt.exe
-        assert!(
-            output.contains("command -v git-wt.exe"),
-            "Generated script should check for git-wt.exe command"
-        );
-
-        // Snapshot the full output for reference
-        insta::assert_snapshot!("init_bash_exe_suffix", output);
-    }
-
     /// Verify that `config_line()` generates lines that
     /// `is_shell_integration_line()` can detect.
     ///
     /// This prevents install and detection from drifting out of sync.
-    /// Includes .exe variants for Windows Git Bash compatibility (Issue #348).
+    /// Note: .exe variants are not included because `binary_name()` strips
+    /// the .exe suffix on Windows (MSYS2/Git Bash handles the resolution).
     #[rstest]
     fn test_config_line_detected_by_is_shell_integration_line(
         #[values(Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell)] shell: Shell,
-        #[values("wt", "git-wt", "wt.exe", "git-wt.exe")] prefix: &str,
+        #[values("wt", "git-wt")] prefix: &str,
     ) {
         let line = shell.config_line(prefix);
         assert!(
