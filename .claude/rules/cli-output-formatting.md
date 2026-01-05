@@ -410,6 +410,51 @@ println!("{}", line.render());
 
 See `src/commands/list/render.rs` for advanced usage.
 
+## Documentation Examples
+
+Use consistent examples throughout all documentation, help text, and config
+templates.
+
+### Canonical example setup
+
+| Element | Value | Notes |
+|---------|-------|-------|
+| Repo directory | `myproject` | Generic placeholder |
+| Repo path | `~/code/myproject` | Realistic dev path |
+| Branch | `feature/auth` | Shows sanitize filter |
+| Worktree path | `~/code/myproject.feature-auth` | Result of default template |
+
+### Template variable examples
+
+Use the canonical values from the table above in all examples:
+
+```
+{{ repo }}           — Repository directory name (e.g., `myproject`)
+{{ branch }}         — Branch name (e.g., `feature/auth`)
+{{ worktree_path }}  — Absolute path to worktree (e.g., `/path/to/myproject.feature-auth`)
+```
+
+In TOML comments:
+```toml
+#   {{ repo }}           - Repository directory name (e.g., "myproject")
+#   {{ branch }}         - Raw branch name (e.g., "feature/auth")
+#   {{ worktree_name }}  - Worktree directory name (e.g., "myproject.feature-auth")
+```
+
+### Worktree path examples
+
+When showing worktree-path template examples:
+
+```toml
+# Default — siblings in parent directory
+# Creates: ~/code/myproject.feature-auth
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
+
+# Inside the repository
+# Creates: ~/code/myproject/.worktrees/feature-auth
+worktree-path = ".worktrees/{{ branch | sanitize }}"
+```
+
 ## Gutter Formatting
 
 Use gutter for **quoted content** (git output, commit messages, config to copy,

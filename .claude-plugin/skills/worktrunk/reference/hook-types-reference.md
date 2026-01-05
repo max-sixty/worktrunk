@@ -14,7 +14,7 @@ Detailed behavior and use cases for all seven Worktrunk hook types.
 | `post-merge` | After successful merge | Yes | No | Basic + Merge | Sequential |
 | `pre-remove` | Before worktree removed | Yes | Yes | Basic | Sequential |
 
-**Basic variables**: `{{ repo }}`, `{{ repo_path }}`, `{{ branch }}`, `{{ worktree_name }}`, `{{ worktree_path }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ remote_url }}`, `{{ upstream }}`
+**Basic variables**: `{{ repo }}`, `{{ repo_path }}`, `{{ branch }}`, `{{ worktree_name }}`, `{{ worktree_path }}`, `{{ main_worktree_path }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ remote_url }}`, `{{ upstream }}`
 **Merge variables**: Basic + `{{ target }}`
 **Filters**: `{{ branch | sanitize }}` (replace `/` `\` with `-`), `{{ branch | hash_port }}` (port 10000-19999)
 
@@ -251,11 +251,12 @@ post-create = "echo 'Working on {{ branch }} in {{ repo }}'"
 ```
 
 Available:
-- `{{ repo }}` - Repository name (e.g., "my-project")
-- `{{ repo_path }}` - Absolute path to repository (e.g., "/path/to/my-project")
-- `{{ branch }}` - Branch name (e.g., "feature-auth")
-- `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-auth")
-- `{{ worktree_path }}` - Absolute path to worktree (e.g., "/path/to/my-project.feature-auth")
+- `{{ repo }}` - Repository directory name (e.g., "myproject")
+- `{{ repo_path }}` - Absolute path to repository (e.g., "/path/to/myproject")
+- `{{ branch }}` - Branch name (e.g., "feature/auth")
+- `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
+- `{{ worktree_path }}` - Absolute path to worktree (e.g., "/path/to/myproject.feature-auth")
+- `{{ main_worktree_path }}` - Absolute path to main worktree (e.g., "/path/to/myproject")
 - `{{ default_branch }}` - Default branch name (e.g., "main")
 - `{{ commit }}` - Full HEAD commit SHA
 - `{{ short_commit }}` - Short HEAD commit SHA (7 chars)

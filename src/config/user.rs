@@ -91,8 +91,8 @@ pub enum StageMode {
 ///
 /// The `worktree-path` template is relative to the repository root.
 /// Supported variables:
-/// - `{{ repo }}` - Repository directory name
-/// - `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
+/// - `{{ repo }}` - Repository directory name (e.g., `myproject`)
+/// - `{{ branch }}` - Raw branch name (e.g., `feature/auth`)
 /// - `{{ branch | sanitize }}` - Branch name with `/` and `\` replaced by `-`
 ///
 /// # Examples

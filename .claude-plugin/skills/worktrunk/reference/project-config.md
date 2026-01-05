@@ -187,11 +187,12 @@ All hooks support template variables for dynamic behavior.
 ### Basic Variables (All Hooks)
 
 Available in all hook types:
-- `{{ repo }}` - Repository name (e.g., "my-project")
-- `{{ repo_path }}` - Absolute path to repository (e.g., "/path/to/my-project")
+- `{{ repo }}` - Repository directory name (e.g., "myproject")
+- `{{ repo_path }}` - Absolute path to repository (e.g., "/path/to/myproject")
 - `{{ branch }}` - Raw branch name (e.g., "feature/auth")
-- `{{ worktree_name }}` - Worktree directory name (e.g., "my-project.feature-auth")
-- `{{ worktree_path }}` - Absolute path to worktree (e.g., "/path/to/my-project.feature-auth")
+- `{{ worktree_name }}` - Worktree directory name (e.g., "myproject.feature-auth")
+- `{{ worktree_path }}` - Absolute path to worktree (e.g., "/path/to/myproject.feature-auth")
+- `{{ main_worktree_path }}` - Absolute path to main worktree (e.g., "/path/to/myproject")
 - `{{ default_branch }}` - Default branch name (e.g., "main")
 - `{{ commit }}` - Full HEAD commit SHA
 - `{{ short_commit }}` - Short HEAD commit SHA (7 chars)

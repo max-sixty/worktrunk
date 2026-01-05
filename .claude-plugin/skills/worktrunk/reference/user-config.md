@@ -107,7 +107,7 @@ Users may want different worktree organization patterns.
 
 Default (parent siblings):
 ```toml
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 ```
 Result: `~/code/myproject` → `~/code/myproject.feature-auth`
 
@@ -129,12 +129,12 @@ Result: `~/code/myproject/.worktrees/feature-auth`
 
 ### Available Variables
 
-- `{{ main_worktree }}` - Main worktree directory name
-- `{{ branch }}` - Raw branch name (e.g., `feature/foo`)
+- `{{ repo }}` - Repository directory name
+- `{{ branch }}` - Raw branch name (e.g., `feature/auth`)
 
 ### Filters
 
-- `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., `feature-foo`)
+- `{{ branch | sanitize }}` - Replace `/` and `\` with `-` (e.g., `feature-auth`)
 - `{{ branch | hash_port }}` - Hash string to deterministic port (10000-19999)
 
 ### Validation Rules
@@ -178,13 +178,13 @@ template-file = "~/.config/worktrunk/commit-template.txt"
 - `{{ git_diff }}` - Staged changes
 - `{{ branch }}` - Current branch
 - `{{ recent_commits }}` - Recent commit titles
-- `{{ repo }}` - Repository name
+- `{{ repo }}` - Repository directory name
 
 **Squash commit templates**:
 - `{{ commits }}` - List of commits being squashed
 - `{{ target_branch }}` - Target branch for merge
 - `{{ branch }}` - Current branch
-- `{{ repo }}` - Repository name
+- `{{ repo }}` - Repository directory name
 
 ### Validation Rules
 
@@ -205,7 +205,7 @@ Complete reference:
 
 ```toml
 # Worktree Path Template
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # LLM Commit Generation (Optional)
 [commit-generation]

@@ -68,7 +68,7 @@ verify = true          # Run project hooks
 # Commands approved for project hooks in this repo
 # Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
 [projects."github.com/user/repo"]
-approved-commands = ["npm install"]
+approved-commands = ["npm ci", "npm test"]
 
 # NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
 # use a separate PROJECT config file at <repo>/.config/wt.toml
@@ -81,7 +81,7 @@ approved-commands = ["npm install"]
 # NOTE: Templates are synced from src/llm.rs by `cargo test readme_sync`
 
 # Optional: Custom prompt template (inline) - Uses minijinja syntax
-# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
+# Available variables: {{ git_diff }}, {{ git_diff_stat }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
 # If not specified, uses the default template shown below:
 # <!-- DEFAULT_TEMPLATE_START -->
 # template = """

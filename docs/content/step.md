@@ -82,9 +82,9 @@ All variables are shell-escaped:
 
 | Variable | Description |
 |----------|-------------|
-| `{{ branch }}` | Branch name (raw, e.g., `feature/foo`) |
+| `{{ branch }}` | Branch name (raw, e.g., `feature/auth`) |
 | `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
-| `{{ repo }}` | Repository directory name |
+| `{{ repo }}` | Repository directory name (e.g., `myproject`) |
 | `{{ repo_path }}` | Absolute path to repository root |
 | `{{ worktree_name }}` | Worktree directory name |
 | `{{ worktree_path }}` | Absolute path to current worktree |

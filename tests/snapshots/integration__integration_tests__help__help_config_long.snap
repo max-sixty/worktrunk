@@ -11,6 +11,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -79,15 +80,15 @@ The user config stores personal preferences that apply across all repositories. 
 Controls where new worktrees are created. The template is relative to the repository root.
 
 [1mAvailable variables:
-- [2m{{ main_worktree }}[0m — main worktree directory name
-- [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/foo[0m)
+- [2m{{ repo }}[0m — repository directory name
+- [2m{{ branch }}[0m — raw branch name (e.g., [2mfeature/auth[0m)
 - [2m{{ branch | sanitize }}[0m — branch name with [2m/[0m and [2m\[0m replaced by [2m-
 
 [1mExamples[0m for a repo at [2m~/code/myproject[0m creating branch [2mfeature/login[0m:
 
   [2m# Default — siblings in parent directory
   [2m# Creates: ~/code/myproject.feature-login
-  [2mworktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+  [2mworktree-path = "../{{ repo }}.{{ branch | sanitize }}"
   [2m
   [2m# Inside the repository
   [2m# Creates: ~/code/myproject/.worktrees/feature-login
@@ -95,7 +96,7 @@ Controls where new worktrees are created. The template is relative to the reposi
   [2m
   [2m# Namespaced (useful when multiple repos share a parent directory)
   [2m# Creates: ~/code/worktrees/myproject/feature-login
-  [2mworktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+  [2mworktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
   [2m
   [2m# Nested bare repo (git clone --bare <url> project/.git)
   [2m# Creates: ~/code/project/feature-login (sibling to .git)
@@ -143,10 +144,7 @@ See LLM Commit Messages for setup details and template customization.
 When project hooks run for the first time, Worktrunk prompts for approval. Approved commands are saved here automatically:
 
   [2m[projects."my-project"]
-  [2mapproved-commands = [
-  [2m    "post-create.install = npm ci",
-  [2m    "pre-merge.test = npm test",
-  [2m]
+  [2mapproved-commands = ["npm ci", "npm test"]
 
 Manage approvals with [2mwt hook approvals add[0m to review and pre-approve commands, and [2mwt hook approvals clear[0m to reset (add [2m--global[0m to clear all
 projects).

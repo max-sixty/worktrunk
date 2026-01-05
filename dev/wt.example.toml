@@ -6,16 +6,20 @@
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}           - Repository name (e.g., "my-project")
-#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
-#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
-#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
+#   {{ repo }}               - Repository directory name (e.g., "myproject")
+#   {{ repo_path }}          - Absolute path to repository (e.g., "/path/to/myproject")
+#   {{ branch }}             - Raw branch name (e.g., "feature/auth")
+#   {{ worktree_name }}      - Worktree directory name (e.g., "myproject.feature-auth")
+#   {{ worktree_path }}      - Absolute path to worktree (e.g., "/path/to/myproject.feature-auth")
+#   {{ main_worktree_path }} - Absolute path to main worktree (for copying deps/caches)
+#   {{ default_branch }}     - Default branch name (e.g., "main")
+#   {{ short_commit }}       - Short HEAD commit SHA (e.g., "a1b2c3d")
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main" default branch)
 #
 # Filters:
-#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
+#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
 #   {{ branch | hash_port }} - Hash string to deterministic port (10000-19999)
 
 # Post-Create Hook
@@ -47,6 +51,13 @@
 # [post-start]
 # server = "npm run dev"
 # watch = "npm run watch"
+
+# Post-Switch Hook
+# Runs in BACKGROUND after every switch (including to the current worktree)
+# Use for: terminal tab naming, tmux window titles, IDE notifications
+# Output is logged to .git/wt-logs/{branch}-{source}-post-switch-{name}.log (source: user/project)
+#
+# post-switch = "echo 'Switched to {{ branch }}'"
 
 # Pre-Commit Hook
 # Runs SEQUENTIALLY before committing changes during merge (blocking, fail-fast)
@@ -110,12 +121,21 @@
 #
 # post-merge = "cargo install --path ."
 
-# Example: Python Project
+# Example: Python Project (uv recommended)
+# [post-create]
+# install = "uv sync"
+#
+# [pre-merge]
+# format = "uv run ruff format --check ."
+# lint = "uv run ruff check ."
+# test = "uv run pytest"
+#
+# Alternative: pip-based (without uv)
 # [post-create]
 # venv = "python -m venv .venv"
 # install = ".venv/bin/pip install -r requirements.txt"
 #
 # [pre-merge]
-# format = ".venv/bin/black --check ."
+# format = ".venv/bin/ruff format --check ."
 # lint = ".venv/bin/ruff check ."
 # test = ".venv/bin/pytest"

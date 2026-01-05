@@ -951,9 +951,9 @@ All variables are shell-escaped:
 
 | Variable | Description |
 |----------|-------------|
-| `{{ branch }}` | Branch name (raw, e.g., `feature/foo`) |
+| `{{ branch }}` | Branch name (raw, e.g., `feature/auth`) |
 | `{{ branch \| sanitize }}` | Branch name with `/` and `\` replaced by `-` |
-| `{{ repo }}` | Repository directory name |
+| `{{ repo }}` | Repository directory name (e.g., `myproject`) |
 | `{{ repo_path }}` | Absolute path to repository root |
 | `{{ worktree_name }}` | Worktree directory name |
 | `{{ worktree_path }}` | Absolute path to current worktree |
@@ -1230,8 +1230,8 @@ The user config stores personal preferences that apply across all repositories. 
 Controls where new worktrees are created. The template is relative to the repository root.
 
 **Available variables:**
-- `{{ main_worktree }}` — main worktree directory name
-- `{{ branch }}` — raw branch name (e.g., `feature/foo`)
+- `{{ repo }}` — repository directory name
+- `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
 **Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
@@ -1239,7 +1239,7 @@ Controls where new worktrees are created. The template is relative to the reposi
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
@@ -1247,7 +1247,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 # Nested bare repo (git clone --bare <url> project/.git)
 # Creates: ~/code/project/feature-login (sibling to .git)
@@ -1305,10 +1305,7 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
 
 ```toml
 [projects."my-project"]
-approved-commands = [
-    "post-create.install = npm ci",
-    "pre-merge.test = npm test",
-]
+approved-commands = ["npm ci", "npm test"]
 ```
 
 Manage approvals with `wt hook approvals add` to review and pre-approve commands, and `wt hook approvals clear` to reset (add `--global` to clear all projects).
@@ -1619,12 +1616,12 @@ Hooks can use template variables that expand at runtime:
 
 | Variable | Example | Description |
 |----------|---------|-------------|
-| `{{ repo }}` | my-project | Repository directory name |
-| `{{ repo_path }}` | /path/to/my-project | Absolute path to repository root |
-| `{{ branch }}` | feature-foo | Branch name |
-| `{{ worktree_name }}` | my-project.feature-foo | Worktree directory name |
-| `{{ worktree_path }}` | /path/to/my-project.feature-foo | Absolute worktree path |
-| `{{ main_worktree_path }}` | /path/to/my-project | Default branch worktree |
+| `{{ repo }}` | myproject | Repository directory name |
+| `{{ repo_path }}` | /path/to/myproject | Absolute path to repository root |
+| `{{ branch }}` | feature/auth | Branch name |
+| `{{ worktree_name }}` | myproject.feature-auth | Worktree directory name |
+| `{{ worktree_path }}` | /path/to/myproject.feature-auth | Absolute worktree path |
+| `{{ main_worktree_path }}` | /path/to/myproject | Default branch worktree |
 | `{{ default_branch }}` | main | Default branch name |
 | `{{ commit }}` | a1b2c3d4e5f6... | Full HEAD commit SHA |
 | `{{ short_commit }}` | a1b2c3d | Short HEAD commit SHA |

@@ -52,8 +52,8 @@ The user config stores personal preferences that apply across all repositories. 
 Controls where new worktrees are created. The template is relative to the repository root.
 
 **Available variables:**
-- `{{ main_worktree }}` — main worktree directory name
-- `{{ branch }}` — raw branch name (e.g., `feature/foo`)
+- `{{ repo }}` — repository directory name
+- `{{ branch }}` — raw branch name (e.g., `feature/auth`)
 - `{{ branch | sanitize }}` — branch name with `/` and `\` replaced by `-`
 
 **Examples** for a repo at `~/code/myproject` creating branch `feature/login`:
@@ -61,7 +61,7 @@ Controls where new worktrees are created. The template is relative to the reposi
 ```toml
 # Default — siblings in parent directory
 # Creates: ~/code/myproject.feature-login
-worktree-path = "../{{ main_worktree }}.{{ branch | sanitize }}"
+worktree-path = "../{{ repo }}.{{ branch | sanitize }}"
 
 # Inside the repository
 # Creates: ~/code/myproject/.worktrees/feature-login
@@ -69,7 +69,7 @@ worktree-path = ".worktrees/{{ branch | sanitize }}"
 
 # Namespaced (useful when multiple repos share a parent directory)
 # Creates: ~/code/worktrees/myproject/feature-login
-worktree-path = "../worktrees/{{ main_worktree }}/{{ branch | sanitize }}"
+worktree-path = "../worktrees/{{ repo }}/{{ branch | sanitize }}"
 
 # Nested bare repo (git clone --bare <url> project/.git)
 # Creates: ~/code/project/feature-login (sibling to .git)
@@ -127,10 +127,7 @@ When project hooks run for the first time, Worktrunk prompts for approval. Appro
 
 ```toml
 [projects."my-project"]
-approved-commands = [
-    "post-create.install = npm ci",
-    "pre-merge.test = npm test",
-]
+approved-commands = ["npm ci", "npm test"]
 ```
 
 Manage approvals with `wt hook approvals add` to review and pre-approve commands, and `wt hook approvals clear` to reset (add `--global` to clear all projects).
@@ -355,7 +352,7 @@ verify = true          # Run project hooks
 # Commands approved for project hooks in this repo
 # Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`
 [projects."github.com/user/repo"]
-approved-commands = ["npm install"]
+approved-commands = ["npm ci", "npm test"]
 
 # NOTE: For project-specific hooks (post-create, post-start, pre-merge, etc.),
 # use a separate PROJECT config file at <repo>/.config/wt.toml
@@ -368,7 +365,7 @@ approved-commands = ["npm install"]
 # NOTE: Templates are synced from src/llm.rs by `cargo test readme_sync`
 
 # Optional: Custom prompt template (inline) - Uses minijinja syntax
-# Available variables: {{ git_diff }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
+# Available variables: {{ git_diff }}, {{ git_diff_stat }}, {{ branch }}, {{ recent_commits }}, {{ repo }}
 # If not specified, uses the default template shown below:
 # <!-- DEFAULT_TEMPLATE_START -->
 # template = """
@@ -489,16 +486,20 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # developers working on the project.
 
 # Available template variables (all hooks):
-#   {{ repo }}           - Repository name (e.g., "my-project")
-#   {{ repo_path }}      - Absolute path to repository (e.g., "/path/to/my-project")
-#   {{ branch }}         - Raw branch name (e.g., "feature/foo")
-#   {{ worktree_path }}  - Absolute path to worktree (e.g., "/path/to/my-project.feature-foo")
+#   {{ repo }}               - Repository directory name (e.g., "myproject")
+#   {{ repo_path }}          - Absolute path to repository (e.g., "/path/to/myproject")
+#   {{ branch }}             - Raw branch name (e.g., "feature/auth")
+#   {{ worktree_name }}      - Worktree directory name (e.g., "myproject.feature-auth")
+#   {{ worktree_path }}      - Absolute path to worktree (e.g., "/path/to/myproject.feature-auth")
+#   {{ main_worktree_path }} - Absolute path to main worktree (for copying deps/caches)
+#   {{ default_branch }}     - Default branch name (e.g., "main")
+#   {{ short_commit }}       - Short HEAD commit SHA (e.g., "a1b2c3d")
 #
 # Merge-related hooks also support:
 #   {{ target }}    - Target branch for the merge (e.g., "main" default branch)
 #
 # Filters:
-#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-foo")
+#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
 #   {{ branch | hash_port }} - Hash string to deterministic port (10000-19999)
 
 # Post-Create Hook
@@ -530,6 +531,13 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 # [post-start]
 # server = "npm run dev"
 # watch = "npm run watch"
+
+# Post-Switch Hook
+# Runs in BACKGROUND after every switch (including to the current worktree)
+# Use for: terminal tab naming, tmux window titles, IDE notifications
+# Output is logged to .git/wt-logs/{branch}-{source}-post-switch-{name}.log (source: user/project)
+#
+# post-switch = "echo 'Switched to {{ branch }}'"
 
 # Pre-Commit Hook
 # Runs SEQUENTIALLY before committing changes during merge (blocking, fail-fast)
@@ -593,13 +601,22 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 #
 # post-merge = "cargo install --path ."
 
-# Example: Python Project
+# Example: Python Project (uv recommended)
+# [post-create]
+# install = "uv sync"
+#
+# [pre-merge]
+# format = "uv run ruff format --check ."
+# lint = "uv run ruff check ."
+# test = "uv run pytest"
+#
+# Alternative: pip-based (without uv)
 # [post-create]
 # venv = "python -m venv .venv"
 # install = ".venv/bin/pip install -r requirements.txt"
 #
 # [pre-merge]
-# format = ".venv/bin/black --check ."
+# format = ".venv/bin/ruff format --check ."
 # lint = ".venv/bin/ruff check ."
 # test = ".venv/bin/pytest"
 ```
