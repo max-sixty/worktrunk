@@ -2103,12 +2103,12 @@ fn setup_snapshot_settings_for_paths(
     // On Windows, clap shows "wt.exe" instead of "wt"
     settings.add_filter(r"wt\.exe", "wt");
 
-    // Normalize version strings in `wt config show` RUNTIME section
+    // Normalize version strings in `wt config show` OTHER section (formerly RUNTIME)
     // Version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
-    // New format: version as suffix to RUNTIME heading (e.g., "RUNTIME  wt v0.9.0")
-    // Pattern: <cyan>RUNTIME</cyan>  wt VERSION
+    // Format: "OTHER  wt v0.9.0" with cyan ANSI codes around OTHER
+    // Pattern: <cyan>OTHER</cyan>  wt VERSION
     settings.add_filter(
-        r"(RUNTIME\x1b\[39m  wt )(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        r"(OTHER\x1b\[39m  wt )(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
         "${1}[VERSION]",
     );
 
@@ -2118,6 +2118,14 @@ fn setup_snapshot_settings_for_paths(
     settings.add_filter(
         r"(Invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
         "${1}[PROJECT_ROOT]/target/$2/wt$3",
+    );
+
+    // Normalize shell probe binary paths
+    // Shell probe reports the actual binary location which varies by system
+    // Format: "is binary at <bold>PATH</>, not function"
+    settings.add_filter(
+        r"(is binary at \x1b\[1m)[^\x1b]+(/wt|/wt\.exe)(\x1b\[22m)",
+        "${1}[BINARY_PATH]$2$3",
     );
 
     // Remove trailing ANSI reset codes at end of lines for cross-platform consistency

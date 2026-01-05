@@ -45,12 +45,15 @@ exit_code: 0
 [107m [0m server = [32m"npm run dev"
 
 [36mSHELL INTEGRATION[39m
+[33m▲[39m [33mShell integration not active[39m
+[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+
 [2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
-[36mRUNTIME[39m  wt [VERSION]
-[33m▲[39m [33mShell integration not active[39m
-[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+[33m▲[39m [33mShell probe: [1mwt[22m is binary at [1m[BINARY_PATH]/wt[22m, not function — won't auto-cd[39m
+
+[36mOTHER[39m  wt [VERSION]
 [2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
 [2m○[22m Hyperlinks: [1minactive[22m

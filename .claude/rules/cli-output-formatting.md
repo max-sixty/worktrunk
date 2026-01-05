@@ -533,6 +533,51 @@ output::print(warning_message(warning))?;
 
 ## Error Formatting
 
+### Error Message Structure
+
+Error and warning messages should communicate four things:
+
+1. **What happened** — The actual state or outcome
+2. **What was expected** — The correct or desired state
+3. **The impact** — Why this matters (optional for obvious cases)
+4. **How to resolve** — What the user should do (can be a separate hint message)
+
+```rust
+// GOOD - states actual, expected, and impact in main message
+"Shell probe: wt is binary at /path, not function — won't auto-cd"
+//                 ^^^^^^^^^^^^^^^   ^^^^^^^^^^^^   ^^^^^^^^^^^^^^
+//                 actual            expected       impact
+// Resolution in separate hint: "Restart shell to activate"
+
+// GOOD - actual vs expected with resolution inline
+"Config file has 3 errors, expected valid TOML; run wt config validate for details"
+//              ^^^^^^^    ^^^^^^^^                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+//              actual     expected                  resolution
+
+// BAD - only states actual, no expected or impact
+"Shell probe: wt resolves to binary at /path"
+// Missing: what should it be instead? why does it matter?
+
+// BAD - vague, no actionable information
+"Shell integration problem detected"
+// Missing: what's wrong? what should it be? what to do?
+```
+
+When the expected state is obvious from context, it can be implied:
+
+```rust
+// OK - expected state (file should exist) is obvious
+"Config file not found at ~/.config/wt/config.toml"
+
+// OK - expected state (should succeed) is obvious
+"Failed to read config: permission denied"
+```
+
+**Diagnostic messages** (like `wt config show`) should follow this pattern
+especially carefully — users read diagnostics to understand what's wrong.
+
+### Single vs Multi-line
+
 **Single-line errors** with variables are fine:
 
 ```rust

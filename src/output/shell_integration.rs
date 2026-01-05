@@ -64,6 +64,9 @@ use worktrunk::shell::{Shell, extract_filename_from_path};
 use worktrunk::styling::hint_message;
 
 /// Shell integration install hint message.
+// TODO(hints-count): After showing this hint 5+ times, suggest `wt config show` for diagnostics.
+// This requires changing the hints infrastructure to track counts rather than booleans.
+// See `Repository::mark_hint_shown()` and `list_shown_hints()` in src/git/repository/mod.rs.
 pub(crate) fn shell_integration_hint() -> String {
     cformat!("To enable automatic cd, run <bright-black>wt config shell install</>")
 }

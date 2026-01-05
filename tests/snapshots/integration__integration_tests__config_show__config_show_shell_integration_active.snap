@@ -40,12 +40,12 @@ exit_code: 0
 [2m↳[22m [2mNot found[22m
 
 [36mSHELL INTEGRATION[39m
+[2m○[22m Shell integration active
+
 [2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
-[36mRUNTIME[39m  wt [VERSION]
-[2m○[22m Shell integration active
-[107m [0m Invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+[36mOTHER[39m  wt [VERSION]
 [2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
 [2m○[22m Hyperlinks: [1minactive[22m
