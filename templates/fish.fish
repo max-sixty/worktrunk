@@ -23,8 +23,9 @@ if type -q {{ cmd }}; or test -n "$WORKTRUNK_BIN"
         set -l directive_file (mktemp)
 
         # --source: use cargo run (builds from source)
+        # Always use 'wt' binary - git-wt is identical code, just different argv[0]
         if test $use_source = true
-            WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin {{ cmd }} --quiet -- $args
+            WORKTRUNK_DIRECTIVE_FILE=$directive_file cargo run --bin wt --quiet -- $args
         else
             WORKTRUNK_DIRECTIVE_FILE=$directive_file command $WORKTRUNK_BIN $args
         end

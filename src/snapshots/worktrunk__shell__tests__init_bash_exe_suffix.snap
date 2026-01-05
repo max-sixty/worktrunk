@@ -4,13 +4,13 @@ expression: output
 ---
 # worktrunk shell integration for bash
 
-# Only initialize if wt is available (in PATH or via WORKTRUNK_BIN)
-if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
+# Only initialize if git-wt.exe is available (in PATH or via WORKTRUNK_BIN)
+if command -v git-wt.exe >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
 
-    # Override wt command with file-based directive passing.
+    # Override git-wt.exe command with file-based directive passing.
     # Creates a temp file, passes path via WORKTRUNK_DIRECTIVE_FILE, sources it after.
     # WORKTRUNK_BIN can override the binary path (for testing dev builds).
-    wt() {
+    git-wt.exe() {
         local use_source=false
         local args=()
 
@@ -22,7 +22,7 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         # This check MUST be here (not in the binary) because clap's completion
         # handler runs before argument parsing.
         if [[ -n "${COMPLETE:-}" ]]; then
-            command "${WORKTRUNK_BIN:-wt}" "${args[@]}"
+            command "${WORKTRUNK_BIN:-git-wt.exe}" "${args[@]}"
             return
         fi
 
@@ -34,7 +34,7 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
         if [[ "$use_source" == true ]]; then
             WORKTRUNK_DIRECTIVE_FILE="$directive_file" cargo run --bin wt --quiet -- "${args[@]}" || exit_code=$?
         else
-            WORKTRUNK_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-wt}" "${args[@]}" || exit_code=$?
+            WORKTRUNK_DIRECTIVE_FILE="$directive_file" command "${WORKTRUNK_BIN:-git-wt.exe}" "${args[@]}" || exit_code=$?
         fi
 
         if [[ -s "$directive_file" ]]; then
@@ -49,16 +49,16 @@ if command -v wt >/dev/null 2>&1 || [[ -n "${WORKTRUNK_BIN:-}" ]]; then
     }
 
     # Lazy completions - generate on first TAB, then delegate to clap's completer
-    _wt_lazy_complete() {
+    _git-wt.exe_lazy_complete() {
         # Generate completions function once (check if clap's function exists)
-        if ! declare -F _clap_complete_wt >/dev/null; then
+        if ! declare -F _clap_complete_git-wt.exe >/dev/null; then
             # Use `command` to bypass the shell function and call the binary directly.
-            # Without this, `wt` would call the shell function which evals
+            # Without this, `git-wt.exe` would call the shell function which evals
             # the completion script internally but doesn't re-emit it.
-            eval "$(COMPLETE=bash command "${WORKTRUNK_BIN:-wt}" 2>/dev/null)" || return
+            eval "$(COMPLETE=bash command "${WORKTRUNK_BIN:-git-wt.exe}" 2>/dev/null)" || return
         fi
-        _clap_complete_wt "$@"
+        _clap_complete_git-wt.exe "$@"
     }
 
-    complete -o nospace -o bashdefault -F _wt_lazy_complete wt
+    complete -o nospace -o bashdefault -F _git-wt.exe_lazy_complete git-wt.exe
 fi
