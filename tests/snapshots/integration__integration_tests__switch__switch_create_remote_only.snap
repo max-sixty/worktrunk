@@ -36,5 +36,6 @@ exit_code: 0
 [33m▲[39m [33mBranch [1mremote-feature[22m exists on remote (origin/remote-feature); creating new branch from base instead[39m
 [2m↳[22m [2mTo switch to the remote branch, remove [90m--create[39m; run [90mwt switch remote-feature[39m[22m
 [32m✓[39m [32mCreated branch [1mremote-feature[22m and worktree from [1mmain[22m @ [1m_REPO_.remote-feature[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

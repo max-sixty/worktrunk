@@ -35,6 +35,7 @@ exit_code: 0
 
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mpost-hook-test[22m and worktree from [1mmain[22m @ [1m_REPO_.post-hook-test[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m
 [36m◎[39m [36mRunning post-switch project hook @ [1m_REPO_.post-hook-test[22m:[39m

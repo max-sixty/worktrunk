@@ -37,5 +37,6 @@ exit_code: 0
 
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mexit-code-test[22m and worktree from [1mmain[22m @ [1m_REPO_.exit-code-test[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [36m◎[39m [36mExecuting (--execute):[39m
 [107m [0m [2m[0m[2m[34mexit[0m[2m 42

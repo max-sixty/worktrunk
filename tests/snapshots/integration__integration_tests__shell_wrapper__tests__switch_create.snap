@@ -3,3 +3,4 @@ source: tests/integration_tests/shell_wrapper.rs
 expression: output.normalized()
 ---
 [32m✓[39m [32mCreated branch [1mfeature[22m and worktree from [1mmain[22m @ [1m[TMPDIR]/repo.feature[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m

@@ -8,5 +8,6 @@ expression: output.normalized()
   Resolved 24 packages in 145ms
   Installed 24 packages in 1.2s
 [32m✓[39m [32mCreated branch [1mfeature-x[22m and worktree from [1mmain[22m @ [1m[TMPDIR]/repo.feature-x[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [36m◎[39m [36mRunning post-start [1mproject:dev[22m:[39m
 [107m [0m [2m[0m[2m[34muv[0m[2m run dev

@@ -23,4 +23,5 @@ y
 [107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Running tests...'[0m[2m
 [0mRunning tests...
 [32m✓[39m [32mCreated branch [1mtest-named[22m and worktree from [1mmain[22m @ [1m_REPO_/repo.BRANCH[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — ran [BIN][22m; shell integration wraps [1mwt[22m[39m

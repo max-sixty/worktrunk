@@ -37,5 +37,6 @@ exit_code: 0
 [107m [0m [2m[0m[2m[34mexit[0m[2m 1
 [0m[33m▲[39m [33mCommand [1mfailing[22m failed: exit status: 1[39m
 [32m✓[39m [32mCreated branch [1mfeature[22m and worktree from [1mmain[22m @ [1m_REPO_.feature[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mCannot change directory — shell integration not installed[39m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

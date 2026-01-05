@@ -39,6 +39,7 @@ line3
 
 ----- stderr -----
 [32m✓[39m [32mCreated branch [1mmultiline-test[22m and worktree from [1mmain[22m @ [1m_REPO_.multiline-test[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
 [33m▲[39m [33mExecuting [1mecho 'line1'
 echo 'line2'
 echo 'line3'[22m @ [1m_REPO_.multiline-test[22m, but shell directory unchanged — shell integration not installed[39m
