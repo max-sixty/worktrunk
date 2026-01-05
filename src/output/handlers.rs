@@ -519,8 +519,13 @@ fn spawn_post_switch_after_remove(
         &repo_root,
         false, // force=false for CommandContext
     );
-    // Show path when shell integration isn't active — the cd directive won't take effect
-    ctx.spawn_post_switch_commands(super::hooks_display_path(main_path))
+    // Post-hook: user will be at main_path if shell integration active
+    let display_path = if super::is_shell_integration_active() {
+        None // Shell will cd there
+    } else {
+        Some(main_path)
+    };
+    ctx.spawn_post_switch_commands(display_path)
 }
 
 /// Handle output for RemovedWorktree removal
@@ -558,7 +563,13 @@ fn handle_removed_worktree_output(
             main_path,
             false, // force=false for CommandContext (not approval-related)
         );
-        execute_pre_remove_commands(&ctx, None)?;
+        // Show path when removing a different worktree (user is elsewhere)
+        let display_path = if changed_directory {
+            None // User was already here
+        } else {
+            Some(worktree_path) // Show path when user is elsewhere
+        };
+        execute_pre_remove_commands(&ctx, None, display_path)?;
     }
 
     // Handle detached HEAD case (no branch known)

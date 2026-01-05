@@ -119,7 +119,7 @@
 pub mod ci_status;
 pub(crate) mod collect;
 mod collect_progressive_impl;
-mod columns;
+pub(crate) mod columns;
 mod json_output;
 pub(crate) mod layout;
 pub mod model;
@@ -138,6 +138,7 @@ use worktrunk::git::Repository;
 
 // Re-export for statusline and other consumers
 pub use collect::{CollectOptions, build_worktree_item, populate_item};
+pub use model::StatuslineSegment;
 
 pub fn handle_list(
     format: crate::OutputFormat,

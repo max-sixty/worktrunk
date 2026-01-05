@@ -167,6 +167,9 @@ impl CommitOptions<'_> {
                 .collect();
 
             // Run pre-commit hooks (user first, then project)
+            // Pre-hook: user is at cwd when hooks run
+            let cwd =
+                std::env::current_dir().unwrap_or_else(|_| self.ctx.worktree_path.to_path_buf());
             super::hooks::run_hook_with_filter(
                 self.ctx,
                 self.ctx.config.hooks.pre_commit.as_ref(),
@@ -176,8 +179,8 @@ impl CommitOptions<'_> {
                 HookType::PreCommit,
                 &extra_vars,
                 HookFailureStrategy::FailFast,
-                None, // name_filter: run all hooks
-                None, // display_path: running in expected directory
+                None,
+                crate::output::compute_hooks_display_path(self.ctx.worktree_path, &cwd),
             )
             .map_err(worktrunk::git::add_hook_skip_hint)?;
         }

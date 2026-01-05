@@ -276,17 +276,36 @@ pub fn is_shell_integration_active() -> bool {
     has_directive_file()
 }
 
-/// Returns `Some(path)` when shell integration isn't active, `None` otherwise.
+/// Compute whether to show "@ path" in hook announcements.
 ///
-/// Use this to decide whether hook announcements should show "@ path".
-/// When shell integration is active, the user's shell will cd to the path automatically,
-/// so no annotation is needed. When inactive, showing the path helps users understand
-/// where hooks are running.
-pub fn hooks_display_path(path: &std::path::Path) -> Option<&std::path::Path> {
-    if is_shell_integration_active() {
+/// Returns `Some(hooks_run_at)` when the user's shell is (or will be) somewhere
+/// else, so the path annotation helps them understand where hooks executed.
+/// Returns `None` when no annotation is needed because the user is (or will be)
+/// at the hook location.
+///
+/// # Arguments
+///
+/// * `hooks_run_at` - The directory where hooks will execute
+/// * `user_location` - Where the user's shell is (or will be) when they see the output
+///
+/// # Determining `user_location`
+///
+/// For **pre-hooks** (pre-commit, pre-merge, pre-remove): pass `cwd` - the user
+/// sees hook output while at their current location.
+///
+/// For **post-hooks** (post-create, post-merge, post-switch, post-start): pass
+/// where the user **will be** after the command. If shell integration is active
+/// and a cd directive was emitted, that's the target path. Otherwise it's `cwd`.
+///
+/// For **manual `wt hook`**: always pass `cwd` - no cd happens.
+pub fn compute_hooks_display_path<'a>(
+    hooks_run_at: &'a std::path::Path,
+    user_location: &std::path::Path,
+) -> Option<&'a std::path::Path> {
+    if hooks_run_at == user_location {
         None
     } else {
-        Some(path)
+        Some(hooks_run_at)
     }
 }
 
@@ -294,6 +313,21 @@ pub fn hooks_display_path(path: &std::path::Path) -> Option<&std::path::Path> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_compute_hooks_display_path_same_location() {
+        let path = PathBuf::from("/repo/worktree");
+        let result = compute_hooks_display_path(&path, &path);
+        assert!(result.is_none(), "Should return None when paths match");
+    }
+
+    #[test]
+    fn test_compute_hooks_display_path_different_location() {
+        let hooks_run_at = PathBuf::from("/repo/feature");
+        let user_location = PathBuf::from("/repo/main");
+        let result = compute_hooks_display_path(&hooks_run_at, &user_location);
+        assert_eq!(result, Some(hooks_run_at.as_path()));
+    }
 
     #[test]
     fn test_lazy_init_does_not_panic() {

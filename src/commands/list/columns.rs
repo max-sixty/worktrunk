@@ -36,6 +36,18 @@ impl ColumnKind {
             ColumnKind::Message => "Message",
         }
     }
+
+    /// Get the base priority for this column (lower = more important).
+    ///
+    /// Used by both `wt list` layout and statusline truncation to ensure
+    /// consistent priority ordering across commands.
+    pub fn priority(self) -> u8 {
+        COLUMN_SPECS
+            .iter()
+            .find(|spec| spec.kind == self)
+            .map(|spec| spec.base_priority)
+            .unwrap_or(u8::MAX)
+    }
 }
 
 /// Differentiates between diff-style columns with plus/minus symbols and those with arrows.
@@ -190,6 +202,36 @@ mod tests {
                     kind
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_all_column_kinds_have_priority() {
+        // Every ColumnKind variant must be in COLUMN_SPECS so priority() works correctly.
+        // If this fails, a new variant was added but not registered in COLUMN_SPECS.
+        let all_kinds = [
+            ColumnKind::Gutter,
+            ColumnKind::Branch,
+            ColumnKind::Status,
+            ColumnKind::WorkingDiff,
+            ColumnKind::AheadBehind,
+            ColumnKind::BranchDiff,
+            ColumnKind::Path,
+            ColumnKind::Upstream,
+            ColumnKind::Url,
+            ColumnKind::CiStatus,
+            ColumnKind::Commit,
+            ColumnKind::Time,
+            ColumnKind::Message,
+        ];
+
+        for kind in all_kinds {
+            let priority = kind.priority();
+            assert!(
+                priority != u8::MAX,
+                "{:?} not found in COLUMN_SPECS (priority returned u8::MAX)",
+                kind
+            );
         }
     }
 }

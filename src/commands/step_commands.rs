@@ -134,7 +134,9 @@ pub fn handle_squash(
     }
 
     // Run pre-commit hooks (user first, then project)
+    // Pre-hook: user is at cwd when hooks run
     if !skip_pre_commit {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| ctx.worktree_path.to_path_buf());
         let extra_vars = [("target", target_branch.as_str())];
         run_hook_with_filter(
             &ctx,
@@ -146,7 +148,7 @@ pub fn handle_squash(
             &extra_vars,
             HookFailureStrategy::FailFast,
             None,
-            None,
+            crate::output::compute_hooks_display_path(ctx.worktree_path, &cwd),
         )
         .map_err(worktrunk::git::add_hook_skip_hint)?;
     }
