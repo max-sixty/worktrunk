@@ -816,26 +816,15 @@ fn test_deprecated_project_config_deleted_new_file_shows_clear_hint(
     fs::remove_file(&migration_file).unwrap();
 
     // Second run - .new doesn't exist but hint is set → skip write, show clear hint
-    {
-        let mut cmd = repo.wt_command();
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
-        let output = cmd.output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "Second run should succeed: {:?}",
-            stderr
-        );
-        assert!(
-            stderr.contains("to regenerate, rerun after"),
-            "Should show hint about clearing, got: {stderr}"
-        );
-        assert!(
-            stderr.contains("wt config state hints clear deprecated-project-config"),
-            "Should show hint clear command, got: {stderr}"
-        );
-    }
+
+        assert_cmd_snapshot!(cmd);
+    });
 
     // Migration file should NOT exist (we skipped writing)
     assert!(
