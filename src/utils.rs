@@ -2,6 +2,24 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Format a Unix timestamp as ISO 8601 string (e.g., "2025-01-01T00:00:00Z").
+///
+/// Used for human-readable timestamps in diagnostic reports and logs.
+pub fn format_timestamp_iso8601(timestamp: u64) -> String {
+    let timestamp = timestamp as i64;
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .unwrap_or_else(chrono::Utc::now)
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}
+
+/// Format the current time as ISO 8601 string, respecting `SOURCE_DATE_EPOCH`.
+///
+/// Convenience function combining `get_now()` and `format_timestamp_iso8601()`.
+pub fn now_iso8601() -> String {
+    format_timestamp_iso8601(get_now())
+}
+
 /// Get current Unix timestamp in seconds, respecting `SOURCE_DATE_EPOCH`.
 ///
 /// When `SOURCE_DATE_EPOCH` environment variable is set, returns that value

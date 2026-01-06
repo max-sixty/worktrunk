@@ -124,7 +124,7 @@ impl DiagnosticReport {
         let context = strip_ansi_codes(context);
 
         // Collect data for template
-        let timestamp = chrono_now();
+        let timestamp = worktrunk::utils::now_iso8601();
         let version = version_str();
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
@@ -240,17 +240,6 @@ fn truncate_log(content: &str) -> String {
         .unwrap_or(start);
 
     format!("(log truncated to last ~50KB)\n{}", &content[start..])
-}
-
-/// Get the current time as ISO 8601 string.
-///
-/// Respects `SOURCE_DATE_EPOCH` for reproducible test snapshots.
-fn chrono_now() -> String {
-    let timestamp = worktrunk::utils::get_now() as i64;
-    chrono::DateTime::from_timestamp(timestamp, 0)
-        .unwrap_or_else(chrono::Utc::now)
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
 }
 
 /// Get git version string.
