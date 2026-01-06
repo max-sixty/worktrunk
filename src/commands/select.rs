@@ -1088,6 +1088,13 @@ mod tests {
     }
 
     #[test]
+    fn test_has_explicit_pager_config() {
+        // This function loads real config, so we just test that it doesn't panic
+        // The behavior is covered by integration tests that set actual config
+        let _ = has_explicit_pager_config();
+    }
+
+    #[test]
     fn test_render_preview_tabs_working_tree_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
         // Tab 1 should be bold (active), tabs 2 and 3 dimmed
