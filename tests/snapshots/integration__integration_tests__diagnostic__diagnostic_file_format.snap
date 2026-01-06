@@ -4,16 +4,12 @@ expression: normalize_report(&content)
 ---
 ## Diagnostic Report
 
-**Generated:** [TIMESTAMP]  
+**Generated:** [TIMESTAMP]
 **Context:** Some git operations failed:
-  (detached): commit-details (fatal: not a git repository:
-  [REPO_PATH])
-  (detached): ahead-behind (fatal: not a git repository:
-  [REPO_PATH])
-  (detached): committed-trees-match (fatal: not a git repository:
-  [REPO_PATH])
-  (detached): working-tree-diff (fatal: not a git repository:
-  [REPO_PATH])  
+  (detached): commit-details (fatal: not a git repository: [REPO_PATH])
+  (detached): ahead-behind (fatal: not a git repository: [REPO_PATH])
+  (detached): committed-trees-match (fatal: not a git repository: [REPO_PATH])
+  (detached): working-tree-diff (fatal: not a git repository: [REPO_PATH])
 
 ### What's included
 

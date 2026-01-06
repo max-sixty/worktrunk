@@ -45,18 +45,61 @@
 //! output::print(hint_message(report.issue_hint(&repo)))?;
 //! ```
 //!
-use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
 use color_print::cformat;
+use minijinja::{Environment, context};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::run;
 
 use crate::cli::version_str;
 use crate::output;
+
+/// Markdown template for the diagnostic report.
+///
+/// This template makes the report structure immediately visible.
+/// Variables are filled in by `format_report()`.
+const REPORT_TEMPLATE: &str = r#"## Diagnostic Report
+
+**Generated:** {{ timestamp }}
+**Context:** {{ context }}
+
+### What's included
+
+- wt version, OS, git version
+- Worktree paths and branch names
+- Worktree status (prunable, locked, etc.)
+- Shell integration status
+- Verbose logs (if run with --verbose)
+- Commit messages (in verbose logs)
+
+Does NOT contain: file contents, credentials.
+
+<details>
+<summary>Diagnostic data</summary>
+
+```
+wt {{ version }} ({{ os }} {{ arch }})
+git {{ git_version }}
+Shell integration: {{ shell_integration }}
+
+--- git worktree list --porcelain ---
+{{ worktree_list }}
+```
+</details>
+{% if verbose_log %}
+<details>
+<summary>Verbose log</summary>
+
+```
+{{ verbose_log }}
+```
+</details>
+{% endif %}
+"#;
 
 /// Collected diagnostic information for issue reporting.
 pub struct DiagnosticReport {
@@ -75,99 +118,48 @@ impl DiagnosticReport {
         Self { content }
     }
 
-    /// Format the complete diagnostic report as markdown.
+    /// Format the complete diagnostic report as markdown using minijinja template.
     fn format_report(repo: &Repository, context: &str) -> String {
-        let mut out = String::new();
-
         // Strip ANSI codes from context - the diagnostic is a markdown file for GitHub
         let context = strip_ansi_codes(context);
 
-        // Header
-        writeln!(out, "## Diagnostic Report\n").unwrap();
-        writeln!(out, "**Generated:** {}  ", chrono_now()).unwrap();
-        writeln!(out, "**Context:** {}  ", context).unwrap();
-        writeln!(out).unwrap();
-
-        // Privacy notice
-        writeln!(out, "### What's included\n").unwrap();
-        writeln!(out, "- wt version, OS, git version").unwrap();
-        writeln!(out, "- Worktree paths and branch names").unwrap();
-        writeln!(out, "- Worktree status (prunable, locked, etc.)").unwrap();
-        writeln!(out, "- Shell integration status").unwrap();
-        writeln!(out, "- Verbose logs (if run with --verbose)").unwrap();
-        writeln!(out, "- Commit messages (in verbose logs)").unwrap();
-        writeln!(out).unwrap();
-        writeln!(out, "Does NOT contain: file contents, credentials.\n").unwrap();
-
-        // Diagnostic data in details block
-        writeln!(out, "<details>").unwrap();
-        writeln!(out, "<summary>Diagnostic data</summary>\n").unwrap();
-        writeln!(out, "```").unwrap();
-
-        // Version info
+        // Collect data for template
+        let timestamp = chrono_now();
         let version = version_str();
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        writeln!(out, "wt {version} ({os} {arch})").unwrap();
-
-        // Git version
-        if let Ok(git_version) = get_git_version() {
-            writeln!(out, "git {git_version}").unwrap();
-        }
-
-        // Shell integration
-        let shell_active = output::is_shell_integration_active();
-        writeln!(
-            out,
-            "Shell integration: {}",
-            if shell_active { "active" } else { "inactive" }
-        )
-        .unwrap();
-
-        writeln!(out).unwrap();
-
-        // Raw git worktree list output (most useful for debugging)
-        writeln!(out, "--- git worktree list --porcelain ---").unwrap();
-        if let Ok(worktree_output) = repo.run_command(&["worktree", "list", "--porcelain"]) {
-            // trim_end ensures no trailing whitespace, then we add exactly one newline
-            writeln!(out, "{}", worktree_output.trim_end()).unwrap();
+        let git_version = get_git_version().unwrap_or_else(|_| "(unknown)".to_string());
+        let shell_integration = if output::is_shell_integration_active() {
+            "active"
         } else {
-            writeln!(out, "(failed to get worktree list)").unwrap();
-        }
+            "inactive"
+        };
+        let worktree_list = repo
+            .run_command(&["worktree", "list", "--porcelain"])
+            .map(|s| s.trim_end().to_string())
+            .unwrap_or_else(|_| "(failed to get worktree list)".to_string());
 
-        writeln!(out, "```").unwrap();
-        writeln!(out, "</details>").unwrap();
+        // Get verbose log content (if available)
+        let verbose_log = crate::verbose_log::log_file_path()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .map(|content| truncate_log(content.trim()))
+            .filter(|s| !s.is_empty());
 
-        // Verbose logs (if available)
-        if let Some(log_path) = crate::verbose_log::log_file_path()
-            && let Ok(log_content) = std::fs::read_to_string(&log_path)
-        {
-            let log_content = log_content.trim();
-            if !log_content.is_empty() {
-                writeln!(out).unwrap();
-                writeln!(out, "<details>").unwrap();
-                writeln!(out, "<summary>Verbose log</summary>\n").unwrap();
-                writeln!(out, "```").unwrap();
-                // Limit log size to ~50KB to avoid huge reports
-                const MAX_LOG_SIZE: usize = 50 * 1024;
-                if log_content.len() > MAX_LOG_SIZE {
-                    writeln!(out, "(log truncated to last ~50KB)").unwrap();
-                    let start = log_content.len() - MAX_LOG_SIZE;
-                    // Find the next newline to avoid cutting mid-line
-                    let start = log_content[start..]
-                        .find('\n')
-                        .map(|i| start + i + 1)
-                        .unwrap_or(start);
-                    writeln!(out, "{}", &log_content[start..]).unwrap();
-                } else {
-                    writeln!(out, "{}", log_content).unwrap();
-                }
-                writeln!(out, "```").unwrap();
-                writeln!(out, "</details>").unwrap();
-            }
-        }
-
-        out
+        // Render template
+        let env = Environment::new();
+        let tmpl = env.template_from_str(REPORT_TEMPLATE).unwrap();
+        tmpl.render(context! {
+            timestamp,
+            context,
+            version,
+            os,
+            arch,
+            git_version,
+            shell_integration,
+            worktree_list,
+            verbose_log,
+        })
+        .unwrap()
     }
 
     /// Write diagnostic file (if verbose) and return issue reporting hint.
@@ -229,6 +221,25 @@ fn strip_ansi_codes(s: &str) -> String {
     // This covers colors, bold, dim, etc.
     let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
     re.replace_all(s, "").into_owned()
+}
+
+/// Truncate verbose log to ~50KB if it's too large.
+///
+/// Keeps the last ~50KB of the log, cutting at a line boundary.
+fn truncate_log(content: &str) -> String {
+    const MAX_LOG_SIZE: usize = 50 * 1024;
+    if content.len() <= MAX_LOG_SIZE {
+        return content.to_string();
+    }
+
+    let start = content.len() - MAX_LOG_SIZE;
+    // Find the next newline to avoid cutting mid-line
+    let start = content[start..]
+        .find('\n')
+        .map(|i| start + i + 1)
+        .unwrap_or(start);
+
+    format!("(log truncated to last ~50KB)\n{}", &content[start..])
 }
 
 /// Get the current time as ISO 8601 string.

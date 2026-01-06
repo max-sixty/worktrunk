@@ -422,6 +422,14 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "[REPO_PATH]")
         .to_string();
 
+    // Normalize line breaks in git error messages (cross-platform consistency)
+    // Some platforms wrap "fatal: not a git repository:\n  /path" on two lines,
+    // others keep it on one line. Normalize to single-line format.
+    result = regex::Regex::new(r"(fatal: not a git repository:)\s*\n\s*(\[REPO_PATH\])")
+        .unwrap()
+        .replace_all(&result, "$1 $2")
+        .to_string();
+
     // Truncate verbose log section - it has parallel git commands that interleave
     // in different orders, making exact snapshot comparison flaky.
     // We verify the section exists separately in the test.
