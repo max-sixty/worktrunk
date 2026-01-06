@@ -81,11 +81,20 @@ echo ""
 echo "Installing shells for integration tests..."
 if command -v apt-get &> /dev/null; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq 2>&1 | grep -v "Failed to fetch" || true
-    apt-get install -y -qq zsh fish 2>&1 | tail -3 || true
+
+    # Remove malformed sources files (common in container environments)
+    for f in /etc/apt/sources.list.d/*.list; do
+        [ -f "$f" ] && grep -q '^\[' "$f" 2>/dev/null && rm -f "$f"
+    done
+
+    if ! command -v zsh &> /dev/null || ! command -v fish &> /dev/null; then
+        apt-get update -qq
+        apt-get install -y -qq zsh fish
+    fi
 fi
 for shell in bash zsh fish; do
-    command -v "$shell" &> /dev/null && print_status "$shell available" || print_warning "$shell missing"
+    command -v "$shell" &> /dev/null || { echo "Error: $shell not found"; exit 1; }
+    print_status "$shell available"
 done
 
 # Install GitHub CLI (gh)
