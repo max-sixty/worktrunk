@@ -253,7 +253,7 @@ mod tests {
     fn test_truncate_visible_zero_width() {
         let text = "hello world";
         let out = truncate_visible(text, 0);
-        assert!(out.is_empty(), "Zero width should return empty string");
+        assert!(out.is_empty());
     }
 
     #[test]

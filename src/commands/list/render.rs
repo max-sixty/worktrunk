@@ -920,7 +920,7 @@ mod tests {
         line1.push_styled(branch_ja.to_string(), Style::new().bold());
         line1.pad_to(20); // Pad to width 20
 
-        assert_eq!(line1.width(), 20, "Japanese branch should pad to 20");
+        assert_eq!(line1.width(), 20);
 
         // Case 2: Regular ASCII branch
         let branch_ascii = "feature-test";
@@ -930,7 +930,7 @@ mod tests {
         line2.push_styled(branch_ascii.to_string(), Style::new().bold());
         line2.pad_to(20);
 
-        assert_eq!(line2.width(), 20, "ASCII branch should pad to 20");
+        assert_eq!(line2.width(), 20);
 
         // Both should have the same visual width after padding
         assert_eq!(
@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(without.width(), total);
         let rendered_without = without.render();
         let clean_without = rendered_without.ansi_strip().into_owned();
-        assert_eq!(clean_without, "       ", "Should render as blank");
+        assert_eq!(clean_without, "       ");
 
         // With always_show_zeros=true, (0, 0) renders as "↑0 ↓0"
         let with = format_diff_like_column(
@@ -1089,7 +1089,7 @@ mod tests {
         line1.push_raw(status_with_emoji.to_string());
         line1.pad_to(status_start + 6); // Pad to width 6 (typical Status column width)
 
-        assert_eq!(line1.width(), 6, "Status column with emoji should pad to 6");
+        assert_eq!(line1.width(), 6);
 
         // Case 2: Status with only ASCII symbols (↑ is 1 column = 1 total)
         let status_ascii = "↑";
@@ -1104,7 +1104,7 @@ mod tests {
         line2.push_raw(status_ascii.to_string());
         line2.pad_to(status_start2 + 6);
 
-        assert_eq!(line2.width(), 6, "Status column with ASCII should pad to 6");
+        assert_eq!(line2.width(), 6);
 
         // Both should have the same visual width after padding
         assert_eq!(
@@ -1127,7 +1127,7 @@ mod tests {
         line3.push_raw(complex_status.to_string());
         line3.pad_to(status_start3 + 10); // Pad to width 10
 
-        assert_eq!(line3.width(), 10, "Complex status should pad to 10");
+        assert_eq!(line3.width(), 10);
     }
 
     #[test]
@@ -1156,7 +1156,7 @@ mod tests {
         );
         let rendered1 = result1.render();
         let clean1 = rendered1.ansi_strip().into_owned();
-        assert_eq!(clean1, " +53  -7", "Should be ' +53  -7'");
+        assert_eq!(clean1, " +53  -7");
 
         // Test case 2: (33, 23) - both medium
         let result2 = format_diff_like_column(
@@ -1176,7 +1176,7 @@ mod tests {
         );
         let rendered2 = result2.render();
         let clean2 = rendered2.ansi_strip().into_owned();
-        assert_eq!(clean2, " +33 -23", "Should be ' +33 -23'");
+        assert_eq!(clean2, " +33 -23");
 
         // Test case 3: (2, 2) - both small (needs padding)
         let result3 = format_diff_like_column(
@@ -1196,7 +1196,7 @@ mod tests {
         );
         let rendered3 = result3.render();
         let clean3 = rendered3.ansi_strip().into_owned();
-        assert_eq!(clean3, "  +2  -2", "Should be '  +2  -2'");
+        assert_eq!(clean3, "  +2  -2");
 
         // Verify vertical alignment: the ones digits should be in the same column
         // The ones digit should be at position 3 for all cases (with 2-digit allocation)
@@ -1268,16 +1268,8 @@ mod tests {
         );
         assert_eq!(overflow_result.width(), total);
         let rendered = overflow_result.render();
-        assert!(
-            rendered.contains("+1") && rendered.contains('K'),
-            "Positive overflow should show +1K (may have styling), got: {}",
-            rendered
-        );
-        assert!(
-            rendered.contains("500"),
-            "Negative value should show normally when positive overflows, got: {}",
-            rendered
-        );
+        assert!(rendered.contains("+1") && rendered.contains('K'));
+        assert!(rendered.contains("500"));
 
         // Case 3: Negative overflow
         // Should show: "+500 -1K" (positive normal, negative with K suffix)
@@ -1298,16 +1290,8 @@ mod tests {
         );
         assert_eq!(overflow_result2.width(), total);
         let rendered2 = overflow_result2.render();
-        assert!(
-            rendered2.contains("500"),
-            "Positive value should show normally when negative overflows, got: {}",
-            rendered2
-        );
-        assert!(
-            rendered2.contains("-1") && rendered2.contains('K'),
-            "Negative overflow should show -1K (may have styling), got: {}",
-            rendered2
-        );
+        assert!(rendered2.contains("500"));
+        assert!(rendered2.contains("-1") && rendered2.contains('K'));
 
         // Case 4: Extreme overflow (>= 10K values show ∞ to avoid false precision)
         let extreme_overflow = format_diff_like_column(
@@ -1331,16 +1315,8 @@ mod tests {
             "100K overflow should fit in allocated width"
         );
         let extreme_rendered = extreme_overflow.render();
-        assert!(
-            extreme_rendered.contains("+∞"),
-            "100K+ overflow should show +∞ (may have styling), got: {}",
-            extreme_rendered
-        );
-        assert!(
-            extreme_rendered.contains("-∞"),
-            "100K+ overflow should show -∞ (may have styling), got: {}",
-            extreme_rendered
-        );
+        assert!(extreme_rendered.contains("+∞"));
+        assert!(extreme_rendered.contains("-∞"));
 
         // Test overflow with Arrows variant (↑ and ↓)
         let arrow_total = 7;
@@ -1364,16 +1340,8 @@ mod tests {
         );
         assert_eq!(arrow_overflow.width(), arrow_total);
         let arrow_rendered = arrow_overflow.render();
-        assert!(
-            arrow_rendered.contains("↑1") && arrow_rendered.contains('K'),
-            "Arrow positive overflow should show ↑1K (may have styling), got: {}",
-            arrow_rendered
-        );
-        assert!(
-            arrow_rendered.contains("50"),
-            "Negative value should show normally when positive overflows, got: {}",
-            arrow_rendered
-        );
+        assert!(arrow_rendered.contains("↑1") && arrow_rendered.contains('K'));
+        assert!(arrow_rendered.contains("50"));
 
         // Case 6: Arrow negative overflow
         // Should show with K suffix
@@ -1394,15 +1362,7 @@ mod tests {
         );
         assert_eq!(arrow_overflow2.width(), arrow_total);
         let arrow_rendered2 = arrow_overflow2.render();
-        assert!(
-            arrow_rendered2.contains("50"),
-            "Positive value should show normally when negative overflows, got: {}",
-            arrow_rendered2
-        );
-        assert!(
-            arrow_rendered2.contains("↓1") && arrow_rendered2.contains('K'),
-            "Arrow negative overflow should show ↓1K (may have styling), got: {}",
-            arrow_rendered2
-        );
+        assert!(arrow_rendered2.contains("50"));
+        assert!(arrow_rendered2.contains("↓1") && arrow_rendered2.contains('K'));
     }
 }

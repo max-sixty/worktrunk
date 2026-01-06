@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(table.lines[0], header);
         assert_eq!(table.lines[1], skeletons[0]);
         assert_eq!(table.lines[2], skeletons[1]);
-        assert!(table.lines[3].is_empty(), "spacer should be blank");
+        assert!(table.lines[3].is_empty());
         assert_eq!(table.lines[4], footer);
 
         // No-op when index out of bounds (returns false)

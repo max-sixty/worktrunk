@@ -1138,10 +1138,10 @@ mod tests {
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
         // Should contain the hash and message
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("Fix bug"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("Fix bug"));
         // Should contain formatted time
-        assert!(output.contains("1h"), "output: {}", output);
+        assert!(output.contains("1h"));
     }
 
     #[test]
@@ -1153,10 +1153,10 @@ mod tests {
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
         // Should contain the hash and message
-        assert!(output.contains("abc1234"), "output: {}", output);
+        assert!(output.contains("abc1234"));
         // Stats should be accumulated: 10+3=13 insertions, 5+0=5 deletions
         // The output should contain the stats in the formatted line
-        assert!(output.contains("Add feature"), "output: {}", output);
+        assert!(output.contains("Add feature"));
         // Verify stats are present (green +13, red -5)
         assert!(output.contains("+13"), "expected +13 in output: {}", output);
         assert!(output.contains("-5"), "expected -5 in output: {}", output);
@@ -1172,10 +1172,10 @@ mod tests {
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
         // Both commits should be in output
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("def5678"), "output: {}", output);
-        assert!(output.contains("First commit"), "output: {}", output);
-        assert!(output.contains("Second commit"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("def5678"));
+        assert!(output.contains("First commit"));
+        assert!(output.contains("Second commit"));
 
         // Output should be two lines (one per commit)
         let lines: Vec<&str> = output.lines().collect();
@@ -1194,8 +1194,8 @@ mod tests {
         let input = "abc1234\x1f1699999000\x1f Just a commit";
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("Just a commit"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("Just a commit"));
     }
 
     #[test]
@@ -1205,8 +1205,8 @@ mod tests {
                      | 5\t2\tfile.rs";
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("Commit with graph"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("Commit with graph"));
         // Verify stats are present
         assert!(output.contains("+5"), "expected +5 in output: {}", output);
         assert!(output.contains("-2"), "expected -2 in output: {}", output);
@@ -1222,8 +1222,8 @@ mod tests {
 
         // Binary files treated as 0 additions/deletions
         // Should still format the commit line
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("Add image"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("Add image"));
         // Verify stats: 0 (binary) + 5 = 5 insertions, 0 deletions
         assert!(output.contains("+5"), "expected +5 in output: {}", output);
     }
@@ -1235,7 +1235,7 @@ mod tests {
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
         // Should be empty since no valid commit lines (no FIELD_DELIM)
-        assert!(output.is_empty(), "output: {}", output);
+        assert!(output.is_empty());
     }
 
     #[test]
@@ -1245,7 +1245,7 @@ mod tests {
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
         // Should output the line as-is since it's malformed (only one \x1f)
-        assert!(output.contains("abc1234"), "output: {}", output);
+        assert!(output.contains("abc1234"));
     }
 
     #[test]
@@ -1255,8 +1255,8 @@ mod tests {
                      0\t50\told_file.rs";
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("Remove old code"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("Remove old code"));
         // Should show deletions
         assert!(output.contains("-50"), "expected -50 in output: {}", output);
     }
@@ -1268,7 +1268,7 @@ mod tests {
                      1500\t800\tlarge_file.rs";
         let output = format_log_output_with_formatter(input, fixed_time_formatter);
 
-        assert!(output.contains("abc1234"), "output: {}", output);
+        assert!(output.contains("abc1234"));
         // Large numbers should use K notation
         assert!(
             output.contains("+1K") || output.contains("+1.5K"),
@@ -1284,8 +1284,8 @@ mod tests {
         let stats = (10, 5);
         let output = format_commit_line(commit_line, stats, &fixed_time_formatter);
 
-        assert!(output.contains("abc1234"), "output: {}", output);
-        assert!(output.contains("Test commit"), "output: {}", output);
+        assert!(output.contains("abc1234"));
+        assert!(output.contains("Test commit"));
         assert!(output.contains("+10"), "expected +10 in output: {}", output);
         assert!(output.contains("-5"), "expected -5 in output: {}", output);
         assert!(output.contains("1h"), "expected time in output: {}", output);

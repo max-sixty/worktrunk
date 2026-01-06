@@ -603,7 +603,7 @@ approved-commands = ["sleep 0.1 && echo 'Background task done' > background.txt"
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let git_common_dir = resolve_git_common_dir(&worktree_path);
     let log_dir = git_common_dir.join("wt-logs");
-    assert!(log_dir.exists(), "Log directory should be created");
+    assert!(log_dir.exists());
 
     // Wait for the background command to complete
     let output_file = worktree_path.join("background.txt");

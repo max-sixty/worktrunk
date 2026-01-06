@@ -127,7 +127,7 @@ mod tests {
         let text = "Fix bug with parsing and more text here";
         let result = truncate_to_width(text, 25);
         println!("Normal truncation:      '{}'", result);
-        assert!(result.ends_with('…'), "Should end with ellipsis");
+        assert!(result.ends_with('…'));
     }
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
         let result = truncate_to_width(text, 25);
         // Shows what happens when truncation lands on existing "..."
         println!("ASCII ellipsis:         '{}'", result);
-        assert!(result.ends_with('…'), "Should end with ellipsis");
+        assert!(result.ends_with('…'));
     }
 
     #[test]
@@ -145,7 +145,7 @@ mod tests {
         let result = truncate_to_width(text, 25);
         // Shows what happens when truncation lands on existing "…"
         println!("Unicode ellipsis:       '{}'", result);
-        assert!(result.ends_with('…'), "Should end with ellipsis");
+        assert!(result.ends_with('…'));
     }
 
     #[test]
@@ -160,14 +160,14 @@ mod tests {
     fn test_truncate_exact_width() {
         let text = "This is a very long message that needs truncation";
         let result = truncate_to_width(text, 30);
-        assert!(result.ends_with('…'), "Should end with ellipsis");
+        assert!(result.ends_with('…'));
         assert!(
             !result.contains(" …"),
             "Should not have space before ellipsis"
         );
         // Should truncate at exact width (mid-word if needed)
         use unicode_width::UnicodeWidthStr;
-        assert_eq!(result.width(), 30, "Should fill exact width");
+        assert_eq!(result.width(), 30);
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         use unicode_width::UnicodeWidthStr;
         // Should truncate mid-word if no space found
         assert!(result.width() <= 20, "Width should be <= 20");
-        assert!(result.ends_with('…'), "Should end with ellipsis");
+        assert!(result.ends_with('…'));
     }
 
     #[test]

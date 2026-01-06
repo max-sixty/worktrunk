@@ -1179,7 +1179,7 @@ approved-commands = ["echo 'test command executed'"]
         output.assert_no_directive_leaks();
         output.assert_no_job_control_messages();
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
 
         // Normalize paths in output for snapshot testing
         // Snapshot the output
@@ -1205,7 +1205,7 @@ approved-commands = ["echo 'test command executed'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
 
         // The executed command output should appear
         assert!(
@@ -1318,7 +1318,7 @@ approved-commands = ["echo 'background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
 
         // Snapshot verifies progress messages appear to users
         // (catches the bug where progress() was incorrectly suppressed)
@@ -1366,7 +1366,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
 
         // Snapshot verifies progress messages appear to users through Fish wrapper
         assert_snapshot!(output.normalized());
@@ -1397,7 +1397,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
 
         // All three lines should be executed and visible
         assert!(output.combined.contains("line 1"), "First line missing");
@@ -1418,7 +1418,7 @@ approved-commands = ["echo 'fish background task'"]
         // No directives should leak even with minimal output
         output.assert_no_directive_leaks();
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
 
         // Should still show success message
         assert!(
@@ -1577,7 +1577,7 @@ approved-commands = ["echo 'background job'"]
 
         let output = exec_through_wrapper("zsh", &repo, "switch", &["--create", "zsh-job-test"]);
 
-        assert_eq!(output.exit_code, 0, "Command should succeed");
+        assert_eq!(output.exit_code, 0);
         output.assert_no_directive_leaks();
 
         // Critical: zsh should NOT show job control notifications
@@ -1711,7 +1711,7 @@ approved-commands = ["echo 'bash background'"]
         let (combined, exit_code) =
             exec_in_pty_interactive("bash", &final_script, repo.root_path(), &env_vars, &[]);
 
-        assert_eq!(exit_code, 0, "Script should succeed");
+        assert_eq!(exit_code, 0);
         assert!(
             combined.contains("__COMPLETION_REGISTERED__"),
             "Bash completions should be registered after sourcing wrapper.\nOutput:\n{}",
@@ -1753,7 +1753,7 @@ approved-commands = ["echo 'bash background'"]
         let (combined, exit_code) =
             exec_in_pty_interactive("fish", &final_script, repo.root_path(), &env_vars, &[]);
 
-        assert_eq!(exit_code, 0, "Script should succeed");
+        assert_eq!(exit_code, 0);
         assert!(
             combined.contains("__COMPLETION_REGISTERED__"),
             "Fish completions should be registered after sourcing wrapper.\nOutput:\n{}",
@@ -1797,7 +1797,7 @@ approved-commands = ["echo 'bash background'"]
         let (combined, exit_code) =
             exec_in_pty_interactive("zsh", &final_script, repo.root_path(), &env_vars, &[]);
 
-        assert_eq!(exit_code, 0, "Script should succeed");
+        assert_eq!(exit_code, 0);
         assert!(
             combined.contains("__WRAPPER_REGISTERED__"),
             "Zsh wrapper function should be registered after sourcing.\nOutput:\n{}",
@@ -2220,7 +2220,7 @@ command = "{}"
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0, "Merge should succeed");
+        assert_eq!(output.exit_code, 0);
         assert_snapshot!(output.normalized());
     }
 
@@ -2300,7 +2300,7 @@ fi
             &[("PATH", &path_with_bin)],
         );
 
-        assert_eq!(output.exit_code, 0, "Switch should succeed");
+        assert_eq!(output.exit_code, 0);
         assert_snapshot!(output.normalized());
     }
 

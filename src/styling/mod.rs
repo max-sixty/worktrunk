@@ -181,7 +181,7 @@ command = "npm install"
         line.push_raw("↑3 ↓2");
 
         // "Branch" (6) + "  " (2) + "↑3 ↓2" (5) = 13
-        assert_eq!(line.width(), 13, "Line width should be 13");
+        assert_eq!(line.width(), 13);
     }
 
     #[test]
@@ -191,11 +191,11 @@ command = "npm install"
         assert_eq!(line.width(), 4);
 
         line.pad_to(10);
-        assert_eq!(line.width(), 10, "After padding to 10, width should be 10");
+        assert_eq!(line.width(), 10);
 
         // Padding when already at target should not change width
         line.pad_to(10);
-        assert_eq!(line.width(), 10, "Padding again should not change width");
+        assert_eq!(line.width(), 10);
     }
 
     #[test]
@@ -236,7 +236,7 @@ command = "npm install"
         let result = super::wrap_text_at_width(text, 30);
 
         // Should wrap at word boundaries
-        assert!(result.len() > 1, "Should wrap into multiple lines");
+        assert!(result.len() > 1);
 
         // Each line should be within the width limit (or be a single long word)
         for line in &result {
@@ -458,7 +458,7 @@ command = "npm install"
         let result = wrap_styled_text(text, 20);
 
         // Should wrap into multiple lines
-        assert!(result.len() > 1, "Should wrap into multiple lines");
+        assert!(result.len() > 1);
 
         // Each line should be within width limit (using visual_width to ignore ANSI codes)
         for line in &result {
@@ -480,7 +480,7 @@ command = "npm install"
         let result = wrap_styled_text(&input, 15);
 
         // Should wrap
-        assert!(result.len() > 1, "Should wrap into multiple lines");
+        assert!(result.len() > 1);
 
         // First line should start with bold code
         assert!(
@@ -612,7 +612,7 @@ cp -cR {{ repo_root }}/target/debug/.fingerprint {{ repo_root }}/target/debug/bu
         let result = format_bash_with_gutter(multiline);
 
         let lines: Vec<&str> = result.lines().collect();
-        assert_eq!(lines.len(), 2, "Should have 2 lines");
+        assert_eq!(lines.len(), 2);
 
         // Extract the styling for unhighlighted text on each line
         // Line 1 ends with `{{ worktree` - find what style it's under

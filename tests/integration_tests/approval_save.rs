@@ -250,8 +250,8 @@ fn test_approval_saves_to_new_config_file() {
         .unwrap();
 
     // Verify directory and file were created
-    assert!(config_path.exists(), "Config file should be created");
-    assert!(config_dir.exists(), "Config directory should be created");
+    assert!(config_path.exists());
+    assert!(config_dir.exists());
 
     // Verify content
     let content = fs::read_to_string(&config_path).unwrap();

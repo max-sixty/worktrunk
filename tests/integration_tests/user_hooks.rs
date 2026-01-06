@@ -81,12 +81,12 @@ approved-commands = ["echo 'PROJECT_HOOK' >> hook_order.txt"]
     // Verify execution order
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let order_file = worktree_path.join("hook_order.txt");
-    assert!(order_file.exists(), "Hook order file should exist");
+    assert!(order_file.exists());
 
     let contents = fs::read_to_string(&order_file).unwrap();
     let lines: Vec<&str> = contents.lines().collect();
 
-    assert_eq!(lines.len(), 2, "Should have two hooks executed");
+    assert_eq!(lines.len(), 2);
     assert_eq!(lines[0], "USER_HOOK", "User hook should run first");
     assert_eq!(lines[1], "PROJECT_HOOK", "Project hook should run second");
 }

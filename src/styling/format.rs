@@ -453,7 +453,7 @@ mod tests {
             "          This is a longer text that should wrap across multiple lines",
             40,
         );
-        assert!(result.len() > 1, "Should have wrapped");
+        assert!(result.len() > 1);
         // All lines should have the 10-space indent
         for line in &result {
             assert!(

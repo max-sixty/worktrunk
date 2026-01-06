@@ -10,7 +10,7 @@ use rstest::rstest;
 /// Helper to parse a single worktree from porcelain output
 fn parse_single(input: &str) -> Worktree {
     let list = Worktree::parse_porcelain_list(input).expect("parse ok");
-    assert_eq!(list.len(), 1, "expected single worktree");
+    assert_eq!(list.len(), 1);
     list.into_iter().next().unwrap()
 }
 

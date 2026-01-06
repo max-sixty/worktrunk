@@ -929,8 +929,8 @@ fn test_complete_filters_options_when_positionals_exist(repo: TestRepo) {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should have branch completions
-    assert!(stdout.contains("feature"), "Should contain feature branch");
-    assert!(stdout.contains("main"), "Should contain main branch");
+    assert!(stdout.contains("feature"));
+    assert!(stdout.contains("main"));
 
     // Should NOT have options (they're filtered out when positionals exist)
     assert!(
@@ -951,9 +951,9 @@ fn test_complete_subcommands_filter_options(repo: TestRepo) {
     let suggestions = value_suggestions(&stdout);
 
     // Should have subcommands
-    assert!(suggestions.contains(&"switch"), "Should contain switch");
-    assert!(suggestions.contains(&"list"), "Should contain list");
-    assert!(suggestions.contains(&"merge"), "Should contain merge");
+    assert!(suggestions.contains(&"switch"));
+    assert!(suggestions.contains(&"list"));
+    assert!(suggestions.contains(&"merge"));
 
     // Should NOT have global options
     assert!(

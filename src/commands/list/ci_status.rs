@@ -242,12 +242,9 @@ mod tests {
         // Call format_indicator(true) directly
         let formatted = pr_with_url.format_indicator(true);
         // Should contain OSC 8 hyperlink escape sequences
-        assert!(formatted.contains("\x1b]8;;"), "Should contain OSC 8 start");
-        assert!(
-            formatted.contains("https://github.com/owner/repo/pull/123"),
-            "Should contain URL"
-        );
-        assert!(formatted.contains("●"), "Should contain indicator");
+        assert!(formatted.contains("\x1b]8;;"));
+        assert!(formatted.contains("https://github.com/owner/repo/pull/123"));
+        assert!(formatted.contains("●"));
     }
 
     #[test]
@@ -266,7 +263,7 @@ mod tests {
             !formatted.contains("\x1b]8;;"),
             "Should not contain OSC 8 sequences"
         );
-        assert!(formatted.contains("●"), "Should contain indicator");
+        assert!(formatted.contains("●"));
     }
 
     #[test]

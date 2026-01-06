@@ -324,7 +324,7 @@ mod pty_tests {
             "", // No input needed - should not prompt
         );
 
-        assert_eq!(exit_code, 0, "Switch should succeed");
+        assert_eq!(exit_code, 0);
 
         // Should NOT contain prompt (detected already installed)
         assert!(
@@ -369,7 +369,7 @@ mod pty_tests {
             "n\n", // User declines
         );
 
-        assert_eq!(exit_code, 0, "Switch should succeed even when declining");
+        assert_eq!(exit_code, 0);
 
         let normalized = normalize_output(&output, temp_home.path());
 
@@ -428,7 +428,7 @@ mod pty_tests {
             "y\n", // User accepts
         );
 
-        assert_eq!(exit_code, 0, "Switch should succeed");
+        assert_eq!(exit_code, 0);
 
         let normalized = normalize_output(&output, temp_home.path());
 
@@ -488,7 +488,7 @@ mod pty_tests {
             "?\nn\n", // User requests preview, then declines
         );
 
-        assert_eq!(exit_code, 0, "Switch should succeed");
+        assert_eq!(exit_code, 0);
 
         let normalized = normalize_output(&output, temp_home.path());
 
@@ -557,7 +557,7 @@ mod pty_tests {
             "", // No input needed
         );
 
-        assert_eq!(exit_code, 0, "Second switch should succeed");
+        assert_eq!(exit_code, 0);
 
         assert!(
             !output.contains("Install shell integration"),

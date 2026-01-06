@@ -172,7 +172,7 @@ fn test_approval_prompt_accept(repo: TestRepo) {
     );
 
     let normalized = normalize_output(&output);
-    assert_eq!(exit_code, 0, "Command should succeed when approved");
+    assert_eq!(exit_code, 0);
     assert_snapshot!("approval_prompt_accept", normalized);
 }
 
@@ -193,7 +193,7 @@ fn test_approval_prompt_decline(repo: TestRepo) {
     );
 
     let normalized = normalize_output(&output);
-    assert_eq!(exit_code, 0, "Command should succeed even when declined");
+    assert_eq!(exit_code, 0);
     assert_snapshot!("approval_prompt_decline", normalized);
 }
 
@@ -311,7 +311,7 @@ test = "echo 'Running tests...'"
     );
 
     let normalized = normalize_output(&output);
-    assert_eq!(exit_code, 0, "Command should succeed when approved");
+    assert_eq!(exit_code, 0);
     assert!(
         normalized.contains("install") && normalized.contains("Installing dependencies"),
         "Should show command name 'install' and execute it"
@@ -359,7 +359,7 @@ approved-commands = ["echo 'Second command'"]
     );
 
     let normalized = normalize_output(&output);
-    assert_eq!(exit_code, 0, "Command should succeed when approved");
+    assert_eq!(exit_code, 0);
 
     // Check that only 2 commands are shown in the prompt (ANSI codes may be in between)
     assert!(
