@@ -20,6 +20,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -42,3 +43,4 @@ exit_code: 0
 [107m [0m working tree.)
 [107m [0m [1mfeature[22m: has-file-changes (fatal: Invalid symmetric difference expression main...feature)
 [107m [0m [1mfeature[22m: working-tree-diff (fatal: bad object HEAD)[39m
+[2m↳[22m [2mTo create a diagnostic file, re-run with [90m--verbose[39m[22m

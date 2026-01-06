@@ -15,12 +15,14 @@ use worktrunk::styling::{
 mod cli;
 mod commands;
 mod completion;
+mod diagnostic;
 mod display;
 pub(crate) mod help_pager;
 mod llm;
 mod md_help;
 mod output;
 mod pager;
+mod verbose_log;
 
 pub use crate::cli::OutputFormat;
 
@@ -740,58 +742,76 @@ fn main() {
     }
 
     // Configure logging based on --verbose flag or RUST_LOG env var
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(if cli.verbose { "debug" } else { "off" }),
-    )
-    .format(|buf, record| {
-        use std::io::Write;
+    // When --verbose is set, also write logs to .git/wt-logs/verbose.log
+    if cli.verbose {
+        verbose_log::init();
+    }
 
-        let msg = record.args().to_string();
+    // --verbose takes precedence over RUST_LOG: use Builder::new() to ignore env var
+    // Otherwise, respect RUST_LOG (defaulting to off)
+    let mut builder = if cli.verbose {
+        let mut b = env_logger::Builder::new();
+        b.filter_level(log::LevelFilter::Debug);
+        b
+    } else {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off"))
+    };
 
-        // Map thread ID to a single character (a-z, then A-Z)
-        let thread_id = format!("{:?}", std::thread::current().id());
-        let thread_num = thread_id
-            .strip_prefix("ThreadId(")
-            .and_then(|s| s.strip_suffix(")"))
-            .and_then(|s| s.parse::<usize>().ok())
-            .map(|n| {
-                if n <= 26 {
-                    char::from(b'a' + (n - 1) as u8)
-                } else if n <= 52 {
-                    char::from(b'A' + (n - 27) as u8)
+    builder
+        .format(|buf, record| {
+            use std::io::Write;
+
+            let msg = record.args().to_string();
+
+            // Map thread ID to a single character (a-z, then A-Z)
+            let thread_id = format!("{:?}", std::thread::current().id());
+            let thread_num = thread_id
+                .strip_prefix("ThreadId(")
+                .and_then(|s| s.strip_suffix(")"))
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|n| {
+                    if n == 0 {
+                        '0'
+                    } else if n <= 26 {
+                        char::from(b'a' + (n - 1) as u8)
+                    } else if n <= 52 {
+                        char::from(b'A' + (n - 27) as u8)
+                    } else {
+                        '?'
+                    }
+                })
+                .unwrap_or('?');
+
+            // Write plain text to log file (no ANSI codes)
+            verbose_log::write_line(&format!("[{thread_num}] {msg}"));
+
+            // Commands start with $, make only the command bold (not $ or [worktree])
+            if let Some(rest) = msg.strip_prefix("$ ") {
+                // Split: "git command [worktree]" -> ("git command", " [worktree]")
+                if let Some(bracket_pos) = rest.find(" [") {
+                    let command = &rest[..bracket_pos];
+                    let worktree = &rest[bracket_pos..];
+                    writeln!(
+                        buf,
+                        "{}",
+                        cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
+                    )
                 } else {
-                    '?'
+                    writeln!(
+                        buf,
+                        "{}",
+                        cformat!("<dim>[{thread_num}]</> $ <bold>{rest}</>")
+                    )
                 }
-            })
-            .unwrap_or('?');
-
-        // Commands start with $, make only the command bold (not $ or [worktree])
-        if let Some(rest) = msg.strip_prefix("$ ") {
-            // Split: "git command [worktree]" -> ("git command", " [worktree]")
-            if let Some(bracket_pos) = rest.find(" [") {
-                let command = &rest[..bracket_pos];
-                let worktree = &rest[bracket_pos..];
-                writeln!(
-                    buf,
-                    "{}",
-                    cformat!("<dim>[{thread_num}]</> $ <bold>{command}</>{worktree}")
-                )
+            } else if msg.starts_with("  ! ") {
+                // Error output - show in red
+                writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
             } else {
-                writeln!(
-                    buf,
-                    "{}",
-                    cformat!("<dim>[{thread_num}]</> $ <bold>{rest}</>")
-                )
+                // Regular output with thread ID
+                writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
             }
-        } else if msg.starts_with("  ! ") {
-            // Error output - show in red
-            writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> <red>{msg}</>"))
-        } else {
-            // Regular output with thread ID
-            writeln!(buf, "{}", cformat!("<dim>[{thread_num}]</> {msg}"))
-        }
-    })
-    .init();
+        })
+        .init();
 
     let Some(command) = cli.command else {
         // No subcommand provided - print help to stderr (stdout is eval'd by shell wrapper)

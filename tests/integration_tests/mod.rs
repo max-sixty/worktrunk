@@ -21,6 +21,7 @@ pub mod config_show_theme;
 pub mod config_state;
 pub mod configure_shell;
 pub mod default_branch;
+pub mod diagnostic;
 pub mod directives;
 pub mod doc_templates;
 pub mod e2e_shell;

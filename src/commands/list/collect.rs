@@ -52,6 +52,7 @@ use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
 use crate::commands::is_worktree_at_expected_path_with;
+use crate::diagnostic::DiagnosticReport;
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -1094,7 +1095,11 @@ pub fn collect(
             "\n\nThis likely indicates a git command hung. Run with RUST_LOG=debug for details.",
         );
 
-        crate::output::print(warning_message(diag))?;
+        crate::output::print(warning_message(&diag))?;
+
+        // Show issue reporting hint (writes diagnostic file if --verbose was used)
+        let report = DiagnosticReport::collect(repo, diag);
+        crate::output::print(worktrunk::styling::hint_message(report.issue_hint(repo)))?;
     }
 
     // Compute status symbols for prunable worktrees (skipped during task spawning).
@@ -1174,7 +1179,11 @@ pub fn collect(
             "Some git operations failed:\n{}",
             format_with_gutter(&error_lines.join("\n"), None)
         );
-        crate::output::print(warning_message(warning))?;
+        crate::output::print(warning_message(&warning))?;
+
+        // Show issue reporting hint (writes diagnostic file if --verbose was used)
+        let report = DiagnosticReport::collect(repo, warning);
+        crate::output::print(worktrunk::styling::hint_message(report.issue_hint(repo)))?;
     }
 
     // Populate display fields for all items (used by JSON output and statusline)
