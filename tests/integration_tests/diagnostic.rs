@@ -386,8 +386,9 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "[TIMESTAMP]")
         .to_string();
 
-    // Normalize wt version line (e.g., "wt v0.9.3-dirty (macos aarch64)" -> "wt [VERSION] ([OS] [ARCH])")
-    result = regex::Regex::new(r"wt v?[0-9][^ ]* \([^)]+\)")
+    // Normalize wt version line (e.g., "wt v0.9.3-dirty (macos aarch64)" or "wt be89089 (linux x86_64)")
+    // CI builds use commit hashes instead of version numbers
+    result = regex::Regex::new(r"wt [^ ]+ \([^)]+\)")
         .unwrap()
         .replace_all(&result, "wt [VERSION] ([OS] [ARCH])")
         .to_string();
@@ -416,8 +417,10 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "[HASH]")
         .to_string();
 
-    // Normalize temp paths in context (repo paths)
-    result = regex::Regex::new(r"/[^\s)]+/repo\.[^\s)]+")
+    // Normalize temp paths in context (repo paths) - handles both Unix and Windows paths
+    // Unix: /var/folders/.../repo.xxx or /tmp/.../repo.xxx
+    // Windows: D:\a\worktrunk\worktrunk\... or C:\Users\...\repo.xxx
+    result = regex::Regex::new(r"(/[^\s)]+/repo\.[^\s)]+|[A-Z]:\\[^\s)]+)")
         .unwrap()
         .replace_all(&result, "[REPO_PATH]")
         .to_string();
