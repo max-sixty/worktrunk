@@ -741,6 +741,7 @@ pub fn collect_worktree_progressive(
     // Send URL immediately (before health check) so it appears in normal styling right away.
     // The health check task will later send url_active to dim if inactive.
     if let Some(ref url) = item_url {
+        expected_results.expect(item_idx, TaskKind::UrlStatus);
         let _ = tx.send(Ok(TaskResult::UrlStatus {
             item_idx,
             url: Some(url.clone()),
@@ -781,22 +782,8 @@ pub fn collect_branch_progressive(
     tx: Sender<Result<TaskResult, TaskError>>,
     expected_results: &Arc<ExpectedResults>,
 ) {
-    // Expand URL template for this item (deferred from pre-skeleton)
-    let item_url = options.url_template.as_ref().and_then(|template| {
-        let mut vars = std::collections::HashMap::new();
-        vars.insert("branch", branch_name);
-        worktrunk::config::expand_template(template, &vars, false).ok()
-    });
-
-    // Send URL immediately (before health check) so it appears in normal styling right away.
-    // The health check task will later send url_active to dim if inactive.
-    if let Some(ref url) = item_url {
-        let _ = tx.send(Ok(TaskResult::UrlStatus {
-            item_idx,
-            url: Some(url.clone()),
-            active: None,
-        }));
-    }
+    // Branches without worktrees don't have URLs - there's no directory to run a dev server from.
+    // URL templates only make sense for worktrees where post-start hooks can start servers.
 
     let ctx = TaskContext {
         repo_path: repo_path.to_path_buf(),
@@ -805,7 +792,7 @@ pub fn collect_branch_progressive(
         default_branch: Some(default_branch.to_string()),
         target: Some(target.to_string()),
         item_idx,
-        item_url,
+        item_url: None,
     };
 
     collect_progressive(ctx, false, options, tx, expected_results);

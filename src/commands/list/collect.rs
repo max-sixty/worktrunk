@@ -1023,6 +1023,7 @@ pub fn collect(
 
     // Track completed results for footer progress
     let mut completed_results = 0;
+    let mut progress_overflow = false;
 
     // Drain task results with conditional progressive rendering
     let drain_outcome = drain_results(
@@ -1042,6 +1043,16 @@ pub fn collect(
 
                 completed_results += 1;
                 let total_results = expected_results.count();
+
+                // Catch counting bugs: completed should never exceed expected
+                debug_assert!(
+                    completed_results <= total_results,
+                    "completed ({completed_results}) > expected ({total_results}): \
+                     task result sent without registering expectation"
+                );
+                if completed_results > total_results {
+                    progress_overflow = true;
+                }
 
                 // Update footer progress
                 let footer_msg = format!(
@@ -1161,24 +1172,36 @@ pub fn collect(
 
     // Status symbols are now computed during data collection (both modes), no fallback needed
 
-    // Display collection errors as warnings (after table rendering)
-    if !errors.is_empty() {
-        // Sort for deterministic output (tasks complete in arbitrary order)
-        errors.sort_by_key(|e| (e.item_idx, e.kind));
-        let error_lines: Vec<String> = errors
-            .iter()
-            .map(|error| {
-                let name = all_items[error.item_idx].branch_name();
-                let kind_str: &'static str = error.kind.into();
-                // Take first line only - git errors can be multi-line with usage hints
-                let msg = error.message.lines().next().unwrap_or(&error.message);
-                cformat!("<bold>{}</>: {} ({})", name, kind_str, msg)
-            })
-            .collect();
-        let warning = format!(
-            "Some git operations failed:\n{}",
-            format_with_gutter(&error_lines.join("\n"), None)
-        );
+    // Display collection errors/warnings (after table rendering)
+    if !errors.is_empty() || progress_overflow {
+        let mut warning_parts = Vec::new();
+
+        if !errors.is_empty() {
+            // Sort for deterministic output (tasks complete in arbitrary order)
+            errors.sort_by_key(|e| (e.item_idx, e.kind));
+            let error_lines: Vec<String> = errors
+                .iter()
+                .map(|error| {
+                    let name = all_items[error.item_idx].branch_name();
+                    let kind_str: &'static str = error.kind.into();
+                    // Take first line only - git errors can be multi-line with usage hints
+                    let msg = error.message.lines().next().unwrap_or(&error.message);
+                    cformat!("<bold>{}</>: {} ({})", name, kind_str, msg)
+                })
+                .collect();
+            warning_parts.push(format!(
+                "Some git operations failed:\n{}",
+                format_with_gutter(&error_lines.join("\n"), None)
+            ));
+        }
+
+        if progress_overflow {
+            // Defensive: should never trigger now that immediate URL sends register expectations,
+            // but kept to detect future counting bugs
+            warning_parts.push("Progress counter overflow (completed > expected)".to_string());
+        }
+
+        let warning = warning_parts.join("\n");
         crate::output::print(warning_message(&warning))?;
 
         // Show issue reporting hint (writes diagnostic file if --verbose was used)

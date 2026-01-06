@@ -267,6 +267,8 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
 }
 
 /// Test URL column with --branches flag
+///
+/// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
 fn test_list_url_with_branches_flag(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
@@ -298,16 +300,30 @@ url = "http://localhost:{{ branch | hash_port }}"
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Parse JSON and verify both worktree and branch have URLs
+    // Parse JSON
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let items = json.as_array().unwrap();
     assert_eq!(items.len(), 2); // main worktree + feature branch
 
-    // Both items should have URLs
-    for item in items {
-        let url = item["url"].as_str().unwrap();
-        assert!(url.starts_with("http://localhost:"));
-    }
+    // Worktree should have URL, branch should not (no dev server running for branches)
+    let worktree = items.iter().find(|i| i["kind"] == "worktree").unwrap();
+    let branch = items.iter().find(|i| i["kind"] == "branch").unwrap();
+
+    assert!(
+        worktree["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://localhost:"),
+        "Worktree should have URL"
+    );
+    assert!(
+        branch["url"].is_null(),
+        "Branch without worktree should not have URL"
+    );
+    assert!(
+        branch["url_active"].is_null(),
+        "Branch without worktree should not have url_active"
+    );
 }
 
 /// Test URL with {{ branch }} variable (not hash_port)
