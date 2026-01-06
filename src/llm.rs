@@ -2,11 +2,16 @@ use anyhow::Context;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use worktrunk::config::CommitGenerationConfig;
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
+use worktrunk::styling::warning_message;
 
 use minijinja::Environment;
+
+/// Track whether template-file deprecation warning has been shown this session
+static TEMPLATE_FILE_WARNING_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// Maximum diff size in characters before filtering kicks in
 const DIFF_SIZE_THRESHOLD: usize = 400_000;
@@ -325,6 +330,19 @@ fn load_template(
     match (inline, file) {
         (Some(inline), None) => Ok(inline.clone()),
         (None, Some(path)) => {
+            // Show deprecation warning once per session
+            if !TEMPLATE_FILE_WARNING_SHOWN.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "{}",
+                    warning_message(format!(
+                        "{} is deprecated and will be removed in a future release. \
+                        Use inline template instead. If you need this feature, comment on: \
+                        https://github.com/max-sixty/worktrunk/issues/444",
+                        file_type_name
+                    ))
+                );
+            }
+
             let expanded_path = PathBuf::from(shellexpand::tilde(path).as_ref());
             std::fs::read_to_string(&expanded_path).map_err(|e| {
                 anyhow::Error::from(worktrunk::git::GitError::Other {

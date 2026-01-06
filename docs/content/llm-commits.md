@@ -147,16 +147,6 @@ Diff:
 """
 ```
 
-Or load templates from files (supports `~` expansion):
-
-```toml
-[commit-generation]
-command = "llm"
-args = ["-m", "claude-haiku-4.5"]
-template-file = "~/.config/worktrunk/commit-template.txt"
-squash-template-file = "~/.config/worktrunk/squash-template.txt"
-```
-
 ### Template syntax
 
 Templates use [minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html), which supports:
