@@ -550,4 +550,16 @@ approved-commands = [
 "#
         );
     }
+
+    #[test]
+    fn test_check_and_migrate_write_failure() {
+        // Test the write error path by using a non-existent directory
+        let content = r#"post-create = "{{ repo_root }}/script.sh""#;
+        let non_existent_path = std::path::Path::new("/nonexistent/dir/config.toml");
+
+        // Should return Ok(true) even if write fails - the function logs error but doesn't fail
+        let result = check_and_migrate(non_existent_path, content, true, "Test config", None);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
 }
