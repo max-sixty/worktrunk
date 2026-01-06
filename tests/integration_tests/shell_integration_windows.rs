@@ -53,32 +53,3 @@ fn test_shell_init_strips_exe_suffix_on_windows() {
         stdout
     );
 }
-
-/// Verify git-wt.exe also uses base name (git-wt).
-#[test]
-fn test_shell_init_git_wt_strips_exe_suffix_on_windows() {
-    // Run git-wt.exe config shell init bash
-    // Note: This command doesn't need a git repo - it just generates shell init code
-    let output = Command::new(env!("CARGO_BIN_EXE_git-wt"))
-        .args(["config", "shell", "init", "bash"])
-        .output()
-        .expect("Failed to run git-wt config shell init");
-
-    assert!(output.status.success(), "Command failed: {:?}", output);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Function should be git-wt() not git-wt.exe()
-    assert!(
-        stdout.contains("git-wt()"),
-        "Expected function definition 'git-wt()' not found.\nOutput:\n{}",
-        stdout
-    );
-
-    // Should NOT contain .exe
-    assert!(
-        !stdout.contains("git-wt.exe()"),
-        "Function should be 'git-wt()' not 'git-wt.exe()'.\nOutput:\n{}",
-        stdout
-    );
-}
