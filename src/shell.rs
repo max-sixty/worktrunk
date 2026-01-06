@@ -1013,20 +1013,29 @@ mod tests {
         // Fish config path should include prefix in filename
         let fish_paths = Shell::Fish.config_paths(prefix).unwrap();
         assert!(
-            fish_paths[0].to_string_lossy().contains("custom-wt.fish"),
+            fish_paths[0]
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("custom-wt.fish")),
             "Fish config should include prefix in filename"
         );
 
         // Bash and Zsh config paths are fixed (not affected by prefix)
         let bash_paths = Shell::Bash.config_paths(prefix).unwrap();
         assert!(
-            bash_paths[0].to_string_lossy().contains(".bashrc"),
+            bash_paths[0]
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains(".bashrc")),
             "Bash config should be .bashrc"
         );
 
         let zsh_paths = Shell::Zsh.config_paths(prefix).unwrap();
         assert!(
-            zsh_paths[0].to_string_lossy().contains(".zshrc"),
+            zsh_paths[0]
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains(".zshrc")),
             "Zsh config should be .zshrc"
         );
     }
@@ -1038,21 +1047,30 @@ mod tests {
         // Bash completion should include prefix in path
         let bash_path = Shell::Bash.completion_path(prefix).unwrap();
         assert!(
-            bash_path.to_string_lossy().contains("my-prefix"),
+            bash_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("my-prefix")),
             "Bash completion should include prefix"
         );
 
         // Fish completion should include prefix in filename
         let fish_path = Shell::Fish.completion_path(prefix).unwrap();
         assert!(
-            fish_path.to_string_lossy().contains("my-prefix.fish"),
+            fish_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("my-prefix.fish")),
             "Fish completion should include prefix in filename"
         );
 
         // Zsh completion should include prefix
         let zsh_path = Shell::Zsh.completion_path(prefix).unwrap();
         assert!(
-            zsh_path.to_string_lossy().contains("_my-prefix"),
+            zsh_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("_my-prefix")),
             "Zsh completion should include underscore prefix"
         );
     }

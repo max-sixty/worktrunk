@@ -611,7 +611,8 @@ pub fn handle_switch(
 
     // Create the worktree
     // Build git worktree add command
-    let mut args = vec!["worktree", "add", worktree_path.to_str().unwrap()];
+    let worktree_path_str = worktree_path.to_string_lossy();
+    let mut args = vec!["worktree", "add", worktree_path_str.as_ref()];
 
     // Use the resolved base, or default to default branch if creating without a base.
     // For bare repos with no branches yet (bootstrap case), allow None to create orphan branch.
@@ -975,6 +976,7 @@ pub fn handle_push(
 
     // Get git common dir for the push
     let git_common_dir = repo.git_common_dir()?;
+    let git_common_dir_str = git_common_dir.to_string_lossy();
 
     // Perform the push - stash guard will auto-restore on any exit path
     // Use --receive-pack to pass config to the receiving end without permanently mutating repo config
@@ -982,7 +984,7 @@ pub fn handle_push(
     repo.run_command(&[
         "push",
         "--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack",
-        git_common_dir.to_str().unwrap(),
+        git_common_dir_str.as_ref(),
         &push_target,
     ])
     .map_err(|e| {

@@ -61,6 +61,8 @@ fn format_relative_time_impl(timestamp: i64, now: i64) -> String {
 /// - Sibling: `../sibling`
 /// - Unrelated paths fall back to `~/...` or absolute
 pub fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
+    use std::path::Component;
+
     // Same path = main worktree
     if path == main_worktree_path {
         return ".".to_string();
@@ -68,13 +70,12 @@ pub fn shorten_path(path: &Path, main_worktree_path: &Path) -> String {
 
     // Try to compute relative path
     if let Some(relative) = pathdiff::diff_paths(path, main_worktree_path) {
-        let rel_str = relative.display().to_string();
         // If relative path starts with "..", it's a sibling/ancestor
         // Otherwise prefix with "./" (or ".\" on Windows) for clarity
-        if rel_str.starts_with("..") {
-            rel_str
+        if relative.components().next() == Some(Component::ParentDir) {
+            relative.display().to_string()
         } else {
-            format!(".{}{}", std::path::MAIN_SEPARATOR, rel_str)
+            format!(".{}{}", std::path::MAIN_SEPARATOR, relative.display())
         }
     } else {
         // Can't compute relative path (e.g., different drives on Windows)

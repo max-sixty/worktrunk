@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use worktrunk::git::{Repository, parse_owner_repo, parse_remote_host, parse_remote_owner};
 use worktrunk::path::sanitize_for_filename;
@@ -128,6 +128,8 @@ mod tests {
 
     #[test]
     fn test_ttl_jitter_range_and_determinism() {
+        use std::path::Path;
+
         // Check range: TTL should be in [30, 60)
         let paths = [
             "/tmp/repo1",
@@ -136,7 +138,7 @@ mod tests {
             "/home/user/code",
         ];
         for path in paths {
-            let ttl = CachedCiStatus::ttl_for_repo(path);
+            let ttl = CachedCiStatus::ttl_for_repo(Path::new(path));
             assert!(
                 (30..60).contains(&ttl),
                 "TTL {} for path {} should be in [30, 60)",
@@ -146,7 +148,7 @@ mod tests {
         }
 
         // Check determinism: same path should always produce same TTL
-        let path = "/some/consistent/path";
+        let path = Path::new("/some/consistent/path");
         let ttl1 = CachedCiStatus::ttl_for_repo(path);
         let ttl2 = CachedCiStatus::ttl_for_repo(path);
         assert_eq!(ttl1, ttl2, "Same path should produce same TTL");
@@ -155,7 +157,7 @@ mod tests {
         let diverse_paths: Vec<_> = (0..20).map(|i| format!("/repo/path{}", i)).collect();
         let ttls: std::collections::HashSet<_> = diverse_paths
             .iter()
-            .map(|p| CachedCiStatus::ttl_for_repo(p))
+            .map(|p| CachedCiStatus::ttl_for_repo(Path::new(p)))
             .collect();
         // With 20 paths mapping to 30 possible values, we expect good diversity
         assert!(
@@ -854,12 +856,13 @@ impl CachedCiStatus {
     ///
     /// Different directories get different TTLs [30, 60) seconds, which spreads
     /// out cache expirations when multiple statuslines run concurrently.
-    pub(crate) fn ttl_for_repo(repo_root: &str) -> u64 {
+    pub(crate) fn ttl_for_repo(repo_root: &Path) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        repo_root.hash(&mut hasher);
+        // Hash the path bytes directly for consistent TTL across string representations
+        repo_root.as_os_str().hash(&mut hasher);
         let hash = hasher.finish();
 
         // Map hash to jitter range [0, TTL_JITTER_SECS)
@@ -868,7 +871,7 @@ impl CachedCiStatus {
     }
 
     /// Check if the cache is still valid
-    fn is_valid(&self, current_head: &str, now_secs: u64, repo_root: &str) -> bool {
+    fn is_valid(&self, current_head: &str, now_secs: u64, repo_root: &Path) -> bool {
         // Cache is valid if:
         // 1. HEAD hasn't changed (same commit)
         // 2. TTL hasn't expired (with deterministic jitter based on repo path)
@@ -877,21 +880,21 @@ impl CachedCiStatus {
     }
 
     /// Get the cache directory path: `.git/wt-cache/ci-status/`
-    fn cache_dir(repo_root: &str) -> Option<PathBuf> {
+    fn cache_dir(repo_root: &Path) -> Option<PathBuf> {
         let repo = Repository::at(repo_root);
         let git_common_dir = repo.git_common_dir().ok()?;
         Some(git_common_dir.join("wt-cache").join("ci-status"))
     }
 
     /// Get the cache file path for a branch.
-    fn cache_file(branch: &str, repo_root: &str) -> Option<PathBuf> {
+    fn cache_file(branch: &str, repo_root: &Path) -> Option<PathBuf> {
         let dir = Self::cache_dir(repo_root)?;
         let safe_branch = sanitize_for_filename(branch);
         Some(dir.join(format!("{safe_branch}.json")))
     }
 
     /// Read cached CI status from file.
-    fn read(branch: &str, repo_root: &str) -> Option<Self> {
+    fn read(branch: &str, repo_root: &Path) -> Option<Self> {
         let path = Self::cache_file(branch, repo_root)?;
         let json = fs::read_to_string(&path).ok()?;
         serde_json::from_str(&json).ok()
@@ -901,7 +904,7 @@ impl CachedCiStatus {
     ///
     /// Uses atomic write (write to temp file, then rename) to avoid corruption
     /// and minimize lock contention on Windows.
-    fn write(&self, branch: &str, repo_root: &str) {
+    fn write(&self, branch: &str, repo_root: &Path) {
         let Some(path) = Self::cache_file(branch, repo_root) else {
             log::debug!("Failed to get cache path for {}", branch);
             return;
@@ -941,7 +944,7 @@ impl CachedCiStatus {
             Err(_) => return Vec::new(),
         };
 
-        let Some(cache_dir) = Self::cache_dir(repo_root.to_str().unwrap_or_default()) else {
+        let Some(cache_dir) = Self::cache_dir(repo_root) else {
             return Vec::new();
         };
 
@@ -975,7 +978,7 @@ impl CachedCiStatus {
             Err(_) => return 0,
         };
 
-        let Some(cache_dir) = Self::cache_dir(repo_root.to_str().unwrap_or_default()) else {
+        let Some(cache_dir) = Self::cache_dir(repo_root) else {
             return 0;
         };
 
@@ -1100,20 +1103,16 @@ impl PrStatus {
         repo_path: &std::path::Path,
         has_upstream: bool,
     ) -> Option<Self> {
-        // We run gh/glab commands from the repo directory to let them auto-detect the correct repo
-        // (including upstream repos for forks)
-        let repo_root = repo_path.to_str()?;
-
         // Check cache first to avoid hitting API rate limits
         let now_secs = get_now();
 
-        if let Some(cached) = CachedCiStatus::read(branch, repo_root) {
-            if cached.is_valid(local_head, now_secs, repo_root) {
+        if let Some(cached) = CachedCiStatus::read(branch, repo_path) {
+            if cached.is_valid(local_head, now_secs, repo_path) {
                 log::debug!(
                     "Using cached CI status for {} (age={}s, ttl={}s, status={:?})",
                     branch,
                     now_secs - cached.checked_at,
-                    CachedCiStatus::ttl_for_repo(repo_root),
+                    CachedCiStatus::ttl_for_repo(repo_path),
                     cached.status.as_ref().map(|s| &s.ci_status)
                 );
                 return cached.status;
@@ -1122,13 +1121,16 @@ impl PrStatus {
                 "Cache expired for {} (age={}s, ttl={}s, head_match={})",
                 branch,
                 now_secs - cached.checked_at,
-                CachedCiStatus::ttl_for_repo(repo_root),
+                CachedCiStatus::ttl_for_repo(repo_path),
                 cached.head == local_head
             );
         }
 
         // Cache miss or expired - fetch fresh status
-        let status = Self::detect_uncached(branch, local_head, repo_root, has_upstream);
+        // We run gh/glab commands from the repo directory to let them auto-detect the correct repo
+        // (including upstream repos for forks)
+        let repo_root = repo_path.to_string_lossy();
+        let status = Self::detect_uncached(branch, local_head, &repo_root, has_upstream);
 
         // Cache the result (including None - means no CI found for this branch)
         let cached = CachedCiStatus {
@@ -1136,7 +1138,7 @@ impl PrStatus {
             checked_at: now_secs,
             head: local_head.to_string(),
         };
-        cached.write(branch, repo_root);
+        cached.write(branch, repo_path);
 
         status
     }
