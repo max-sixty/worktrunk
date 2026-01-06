@@ -420,7 +420,8 @@ fn normalize_report(content: &str) -> String {
     // Normalize temp paths in context (repo paths) - handles both Unix and Windows paths
     // Unix: /var/folders/.../repo.xxx or /tmp/.../repo.xxx
     // Windows: D:\a\worktrunk\worktrunk\... or C:\Users\...\repo.xxx
-    result = regex::Regex::new(r"(/[^\s)]+/repo\.[^\s)]+|[A-Z]:\\[^\s)]+)")
+    // Match Windows paths first (drive letter + colon + any path chars)
+    result = regex::Regex::new(r"([A-Z]:[^\s)]+|/[^\s)]+/repo\.[^\s)]+)")
         .unwrap()
         .replace_all(&result, "[REPO_PATH]")
         .to_string();
