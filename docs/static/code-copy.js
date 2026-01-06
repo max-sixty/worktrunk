@@ -1,5 +1,5 @@
 // Copy-to-clipboard for code blocks
-// Strips leading `$ ` from terminal blocks
+// Strips leading `$ ` from bash/shell blocks (detected via data-lang or syntect classes)
 // Wraps pre in a container so copy button stays fixed during horizontal scroll
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -19,10 +19,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     button.addEventListener('click', function() {
       // Check if this is a bash/shell code block
-      // Note: language-* classes are stripped at build time (1Password bug workaround)
-      // so we check for z-source z-shell instead
       const codeEl = block.querySelector('code');
-      const isBash = codeEl && /z-shell|z-bash/.test(codeEl.className);
+      const isBash = codeEl && (
+        codeEl.dataset.lang === 'bash' ||
+        codeEl.dataset.lang === 'console' ||
+        /z-shell|z-bash/.test(codeEl.innerHTML)
+      );
       const isTerminal = block.classList.contains('terminal');
       let text = block.textContent;
 
