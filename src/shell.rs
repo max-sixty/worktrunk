@@ -1384,6 +1384,8 @@ mod tests {
     /// `is_shell_integration_line()` can detect.
     ///
     /// This prevents install and detection from drifting out of sync.
+    /// Note: .exe variants are not included because `binary_name()` strips
+    /// the .exe suffix on Windows (MSYS2/Git Bash handles the resolution).
     #[rstest]
     fn test_config_line_detected_by_is_shell_integration_line(
         #[values(Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell)] shell: Shell,

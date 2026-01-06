@@ -50,12 +50,13 @@ use worktrunk::HookType;
 ///
 /// Used as the default for `--cmd` in shell integration commands.
 /// When invoked as `git-wt`, returns "git-wt"; when invoked as `wt`, returns "wt".
+/// On Windows, strips `.exe` extension — users should use `wt` not `wt.exe` in aliases.
 fn binary_name() -> String {
     std::env::args()
         .next()
         .and_then(|arg0| {
             std::path::Path::new(&arg0)
-                .file_stem() // Use file_stem to strip .exe on Windows
+                .file_stem()
                 .and_then(|name| name.to_str())
                 .map(String::from)
         })
