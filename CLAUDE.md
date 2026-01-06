@@ -68,7 +68,7 @@ When working in Claude Code web, run the setup script first:
 ./dev/setup-claude-code-web.sh
 ```
 
-This installs required shells (zsh, fish) for shell integration tests and builds the project. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) automatically skip when running as root, which is common in containerized environments.
+This installs required shells (zsh, fish) for shell integration tests and builds the project. Also installs `gh` and other dev tools—run this if any command is not found. The permission tests (`test_permission_error_prevents_save`, `test_approval_prompt_permission_error`) automatically skip when running as root, which is common in containerized environments.
 
 ### Shell/PTY Integration Tests
 
