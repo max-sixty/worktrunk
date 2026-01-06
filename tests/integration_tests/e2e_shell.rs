@@ -3,21 +3,9 @@
 
 use crate::common::{
     TestRepo, repo,
-    shell::{
-        execute_shell_script, generate_init_code, path_export_syntax, shell_available, wt_bin_dir,
-    },
+    shell::{execute_shell_script, generate_init_code, path_export_syntax, wt_bin_dir},
 };
 use rstest::rstest;
-
-/// Skip test if the shell is not available on this system.
-macro_rules! skip_if_shell_unavailable {
-    ($shell:expr) => {
-        if !shell_available($shell) {
-            eprintln!("Skipping test: {} not available on this system", $shell);
-            return;
-        }
-    };
-}
 
 #[rstest]
 // Test with bash (baseline) and fish (alternate syntax)
@@ -25,8 +13,6 @@ macro_rules! skip_if_shell_unavailable {
 #[case("fish")]
 #[case("zsh")]
 fn test_shell_integration_switch_and_remove(#[case] shell: &str, repo: TestRepo) {
-    skip_if_shell_unavailable!(shell);
-
     let init_code = generate_init_code(&repo, shell);
     let bin_path = wt_bin_dir();
 
@@ -79,8 +65,6 @@ fn test_shell_integration_switch_and_remove(#[case] shell: &str, repo: TestRepo)
 
 #[rstest]
 fn test_bash_shell_integration_error_handling(repo: TestRepo) {
-    skip_if_shell_unavailable!("bash");
-
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
 
@@ -119,8 +103,6 @@ fn test_bash_shell_integration_error_handling(repo: TestRepo) {
 
 #[rstest]
 fn test_bash_shell_integration_switch_existing_worktree(repo: TestRepo) {
-    skip_if_shell_unavailable!("bash");
-
     let init_code = generate_init_code(&repo, "bash");
     let bin_path = wt_bin_dir();
     let repo_root = repo.root_path().display();

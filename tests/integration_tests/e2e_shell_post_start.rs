@@ -3,24 +3,12 @@
 
 use crate::common::{
     TestRepo, repo, resolve_git_common_dir,
-    shell::{
-        execute_shell_script, generate_init_code, path_export_syntax, shell_available, wt_bin_dir,
-    },
+    shell::{execute_shell_script, generate_init_code, path_export_syntax, wt_bin_dir},
     wait_for_file, wait_for_file_content,
 };
 use rstest::rstest;
 use std::fs;
 use std::time::Duration;
-
-/// Skip test if the shell is not available on this system.
-macro_rules! skip_if_shell_unavailable {
-    ($shell:expr) => {
-        if !shell_available($shell) {
-            eprintln!("Skipping test: {} not available on this system", $shell);
-            return;
-        }
-    };
-}
 
 /// Test that post-start background commands work with shell integration
 #[rstest]
@@ -28,8 +16,6 @@ macro_rules! skip_if_shell_unavailable {
 #[case("bash")]
 #[case("fish")]
 fn test_shell_integration_post_start_background(#[case] shell: &str, repo: TestRepo) {
-    skip_if_shell_unavailable!(shell);
-
     // Create project config with background command
     let config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&config_dir).unwrap();

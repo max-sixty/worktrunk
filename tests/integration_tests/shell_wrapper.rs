@@ -37,24 +37,12 @@
 
 use crate::common::TestRepo;
 use crate::common::canonicalize;
-use crate::common::shell::shell_available;
 use insta::assert_snapshot;
 use insta_cmd::get_cargo_bin;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::LazyLock;
-
-/// Skip test if the shell is not available.
-/// Returns early from the test with a message.
-macro_rules! skip_if_shell_unavailable {
-    ($shell:expr) => {
-        if !shell_available($shell) {
-            eprintln!("Skipping test: {} not available on this system", $shell);
-            return;
-        }
-    };
-}
 
 /// Regex for normalizing temporary directory paths in test snapshots
 static TMPDIR_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -699,8 +687,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_handles_command_failure(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Create a worktree that already exists
         repo.add_worktree("existing");
 
@@ -732,8 +718,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_switch_create(#[case] shell: &str, repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         let output = exec_through_wrapper(shell, &repo, "switch", &["--create", "feature"]);
 
         // Shell-agnostic assertions
@@ -758,8 +742,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_remove(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Create a worktree to remove
         repo.add_worktree("to-remove");
 
@@ -780,7 +762,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_step_for_each(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
         repo.commit("Initial commit");
 
         // Create additional worktrees
@@ -839,8 +820,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_merge(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Create a feature branch
         repo.add_worktree("feature");
 
@@ -861,8 +840,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_switch_with_execute(#[case] shell: &str, repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Use --yes to skip approval prompt in tests
         let output = exec_through_wrapper(
             shell,
@@ -901,8 +878,6 @@ mod tests {
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_execute_exit_code_propagation(#[case] shell: &str, repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Use --yes to skip approval prompt in tests
         // wt should succeed (creates worktree), but the execute command should fail with exit 42
         let output = exec_through_wrapper(
@@ -945,8 +920,6 @@ mod tests {
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
     fn test_wrapper_switch_with_hooks(#[case] shell: &str, repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Create project config with both post-create and post-start hooks
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -998,8 +971,6 @@ approved-commands = [
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
     fn test_wrapper_merge_with_pre_merge_success(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Create project config with pre-merge validation
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -1050,8 +1021,6 @@ approved-commands = [
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
     fn test_wrapper_merge_with_pre_merge_failure(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Create project config with failing pre-merge validation
         let config_dir = repo.root_path().join(".config");
         fs::create_dir_all(&config_dir).unwrap();
@@ -1107,8 +1076,6 @@ approved-commands = [
     #[case("zsh")]
     // #[case("fish")] // TODO: Fish shell has non-deterministic PTY output ordering
     fn test_wrapper_merge_with_mixed_stdout_stderr(#[case] shell: &str, mut repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
-
         // Copy the fixture script to the test repo to avoid path issues with special characters
         // (CARGO_MANIFEST_DIR may contain single quotes like worktrunk.'∅' which break shell parsing)
         let fixtures_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -2825,7 +2792,6 @@ for c in "${{COMPREPLY[@]}}"; do echo "${{c%%	*}}"; done
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_help_redirect_captures_all_output(#[case] shell: &str, repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
@@ -2976,7 +2942,6 @@ echo "SCRIPT_COMPLETED"
     #[case("zsh")]
     #[case("fish")]
     fn test_wrapper_help_interactive_uses_pager(#[case] shell: &str, repo: TestRepo) {
-        skip_if_shell_unavailable!(shell);
         use std::io::Read;
 
         let wt_bin = get_cargo_bin("wt");
