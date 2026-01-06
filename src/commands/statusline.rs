@@ -289,10 +289,9 @@ fn get_git_status_segments(
     let mut item = list::build_worktree_item(wt, is_home, true, false);
 
     // Load URL template from project config (if configured)
-    let url_template = repo
-        .worktree_root()
+    let url_template = ProjectConfig::load(repo, true)
         .ok()
-        .and_then(|root| ProjectConfig::load(root, Some(repo)).ok().flatten())
+        .flatten()
         .and_then(|config| config.list)
         .and_then(|list| list.url);
 

@@ -743,14 +743,9 @@ pub fn collect(
 
     // Check if URL template is configured (for layout column allocation).
     // Template expansion is deferred to post-skeleton to minimize time-to-skeleton.
-    let url_template = repo
-        .worktree_root()
+    let url_template = worktrunk::config::ProjectConfig::load(repo, true)
         .ok()
-        .and_then(|root| {
-            worktrunk::config::ProjectConfig::load(root, Some(repo))
-                .ok()
-                .flatten()
-        })
+        .flatten()
         .and_then(|config| config.list)
         .and_then(|list| list.url);
     // Initialize worktree items with identity fields and None for computed fields
