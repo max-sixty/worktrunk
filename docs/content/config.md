@@ -348,6 +348,13 @@ rebase = true          # Rebase onto target before merging
 remove = true          # Remove worktree after merge
 verify = true          # Run project hooks
 
+# Select Command Defaults
+# Configure pager behavior for `wt select` diff previews
+[select]
+# Pager command with flags for diff preview (overrides git's core.pager)
+# Use this to specify pager flags needed for non-TTY contexts
+# Example: pager = "delta --paging=never"
+
 # Approved Commands
 # Commands approved for project hooks in this repo
 # Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`

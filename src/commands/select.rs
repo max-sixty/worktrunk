@@ -25,10 +25,25 @@ use crate::pager::{git_config_pager, parse_pager_value};
 static CACHED_PAGER: OnceLock<Option<String>> = OnceLock::new();
 
 /// Get the cached pager command, initializing if needed.
+///
+/// Precedence (highest to lowest):
+/// 1. `[select] pager` in user config (explicit override, used as-is)
+/// 2. `GIT_PAGER` environment variable (with auto-detection applied)
+/// 3. `core.pager` git config (with auto-detection applied)
 fn get_diff_pager() -> Option<&'static String> {
     CACHED_PAGER
         .get_or_init(|| {
-            // GIT_PAGER takes precedence - if set (even to "cat" or empty), don't fall back
+            // Check user config first for explicit pager override
+            // When set, use exactly as specified (no auto-detection)
+            if let Ok(config) = WorktrunkConfig::load()
+                && let Some(select_config) = config.select
+                && let Some(pager) = select_config.pager
+                && !pager.trim().is_empty()
+            {
+                return Some(pager);
+            }
+
+            // GIT_PAGER takes precedence over core.pager
             if let Ok(pager) = std::env::var("GIT_PAGER") {
                 return parse_pager_value(&pager);
             }
@@ -44,10 +59,8 @@ fn get_diff_pager() -> Option<&'static String> {
 /// Some pagers like delta and bat spawn `less` by default, which hangs in
 /// non-TTY contexts like skim's preview panel. These need `--paging=never`.
 ///
-/// TODO: Replace this hardcoded detection with a config option like
-/// `select.pager = "delta --paging=never"` so users can specify their own
-/// pager command with appropriate flags. This would eliminate the need to
-/// maintain a list of pagers that need special handling.
+/// Used only when user hasn't set `[select] pager` config explicitly.
+/// When config is set, that value is used as-is without modification.
 fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
     // Split on whitespace to get the command name, then extract basename
     // Uses extract_filename_from_path for consistent handling of Windows paths and .exe
@@ -62,6 +75,15 @@ fn pager_needs_paging_disabled(pager_cmd: &str) -> bool {
                 || basename.eq_ignore_ascii_case("bat")
                 || basename.eq_ignore_ascii_case("batcat")
         })
+}
+
+/// Check if user has explicitly configured a select-specific pager.
+fn has_explicit_pager_config() -> bool {
+    WorktrunkConfig::load()
+        .ok()
+        .and_then(|config| config.select)
+        .and_then(|select| select.pager)
+        .is_some_and(|p| !p.trim().is_empty())
 }
 
 /// Maximum time to wait for pager to complete.
@@ -85,15 +107,19 @@ const MIN_PREVIEW_LINES: usize = 5;
 /// Run git diff piped directly through the pager as a streaming pipeline.
 ///
 /// Runs `git <args> | pager` as a single shell command, avoiding intermediate
-/// buffering. For pagers that spawn their own sub-pager (delta, bat), adds
-/// `--paging=never` to prevent them from spawning less.
-/// Returns None if pipeline fails or times out (caller should fall back to raw diff).
+/// buffering. Returns None if pipeline fails or times out (caller should fall back to raw diff).
+///
+/// When `[select] pager` is not configured, automatically appends `--paging=never` for
+/// delta/bat/batcat pagers to prevent hangs. To override this behavior, set an explicit
+/// pager command in config: `[select] pager = "delta"` (or with custom flags).
 fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String> {
     // Note: pager_cmd is expected to be valid shell code (like git's core.pager).
     // Users with paths containing special chars must quote them in their config.
 
-    // Some pagers spawn `less` by default which hangs in non-TTY contexts
-    let pager_with_args = if pager_needs_paging_disabled(pager_cmd) {
+    // Apply auto-detection only when user hasn't set explicit config
+    // If config is set, use the value as-is (user has full control)
+    let pager_with_args = if !has_explicit_pager_config() && pager_needs_paging_disabled(pager_cmd)
+    {
         format!("{} --paging=never", pager_cmd)
     } else {
         pager_cmd.to_string()

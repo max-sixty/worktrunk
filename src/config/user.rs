@@ -153,6 +153,10 @@ pub struct WorktrunkConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeConfig>,
 
+    /// Configuration for the `wt select` command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select: Option<SelectConfig>,
+
     // =========================================================================
     // User-level hooks (same syntax as project hooks, run before project hooks)
     // =========================================================================
@@ -295,6 +299,19 @@ pub struct MergeConfig {
     /// Run project hooks (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<bool>,
+}
+
+/// Configuration for the `wt select` command
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct SelectConfig {
+    /// Pager command with flags for diff preview
+    ///
+    /// Overrides git's core.pager for the select command's preview panel.
+    /// Use this to specify pager flags needed for non-TTY contexts.
+    ///
+    /// Example: `pager = "delta --paging=never"`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pager: Option<String>,
 }
 
 /// Default worktree path template
