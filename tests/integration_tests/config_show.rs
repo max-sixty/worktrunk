@@ -851,6 +851,57 @@ fn test_deprecated_template_variables_hint_clear_and_regenerate(
     );
 }
 
+/// Test that user config deprecated variables hint shows "delete file" message on second run
+///
+/// User config has no repo context, so hint deduplication is based on file existence.
+/// When the .new file already exists, subsequent runs should show a hint about deleting
+/// the file to regenerate (not about clearing a git config hint).
+#[rstest]
+fn test_user_config_deprecated_template_variables_hint_deduplication(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write user config with deprecated variables using the test config path
+    // (WORKTRUNK_CONFIG_PATH is set by repo.wt_command(), not .config/worktrunk/config.toml)
+    repo.write_test_config(
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    );
+    let user_config_path = repo.test_config_path().to_path_buf();
+
+    // First run - should create migration file
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "First run should succeed: {:?}",
+            stderr
+        );
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "First run should write migration file, got: {stderr}"
+        );
+    }
+
+    let migration_file = user_config_path.with_extension("toml.new");
+    assert!(migration_file.exists(), "Migration file should exist");
+
+    // Second run - should show hint about deleting the file (not about clearing git hint)
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+}
+
 /// Test `wt config show` with shell integration active (WORKTRUNK_DIRECTIVE_FILE set)
 #[rstest]
 fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: TempDir) {
