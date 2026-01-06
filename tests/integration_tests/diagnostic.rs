@@ -55,7 +55,11 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    let diagnostic_path = repo.root_path().join(".git/wt-logs/diagnostic.md");
+    let diagnostic_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("diagnostic.md");
     assert!(
         diagnostic_path.exists(),
         "Diagnostic file should be generated at {:?}",
@@ -97,7 +101,11 @@ fn test_diagnostic_not_created_without_verbose(mut repo: TestRepo) {
     repo.wt_command().args(["list"]).output().unwrap();
 
     // Diagnostic file should NOT exist
-    let diagnostic_path = repo.root_path().join(".git/wt-logs/diagnostic.md");
+    let diagnostic_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("diagnostic.md");
     assert!(
         !diagnostic_path.exists(),
         "Diagnostic file should NOT be created without --verbose"
@@ -136,7 +144,13 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    let content = fs::read_to_string(repo.root_path().join(".git/wt-logs/diagnostic.md")).unwrap();
+    let content = fs::read_to_string(
+        repo.root_path()
+            .join(".git")
+            .join("wt-logs")
+            .join("diagnostic.md"),
+    )
+    .unwrap();
 
     // Header section
     assert!(
@@ -198,7 +212,13 @@ fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    let content = fs::read_to_string(repo.root_path().join(".git/wt-logs/diagnostic.md")).unwrap();
+    let content = fs::read_to_string(
+        repo.root_path()
+            .join(".git")
+            .join("wt-logs")
+            .join("diagnostic.md"),
+    )
+    .unwrap();
 
     // ANSI escape codes start with \x1b[ or \033[
     assert!(
@@ -222,7 +242,13 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    let content = fs::read_to_string(repo.root_path().join(".git/wt-logs/diagnostic.md")).unwrap();
+    let content = fs::read_to_string(
+        repo.root_path()
+            .join(".git")
+            .join("wt-logs")
+            .join("diagnostic.md"),
+    )
+    .unwrap();
 
     // Extract verbose log section
     let verbose_start = content
@@ -302,7 +328,7 @@ fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
         .unwrap();
 
     // Should be in .git/wt-logs/ directory
-    let wt_logs_dir = repo.root_path().join(".git/wt-logs");
+    let wt_logs_dir = repo.root_path().join(".git").join("wt-logs");
     assert!(wt_logs_dir.exists(), "wt-logs directory should exist");
 
     let diagnostic_path = wt_logs_dir.join("diagnostic.md");
@@ -330,7 +356,11 @@ fn test_verbose_log_file_created(mut repo: TestRepo) {
         .output()
         .unwrap();
 
-    let verbose_log_path = repo.root_path().join(".git/wt-logs/verbose.log");
+    let verbose_log_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("verbose.log");
     assert!(
         verbose_log_path.exists(),
         "verbose.log should be created with --verbose"

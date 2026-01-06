@@ -188,9 +188,10 @@ impl DiagnosticReport {
         let mut hint = format!("Diagnostic saved: {path_display}");
 
         if is_gh_installed() {
-            let abs_path = path.display();
+            // Escape single quotes for shell: 'it'\''s' -> it's
+            let path_str = path.to_string_lossy().replace('\'', "'\\''");
             hint.push_str(&cformat!(
-                "\n   <bright-black>gh issue create -R max-sixty/worktrunk -t 'Bug report' --body-file '{abs_path}'</>"
+                "\n   <bright-black>gh issue create -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
             ));
         }
 

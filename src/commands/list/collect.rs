@@ -1092,7 +1092,7 @@ pub fn collect(
         }
 
         diag.push_str(
-            "\n\nThis likely indicates a git command hung. Run with RUST_LOG=debug for details.",
+            "\n\nThis likely indicates a git command hung. Run with --verbose for details.",
         );
 
         crate::output::print(warning_message(&diag))?;
