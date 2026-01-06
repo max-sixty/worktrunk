@@ -29,6 +29,11 @@ With `--branches`/`--remotes`:
 **DO NOT add operations here without very good reason.** Template expansion,
 per-item computations, network I/O — all must wait until after skeleton.
 
+**TODO: Phase 0 optimization** — Consider a "Phase 0" that renders just the first
+few columns (Branch, Status) without computing widths for all columns. This would
+show *something* even faster, then expand the table as more column widths are
+computed. Trade-off: table width might shift as columns are added.
+
 ### Phase 2: Skeleton Render
 
 The skeleton shows:
@@ -48,10 +53,11 @@ Everything else runs after the skeleton appears:
 
 These operations update cells progressively as they complete.
 
-**URL column example:** The skeleton allocates space for the URL column (width
-estimated from template + longest branch in Phase 1). URL template expansion
-happens in task spawning (Phase 3), parallelized across worktrees. Two-phase
-update:
+**URL column example:** The skeleton allocates space for the URL column using a
+fast heuristic (checks for `hash_port` in template, no expansion). When hyperlinks
+are supported, the display is `:PORT` (6 chars) instead of the full URL. Template
+expansion happens in task spawning (Phase 3), parallelized across worktrees.
+Two-phase update:
 
 1. URL appears immediately in normal styling (sent before health check task)
 2. If health check fails (port not listening), URL dims
