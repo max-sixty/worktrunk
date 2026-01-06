@@ -52,12 +52,14 @@ impl DiffColumnConfig {
     /// - 648 / 100 = 6 → "6C" (represents ~600)
     /// - 1999 / 1000 = 1 → "1K" (represents ~1000)
     ///
+    /// Values >= 10,000 display as "∞" to indicate "very large" without false precision.
+    ///
     /// Examples (Signs):  100 -> ("100", false), 648 -> ("648", false), 1000 -> ("1K", true)
     /// Examples (Arrows): 100 -> ("1C", true),   648 -> ("6C", true),   1000 -> ("1K", true)
     fn format_overflow(value: usize, variant: DiffVariant) -> (String, bool) {
         if value >= 10_000 {
-            // Cap at 9K to maintain 2-char limit (indicates "very large")
-            ("9K".to_string(), true)
+            // Use ∞ for extreme values to avoid false precision (9K could be 9K or 900K)
+            ("∞".to_string(), true)
         } else if value >= 1_000 {
             (format!("{}K", value / 1_000), true)
         } else if value >= 100 {
@@ -91,7 +93,7 @@ impl DiffColumnConfig {
         } else {
             (value.to_string(), false)
         };
-        let content_len = 1 + value_str.len(); // symbol + digits
+        let content_len = 1 + value_str.width(); // symbol + display width
         let padding_needed = width.saturating_sub(content_len);
 
         // Add left padding for right-alignment
@@ -1307,7 +1309,7 @@ mod tests {
             rendered2
         );
 
-        // Case 4: Extreme overflow (>= 10K values cap at 9K for 2-char limit)
+        // Case 4: Extreme overflow (>= 10K values show ∞ to avoid false precision)
         let extreme_overflow = format_diff_like_column(
             100_000,
             200_000,
@@ -1330,13 +1332,13 @@ mod tests {
         );
         let extreme_rendered = extreme_overflow.render();
         assert!(
-            extreme_rendered.contains("+9") && extreme_rendered.contains('K'),
-            "100K+ overflow should cap at +9K (may have styling), got: {}",
+            extreme_rendered.contains("+∞"),
+            "100K+ overflow should show +∞ (may have styling), got: {}",
             extreme_rendered
         );
         assert!(
-            extreme_rendered.contains("-9") && extreme_rendered.contains('K'),
-            "100K+ overflow should cap at -9K (may have styling), got: {}",
+            extreme_rendered.contains("-∞"),
+            "100K+ overflow should show -∞ (may have styling), got: {}",
             extreme_rendered
         );
 
