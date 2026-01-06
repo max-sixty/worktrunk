@@ -275,6 +275,22 @@ pub struct FileDetectionResult {
     /// Lines containing the command at word boundary but NOT detected.
     /// These are potential false negatives.
     pub unmatched_candidates: Vec<DetectedLine>,
+    /// Aliases that bypass shell integration by pointing to a binary path.
+    /// e.g., `alias gwt="/usr/bin/wt"` or `alias wt="wt.exe"`
+    pub bypass_aliases: Vec<BypassAlias>,
+}
+
+/// An alias that bypasses shell integration by pointing to a binary.
+#[derive(Debug, Clone)]
+pub struct BypassAlias {
+    /// Line number in the config file (1-indexed).
+    pub line_number: usize,
+    /// The alias name (e.g., "gwt").
+    pub alias_name: String,
+    /// The target the alias points to (e.g., "/usr/bin/wt" or "wt.exe").
+    pub target: String,
+    /// The full line content.
+    pub content: String,
 }
 
 /// Scan a single file for shell integration lines and potential false negatives.
@@ -286,6 +302,7 @@ fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
     let reader = BufReader::new(file);
     let mut matched_lines = Vec::new();
     let mut unmatched_candidates = Vec::new();
+    let mut bypass_aliases = Vec::new();
 
     for (line_number, line) in reader.lines().map_while(Result::ok).enumerate() {
         let line_number = line_number + 1; // 1-based
@@ -306,10 +323,18 @@ fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
                 content: line.clone(),
             });
         }
+
+        // Check for aliases that bypass shell integration
+        if let Some(alias) = detect_bypass_alias(trimmed, cmd, line_number) {
+            bypass_aliases.push(BypassAlias {
+                content: line.clone(),
+                ..alias
+            });
+        }
     }
 
     // Only return if we found something interesting
-    if matched_lines.is_empty() && unmatched_candidates.is_empty() {
+    if matched_lines.is_empty() && unmatched_candidates.is_empty() && bypass_aliases.is_empty() {
         return None;
     }
 
@@ -317,6 +342,80 @@ fn scan_file(path: &std::path::Path, cmd: &str) -> Option<FileDetectionResult> {
         path: path.to_path_buf(),
         matched_lines,
         unmatched_candidates,
+        bypass_aliases,
+    })
+}
+
+/// Detect if a line defines an alias that bypasses shell integration.
+///
+/// Returns `Some(BypassAlias)` if the line is an alias pointing to a binary path.
+/// Binary paths are detected by: containing `/` or `\`, or ending with `.exe`.
+///
+/// Examples that bypass:
+/// - `alias gwt="/usr/bin/wt"` — absolute path
+/// - `alias wt="wt.exe"` — Windows binary
+/// - `alias gwt='git-wt.exe'` — Windows binary with single quotes
+///
+/// Examples that don't bypass:
+/// - `alias gwt="wt"` — points to function name (OK)
+/// - `alias gwt="git-wt"` — points to function name (OK)
+fn detect_bypass_alias(line: &str, cmd: &str, line_number: usize) -> Option<BypassAlias> {
+    // Match patterns like: alias <name>="<target>" or alias <name>='<target>'
+    // Also handle: alias <name>=<target> (no quotes, less common)
+    let line = line.trim();
+
+    // Must start with "alias "
+    if !line.starts_with("alias ") {
+        return None;
+    }
+
+    let after_alias = line[6..].trim_start();
+
+    // Find the = sign
+    let eq_pos = after_alias.find('=')?;
+    let alias_name = after_alias[..eq_pos].trim();
+    let target_part = after_alias[eq_pos + 1..].trim();
+
+    // Extract target, handling quotes
+    let target = if let Some(stripped) = target_part.strip_prefix('"') {
+        // Double-quoted: find closing quote
+        let end = stripped.find('"')?;
+        &stripped[..end]
+    } else if let Some(stripped) = target_part.strip_prefix('\'') {
+        // Single-quoted: find closing quote
+        let end = stripped.find('\'')?;
+        &stripped[..end]
+    } else {
+        // Unquoted: take until whitespace or end
+        target_part.split_whitespace().next()?
+    };
+
+    // Check if target looks like a binary path (contains path separators or .exe)
+    let target_lower = target.to_ascii_lowercase();
+    let is_binary_target =
+        target.contains('/') || target.contains('\\') || target_lower.ends_with(".exe");
+
+    if !is_binary_target {
+        return None;
+    }
+
+    // Check if the target references our command (wt, git-wt, etc.)
+    // We check if target contains the cmd name to catch:
+    // - /usr/bin/wt
+    // - wt.exe
+    // - /path/to/git-wt
+    // - git-wt.exe
+    let target_lower = target.to_ascii_lowercase();
+    let cmd_lower = cmd.to_ascii_lowercase();
+    if !target_lower.contains(&cmd_lower) {
+        return None;
+    }
+
+    Some(BypassAlias {
+        line_number,
+        alias_name: alias_name.to_string(),
+        target: target.to_string(),
+        content: String::new(), // Filled in by caller
     })
 }
 
@@ -1485,4 +1584,65 @@ mod tests {
     // - Warning message before shell restart ("not installed" vs "restart to activate")
     // - `wt config shell uninstall` (lines might not be found)
     // ------------------------------------------------------------------------
+
+    // ==========================================================================
+    // ALIAS BYPASS DETECTION TESTS (Issue #348)
+    // ==========================================================================
+
+    /// Aliases pointing to binary paths should be detected as bypassing shell integration
+    #[rstest]
+    #[case::absolute_path(r#"alias gwt="/usr/bin/wt""#, "wt", "gwt", "/usr/bin/wt")]
+    #[case::exe_suffix(r#"alias gwt="wt.exe""#, "wt", "gwt", "wt.exe")]
+    #[case::exe_with_path(r#"alias gwt="/path/to/wt.exe""#, "wt", "gwt", "/path/to/wt.exe")]
+    #[case::single_quotes(r#"alias gwt='/usr/bin/wt'"#, "wt", "gwt", "/usr/bin/wt")]
+    #[case::git_wt_exe(r#"alias gwt="git-wt.exe""#, "git-wt", "gwt", "git-wt.exe")]
+    #[case::windows_path(
+        r#"alias gwt="C:\Program Files\wt\wt.exe""#,
+        "wt",
+        "gwt",
+        r"C:\Program Files\wt\wt.exe"
+    )]
+    fn test_bypass_alias_detected(
+        #[case] line: &str,
+        #[case] cmd: &str,
+        #[case] expected_name: &str,
+        #[case] expected_target: &str,
+    ) {
+        let result = detect_bypass_alias(line, cmd, 1);
+        assert!(
+            result.is_some(),
+            "Expected bypass alias detection for: {line}"
+        );
+        let alias = result.unwrap();
+        assert_eq!(alias.alias_name, expected_name);
+        assert_eq!(alias.target, expected_target);
+    }
+
+    /// Aliases pointing to function names (not paths) should NOT be detected as bypassing
+    #[rstest]
+    #[case::function_name(r#"alias gwt="wt""#, "wt")]
+    #[case::git_wt_function(r#"alias gwt="git-wt""#, "git-wt")]
+    #[case::other_alias(r#"alias ll="ls -la""#, "wt")]
+    #[case::not_an_alias("eval \"$(wt config shell init bash)\"", "wt")]
+    #[case::commented_alias(r#"# alias gwt="/usr/bin/wt""#, "wt")]
+    fn test_bypass_alias_not_detected(#[case] line: &str, #[case] cmd: &str) {
+        // Note: commented lines are skipped in scan_file, but detect_bypass_alias
+        // itself doesn't filter comments - that's done by the caller
+        let result = detect_bypass_alias(line, cmd, 1);
+        // For commented alias, we test the raw function behavior
+        if !line.trim().starts_with('#') {
+            assert!(
+                result.is_none(),
+                "Should NOT detect bypass for: {line}, got: {:?}",
+                result
+            );
+        }
+    }
+
+    /// Unrelated aliases should not be detected
+    #[test]
+    fn test_unrelated_alias_not_detected() {
+        let result = detect_bypass_alias(r#"alias vim="nvim""#, "wt", 1);
+        assert!(result.is_none());
+    }
 }

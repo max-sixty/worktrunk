@@ -84,6 +84,32 @@ a subprocess, bypassing the shell wrapper.
 
 **Fix**: Use `wt` directly instead of `git wt` when you need directory switching.
 
+### "Alias bypasses shell integration"
+
+**Meaning**: You have an alias like `alias gwt="/usr/bin/wt"` or
+`alias gwt="wt.exe"` that points directly to the binary instead of the shell
+function.
+
+When shell integration is installed, it creates a shell function named `wt` (or
+`git-wt`). If your alias points to the binary path, it bypasses this function
+and shell integration won't work.
+
+**Examples that bypass** (won't auto-cd):
+```bash
+alias gwt="/usr/bin/wt"
+alias gwt="wt.exe"
+alias wt="/path/to/wt"
+```
+
+**Fix**: Change the alias to point to the function name instead of the binary:
+```bash
+alias gwt="wt"       # Good - uses the shell function
+alias gwt="git-wt"   # Good - uses the shell function
+```
+
+`wt config show` detects these problematic aliases and shows a warning with the
+suggested fix.
+
 ## How the Shell Wrapper Works
 
 The shell wrapper (installed by `wt config shell install`) defines a shell

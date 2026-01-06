@@ -645,6 +645,31 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         }
     }
 
+    // Show aliases that bypass shell integration (Issue #348)
+    for detection in &detection_results {
+        for alias in &detection.bypass_aliases {
+            let path = format_path_for_display(&detection.path);
+            let location = format!("{}:{}", path, alias.line_number);
+            writeln!(
+                out,
+                "{}",
+                warning_message(cformat!(
+                    "Alias <bold>{}</> bypasses shell integration — won't auto-cd",
+                    alias.alias_name
+                ))
+            )?;
+            writeln!(out, "{}", format_bash_with_gutter(alias.content.trim()))?;
+            writeln!(
+                out,
+                "{}",
+                hint_message(cformat!(
+                    "Change to <bright-black>alias {}=\"{cmd}\"</> @ {location}",
+                    alias.alias_name
+                ))
+            )?;
+        }
+    }
+
     // Check if any shell has config already (eval line present)
     let has_any_configured = scan_result
         .configured
