@@ -241,9 +241,10 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
     }
 
     // Load project config and add project hook names
+    // Pass None for repo to avoid side effects (writing hints) during completion
     let repo = Repository::current();
     if let Ok(repo_root) = repo.worktree_root()
-        && let Ok(Some(project_config)) = ProjectConfig::load(repo_root)
+        && let Ok(Some(project_config)) = ProjectConfig::load(repo_root, None)
         && let Some(config) = project_config.hooks.get(hook_type)
     {
         add_named_commands(&mut candidates, config);

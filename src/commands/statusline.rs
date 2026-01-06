@@ -292,7 +292,7 @@ fn get_git_status_segments(
     let url_template = repo
         .worktree_root()
         .ok()
-        .and_then(|root| ProjectConfig::load(root).ok().flatten())
+        .and_then(|root| ProjectConfig::load(root, Some(repo)).ok().flatten())
         .and_then(|config| config.list)
         .and_then(|list| list.url);
 

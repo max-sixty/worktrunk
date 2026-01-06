@@ -1752,7 +1752,8 @@ impl Repository {
             .project_config
             .get_or_try_init(|| {
                 match self.worktree_root() {
-                    Ok(root) => ProjectConfig::load(root).context("Failed to load project config"),
+                    Ok(root) => ProjectConfig::load(root, Some(self))
+                        .context("Failed to load project config"),
                     Err(_) => Ok(None), // Not in a worktree, no project config
                 }
             })

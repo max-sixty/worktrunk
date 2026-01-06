@@ -2,6 +2,14 @@
 //!
 //! Scans config file content for deprecated template variables and generates
 //! a migration file with replacements.
+//!
+//! Migration files are only written once per config file. The hint system tracks
+//! whether a migration file has been written:
+//! - Project config: uses `worktrunk.hints.deprecated-project-config` in git config
+//! - User config: checks if the `.new` file already exists (no repo context)
+//!
+//! To regenerate a project config migration file, run `wt config state hints clear deprecated-project-config`.
+//! To regenerate a user config migration file, delete the existing `.new` file.
 
 use crate::styling::{eprintln, hint_message, warning_message};
 use color_print::cformat;
@@ -16,6 +24,9 @@ use std::sync::Mutex;
 /// Tracks which config paths have already shown deprecation warnings this process.
 /// Prevents repeated warnings when config is loaded multiple times.
 static WARNED_PATHS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+/// Hint name for project config deprecation warnings
+const HINT_DEPRECATED_PROJECT_CONFIG: &str = "deprecated-project-config";
 
 /// Mapping from deprecated variable name to its replacement
 const DEPRECATED_VARS: &[(&str, &str)] = &[
@@ -132,12 +143,16 @@ pub fn replace_deprecated_vars(content: &str) -> String {
 ///
 /// If deprecated variables are found and `warn_and_migrate` is true:
 /// 1. Emits a warning listing the deprecated variables
-/// 2. Creates a `.new` file with replacements
+/// 2. Creates a `.new` file with replacements (only if not already written)
 ///
 /// Set `warn_and_migrate` to false for project config on feature worktrees - the warning
 /// is only actionable from the main worktree where the migration file can be applied.
 ///
 /// The `label` is used in the warning message (e.g., "User config" or "Project config").
+///
+/// `repo` should be provided for project config to use the hint system. For user config
+/// (global, not repo-specific), pass `None` and the function will check if the `.new`
+/// file already exists instead.
 ///
 /// Warnings are deduplicated per path per process.
 ///
@@ -147,6 +162,7 @@ pub fn check_and_migrate(
     content: &str,
     warn_and_migrate: bool,
     label: &str,
+    repo: Option<&crate::git::Repository>,
 ) -> anyhow::Result<bool> {
     let deprecated = find_deprecated_vars(content);
     if deprecated.is_empty() {
@@ -169,6 +185,21 @@ pub fn check_and_migrate(
         warned.insert(canonical_path.clone());
     }
 
+    // Build the .new path: "config.toml" -> "config.toml.new"
+    let new_path = path.with_extension(format!(
+        "{}.new",
+        path.extension().unwrap_or_default().to_string_lossy()
+    ));
+
+    // Check if we should skip writing the migration file
+    // - For project config: check hint system
+    // - For user config: check if .new file already exists
+    let hint_already_shown = if let Some(repo) = repo {
+        repo.has_shown_hint(HINT_DEPRECATED_PROJECT_CONFIG)
+    } else {
+        new_path.exists()
+    };
+
     // Build inline list of deprecated variables: "repo_root → repo_path, worktree → worktree_path"
     let var_list: Vec<String> = deprecated
         .iter()
@@ -182,47 +213,64 @@ pub fn check_and_migrate(
     );
     eprintln!("{}", warning_message(warning));
 
-    let new_content = replace_deprecated_vars(content);
-
-    // Build the .new path: "config.toml" -> "config.toml.new"
-    let new_path = path.with_extension(format!(
-        "{}.new",
-        path.extension().unwrap_or_default().to_string_lossy()
-    ));
-
-    // Attempt to write migration file, but don't fail config loading if it fails
-    match std::fs::write(&new_path, new_content) {
-        Ok(()) => {
-            // Show just the filename in the message, full paths in the command
-            let new_filename = new_path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default();
-
-            // Shell-escape paths for safe copy-paste
+    if hint_already_shown {
+        // Migration file already written, just show a hint about regenerating
+        let clear_hint = if repo.is_some() {
+            cformat!(
+                "to regenerate, rerun after <bright-black>wt config state hints clear {}</>",
+                HINT_DEPRECATED_PROJECT_CONFIG
+            )
+        } else {
             let new_path_str = new_path.to_string_lossy();
-            let path_str = path.to_string_lossy();
             let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
-            let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
-                    new_filename,
-                    new_path_escaped,
-                    path_escaped
-                ))
-            );
-        }
-        Err(e) => {
-            // Warn about write failure but don't block config loading
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Could not write migration file: <bright-black>{}</>",
-                    e
-                ))
-            );
+            cformat!(
+                "to regenerate, delete <bright-black>{}</>",
+                new_path_escaped
+            )
+        };
+        eprintln!("{}", hint_message(clear_hint));
+    } else {
+        // Write migration file
+        let new_content = replace_deprecated_vars(content);
+
+        match std::fs::write(&new_path, &new_content) {
+            Ok(()) => {
+                // Mark hint as shown for project config
+                if let Some(repo) = repo {
+                    let _ = repo.mark_hint_shown(HINT_DEPRECATED_PROJECT_CONFIG);
+                }
+
+                // Show just the filename in the message, full paths in the command
+                let new_filename = new_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default();
+
+                // Shell-escape paths for safe copy-paste
+                let new_path_str = new_path.to_string_lossy();
+                let path_str = path.to_string_lossy();
+                let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
+                let path_escaped = escape(Cow::Borrowed(path_str.as_ref()));
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Wrote migrated {}; to apply: <bright-black>mv -- {} {}</>",
+                        new_filename,
+                        new_path_escaped,
+                        path_escaped
+                    ))
+                );
+            }
+            Err(e) => {
+                // Warn about write failure but don't block config loading
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Could not write migration file: <bright-black>{}</>",
+                        e
+                    ))
+                );
+            }
         }
     }
 

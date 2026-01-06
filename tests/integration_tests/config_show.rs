@@ -709,6 +709,148 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
+/// Test that deprecated variables migration file is only written once (hint-based deduplication)
+///
+/// When a migration file has already been written, subsequent commands should:
+/// 1. Still show the deprecation warning
+/// 2. NOT overwrite the migration file
+/// 3. Show a hint about how to regenerate the migration file
+#[rstest]
+fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_home: TempDir) {
+    // Write project config with deprecated variables
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    let project_config_path = project_config_dir.join("wt.toml");
+    fs::write(
+        &project_config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // First run - should create migration file and set hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "First run should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "First run should write migration file, got: {stderr}"
+        );
+    }
+
+    let migration_file = project_config_path.with_extension("toml.new");
+    assert!(migration_file.exists(), "Migration file should exist");
+
+    let original_content = fs::read_to_string(&migration_file).unwrap();
+
+    // Second run - should NOT overwrite migration file, should show hint about clearing
+    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
+    settings.bind(|| {
+        let mut cmd = wt_command();
+        repo.configure_wt_cmd(&mut cmd);
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+
+        assert_cmd_snapshot!(cmd);
+    });
+
+    // Verify migration file was NOT overwritten
+    let current_content = fs::read_to_string(&migration_file).unwrap();
+    assert_eq!(
+        original_content, current_content,
+        "Migration file should not be overwritten on second run"
+    );
+}
+
+/// Test that clearing the deprecation hint allows regenerating the migration file
+#[rstest]
+fn test_deprecated_template_variables_hint_clear_and_regenerate(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write project config with deprecated variables
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    let project_config_path = project_config_dir.join("wt.toml");
+    fs::write(
+        &project_config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // First run - creates migration file and sets hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "First run should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let migration_file = project_config_path.with_extension("toml.new");
+    assert!(migration_file.exists(), "Migration file should exist");
+
+    // Delete the migration file to simulate user having applied and removed it
+    fs::remove_file(&migration_file).unwrap();
+
+    // Clear the hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.args([
+            "config",
+            "state",
+            "hints",
+            "clear",
+            "deprecated-project-config",
+        ])
+        .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "Hint clear should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Third run - should create migration file again
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "Third run should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "After clearing hint, should write migration file again, got: {stderr}"
+        );
+    }
+
+    // Migration file should exist again
+    assert!(
+        migration_file.exists(),
+        "Migration file should be regenerated after clearing hint"
+    );
+}
+
 /// Test `wt config show` with shell integration active (WORKTRUNK_DIRECTIVE_FILE set)
 #[rstest]
 fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: TempDir) {

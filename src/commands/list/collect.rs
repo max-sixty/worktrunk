@@ -746,7 +746,11 @@ pub fn collect(
     let url_template = repo
         .worktree_root()
         .ok()
-        .and_then(|root| worktrunk::config::ProjectConfig::load(root).ok().flatten())
+        .and_then(|root| {
+            worktrunk::config::ProjectConfig::load(root, Some(repo))
+                .ok()
+                .flatten()
+        })
         .and_then(|config| config.list)
         .and_then(|list| list.url);
     // Initialize worktree items with identity fields and None for computed fields

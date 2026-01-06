@@ -84,7 +84,13 @@ pub struct ProjectConfig {
 
 impl ProjectConfig {
     /// Load project configuration from .config/wt.toml in the repository root
-    pub fn load(repo_root: &std::path::Path) -> Result<Option<Self>, ConfigError> {
+    ///
+    /// If `repo` is provided, deprecation warnings will use the hint system to avoid
+    /// repeatedly writing migration files. Pass the `Repository` when available.
+    pub fn load(
+        repo_root: &std::path::Path,
+        repo: Option<&crate::git::Repository>,
+    ) -> Result<Option<Self>, ConfigError> {
         let config_path = repo_root.join(".config").join("wt.toml");
 
         if !config_path.exists() {
@@ -104,6 +110,7 @@ impl ProjectConfig {
             &contents,
             is_main_worktree,
             "Project config",
+            repo,
         );
 
         let config: ProjectConfig = toml::from_str(&contents)
