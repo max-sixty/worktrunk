@@ -461,6 +461,10 @@ pub const WEEK: i64 = 7 * DAY;
 /// Use this when creating test data with timestamps (cache entries, etc.).
 pub const TEST_EPOCH: u64 = 1735776000;
 
+/// Default timeout for background hook/command completion.
+/// Generous to avoid flakiness under CI load; exponential backoff means fast tests when things work.
+const BG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Null device path, platform-appropriate.
 /// Use this for GIT_CONFIG_SYSTEM to disable system config in tests.
 #[cfg(windows)]
@@ -2376,10 +2380,10 @@ fn exponential_sleep(attempt: u32) {
 
 /// Wait for a file to exist, polling with exponential backoff.
 /// Use this instead of fixed sleeps for background commands to avoid flaky tests.
-pub fn wait_for_file(path: &Path, timeout: std::time::Duration) {
+pub fn wait_for_file(path: &Path) {
     let start = std::time::Instant::now();
     let mut attempt = 0;
-    while start.elapsed() < timeout {
+    while start.elapsed() < BG_TIMEOUT {
         if path.exists() {
             return;
         }
@@ -2388,21 +2392,16 @@ pub fn wait_for_file(path: &Path, timeout: std::time::Duration) {
     }
     panic!(
         "File was not created within {:?}: {}",
-        timeout,
+        BG_TIMEOUT,
         path.display()
     );
 }
 
 /// Wait for a directory to contain at least `expected_count` files with a given extension.
-pub fn wait_for_file_count(
-    dir: &Path,
-    extension: &str,
-    expected_count: usize,
-    timeout: std::time::Duration,
-) {
+pub fn wait_for_file_count(dir: &Path, extension: &str, expected_count: usize) {
     let start = std::time::Instant::now();
     let mut attempt = 0;
-    while start.elapsed() < timeout {
+    while start.elapsed() < BG_TIMEOUT {
         if let Ok(entries) = std::fs::read_dir(dir) {
             let count = entries
                 .filter_map(|e| e.ok())
@@ -2417,16 +2416,16 @@ pub fn wait_for_file_count(
     }
     panic!(
         "Expected {} .{} files in {:?} within {:?}",
-        expected_count, extension, dir, timeout
+        expected_count, extension, dir, BG_TIMEOUT
     );
 }
 
 /// Wait for a file to have non-empty content, polling with exponential backoff.
 /// Use when a background process creates a file but may not have finished writing.
-pub fn wait_for_file_content(path: &Path, timeout: std::time::Duration) {
+pub fn wait_for_file_content(path: &Path) {
     let start = std::time::Instant::now();
     let mut attempt = 0;
-    while start.elapsed() < timeout {
+    while start.elapsed() < BG_TIMEOUT {
         if std::fs::metadata(path).is_ok_and(|m| m.len() > 0) {
             return;
         }
@@ -2435,17 +2434,17 @@ pub fn wait_for_file_content(path: &Path, timeout: std::time::Duration) {
     }
     panic!(
         "File remained empty within {:?}: {}",
-        timeout,
+        BG_TIMEOUT,
         path.display()
     );
 }
 
 /// Wait for a file to have at least `expected_lines` lines, polling with exponential backoff.
 /// Use when a background process writes multiple lines sequentially.
-pub fn wait_for_file_lines(path: &Path, expected_lines: usize, timeout: std::time::Duration) {
+pub fn wait_for_file_lines(path: &Path, expected_lines: usize) {
     let start = std::time::Instant::now();
     let mut attempt = 0;
-    while start.elapsed() < timeout {
+    while start.elapsed() < BG_TIMEOUT {
         if let Ok(content) = std::fs::read_to_string(path) {
             let line_count = content.lines().count();
             if line_count >= expected_lines {
@@ -2461,7 +2460,7 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize, timeout: std::tim
     panic!(
         "File did not reach {} lines within {:?} (got {}): {}",
         expected_lines,
-        timeout,
+        BG_TIMEOUT,
         actual,
         path.display()
     );
@@ -2469,11 +2468,11 @@ pub fn wait_for_file_lines(path: &Path, expected_lines: usize, timeout: std::tim
 
 /// Wait for a file to contain valid JSON, polling with exponential backoff.
 /// Use when a background process writes JSON that may be partially written.
-pub fn wait_for_valid_json(path: &Path, timeout: std::time::Duration) -> serde_json::Value {
+pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
     let start = std::time::Instant::now();
     let mut attempt = 0;
     let mut last_error = String::new();
-    while start.elapsed() < timeout {
+    while start.elapsed() < BG_TIMEOUT {
         if let Ok(content) = std::fs::read_to_string(path) {
             match serde_json::from_str(&content) {
                 Ok(json) => return json,
@@ -2485,7 +2484,7 @@ pub fn wait_for_valid_json(path: &Path, timeout: std::time::Duration) -> serde_j
     }
     panic!(
         "File did not contain valid JSON within {:?}: {}\nLast error: {}",
-        timeout,
+        BG_TIMEOUT,
         path.display(),
         last_error
     );

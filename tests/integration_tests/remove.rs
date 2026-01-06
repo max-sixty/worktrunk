@@ -5,7 +5,7 @@ use crate::common::{
 };
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-use std::time::Duration;
+use std::time::Duration; // For absence checks (SLEEP_FOR_ABSENCE_CHECK pattern)
 
 #[rstest]
 fn test_remove_already_on_default(repo: TestRepo) {
@@ -1066,7 +1066,7 @@ approved-commands = ["echo 'hook ran' > {}"]
         .unwrap();
 
     // Wait for the hook to create the marker file
-    wait_for_file(&marker_file, Duration::from_secs(5));
+    wait_for_file(&marker_file);
 
     // Marker file SHOULD exist - pre-remove hooks run before background removal starts
     assert!(

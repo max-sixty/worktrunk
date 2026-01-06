@@ -16,6 +16,8 @@ use std::fs;
 use std::thread;
 use std::time::Duration;
 
+// Note: Duration is still imported for SLEEP_FOR_ABSENCE_CHECK (testing command did NOT run)
+
 /// Wait duration when checking file absence (testing command did NOT run).
 const SLEEP_FOR_ABSENCE_CHECK: Duration = Duration::from_millis(500);
 
@@ -188,7 +190,7 @@ bg = "echo 'USER_POST_START_RAN' > user_bg_marker.txt"
     // Wait for background hook to complete and write content
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let marker_file = worktree_path.join("user_bg_marker.txt");
-    wait_for_file_content(&marker_file, Duration::from_secs(5));
+    wait_for_file_content(&marker_file);
 
     let contents = fs::read_to_string(&marker_file).unwrap();
     assert!(
@@ -346,7 +348,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 
     // Wait until hook writes "start" to hook.log (verifies the hook is running)
     let hook_log = repo.root_path().join("hook.log");
-    wait_for_file_content(&hook_log, Duration::from_secs(5));
+    wait_for_file_content(&hook_log);
 
     // Send SIGINT to wt's process group (wt's PID == its PGID since it's the leader)
     // This simulates real Ctrl-C which sends SIGINT to the foreground process group
@@ -407,7 +409,7 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
 
     // Wait until hook writes "start" to hook.log (verifies the hook is running)
     let hook_log = repo.root_path().join("hook.log");
-    wait_for_file_content(&hook_log, Duration::from_secs(5));
+    wait_for_file_content(&hook_log);
 
     // Send SIGTERM to wt's process group (wt's PID == its PGID since it's the leader)
     let wt_pgid = Pid::from_raw(child.id() as i32);
@@ -689,11 +691,8 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
 
     // Wait for both background commands
-    wait_for_file(&worktree_path.join("user_bg.txt"), Duration::from_secs(5));
-    wait_for_file(
-        &worktree_path.join("project_bg.txt"),
-        Duration::from_secs(5),
-    );
+    wait_for_file(&worktree_path.join("user_bg.txt"));
+    wait_for_file(&worktree_path.join("project_bg.txt"));
 
     // Both should have run
     assert!(
@@ -750,7 +749,7 @@ fn test_standalone_hook_post_start(repo: TestRepo) {
 
     // Hook spawns in background - wait for marker file
     let marker = repo.root_path().join("hook_ran.txt");
-    wait_for_file_content(&marker, Duration::from_secs(5));
+    wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("STANDALONE_POST_START"));
 }
@@ -864,7 +863,7 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
 
     // Wait for log file to be created and contain output
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
-    wait_for_file_count(&log_dir, "log", 1, Duration::from_secs(5));
+    wait_for_file_count(&log_dir, "log", 1);
 
     // Find and read the log file
     let log_file = fs::read_dir(&log_dir)
@@ -874,7 +873,7 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
         .expect("Should have a log file");
 
     // Wait for content to be written (command runs async)
-    wait_for_file_content(&log_file.path(), Duration::from_secs(5));
+    wait_for_file_content(&log_file.path());
     let log_content = fs::read_to_string(log_file.path()).unwrap();
 
     // Verify the hook actually ran and wrote output (not just that file was created)
@@ -909,7 +908,7 @@ second = "echo SECOND_OUTPUT"
 
     // Wait for both log files to be created
     let log_dir = resolve_git_common_dir(repo.root_path()).join("wt-logs");
-    wait_for_file_count(&log_dir, "log", 2, Duration::from_secs(5));
+    wait_for_file_count(&log_dir, "log", 2);
 
     // Collect log files and their contents
     let log_files: Vec<_> = fs::read_dir(&log_dir)
@@ -921,7 +920,7 @@ second = "echo SECOND_OUTPUT"
 
     // Wait for content in both log files
     for log_file in &log_files {
-        wait_for_file_content(&log_file.path(), Duration::from_secs(5));
+        wait_for_file_content(&log_file.path());
     }
 
     // Collect all log contents
@@ -978,8 +977,8 @@ user = "echo 'USER_HOOK' > user_hook_ran.txt"
     let user_marker = repo.root_path().join("user_hook_ran.txt");
     let project_marker = repo.root_path().join("project_hook_ran.txt");
 
-    wait_for_file_content(&user_marker, Duration::from_secs(5));
-    wait_for_file_content(&project_marker, Duration::from_secs(5));
+    wait_for_file_content(&user_marker);
+    wait_for_file_content(&project_marker);
 
     let user_content = fs::read_to_string(&user_marker).unwrap();
     let project_content = fs::read_to_string(&project_marker).unwrap();
@@ -1006,7 +1005,7 @@ fn test_concurrent_hook_post_switch(repo: TestRepo) {
 
     // Hook spawns in background - wait for marker file
     let marker = repo.root_path().join("hook_ran.txt");
-    wait_for_file_content(&marker, Duration::from_secs(5));
+    wait_for_file_content(&marker);
     let content = fs::read_to_string(&marker).unwrap();
     assert!(content.contains("POST_SWITCH"));
 }
@@ -1039,7 +1038,7 @@ second = "echo 'SECOND' > second.txt"
     let first_marker = repo.root_path().join("first.txt");
     let second_marker = repo.root_path().join("second.txt");
 
-    wait_for_file_content(&first_marker, Duration::from_secs(5));
+    wait_for_file_content(&first_marker);
 
     // Fixed sleep for absence check - second hook should NOT have run
     thread::sleep(SLEEP_FOR_ABSENCE_CHECK);

@@ -8,7 +8,6 @@ use crate::common::{
 };
 use rstest::rstest;
 use std::fs;
-use std::time::Duration;
 
 /// Test that post-start background commands work with shell integration
 #[rstest]
@@ -91,7 +90,7 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
 
     // Wait for background command to complete AND flush content (allow plenty of margin on CI)
     let marker_file = worktree_path.join("bg_marker.txt");
-    wait_for_file_content(marker_file.as_path(), Duration::from_secs(2));
+    wait_for_file_content(marker_file.as_path());
 
     let content = fs::read_to_string(&marker_file).unwrap();
     assert!(
@@ -159,14 +158,8 @@ approved-commands = [
         .unwrap()
         .join("repo.parallel-test");
 
-    wait_for_file(
-        worktree_path.join("task1.txt").as_path(),
-        Duration::from_secs(2),
-    );
-    wait_for_file(
-        worktree_path.join("task2.txt").as_path(),
-        Duration::from_secs(2),
-    );
+    wait_for_file(worktree_path.join("task1.txt").as_path());
+    wait_for_file(worktree_path.join("task2.txt").as_path());
 }
 
 /// Test that post-create commands block before shell returns
@@ -287,7 +280,7 @@ approved-commands = ["sleep 0.05 && echo 'Fish background done' > fish_bg.txt"]
     // Wait for background command AND flush content (allow plenty of margin on CI)
     let worktree_path = repo.root_path().parent().unwrap().join("repo.fish-bg-test");
     let marker_file = worktree_path.join("fish_bg.txt");
-    wait_for_file_content(marker_file.as_path(), Duration::from_secs(2));
+    wait_for_file_content(marker_file.as_path());
 
     let content = fs::read_to_string(&marker_file).unwrap();
     assert!(

@@ -7,7 +7,6 @@ use rstest::rstest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 #[test]
 fn test_bare_repo_list_worktrees() {
@@ -408,7 +407,7 @@ fn test_bare_repo_background_logs_location() {
     // Wait for background process to create log file (poll instead of fixed sleep)
     // The key test is that the path is correct, not that content was written (background processes are flaky in tests)
     let log_path = test.bare_repo_path().join("wt-logs/feature-remove.log");
-    wait_for_file(&log_path, Duration::from_secs(5));
+    wait_for_file(&log_path);
 
     // Verify it's NOT in the worktree's .git directory (which doesn't exist for linked worktrees)
     let wrong_path = main_worktree.join(".git/wt-logs/feature-remove.log");
