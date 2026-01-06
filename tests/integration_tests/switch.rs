@@ -22,6 +22,7 @@ fn snapshot_switch_from_dir(test_name: &str, repo: &TestRepo, args: &[&str], cwd
     snapshot_switch_impl(test_name, repo, args, false, Some(cwd), None);
 }
 
+#[cfg(not(windows))]
 fn snapshot_switch_with_shell(test_name: &str, repo: &TestRepo, args: &[&str], shell: &str) {
     snapshot_switch_impl(test_name, repo, args, false, None, Some(shell));
 }
@@ -108,7 +109,11 @@ fn test_switch_existing_branch(mut repo: TestRepo) {
 /// Since tests run via `cargo test`, argv[0] contains a path (`target/debug/wt`), which
 /// triggers the "explicit path" code path. The warning explains that shell integration
 /// won't intercept explicit paths.
+///
+/// Skipped on Windows: the binary is `wt.exe` so a different (more targeted) warning is
+/// shown ("use wt without .exe"). Windows-specific behavior is tested in unit tests.
 #[rstest]
+#[cfg(not(windows))]
 fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
     use std::fs;
 

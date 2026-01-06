@@ -117,8 +117,28 @@ fn compute_shell_warning_reason_inner(
 ) -> String {
     if is_configured {
         if explicit_path {
-            // Invoked with explicit path - shell wrapper won't intercept this binary
-            cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
+            // Invoked with explicit path - shell wrapper won't intercept this binary.
+            let invoked_name = std::path::Path::new(invoked)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(invoked);
+
+            // Check if the only difference is .exe suffix (case-insensitive for Windows)
+            let invoked_lower = invoked_name.to_lowercase();
+            let wraps_lower = wraps.to_lowercase();
+            if invoked_lower == format!("{wraps_lower}.exe") {
+                // Windows .exe mismatch - give targeted advice
+                cformat!(
+                    "ran <bold>{invoked_name}</>; use <bold>{wraps}</> (without .exe) for auto-cd"
+                )
+            } else if invoked_name == wraps {
+                // Filename matches but full path differs - show full path for clarity
+                // (e.g., "./target/debug/wt" vs "wt" - the path IS the useful info)
+                cformat!("ran <bold>{invoked}</>; shell integration wraps <bold>{wraps}</>")
+            } else {
+                // Different binary name - show just the filename
+                cformat!("ran <bold>{invoked_name}</>; shell integration wraps <bold>{wraps}</>")
+            }
         } else {
             "shell requires restart".to_string()
         }
@@ -400,11 +420,44 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_shell_warning_reason_explicit_path() {
-        // Shell integration configured + explicit path -> "ran X; wraps Y"
+    fn test_compute_shell_warning_reason_explicit_path_same_name() {
+        // When filename matches wraps, show full path (the path IS the useful info)
         let reason = compute_shell_warning_reason_inner(true, true, "./target/debug/wt", "wt");
         assert!(reason.contains("./target/debug/wt"));
+        assert!(reason.contains("wraps"));
+    }
+
+    #[test]
+    fn test_compute_shell_warning_reason_explicit_path_different_binary() {
+        // When invoked binary differs from wrapped binary, show both
+        let reason = compute_shell_warning_reason_inner(true, true, "/usr/local/bin/git-wt", "wt");
+        assert!(reason.contains("git-wt"));
         assert!(reason.contains("wt"));
+        assert!(reason.contains("wraps"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_compute_shell_warning_reason_windows_exe_suffix() {
+        // Windows: invoked as git-wt.exe, wraps git-wt -> targeted .exe message
+        let reason = compute_shell_warning_reason_inner(
+            true,
+            true,
+            r"C:\Users\user\AppData\Local\Microsoft\WinGet\Packages\git-wt.exe",
+            "git-wt",
+        );
+        // Should extract filename and give targeted advice
+        assert!(reason.contains("git-wt.exe"));
+        assert!(reason.contains("without .exe"));
+        assert!(!reason.contains(r"C:\Users")); // No full path
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_compute_shell_warning_reason_windows_exe_case_insensitive() {
+        // Windows paths are case-insensitive
+        let reason = compute_shell_warning_reason_inner(true, true, r"C:\path\to\WT.EXE", "wt");
+        assert!(reason.contains("without .exe"));
     }
 
     #[test]

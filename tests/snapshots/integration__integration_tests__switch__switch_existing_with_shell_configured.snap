@@ -1,5 +1,6 @@
 ---
 source: tests/integration_tests/switch.rs
+assertion_line: 53
 info:
   program: wt
   args:
@@ -14,6 +15,7 @@ info:
     GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
     GIT_CONFIG_SYSTEM: /dev/null
     GIT_EDITOR: ""
+    GIT_FETCH_ARGS: ""
     GIT_TERMINAL_PROMPT: "0"
     HOME: "[TEST_HOME]"
     LANG: C
@@ -22,6 +24,7 @@ info:
     RUST_LOG: warn
     SHELL: /bin/zsh
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
