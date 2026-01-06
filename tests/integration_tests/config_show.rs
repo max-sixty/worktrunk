@@ -851,6 +851,67 @@ fn test_deprecated_template_variables_hint_clear_and_regenerate(
     );
 }
 
+/// Test that project config deprecation warnings are NOT shown from feature worktrees
+///
+/// Deprecation warnings should only appear in the main worktree where the migration
+/// file can be applied. Running from a feature worktree should skip the warning entirely.
+#[rstest]
+fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, temp_home: TempDir) {
+    // Create a feature worktree first (before adding project config)
+    {
+        let mut cmd = repo.wt_command();
+        cmd.args(["switch", "--create", "feature"])
+            .current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "Creating feature worktree should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Get the feature worktree path
+    let feature_path = repo.root_path().parent().unwrap().join(format!(
+        "{}.feature",
+        repo.root_path().file_name().unwrap().to_string_lossy()
+    ));
+
+    // Write project config with deprecated variables IN THE FEATURE WORKTREE
+    // (project config is loaded from the current worktree root, not the main worktree)
+    let feature_config_dir = feature_path.join(".config");
+    fs::create_dir_all(&feature_config_dir).unwrap();
+    fs::write(
+        feature_config_dir.join("wt.toml"),
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // Run wt list from the feature worktree - should NOT show deprecation warning
+    // because warn_and_migrate is false for non-main worktrees
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(&feature_path);
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "wt list from feature worktree should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("deprecated template variables"),
+            "Deprecation warning should NOT appear in feature worktree, got: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Wrote migrated"),
+            "Migration file should NOT be written from feature worktree, got: {stderr}"
+        );
+    }
+}
+
 /// Test that user config deprecated variables hint shows "delete file" message on second run
 ///
 /// User config has no repo context, so hint deduplication is based on file existence.
