@@ -44,6 +44,7 @@ pub mod remove;
 pub mod repository;
 pub mod security;
 pub mod select;
+pub mod select_config;
 pub mod shell_integration_prompt;
 pub mod shell_integration_windows;
 pub mod shell_wrapper;

@@ -112,6 +112,13 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
   [2mremove = true          # Remove worktree after merge
   [2mverify = true          # Run project hooks
   [2m
+  [2m# Select Command Defaults
+  [2m# Configure pager behavior for `wt select` diff previews
+  [2m[select]
+  [2m# Pager command with flags for diff preview (overrides git's core.pager)
+  [2m# Use this to specify pager flags needed for non-TTY contexts
+  [2m# Example: pager = "delta --paging=never"
+  [2m
   [2m# Approved Commands
   [2m# Commands approved for project hooks in this repo
   [2m# Auto-populated when approving hooks (prompt on first run) or via `wt hook approvals add`

@@ -1,0 +1,43 @@
+use worktrunk::config::WorktrunkConfig;
+
+#[test]
+fn test_select_pager_config_deserialization() {
+    // Verify that SelectConfig with pager field deserializes correctly
+    let config_content = r#"
+[select]
+pager = "test-pager --custom-flag"
+"#;
+
+    let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
+
+    assert!(config.select.is_some(), "Select config should be present");
+    let select = config.select.unwrap();
+    assert_eq!(select.pager, Some("test-pager --custom-flag".to_string()));
+}
+
+#[test]
+fn test_select_pager_config_empty_string() {
+    // Verify that empty string is valid TOML and deserializes
+    let config_content = r#"
+[select]
+pager = ""
+"#;
+
+    let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
+
+    assert!(config.select.is_some(), "Select config should be present");
+    let select = config.select.unwrap();
+    assert_eq!(select.pager, Some("".to_string()));
+}
+
+#[test]
+fn test_select_config_optional() {
+    // Verify that config without [select] section is still valid
+    let config_content = r#"
+[list]
+full = true
+"#;
+
+    let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
+    assert!(config.select.is_none(), "Select config should be absent");
+}
