@@ -175,9 +175,10 @@ use anstyle::Style;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
-use worktrunk::styling::{ADDITION, DELETION};
+use worktrunk::styling::{ADDITION, DELETION, Stream, supports_hyperlinks};
 
 use super::collect::TaskKind;
+use super::collect_progressive_impl::parse_port_from_url;
 use super::columns::{COLUMN_SPECS, ColumnKind, ColumnSpec, column_display_index};
 
 // Re-export DiffVariant for external use (e.g., select command)
@@ -524,25 +525,27 @@ struct PendingColumn<'a> {
     format: ColumnFormat,
 }
 
-/// Estimate URL column width by expanding the template with a sample branch.
+/// Estimate URL column width using heuristics.
 ///
-/// Uses the longest branch name to get an accurate width estimate for the URL column.
-/// Falls back to 22 chars ("http://localhost:12345") if expansion fails.
-fn estimate_url_width(url_template: Option<&str>, longest_branch: Option<&str>) -> usize {
+/// When hyperlinks are supported, URLs display as `:PORT` (6 chars for 5-digit ports).
+/// Otherwise, estimates full URL width from template structure.
+fn estimate_url_width(url_template: Option<&str>) -> usize {
     let Some(template) = url_template else {
         return 0;
     };
 
-    // Try to expand the template with the longest branch name
-    if let Some(branch) = longest_branch {
-        let mut vars = std::collections::HashMap::new();
-        vars.insert("branch", branch);
-        if let Ok(expanded) = worktrunk::config::expand_template(template, &vars, false) {
-            return expanded.width();
+    // When hyperlinks are supported, URLs with ports display as ":XXXXX" (6 chars)
+    if supports_hyperlinks(Stream::Stdout) {
+        // Check for port patterns: template variables or static ports
+        if template.contains("hash_port")
+            || template.contains(":{{")
+            || parse_port_from_url(template).is_some()
+        {
+            return 6; // ":12345"
         }
     }
 
-    // Fallback: estimate based on template structure
+    // Fallback: estimate full URL width from template structure
     // {{ branch | hash_port }} becomes a 5-digit port (10000-19999)
     // {{ branch }} becomes the branch name (unknown length, use 10 as average)
     template
@@ -887,8 +890,8 @@ pub fn calculate_layout_with_width(
         .filter_map(|item| item.worktree_data())
         .any(|data| data.branch_worktree_mismatch);
 
-    // Estimate URL width from template + longest branch
-    let url_width = estimate_url_width(url_template, longest_branch);
+    // Estimate URL width from template (heuristic, no expansion needed)
+    let url_width = estimate_url_width(url_template);
 
     // Build pre-allocated width estimates (same as buffered mode)
     let metadata = build_estimated_widths(
@@ -1369,55 +1372,48 @@ mod tests {
     #[test]
     fn test_estimate_url_width_no_template() {
         // No template returns 0
-        assert_eq!(estimate_url_width(None, Some("feature")), 0);
-        assert_eq!(estimate_url_width(None, None), 0);
+        assert_eq!(estimate_url_width(None), 0);
     }
 
     #[test]
     fn test_estimate_url_width_with_hash_port() {
+        // Tests run without TTY, so supports_hyperlinks() returns false.
+        // Falls back to template-based estimation.
         let template = "http://localhost:{{ branch | hash_port }}";
 
-        // With a branch name, expands template and measures
-        let width = estimate_url_width(Some(template), Some("feature"));
-        // "http://localhost:" (17) + 5-digit port = 22
-        assert_eq!(width, 22);
-
-        // Longer branch doesn't affect hash_port width (always 5 digits)
-        let width = estimate_url_width(Some(template), Some("very-long-feature-branch-name"));
-        assert_eq!(width, 22);
-    }
-
-    #[test]
-    fn test_estimate_url_width_with_branch_variable() {
-        let template = "http://localhost:8080/{{ branch }}";
-
-        // Width includes the branch name
-        let width = estimate_url_width(Some(template), Some("feature"));
-        // "http://localhost:8080/" (22) + "feature" (7) = 29
-        assert_eq!(width, 29);
-
-        // Longer branch increases width
-        let width = estimate_url_width(Some(template), Some("long-feature-branch"));
-        // "http://localhost:8080/" (22) + "long-feature-branch" (19) = 41
-        assert_eq!(width, 41);
-    }
-
-    #[test]
-    fn test_estimate_url_width_fallback() {
-        let template = "http://localhost:{{ branch | hash_port }}";
-
-        // No branch name triggers fallback estimation
-        let width = estimate_url_width(Some(template), None);
-        // Fallback replaces {{ branch | hash_port }} with "12345"
+        let width = estimate_url_width(Some(template));
+        // Replaces {{ branch | hash_port }} with "12345"
         // "http://localhost:12345" = 22
         assert_eq!(width, 22);
     }
 
     #[test]
+    fn test_estimate_url_width_with_branch_variable() {
+        // Tests run without TTY, so supports_hyperlinks() returns false.
+        // Falls back to template-based estimation.
+        let template = "http://localhost:8080/{{ branch }}";
+
+        let width = estimate_url_width(Some(template));
+        // Replaces {{ branch }} with "feature-xx" (10 chars)
+        // "http://localhost:8080/feature-xx" = 32
+        assert_eq!(width, 32);
+    }
+
+    #[test]
     fn test_estimate_url_width_static_template() {
-        // Template with no variables
+        // Template with no variables - width is just the template length
         let template = "http://localhost:3000";
-        let width = estimate_url_width(Some(template), Some("feature"));
+        let width = estimate_url_width(Some(template));
         assert_eq!(width, 21);
+    }
+
+    #[test]
+    fn test_estimate_url_width_port_pattern() {
+        // Template with :{{ pattern (port in variable)
+        // Tests run without TTY, so falls back to template estimation
+        let template = "http://localhost:{{ port }}";
+        let width = estimate_url_width(Some(template));
+        // No hash_port or branch replacement, just keeps the template with {{ port }}
+        assert_eq!(width, template.len());
     }
 }
