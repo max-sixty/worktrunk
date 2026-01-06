@@ -192,13 +192,11 @@ pub fn check_and_migrate(
     ));
 
     // Check if we should skip writing the migration file
-    // - For project config: check hint system
-    // - For user config: check if .new file already exists
-    let hint_already_shown = if let Some(repo) = repo {
-        repo.has_shown_hint(HINT_DEPRECATED_PROJECT_CONFIG)
-    } else {
-        new_path.exists()
-    };
+    // - Always regenerate if .new file exists (user kept it, so overwrite with fresh version)
+    // - For project config: skip if hint shown AND .new doesn't exist (user deleted it)
+    // - For user config: always write (no persistent hint tracking without repo)
+    let should_skip_write = !new_path.exists()
+        && repo.is_some_and(|r| r.has_shown_hint(HINT_DEPRECATED_PROJECT_CONFIG));
 
     // Build inline list of deprecated variables: "repo_root → repo_path, worktree → worktree_path"
     let var_list: Vec<String> = deprecated
@@ -213,22 +211,16 @@ pub fn check_and_migrate(
     );
     eprintln!("{}", warning_message(warning));
 
-    if hint_already_shown {
-        // Migration file already written, just show a hint about regenerating
-        let clear_hint = if repo.is_some() {
-            cformat!(
+    if should_skip_write {
+        // User deleted the .new file but hint is set - they don't want the migration file
+        // Show how to regenerate if they change their mind
+        eprintln!(
+            "{}",
+            hint_message(cformat!(
                 "to regenerate, rerun after <bright-black>wt config state hints clear {}</>",
                 HINT_DEPRECATED_PROJECT_CONFIG
-            )
-        } else {
-            let new_path_str = new_path.to_string_lossy();
-            let new_path_escaped = escape(Cow::Borrowed(new_path_str.as_ref()));
-            cformat!(
-                "to regenerate, delete <bright-black>{}</>",
-                new_path_escaped
-            )
-        };
-        eprintln!("{}", hint_message(clear_hint));
+            ))
+        );
     } else {
         // Write migration file
         let new_content = replace_deprecated_vars(content);

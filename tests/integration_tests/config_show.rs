@@ -751,22 +751,96 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
 
     let original_content = fs::read_to_string(&migration_file).unwrap();
 
-    // Second run - should NOT overwrite migration file, should show hint about clearing
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
+    // Second run - if .new exists, we always regenerate (overwrite)
+    // This ensures users always have a fresh migration file
+    {
+        let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "Second run should succeed: {:?}",
+            stderr
+        );
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "Second run should regenerate migration file, got: {stderr}"
+        );
+    }
 
-        assert_cmd_snapshot!(cmd);
-    });
-
-    // Verify migration file was NOT overwritten
+    // Content should be the same (same input produces same output)
     let current_content = fs::read_to_string(&migration_file).unwrap();
     assert_eq!(
         original_content, current_content,
-        "Migration file should not be overwritten on second run"
+        "Regenerated content should be the same"
+    );
+}
+
+/// Test that if user deletes .new file but hint is set, we show "to regenerate, clear hint"
+/// This tests the skip-write path for project config
+#[rstest]
+fn test_deprecated_project_config_deleted_new_file_shows_clear_hint(
+    repo: TestRepo,
+    temp_home: TempDir,
+) {
+    // Write project config with deprecated variables
+    let project_config_dir = repo.root_path().join(".config");
+    fs::create_dir_all(&project_config_dir).unwrap();
+    let project_config_path = project_config_dir.join("wt.toml");
+    fs::write(
+        &project_config_path,
+        r#"worktree-path = "../{{ main_worktree }}.{{ branch }}"
+"#,
+    )
+    .unwrap();
+
+    // First run - creates migration file and sets hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        assert!(
+            output.status.success(),
+            "First run should succeed: {:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let migration_file = project_config_path.with_extension("toml.new");
+    assert!(migration_file.exists(), "Migration file should exist");
+
+    // Delete the migration file (user doesn't want it)
+    fs::remove_file(&migration_file).unwrap();
+
+    // Second run - .new doesn't exist but hint is set → skip write, show clear hint
+    {
+        let mut cmd = repo.wt_command();
+        cmd.arg("list").current_dir(repo.root_path());
+        set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "Second run should succeed: {:?}",
+            stderr
+        );
+        assert!(
+            stderr.contains("to regenerate, rerun after"),
+            "Should show hint about clearing, got: {stderr}"
+        );
+        assert!(
+            stderr.contains("wt config state hints clear deprecated-project-config"),
+            "Should show hint clear command, got: {stderr}"
+        );
+    }
+
+    // Migration file should NOT exist (we skipped writing)
+    assert!(
+        !migration_file.exists(),
+        "Migration file should not be recreated when hint is set"
     );
 }
 
@@ -951,16 +1025,27 @@ fn test_user_config_deprecated_template_variables_hint_deduplication(
     let migration_file = user_config_path.with_extension("toml.new");
     assert!(migration_file.exists(), "Migration file should exist");
 
-    // Second run - should show hint about deleting the file (not about clearing git hint)
-    let settings = setup_snapshot_settings_with_home(&repo, &temp_home);
-    settings.bind(|| {
-        let mut cmd = wt_command();
-        repo.configure_wt_cmd(&mut cmd);
+    // Second run - user config always regenerates (overwrites .new file)
+    // Should still show "Wrote migrated" since we overwrite existing .new files
+    {
+        let mut cmd = repo.wt_command();
         cmd.arg("list").current_dir(repo.root_path());
         set_temp_home_env(&mut cmd, temp_home.path());
+        let output = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "Second run should succeed: {:?}",
+            stderr
+        );
+        assert!(
+            stderr.contains("Wrote migrated"),
+            "Second run should regenerate migration file, got: {stderr}"
+        );
+    }
 
-        assert_cmd_snapshot!(cmd);
-    });
+    // Verify migration file still exists
+    assert!(migration_file.exists(), "Migration file should still exist");
 }
 
 /// Test `wt config show` with shell integration active (WORKTRUNK_DIRECTIVE_FILE set)
