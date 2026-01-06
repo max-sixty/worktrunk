@@ -2112,11 +2112,11 @@ fn setup_snapshot_settings_for_paths(
         "${1}[VERSION]",
     );
 
-    // Normalize project root paths in "Invoked as:" debug output
+    // Normalize project root paths in "Binary invoked as:" debug output
     // Tests run cargo which produces paths like /path/to/worktrunk/target/debug/wt
     // Normalize to [PROJECT_ROOT]/target/debug/wt for deterministic snapshots
     settings.add_filter(
-        r"(Invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
+        r"(Binary invoked as: \x1b\[1m)[^\x1b]+/target/(debug|release)/wt(\x1b\[22m)",
         "${1}[PROJECT_ROOT]/target/$2/wt$3",
     );
 

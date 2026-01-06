@@ -443,7 +443,7 @@ fn render_shell_status(out: &mut String) -> anyhow::Result<()> {
         // Show invocation details to help diagnose
         let invocation = crate::invocation_path();
         let is_git_subcommand = crate::is_git_subcommand();
-        let mut debug_lines = vec![cformat!("Invoked as: <bold>{invocation}</>")];
+        let mut debug_lines = vec![cformat!("Binary invoked as: <bold>{invocation}</>")];
         if is_git_subcommand {
             debug_lines.push("Git subcommand: yes (GIT_EXEC_PATH set)".to_string());
         }

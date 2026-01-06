@@ -6,22 +6,10 @@
 
 use crate::common::{
     TestRepo, repo,
-    shell::{
-        execute_shell_script, generate_init_code, path_export_syntax, shell_available, wt_bin_dir,
-    },
+    shell::{execute_shell_script, generate_init_code, path_export_syntax, wt_bin_dir},
 };
 use rstest::rstest;
 use worktrunk::shell::{Shell, ShellProbeResult, probe_shell_integration};
-
-/// Skip test if the shell is not available on this system.
-macro_rules! skip_if_shell_unavailable {
-    ($shell:expr) => {
-        if !shell_available($shell) {
-            eprintln!("Skipping test: {} not available on this system", $shell);
-            return;
-        }
-    };
-}
 
 // =============================================================================
 // UNIT TESTS - Parsing logic (always run, no shell required)
@@ -61,8 +49,6 @@ fn test_probe_detects_function_after_init(
     #[case] _shell: Shell,
     repo: TestRepo,
 ) {
-    skip_if_shell_unavailable!(shell_name);
-
     let init_code = generate_init_code(&repo, shell_name);
     let bin_path = wt_bin_dir();
 
@@ -93,8 +79,6 @@ fn test_probe_detects_function_after_init(
 #[case::bash("bash", Shell::Bash)]
 #[case::zsh("zsh", Shell::Zsh)]
 fn test_probe_detects_binary_without_init(#[case] shell_name: &str, #[case] shell: Shell) {
-    skip_if_shell_unavailable!(shell_name);
-
     // Probe the shell for a command that definitely exists as a binary (ls)
     // This tests the probe mechanism without needing wt to be installed
     let result = probe_shell_integration(shell, "ls");
@@ -113,8 +97,6 @@ fn test_probe_detects_binary_without_init(#[case] shell_name: &str, #[case] shel
 #[case::bash("bash", Shell::Bash)]
 #[case::zsh("zsh", Shell::Zsh)]
 fn test_probe_detects_not_found(#[case] shell_name: &str, #[case] shell: Shell) {
-    skip_if_shell_unavailable!(shell_name);
-
     // Probe for a command that definitely doesn't exist
     let result = probe_shell_integration(shell, "__wt_nonexistent_command_12345__");
 
@@ -132,8 +114,6 @@ fn test_probe_detects_not_found(#[case] shell_name: &str, #[case] shell: Shell) 
 #[rstest]
 #[case::bash("bash", Shell::Bash)]
 fn test_probe_detects_alias(#[case] shell_name: &str, #[case] _shell: Shell, repo: TestRepo) {
-    skip_if_shell_unavailable!(shell_name);
-
     // Define alias inline in the script (execute_shell_script uses --norc)
     // Need to enable expand_aliases since bash doesn't expand aliases in non-interactive mode
     let script = r#"
@@ -161,8 +141,6 @@ fn test_probe_detects_alias(#[case] shell_name: &str, #[case] _shell: Shell, rep
 /// - The function is named `git-wt`, but the alias points to the binary
 #[rstest]
 fn test_issue_348_alias_bypasses_function(repo: TestRepo) {
-    skip_if_shell_unavailable!("bash");
-
     let bin_path = wt_bin_dir();
     let init_code = generate_init_code(&repo, "bash");
 
@@ -222,8 +200,6 @@ type wt_alias 2>&1
 /// Test that fish shell probing works.
 #[rstest]
 fn test_probe_fish_binary() {
-    skip_if_shell_unavailable!("fish");
-
     // Probe for ls in fish
     let result = probe_shell_integration(Shell::Fish, "ls");
 
@@ -241,8 +217,6 @@ fn test_probe_fish_binary() {
 /// Test that fish shell probing detects not found.
 #[rstest]
 fn test_probe_fish_not_found() {
-    skip_if_shell_unavailable!("fish");
-
     let result = probe_shell_integration(Shell::Fish, "__wt_nonexistent_12345__");
 
     assert!(

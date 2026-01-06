@@ -106,6 +106,38 @@ assert!(!marker_file.exists(), "Command should NOT have run");
 
 Use `--yes` to skip interactive prompts in tests. Don't pipe input to stdin.
 
+## Feature Flags, Not Runtime Skipping
+
+**Never skip tests based on runtime availability checks.** Use Cargo feature flags instead.
+
+```rust
+// ❌ BAD: Runtime skip - test silently passes when tool unavailable
+#[test]
+fn test_fish_integration() {
+    if !shell_available("fish") {
+        eprintln!("Skipping: fish not available");
+        return;
+    }
+    // test code...
+}
+
+// ✅ GOOD: Feature flag - test excluded from compilation
+#[cfg(feature = "shell-integration-tests")]
+#[test]
+fn test_fish_integration() {
+    // test code...
+}
+```
+
+**Why:**
+- Runtime skips hide missing test coverage in CI logs
+- Feature flags make dependencies explicit in `Cargo.toml`
+- `cargo test` output clearly shows which tests ran vs were compiled out
+- CI can enable features when dependencies are installed
+
+**Existing feature flags:**
+- `shell-integration-tests` — Tests requiring bash/zsh/fish shells and PTY
+
 ## README Examples and Snapshot Testing
 
 ### Problem: Separated stdout/stderr in Standard Snapshots

@@ -205,9 +205,9 @@ fn is_valid_command_position(line: &str, pos: usize, cmd: &str) -> bool {
 
     let before = &line[..pos];
 
-    // For git-wt, just check it's not part of a longer identifier
+    // For git-wt (and git-wt.exe), just check it's not part of a longer identifier
     // e.g., `my-git-wt` should not match
-    if cmd == "git-wt" {
+    if cmd == "git-wt" || cmd == "git-wt.exe" {
         let last_char = before.chars().last().unwrap();
         return !last_char.is_alphanumeric() && last_char != '_' && last_char != '-';
     }
