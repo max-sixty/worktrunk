@@ -47,8 +47,6 @@ exit_code: 0
 [2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
 [2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
 
-[33m▲[39m [33mShell probe: [1mwt[22m is binary at [1m[BINARY_PATH]/wt[22m, not function — won't auto-cd[39m
-
 [36mDIAGNOSTICS[39m
 [2m↳[22m [2mCI status requires GitHub or GitLab remote[22m
 [2m↳[22m [2mCommit generation not configured[22m
