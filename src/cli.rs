@@ -4,6 +4,46 @@ use std::sync::OnceLock;
 
 use crate::commands::Shell;
 
+/// Known template variables that can be overridden with --var.
+const TEMPLATE_VARS: &[&str] = &[
+    "repo",
+    "branch",
+    "worktree_name",
+    "repo_path",
+    "worktree_path",
+    "default_branch",
+    "main_worktree_path",
+    "commit",
+    "short_commit",
+    "remote",
+    "remote_url",
+    "upstream",
+    "target",
+];
+
+/// Deprecated template variable aliases (still valid for override).
+const DEPRECATED_TEMPLATE_VARS: &[&str] = &["main_worktree", "repo_root", "worktree"];
+
+/// Parse key=value string into a tuple, validating that the key is a known template variable.
+///
+/// Used by the `--var` flag on hook commands to override built-in template variables.
+fn parse_key_val(s: &str) -> Result<(String, String), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("invalid KEY=VALUE: no `=` found in `{s}`"))?;
+    if key.is_empty() {
+        return Err("invalid KEY=VALUE: key cannot be empty".to_string());
+    }
+    if !TEMPLATE_VARS.contains(&key) && !DEPRECATED_TEMPLATE_VARS.contains(&key) {
+        return Err(format!(
+            "unknown variable `{key}`; valid variables: {} (deprecated: {})",
+            TEMPLATE_VARS.join(", "),
+            DEPRECATED_TEMPLATE_VARS.join(", ")
+        ));
+    }
+    Ok((key.to_string(), value.to_string()))
+}
+
 /// Custom styles for help output - matches worktrunk's color scheme
 fn help_styles() -> Styles {
     Styles::styled()
@@ -1100,6 +1140,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run post-start hooks
@@ -1116,6 +1160,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run post-switch hooks
@@ -1132,6 +1180,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run pre-commit hooks
@@ -1146,6 +1198,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run pre-merge hooks
@@ -1160,6 +1216,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run post-merge hooks
@@ -1174,6 +1234,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Run pre-remove hooks
@@ -1188,6 +1252,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Override built-in template variable (KEY=VALUE)
+        #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
+        vars: Vec<(String, String)>,
     },
 
     /// Manage command approvals
@@ -2331,9 +2399,12 @@ wt hook pre-merge project:     # Run all project hooks
 wt hook pre-merge user:test    # Run only user's "test" hook
 wt hook pre-merge project:test # Run only project's "test" hook
 wt hook pre-merge --yes        # Skip approval prompts (for CI)
+wt hook post-create --var branch=feature/test  # Override template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
+
+The `--var KEY=VALUE` flag lets you override built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
 ## Language-specific tips
 
