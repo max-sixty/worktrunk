@@ -23,6 +23,7 @@ jobs:
       contents: write
       pull-requests: write
       actions: read
+      id-token: write
     steps:
       - name: 📂 Checkout code
         uses: actions/checkout@v6
@@ -66,7 +67,7 @@ jobs:
             actions: read
 
           # Provide Claude with context about the failure and instructions
-          direct_prompt: |
+          prompt: |
             CI has failed on main branch. Your job is to diagnose and fix the failure, then create a PR.
 
             ## Failed workflow information
