@@ -1,32 +1,14 @@
 use clap::builder::styling::{AnsiColor, Color, Styles};
 use clap::{Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use std::sync::OnceLock;
+use worktrunk::config::{DEPRECATED_TEMPLATE_VARS, TEMPLATE_VARS};
 
 use crate::commands::Shell;
-
-/// Known template variables that can be overridden with --var.
-const TEMPLATE_VARS: &[&str] = &[
-    "repo",
-    "branch",
-    "worktree_name",
-    "repo_path",
-    "worktree_path",
-    "default_branch",
-    "main_worktree_path",
-    "commit",
-    "short_commit",
-    "remote",
-    "remote_url",
-    "upstream",
-    "target",
-];
-
-/// Deprecated template variable aliases (still valid for override).
-const DEPRECATED_TEMPLATE_VARS: &[&str] = &["main_worktree", "repo_root", "worktree"];
 
 /// Parse key=value string into a tuple, validating that the key is a known template variable.
 ///
 /// Used by the `--var` flag on hook commands to override built-in template variables.
+/// Values are shell-escaped during template expansion (see `expand_template` in expansion.rs).
 fn parse_key_val(s: &str) -> Result<(String, String), String> {
     let (key, value) = s
         .split_once('=')

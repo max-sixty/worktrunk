@@ -20,6 +20,37 @@
 //!   ```
 
 use minijinja::{Environment, Value};
+
+/// Known template variables available in hook commands.
+///
+/// These are populated by `build_hook_context()` in `command_executor.rs`.
+/// Some variables are conditional (e.g., `upstream` only exists if tracking is configured).
+///
+/// This list is the single source of truth for `--var` validation in CLI.
+pub const TEMPLATE_VARS: &[&str] = &[
+    "repo",
+    "branch",
+    "worktree_name",
+    "repo_path",
+    "worktree_path",
+    "default_branch",
+    "main_worktree_path",
+    "commit",
+    "short_commit",
+    "remote",
+    "remote_url",
+    "upstream",
+    "target", // Added by merge/rebase hooks via extra_vars
+];
+
+/// Deprecated template variable aliases (still valid for backward compatibility).
+///
+/// These map to current variables:
+/// - `main_worktree` → `repo`
+/// - `repo_root` → `repo_path`
+/// - `worktree` → `worktree_path`
+pub const DEPRECATED_TEMPLATE_VARS: &[&str] = &["main_worktree", "repo_root", "worktree"];
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
