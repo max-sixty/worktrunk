@@ -47,7 +47,6 @@ fn test_remove_internal_mode(mut repo: TestRepo) {
     });
 }
 
-/// Test remove when running as a git subcommand (`git wt remove` instead of `wt remove`).
 ///
 /// When git runs a subcommand, it sets `GIT_EXEC_PATH` in the environment.
 /// Shell integration cannot work in this case because cd directives cannot
@@ -197,7 +196,6 @@ fn test_remove_nonexistent_worktree(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["nonexistent"], None));
 }
 
-/// Test removing a branch that exists but has no worktree, when expected path is occupied.
 ///
 /// Regression test for bug where `wt remove npm` would show "Cannot create worktree for npm"
 /// when the expected path was occupied. The fix uses `ResolutionContext::Remove` which skips
@@ -623,7 +621,6 @@ fn test_remove_branch_only_force_delete(repo: TestRepo) {
     ));
 }
 
-/// Test that remove works from a detached HEAD state in a worktree.
 ///
 /// When in detached HEAD, we should still be able to remove the current worktree
 /// using path-based removal (no branch deletion).
@@ -643,7 +640,6 @@ fn test_remove_from_detached_head_in_worktree(mut repo: TestRepo) {
     ));
 }
 
-/// Test foreground removal from a detached HEAD state.
 ///
 /// Covers the foreground detached HEAD code path in handlers.rs.
 /// The output should be "✓ Removed worktree (detached HEAD, no branch to delete)".
@@ -666,7 +662,6 @@ fn test_remove_foreground_detached_head(mut repo: TestRepo) {
     ));
 }
 
-/// Test that `wt remove @` works from a detached HEAD state in a worktree.
 ///
 /// This should behave identically to `wt remove` (no args) - path-based removal
 /// without branch deletion. The `@` symbol refers to the current worktree.
@@ -686,7 +681,6 @@ fn test_remove_at_from_detached_head_in_worktree(mut repo: TestRepo) {
     ));
 }
 
-/// Test that a branch with matching tree content (but not an ancestor) is deleted.
 ///
 /// This simulates a squash merge workflow where:
 /// - Feature branch has commits ahead of main
@@ -773,7 +767,6 @@ fn test_remove_branch_matching_tree_content(repo: TestRepo) {
         None
     ));
 }
-/// Test the explicit difference between removing main worktree (error) vs linked worktree (success).
 ///
 /// This test documents the expected behavior:
 /// 1. Linked worktrees can be removed (whether from within them or from elsewhere)
@@ -830,7 +823,6 @@ fn test_remove_main_worktree_vs_linked_worktree(mut repo: TestRepo) {
     );
 }
 
-/// Test that removing a worktree for the default branch doesn't show tautological reason.
 ///
 /// When removing a worktree for "main" branch, we should NOT show "(ancestor of main)"
 /// because that would be tautological. The message should just be "Removed main worktree & branch".
@@ -858,7 +850,6 @@ fn test_remove_default_branch_no_tautology() {
     });
 }
 
-/// Test that a squash-merged branch is detected as integrated even when main advances.
 ///
 /// This tests the scenario:
 /// 1. Create feature branch from main and make changes (file A)
@@ -967,7 +958,6 @@ fn test_remove_squash_merged_then_main_advanced(repo: TestRepo) {
 // Pre-Remove Hook Tests
 // ============================================================================
 
-/// Test pre-remove hook executes before worktree removal.
 #[rstest]
 fn test_pre_remove_hook_executes(mut repo: TestRepo) {
     // Create project config with pre-remove hook
@@ -993,7 +983,6 @@ approved-commands = ["echo 'About to remove worktree'"]
     ));
 }
 
-/// Test pre-remove hook has access to template variables.
 #[rstest]
 fn test_pre_remove_hook_template_variables(mut repo: TestRepo) {
     // Create project config with template variables
@@ -1029,7 +1018,6 @@ approved-commands = [
     ));
 }
 
-/// Test pre-remove hook runs even in background mode (before spawning background process).
 #[rstest]
 fn test_pre_remove_hook_runs_in_background_mode(mut repo: TestRepo) {
     use crate::common::wait_for_file;
@@ -1075,7 +1063,6 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
-/// Test pre-remove hook failure aborts removal (FailFast strategy).
 #[rstest]
 fn test_pre_remove_hook_failure_aborts(mut repo: TestRepo) {
     // Create project config with failing hook
@@ -1107,7 +1094,6 @@ approved-commands = ["exit 1"]
     );
 }
 
-/// Test pre-remove hook does NOT run for branch-only removal (no worktree).
 #[rstest]
 fn test_pre_remove_hook_not_for_branch_only(repo: TestRepo) {
     // Create a marker file that the hook would create
@@ -1151,7 +1137,6 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
-/// Test --no-verify flag skips pre-remove hooks.
 #[rstest]
 fn test_pre_remove_hook_skipped_with_no_verify(mut repo: TestRepo) {
     use std::thread;
@@ -1203,7 +1188,6 @@ approved-commands = ["echo 'hook ran' > {}"]
     );
 }
 
-/// Test that pre-remove hook runs for detached HEAD worktrees.
 ///
 /// Even when a worktree is in detached HEAD state (no branch), the pre-remove
 /// hook should still execute.
@@ -1252,7 +1236,6 @@ approved-commands = ["touch {marker_path}"]
     );
 }
 
-/// Test that pre-remove hook runs for detached HEAD worktrees in background mode.
 ///
 /// This complements `test_pre_remove_hook_runs_for_detached_head` by verifying
 /// the hook also runs when removal happens in background (the default).
@@ -1294,7 +1277,6 @@ approved-commands = ["touch {marker_path}"]
     );
 }
 
-/// Test that {{ branch }} template variable expands to empty string for detached HEAD.
 ///
 /// This is a non-snapshot test to avoid cross-platform line-wrapping differences
 /// (macOS temp paths are ~60 chars vs Linux ~20 chars). The snapshot version
@@ -1354,7 +1336,6 @@ approved-commands = ["echo 'branch={{{{ branch }}}}' > {branch_path}"]
     );
 }
 
-/// Test that removing a worktree at a non-standard path shows a path mismatch warning.
 ///
 /// When a worktree is created at a path that doesn't match the config template,
 /// `wt remove` should show a warning about the path mismatch.
@@ -1383,7 +1364,6 @@ fn test_remove_path_mismatch_warning(repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "remove", &["feature"], None));
 }
 
-/// Test that removing a worktree at a non-standard path shows warning in foreground mode.
 #[rstest]
 fn test_remove_path_mismatch_warning_foreground(repo: TestRepo) {
     // Create a worktree at a non-standard path using raw git

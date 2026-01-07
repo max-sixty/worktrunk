@@ -313,7 +313,6 @@ check = "echo 'USER_PRE_MERGE' > user_premerge_marker.txt"
     );
 }
 
-/// Test that hooks receive SIGINT when Ctrl-C is pressed.
 ///
 /// Real Ctrl-C sends SIGINT to the entire foreground process group. We simulate this by:
 /// 1. Spawning wt in its own process group (so we don't kill the test runner)
@@ -378,7 +377,6 @@ long = "sh -c 'echo start >> hook.log; sleep 30; echo done >> hook.log'"
     );
 }
 
-/// Test that hooks receive SIGTERM and do not continue after termination.
 #[rstest]
 #[cfg(unix)]
 fn test_pre_merge_hook_receives_sigterm(repo: TestRepo) {
@@ -647,7 +645,7 @@ vars = "echo 'repo={{ repo }} branch={{ branch }}' > template_vars.txt"
     // Verify template variables were expanded
     let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
     let vars_file = worktree_path.join("template_vars.txt");
-    assert!(vars_file.exists(), "Template vars file should exist");
+    assert!(vars_file.exists());
 
     let contents = fs::read_to_string(&vars_file).unwrap();
     assert!(
@@ -709,7 +707,6 @@ approved-commands = ["echo 'PROJECT_POST_START' > project_bg.txt"]
 // Standalone Hook Execution Tests (wt hook <type>)
 // ============================================================================
 
-/// Test `wt hook post-create` standalone execution
 #[rstest]
 fn test_standalone_hook_post_create(repo: TestRepo) {
     // Write project config with post-create hook
@@ -733,7 +730,6 @@ fn test_standalone_hook_post_create(repo: TestRepo) {
     assert!(content.contains("STANDALONE_POST_CREATE"));
 }
 
-/// Test `wt hook post-start` standalone execution
 #[rstest]
 fn test_standalone_hook_post_start(repo: TestRepo) {
     // Write project config with post-start hook
@@ -754,7 +750,6 @@ fn test_standalone_hook_post_start(repo: TestRepo) {
     assert!(content.contains("STANDALONE_POST_START"));
 }
 
-/// Test `wt hook pre-commit` standalone execution
 #[rstest]
 fn test_standalone_hook_pre_commit(repo: TestRepo) {
     // Write project config with pre-commit hook
@@ -775,7 +770,6 @@ fn test_standalone_hook_pre_commit(repo: TestRepo) {
     assert!(content.contains("STANDALONE_PRE_COMMIT"));
 }
 
-/// Test `wt hook post-merge` standalone execution
 #[rstest]
 fn test_standalone_hook_post_merge(repo: TestRepo) {
     // Write project config with post-merge hook
@@ -796,7 +790,6 @@ fn test_standalone_hook_post_merge(repo: TestRepo) {
     assert!(content.contains("STANDALONE_POST_MERGE"));
 }
 
-/// Test `wt hook pre-remove` standalone execution
 #[rstest]
 fn test_standalone_hook_pre_remove(repo: TestRepo) {
     // Write project config with pre-remove hook
@@ -817,7 +810,6 @@ fn test_standalone_hook_pre_remove(repo: TestRepo) {
     assert!(content.contains("STANDALONE_PRE_REMOVE"));
 }
 
-/// Test `wt hook post-create` fails when no hooks configured
 #[rstest]
 fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
     // No project config, no user config with hooks
@@ -843,7 +835,6 @@ fn test_standalone_hook_no_hooks_configured(repo: TestRepo) {
 // Background Hook Execution Tests (post-start, post-switch)
 // ============================================================================
 
-/// Test that a single failing background hook logs its output
 #[rstest]
 fn test_concurrent_hook_single_failure(repo: TestRepo) {
     // Write project config with a hook that writes output before failing
@@ -883,7 +874,6 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
     );
 }
 
-/// Test that multiple background hooks each get their own log file with correct content
 #[rstest]
 fn test_concurrent_hook_multiple_failures(repo: TestRepo) {
     // Write project config with multiple named hooks (table format)
@@ -948,7 +938,6 @@ second = "echo SECOND_OUTPUT"
     assert!(found_second, "Should have log for 'second' hook");
 }
 
-/// Test that user and project post-start hooks both run in background
 #[rstest]
 fn test_concurrent_hook_user_and_project(repo: TestRepo) {
     // Write user config with post-start hook (using table format for named hook)
@@ -986,7 +975,6 @@ user = "echo 'USER_HOOK' > user_hook_ran.txt"
     assert!(project_content.contains("PROJECT_HOOK"));
 }
 
-/// Test that post-switch hooks also run in background
 #[rstest]
 fn test_concurrent_hook_post_switch(repo: TestRepo) {
     // Write project config with post-switch hook
@@ -1010,7 +998,6 @@ fn test_concurrent_hook_post_switch(repo: TestRepo) {
     assert!(content.contains("POST_SWITCH"));
 }
 
-/// Test that background hooks work with name filter
 #[rstest]
 fn test_concurrent_hook_with_name_filter(repo: TestRepo) {
     // Write project config with multiple named hooks
@@ -1045,7 +1032,6 @@ second = "echo 'SECOND' > second.txt"
     assert!(!second_marker.exists(), "second hook should NOT have run");
 }
 
-/// Test that concurrent hooks with invalid name filter return error
 #[rstest]
 fn test_concurrent_hook_invalid_name_filter(repo: TestRepo) {
     // Write project config with named hooks

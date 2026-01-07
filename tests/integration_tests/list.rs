@@ -101,7 +101,6 @@ fn test_list_multiple_worktrees(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// Test that the `-` gutter symbol appears for the previous worktree (target of `wt switch -`).
 ///
 /// Simulates realistic usage by running switch commands from the correct worktree directories.
 #[rstest]
@@ -224,7 +223,6 @@ fn test_list_json_with_metadata(mut repo: TestRepo) {
     });
 }
 
-/// Test that committed_trees_match is true when a branch has commits ahead but identical tree content.
 /// This tests the merge commit scenario where content matches main even with different commit history.
 #[rstest]
 fn test_list_json_tree_matches_main_after_merge(mut repo: TestRepo) {
@@ -2172,7 +2170,6 @@ fn test_list_maximum_status_symbols(mut repo: TestRepo) {
     });
 }
 
-/// Test that --full detects working tree conflicts (uncommitted changes that would conflict).
 ///
 /// This specifically tests the WorkingTreeConflicts task which:
 /// 1. Uses `git stash create` to get a tree object from uncommitted changes
@@ -2214,7 +2211,6 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     });
 }
 
-/// Test that clean working trees don't affect conflict detection with --full.
 ///
 /// Even with --full, if the working tree is clean, we skip the stash-based check
 /// and just use the commit-level conflict detection.
@@ -2257,7 +2253,6 @@ fn test_list_warns_when_default_branch_missing_worktree(repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// Test that git errors during task execution are collected and displayed as warnings.
 ///
 /// Corrupts a branch ref to point to a non-existent commit, which causes
 /// ahead_behind and other git operations to fail. Verifies the warning
@@ -2277,7 +2272,6 @@ fn test_list_shows_warning_on_git_error(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
-/// Test that orphan branches (no common ancestor with main) are handled gracefully.
 ///
 /// Creates a true orphan branch using `git checkout --orphan` which has no merge base
 /// with main. Verifies no error warning appears and the branch shows as unmerged.
@@ -2325,7 +2319,6 @@ fn test_list_handles_orphan_branch(repo: TestRepo) {
     });
 }
 
-/// Test that prunable worktrees (directory deleted) don't generate error spam.
 ///
 /// When a worktree directory is deleted but git still knows about it, the worktree
 /// is marked as "prunable". We should skip git operations for these worktrees

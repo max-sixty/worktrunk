@@ -235,7 +235,6 @@ fn snapshot_run_hook(test_name: &str, repo: &TestRepo, hook_type: &str, approve:
     insta::assert_snapshot!(test_name, combined);
 }
 
-/// Test that `wt hook pre-merge` requires approval (security boundary test)
 ///
 /// This verifies the fix for the security issue where hooks were bypassing approval.
 /// Before the fix, pre-merge hooks ran with auto_trust=true, skipping approval prompts.
@@ -254,7 +253,6 @@ fn test_run_hook_pre_merge_requires_approval(repo: TestRepo) {
     );
 }
 
-/// Test that `wt hook post-merge` requires approval (security boundary test)
 ///
 /// This verifies the fix for the security issue where hooks were bypassing approval.
 /// Before the fix, post-merge hooks ran with auto_trust=true, skipping approval prompts.
@@ -273,7 +271,6 @@ fn test_run_hook_post_merge_requires_approval(repo: TestRepo) {
     );
 }
 
-/// Test that approval fails in non-TTY environment with clear error message
 ///
 /// When stdin is not a TTY (e.g., CI/CD, piped input), approval prompts cannot be shown.
 /// The command should fail with a clear error telling users to use --yes.
@@ -290,7 +287,6 @@ fn test_approval_fails_in_non_tty(repo: TestRepo) {
     );
 }
 
-/// Test that --yes flag bypasses TTY requirement
 ///
 /// Even in non-TTY environments, --yes should allow commands to execute.
 #[rstest]
@@ -307,7 +303,6 @@ fn test_yes_bypasses_tty_check(repo: TestRepo) {
     ));
 }
 
-/// Test that `{{ target }}` is the current branch when running standalone
 ///
 /// When `wt hook post-merge` runs standalone (not via `wt merge`), the `{{ target }}`
 /// variable should be the current branch, not always the default branch.
@@ -346,7 +341,6 @@ fn test_hook_post_merge_target_is_current_branch(repo: TestRepo) {
     );
 }
 
-/// Test that `{{ target }}` is the current branch for pre-merge standalone
 #[rstest]
 fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
     // Hook that writes {{ target }} to a file so we can verify its value
@@ -381,7 +375,6 @@ fn test_hook_pre_merge_target_is_current_branch(repo: TestRepo) {
     );
 }
 
-/// Test running a specific named hook command
 #[rstest]
 fn test_step_hook_run_named_command(repo: TestRepo) {
     // Config with multiple named commands
@@ -423,7 +416,6 @@ build = "echo 'running build' > build.txt"
     );
 }
 
-/// Test error message when named hook command doesn't exist
 #[rstest]
 fn test_step_hook_unknown_name_error(repo: TestRepo) {
     // Config with multiple named commands
@@ -442,7 +434,6 @@ lint = "echo 'lint'"
     );
 }
 
-/// Test error message when hook has no named commands
 #[rstest]
 fn test_step_hook_name_filter_on_unnamed_command(repo: TestRepo) {
     // Config with a single unnamed command (no table)
@@ -487,7 +478,6 @@ fn snapshot_run_hook_with_args(test_name: &str, repo: &TestRepo, args: &[&str], 
     insta::assert_snapshot!(test_name, combined);
 }
 
-/// Test that `project:` prefix filter still requires approval (security fix test)
 ///
 /// This verifies the fix for the approval bypass vulnerability where `project:name`
 /// filter syntax was not correctly parsed by the approval gate, allowing project
@@ -511,7 +501,6 @@ test = "echo 'Running project test'"
     );
 }
 
-/// Test that `project:` (all project hooks) requires approval
 #[rstest]
 fn test_project_prefix_all_requires_approval(repo: TestRepo) {
     repo.write_project_config(
@@ -531,7 +520,6 @@ lint = "echo 'Running project lint'"
     );
 }
 
-/// Test that `user:` prefix skips approval (user hooks don't need it)
 #[rstest]
 fn test_user_prefix_skips_approval(repo: TestRepo) {
     // Set up user config with a hook
@@ -548,7 +536,6 @@ test = "echo 'user test'"
     );
 }
 
-/// Test running all hooks (no name filter) still works
 #[rstest]
 fn test_step_hook_run_all_commands(repo: TestRepo) {
     // Config with multiple named commands
@@ -587,7 +574,6 @@ third = "echo 'third' >> output.txt"
     );
 }
 
-/// Test that `wt select` fails in non-TTY environment with clear error message
 ///
 /// The select command requires an interactive terminal for its TUI.
 /// When stdin is not a TTY, it should fail with a clear error.

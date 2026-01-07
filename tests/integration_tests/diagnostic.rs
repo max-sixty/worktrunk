@@ -329,7 +329,7 @@ fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
 
     // Should be in .git/wt-logs/ directory
     let wt_logs_dir = repo.root_path().join(".git").join("wt-logs");
-    assert!(wt_logs_dir.exists(), "wt-logs directory should exist");
+    assert!(wt_logs_dir.exists());
 
     let diagnostic_path = wt_logs_dir.join("diagnostic.md");
     assert!(

@@ -8,7 +8,6 @@ use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
-/// Test `wt list` with config setting full = true
 #[rstest]
 fn test_list_config_full_enabled(repo: TestRepo, temp_home: TempDir) {
     // Create user config with list.full = true
@@ -35,7 +34,6 @@ full = true
     });
 }
 
-/// Test `wt list` with config setting branches = true
 #[rstest]
 fn test_list_config_branches_enabled(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
@@ -65,7 +63,6 @@ branches = true
     });
 }
 
-/// Test that CLI flags override config settings
 #[rstest]
 fn test_list_config_cli_override(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
@@ -98,7 +95,6 @@ branches = false
     });
 }
 
-/// Test `wt list` with both full and branches config enabled
 #[rstest]
 fn test_list_config_full_and_branches(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
@@ -129,7 +125,6 @@ branches = true
     });
 }
 
-/// Test `wt list` without config (default behavior)
 #[rstest]
 fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
     // Create a branch without a worktree
@@ -156,7 +151,6 @@ fn test_list_no_config(repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt list` with project config URL template
 #[rstest]
 fn test_list_project_url_column(repo: TestRepo, temp_home: TempDir) {
     // Create project config with URL template
@@ -187,7 +181,6 @@ url = "http://localhost:{{ branch | hash_port }}"
     });
 }
 
-/// Test `wt list --format=json` includes URL fields when template configured
 #[rstest]
 fn test_list_json_url_fields(repo: TestRepo, temp_home: TempDir) {
     // Create project config with URL template
@@ -233,7 +226,6 @@ url = "http://localhost:{{ branch | hash_port }}"
     assert!(first["url_active"].is_boolean());
 }
 
-/// Test `wt list --format=json` has null URL fields when no template configured
 #[rstest]
 fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
     // Create user config WITHOUT URL template
@@ -266,7 +258,6 @@ fn test_list_json_no_url_without_template(repo: TestRepo, temp_home: TempDir) {
     assert!(first["url_active"].is_null());
 }
 
-/// Test URL column with --branches flag
 ///
 /// Only worktrees should have URLs - branches without worktrees can't have running dev servers.
 #[rstest]
@@ -326,7 +317,6 @@ url = "http://localhost:{{ branch | hash_port }}"
     );
 }
 
-/// Test URL with {{ branch }} variable (not hash_port)
 #[rstest]
 fn test_list_url_with_branch_variable(repo: TestRepo, temp_home: TempDir) {
     // Create project config with {{ branch }} in URL

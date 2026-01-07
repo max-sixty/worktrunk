@@ -7,7 +7,6 @@ use crate::common::{TestRepo, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 
-/// Test that Status column data aligns with Status header
 #[rstest]
 fn test_status_column_alignment_with_header(mut repo: TestRepo) {
     // Create worktree with status symbols
@@ -20,7 +19,6 @@ fn test_status_column_alignment_with_header(mut repo: TestRepo) {
     assert_cmd_snapshot!(make_snapshot_cmd(&repo, "list", &[], None));
 }
 
-/// Test that Status column width is consistent across all rows
 #[rstest]
 fn test_status_column_width_consistency(mut repo: TestRepo) {
     // Create multiple worktrees with different status symbol combinations

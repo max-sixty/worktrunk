@@ -99,7 +99,6 @@ fn test_switch_existing_branch(mut repo: TestRepo) {
     snapshot_switch("switch_existing_branch", &repo, &["feature-z"]);
 }
 
-/// Test switching to existing worktree when shell integration is configured but not active.
 ///
 /// When shell integration is configured in user's rc files (e.g., .zshrc) but the user
 /// runs `wt` binary directly (not through the shell wrapper), show a warning that explains
@@ -140,7 +139,6 @@ fn test_switch_existing_with_shell_integration_configured(mut repo: TestRepo) {
     );
 }
 
-/// Test switching when running as a git subcommand (`git wt` instead of `git-wt`).
 ///
 /// When git runs a subcommand, it sets `GIT_EXEC_PATH` in the environment.
 /// Shell integration cannot work in this case because cd directives cannot
@@ -217,7 +215,6 @@ fn test_switch_error_missing_worktree_directory(mut repo: TestRepo) {
     snapshot_switch("switch_error_missing_directory", &repo, &["missing-wt"]);
 }
 
-/// Test the `worktree_path_occupied` error when target path exists but isn't a worktree
 #[rstest]
 fn test_switch_error_path_occupied(repo: TestRepo) {
     // Calculate where the worktree would be created
@@ -453,7 +450,6 @@ fn test_create_with_base_main(repo: TestRepo) {
     );
 }
 
-/// Test that normal switch (branch matches) does NOT show warning
 #[rstest]
 fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
     // Create a worktree for "feature" branch (normal case)
@@ -467,7 +463,6 @@ fn test_switch_no_warning_when_branch_matches(mut repo: TestRepo) {
     );
 }
 
-/// Test switching to a worktree at an unexpected path shows a hint
 #[rstest]
 fn test_switch_branch_worktree_mismatch_shows_hint(repo: TestRepo) {
     // Create a worktree at a non-standard path (sibling to repo, not following template)
@@ -488,12 +483,11 @@ fn test_switch_branch_worktree_mismatch_shows_hint(repo: TestRepo) {
     );
 }
 
-/// Test branch-worktree mismatch warning without shell integration.
 ///
 /// When shell integration is not active, the branch-worktree mismatch warning should appear
 /// alongside the "cannot change directory" warning.
 #[rstest]
-fn test_switch_branch_worktree_mismatch_without_shell_integration(repo: TestRepo) {
+fn test_switch_worktree_mismatch_no_shell_integration(repo: TestRepo) {
     // Create a worktree at a non-standard path
     let wrong_path = repo
         .root_path()
@@ -516,7 +510,6 @@ fn test_switch_branch_worktree_mismatch_without_shell_integration(repo: TestRepo
     );
 }
 
-/// Test AlreadyAt with branch-worktree mismatch.
 ///
 /// When already in a worktree whose path doesn't match the branch name,
 /// switching to that branch should show the branch-worktree mismatch warning.
@@ -545,7 +538,6 @@ fn test_switch_already_at_with_branch_worktree_mismatch(repo: TestRepo) {
     );
 }
 
-/// Test that switching to a branch errors when path is occupied by worktree on different branch
 ///
 /// With branch-first lookup, if a worktree was created for "feature" but then switched to
 /// "bugfix", `wt switch feature` can't find it (since it looks by branch name). When it
@@ -574,7 +566,6 @@ fn test_switch_error_path_occupied_different_branch(repo: TestRepo) {
     );
 }
 
-/// Test that switching to a branch errors when path is occupied by detached HEAD worktree
 #[rstest]
 fn test_switch_error_path_occupied_detached(repo: TestRepo) {
     // Create a worktree for "feature" branch at expected path
@@ -602,7 +593,6 @@ fn test_switch_error_path_occupied_detached(repo: TestRepo) {
     snapshot_switch_with_directive_file("switch_error_path_occupied_detached", &repo, &["feature"]);
 }
 
-/// Test switching to default branch when main worktree is on a different branch
 ///
 /// When the main worktree (repo root) has been switched to a feature branch via
 /// `git checkout feature`, `wt switch main` should error with a helpful message
@@ -620,7 +610,6 @@ fn test_switch_main_worktree_on_different_branch(repo: TestRepo) {
     );
 }
 
-/// Test switching to default branch FROM a feature worktree when main worktree is on different branch
 ///
 /// This reproduces GitHub issue #327: user is in a feature worktree, main worktree has been
 /// switched to a different branch, and user runs `wt switch <default-branch>`.
@@ -643,7 +632,6 @@ fn test_switch_default_branch_from_feature_worktree(mut repo: TestRepo) {
 }
 
 // Execute tests with directive file
-/// Test that --execute with exit code is written to directive file.
 /// The shell wrapper sources this file and propagates the exit code.
 #[rstest]
 fn test_switch_internal_execute_exit_code(repo: TestRepo) {
@@ -656,7 +644,6 @@ fn test_switch_internal_execute_exit_code(repo: TestRepo) {
     );
 }
 
-/// Test execute command failure propagation with shell integration.
 /// When wt succeeds but the execute script would fail, wt still exits 0.
 /// The shell wrapper handles the execute command's exit code.
 #[rstest]
@@ -671,7 +658,6 @@ fn test_switch_internal_execute_with_output_before_exit(repo: TestRepo) {
     );
 }
 // History and ping-pong tests
-/// Test that `wt switch -` uses actual current branch for recording history.
 ///
 /// Bug scenario: If user changes worktrees without using `wt switch` (e.g., cd directly),
 /// history becomes stale. The fix ensures we always use the actual current branch
@@ -701,7 +687,6 @@ fn test_switch_previous_with_stale_history(repo: TestRepo) {
     snapshot_switch("switch_stale_history_second_dash", &repo, &["-"]);
 }
 
-/// Test realistic ping-pong behavior where we actually run from the correct worktree.
 ///
 /// This simulates real usage with shell integration, where each `wt switch` actually
 /// changes the working directory before the next command runs.
@@ -757,14 +742,12 @@ fn test_switch_ping_pong_realistic(repo: TestRepo) {
     );
 }
 
-/// Test that `wt switch` without arguments shows helpful hints about shortcuts.
 #[rstest]
 fn test_switch_missing_argument_shows_hints(repo: TestRepo) {
     // Run switch with no arguments - should show clap error plus hints
     snapshot_switch("switch_missing_argument_hints", &repo, &[]);
 }
 
-/// Test that --execute commands can read from stdin (stdin inheritance).
 ///
 /// This verifies the fix for non-Unix platforms where stdin was incorrectly
 /// set to Stdio::null() instead of Stdio::inherit(), breaking interactive
@@ -810,7 +793,6 @@ fn test_switch_execute_stdin_inheritance(repo: TestRepo) {
 
 // Error context tests
 
-/// Test `wt switch` outside git repo shows error with context
 #[rstest]
 fn test_switch_outside_git_repo(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -831,7 +813,6 @@ fn test_switch_outside_git_repo(temp_home: TempDir) {
 
 // Clobber flag path backup tests
 
-/// Test --clobber moves stale directory to .bak and creates worktree
 #[rstest]
 fn test_switch_clobber_backs_up_stale_directory(repo: TestRepo) {
     // Calculate where the worktree would be created
@@ -867,7 +848,7 @@ fn test_switch_clobber_backs_up_stale_directory(repo: TestRepo) {
         "Backup should exist at {:?}",
         backup_path
     );
-    assert!(backup_path.is_dir(), "Backup should be a directory");
+    assert!(backup_path.is_dir());
 
     // Verify stale content is preserved in backup
     let stale_file = backup_path.join("stale_file.txt");
@@ -878,7 +859,6 @@ fn test_switch_clobber_backs_up_stale_directory(repo: TestRepo) {
     );
 }
 
-/// Test --clobber moves stale file to .bak and creates worktree
 #[rstest]
 fn test_switch_clobber_backs_up_stale_file(repo: TestRepo) {
     // Calculate where the worktree would be created
@@ -912,14 +892,13 @@ fn test_switch_clobber_backs_up_stale_file(repo: TestRepo) {
         "Backup should exist at {:?}",
         backup_path
     );
-    assert!(backup_path.is_file(), "Backup should be a file");
+    assert!(backup_path.is_file());
     assert_eq!(
         std::fs::read_to_string(&backup_path).unwrap(),
         "stale file content"
     );
 }
 
-/// Test --clobber errors when backup path already exists
 #[rstest]
 fn test_switch_clobber_error_backup_exists(repo: TestRepo) {
     // Calculate where the worktree would be created
@@ -953,7 +932,6 @@ fn test_switch_clobber_error_backup_exists(repo: TestRepo) {
     assert!(backup_path.exists());
 }
 
-/// Test that post-switch hooks show "@ path" annotation when shell integration is not active.
 ///
 /// When the user runs `wt` directly (not through shell wrapper), their shell won't
 /// cd to the worktree directory. Hooks should show "@ path" to clarify where they run.
@@ -982,7 +960,6 @@ fn test_switch_post_hook_shows_path_without_shell_integration(repo: TestRepo) {
     );
 }
 
-/// Test that post-switch hooks do NOT show "@ path" when shell integration is active.
 ///
 /// When running through the shell wrapper (directive file set), the user's shell will
 /// actually cd to the worktree. Hooks don't need the path annotation.
@@ -1010,7 +987,6 @@ fn test_switch_post_hook_no_path_with_shell_integration(repo: TestRepo) {
     );
 }
 
-/// Test --clobber handles paths with extensions correctly
 #[rstest]
 fn test_switch_clobber_path_with_extension(repo: TestRepo) {
     // Calculate where the worktree would be created
@@ -1052,7 +1028,6 @@ fn test_switch_clobber_path_with_extension(repo: TestRepo) {
     );
 }
 
-/// Test that worktree-path hint is suppressed when user has custom worktree-path config
 #[rstest]
 fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
     // Set up custom worktree-path in user config

@@ -350,7 +350,6 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
     );
 }
 
-/// Test that hooks receive JSON context on stdin
 #[rstest]
 fn test_post_create_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
@@ -426,7 +425,6 @@ approved-commands = ["cat > context.json"]
     );
 }
 
-/// Test that an actual script file can read JSON from stdin
 #[rstest]
 #[cfg(unix)]
 fn test_post_create_script_reads_json(repo: TestRepo) {
@@ -519,7 +517,6 @@ approved-commands = ["./scripts/setup.py"]
     );
 }
 
-/// Test that background hooks also receive JSON context on stdin
 #[rstest]
 fn test_post_start_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
@@ -1027,7 +1024,6 @@ approved-commands = ["""
 // Regression Tests
 // ============================================================================
 
-/// Test that post-start commands DO NOT run when switching to an existing worktree.
 ///
 /// This is a regression test for a bug where post-start commands were running on ALL
 /// `wt switch` operations instead of only on `wt switch --create`.

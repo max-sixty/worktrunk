@@ -9,7 +9,6 @@ use crate::common::{
 use rstest::rstest;
 use std::fs;
 
-/// Test that post-start background commands work with shell integration
 #[rstest]
 // Test with bash and fish
 #[case("bash")]
@@ -100,7 +99,6 @@ approved-commands = ["sleep 0.05 && echo 'Background task done' > bg_marker.txt"
     );
 }
 
-/// Test that multiple post-start commands run in parallel with shell integration
 #[rstest]
 fn test_bash_shell_integration_post_start_parallel(repo: TestRepo) {
     // Create project config with multiple background commands
@@ -162,7 +160,6 @@ approved-commands = [
     wait_for_file(worktree_path.join("task2.txt").as_path());
 }
 
-/// Test that post-create commands block before shell returns
 #[rstest]
 fn test_bash_shell_integration_post_create_blocks(repo: TestRepo) {
     // Create project config with blocking command
@@ -228,7 +225,6 @@ approved-commands = ["echo 'Setup done' > setup.txt"]
     );
 }
 
-/// Test fish shell specifically with background tasks
 #[cfg(unix)]
 #[rstest]
 fn test_fish_shell_integration_post_start_background(repo: TestRepo) {

@@ -126,7 +126,6 @@ fn test_list_progressive_snapshot_at(mut repo: TestRepo) {
     );
 }
 
-/// Test with a larger dataset to ensure progressive rendering is visible
 #[rstest]
 fn test_list_progressive_many_worktrees(mut repo: TestRepo) {
     // Create many worktrees to ensure rendering takes time
@@ -169,7 +168,6 @@ fn test_list_progressive_many_worktrees(mut repo: TestRepo) {
     output.verify_progressive_filling().unwrap();
 }
 
-/// Test that we can capture output even for fast commands
 #[rstest]
 fn test_list_progressive_fast_command(repo: TestRepo) {
     // Run list without any worktrees (fast)

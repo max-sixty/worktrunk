@@ -209,7 +209,6 @@ fn test_statusline_claude_code_with_model(repo: TestRepo) {
 
 // --- Branch Display Tests ---
 
-/// Test that statusline reflects the current branch after checkout.
 ///
 /// Git updates worktree metadata (`branch` field in `git worktree list`) when
 /// you checkout a different branch. This test verifies that statusline correctly
@@ -255,7 +254,6 @@ fn test_statusline_reflects_checked_out_branch(mut repo: TestRepo) {
     );
 }
 
-/// Test that statusline handles detached HEAD correctly.
 #[rstest]
 fn test_statusline_detached_head(mut repo: TestRepo) {
     // Create a feature worktree
@@ -279,7 +277,6 @@ fn test_statusline_detached_head(mut repo: TestRepo) {
 
 // --- URL Display Tests ---
 
-/// Test that statusline shows URL when project config has URL template.
 #[rstest]
 fn test_statusline_with_url(repo: TestRepo) {
     // Configure URL template with simple branch variable (no hash_port for deterministic output)
@@ -294,7 +291,6 @@ url = "http://{{ branch }}.localhost:3000"
     assert_snapshot!(output, @"[0m main  [36m?[0m[2m^[22m  http://main.localhost:3000");
 }
 
-/// Test that statusline URL uses branch name in feature worktree.
 #[rstest]
 fn test_statusline_url_in_feature_worktree(mut repo: TestRepo) {
     // Configure URL template with simple branch variable

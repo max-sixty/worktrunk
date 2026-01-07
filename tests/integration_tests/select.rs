@@ -391,7 +391,6 @@ fn test_select_with_branches(mut repo: TestRepo) {
     assert_snapshot!("select_with_branches", normalized);
 }
 
-/// Test preview panel 1: HEAD± shows uncommitted changes
 #[rstest]
 fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
@@ -446,7 +445,6 @@ fn test_select_preview_panel_uncommitted(mut repo: TestRepo) {
     assert_snapshot!("select_preview_uncommitted", normalized);
 }
 
-/// Test preview panel 2: log shows recent commits
 #[rstest]
 fn test_select_preview_panel_log(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
@@ -500,7 +498,6 @@ fn test_select_preview_panel_log(mut repo: TestRepo) {
     assert_snapshot!("select_preview_log", normalized);
 }
 
-/// Test preview panel 3: main…± shows diff vs main branch
 #[rstest]
 fn test_select_preview_panel_main_diff(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
