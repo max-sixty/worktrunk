@@ -2200,6 +2200,11 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
+    // Sleep briefly to avoid racy git index caching issues on macOS
+    // Git compares mtimes, and if the write happens within the same filesystem time
+    // resolution window as the previous commit, git status may not detect the change.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
     // Without --full: no conflict symbol (only checks commit-level)
     assert_cmd_snapshot!(
         "working_tree_conflicts_without_full",
