@@ -1482,20 +1482,29 @@ Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same comm
 Query structured data with `--format=json`:
 
 ```console
+# Current worktree path (for scripts)
+wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+
+# Branches with uncommitted changes
+wt list --format=json | jq '.[] | select(.working_tree.modified)'
+
 # Worktrees with merge conflicts
 wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
-# Uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
+# Branches ahead of main (needs merging)
+wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
 
-# Current worktree
-wt list --format=json | jq '.[] | select(.is_current)'
+# Integrated branches (safe to remove)
+wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
 
-# Branches ahead of the default branch
-wt list --format=json | jq '.[] | select(.main.ahead > 0)'
+# Branches without worktrees
+wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
 
-# Integrated branches (ready to clean up)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
+# Worktrees ahead of remote (needs pushing)
+wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+
+# Stale CI (local changes not reflected in CI)
+wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
@@ -1898,6 +1907,19 @@ Toggle between views with number keys:
 
 Branches without worktrees are included — selecting one creates a worktree. (`wt list` requires `--branches` to show them.)
 
+## Configuration
+
+### Pager
+
+The preview panel pipes diff output through git's pager (typically `less` or `delta`). Override pager behavior in user config:
+
+```toml
+[select]
+pager = "delta --paging=never"
+```
+
+This is useful when the default pager doesn't render correctly in the embedded preview panel.
+
 ## See also
 
 - [wt list](@/list.md) — Static table view with all worktree metadata
@@ -1936,6 +1958,42 @@ wt step push
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
 - `for-each` — [experimental] Run a command in every worktree
+
+## Options
+
+### `--stage`
+
+Controls what to stage before committing. Available for `commit` and `squash`:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```bash
+wt step commit --stage=tracked
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
 
 ## See also
 
@@ -2632,6 +2690,20 @@ wt config shell init fish | source
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
 
+### Skip first-run prompt
+
+On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+
+```toml
+skip-shell-integration-prompt = true
+```
+
+Or via environment variable:
+
+```bash
+export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
+```
+
 ## Environment variables
 
 All user config options can be overridden with environment variables using the `WORKTRUNK_` prefix.
@@ -2676,7 +2748,7 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
-| `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting resource limits. |
+| `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 

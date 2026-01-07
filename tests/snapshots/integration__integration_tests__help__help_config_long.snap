@@ -216,6 +216,16 @@ Or manually add to the shell config:
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
 
+[1mSkip first-run prompt
+
+On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+
+  [2mskip-shell-integration-prompt = true
+
+Or via environment variable:
+
+  [2mexport WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
+
 [32mEnvironment variables
 
 All user config options can be overridden with environment variables using the [2mWORKTRUNK_[0m prefix.
@@ -250,12 +260,12 @@ Override the LLM command in CI to use a mock:
 
 [1mOther environment variables
 
-               Variable                                               Purpose                                   
-   ───────────────────────────────── ────────────────────────────────────────────────────────────────────────── 
-   WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)    
-   WORKTRUNK_CONFIG_PATH             Override user config file location                                         
-   WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                
-   WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)  
-   WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting resource limits. 
-   NO_COLOR                          Disable colored output (standard)                                          
+               Variable                                                   Purpose                                      
+   ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
+   WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)           
+   WORKTRUNK_CONFIG_PATH             Override user config file location                                                
+   WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                       
+   WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)         
+   WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
+   NO_COLOR                          Disable colored output (standard)                                                 
    CLICOLOR_FORCE                    Force colored output even when not a TTY

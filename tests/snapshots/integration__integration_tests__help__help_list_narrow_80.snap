@@ -168,20 +168,29 @@ content integrated).
 
 Query structured data with [2m--format=json[0m:
 
+  [2m# Current worktree path (for scripts)
+  [2mwt list --format=json | jq -r '.[] | select(.is_current) | .path'
+  [2m
+  [2m# Branches with uncommitted changes
+  [2mwt list --format=json | jq '.[] | select(.working_tree.modified)'
+  [2m
   [2m# Worktrees with merge conflicts
   [2mwt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
   [2m
-  [2m# Uncommitted changes
-  [2mwt list --format=json | jq '.[] | select(.working_tree.modified)'
+  [2m# Branches ahead of main (needs merging)
+  [2mwt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
   [2m
-  [2m# Current worktree
-  [2mwt list --format=json | jq '.[] | select(.is_current)'
+  [2m# Integrated branches (safe to remove)
+  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
   [2m
-  [2m# Branches ahead of the default branch
-  [2mwt list --format=json | jq '.[] | select(.main.ahead > 0)'
+  [2m# Branches without worktrees
+  [2mwt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
   [2m
-  [2m# Integrated branches (ready to clean up)
-  [2mwt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
+  [2m# Worktrees ahead of remote (needs pushing)
+  [2mwt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+  [2m
+  [2m# Stale CI (local changes not reflected in CI)
+  [2mwt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 
 [1mFields:
 

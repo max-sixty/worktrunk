@@ -47,6 +47,19 @@ Toggle between views with number keys:
 
 Branches without worktrees are included — selecting one creates a worktree. (`wt list` requires `--branches` to show them.)
 
+## Configuration
+
+### Pager
+
+The preview panel pipes diff output through git's pager (typically `less` or `delta`). Override pager behavior in user config:
+
+```toml
+[select]
+pager = "delta --paging=never"
+```
+
+This is useful when the default pager doesn't render correctly in the embedded preview panel.
+
 ## See also
 
 - [wt list](@/list.md) — Static table view with all worktree metadata

@@ -148,20 +148,29 @@ Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same comm
 Query structured data with `--format=json`:
 
 ```bash
+# Current worktree path (for scripts)
+wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+
+# Branches with uncommitted changes
+wt list --format=json | jq '.[] | select(.working_tree.modified)'
+
 # Worktrees with merge conflicts
 wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
-# Uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
+# Branches ahead of main (needs merging)
+wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
 
-# Current worktree
-wt list --format=json | jq '.[] | select(.is_current)'
+# Integrated branches (safe to remove)
+wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
 
-# Branches ahead of the default branch
-wt list --format=json | jq '.[] | select(.main.ahead > 0)'
+# Branches without worktrees
+wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
 
-# Integrated branches (ready to clean up)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
+# Worktrees ahead of remote (needs pushing)
+wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+
+# Stale CI (local changes not reflected in CI)
+wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
