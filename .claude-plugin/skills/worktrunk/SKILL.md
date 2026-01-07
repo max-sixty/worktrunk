@@ -18,7 +18,8 @@ Reference files are synced from [worktrunk.dev](https://worktrunk.dev) documenta
 - **reference/switch.md**, **merge.md**, **list.md**, etc.: Command documentation
 - **reference/llm-commits.md**: LLM commit message generation
 - **reference/tips-patterns.md**: Language-specific tips and patterns
-- **reference/shell-integration.md**: Shell integration debugging (Claude-specific)
+- **reference/shell-integration.md**: Shell integration debugging
+- **reference/troubleshooting.md**: Troubleshooting for LLM and hooks (Claude-specific)
 
 For command-specific options, run `wt <command> --help`. For configuration, follow the workflows below.
 
