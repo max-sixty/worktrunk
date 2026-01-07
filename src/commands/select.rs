@@ -198,19 +198,19 @@ fn run_git_diff_with_pager(git_args: &[&str], pager_cmd: &str) -> Option<String>
 /// 1. WorkingTree: Uncommitted changes (git diff HEAD --stat)
 /// 2. Log: Commit history since diverging from the default branch (git log with merge-base)
 /// 3. BranchDiff: Line diffs since the merge-base with the default branch (git diff --stat DEFAULT…)
+/// 4. UpstreamDiff: Diff vs upstream tracking branch (ahead/behind)
 ///
 /// Loosely aligned with `wt list` columns, though not a perfect match:
 /// - Tab 1 corresponds to "HEAD±" column
 /// - Tab 2 shows commits (related to "main↕" counts)
 /// - Tab 3 corresponds to "main…± (--full)" column
-///
-/// TODO: Consider adding tab 4 "remote±" showing diff vs upstream tracking branch
-/// (unpushed commits). Would align with "Remote⇅" column in `wt list`.
+/// - Tab 4 corresponds to "Remote⇅" column
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewMode {
     WorkingTree = 1,
     Log = 2,
     BranchDiff = 3,
+    UpstreamDiff = 4,
 }
 
 /// Typical terminal character aspect ratio (width/height).
@@ -291,6 +291,7 @@ impl PreviewMode {
         match n {
             2 => Self::Log,
             3 => Self::BranchDiff,
+            4 => Self::UpstreamDiff,
             _ => Self::WorkingTree,
         }
     }
@@ -298,7 +299,7 @@ impl PreviewMode {
 
 /// Preview state persistence (mode only, layout auto-detected)
 ///
-/// State file format: Single digit representing preview mode (1=WorkingTree, 2=Log, 3=BranchDiff)
+/// State file format: Single digit representing preview mode (1-4)
 struct PreviewStateData;
 
 impl PreviewStateData {
@@ -420,6 +421,7 @@ impl WorktreeSkimItem {
         let tab1 = format_tab("1: HEAD±", mode == PreviewMode::WorkingTree);
         let tab2 = format_tab("2: log", mode == PreviewMode::Log);
         let tab3 = format_tab("3: main…±", mode == PreviewMode::BranchDiff);
+        let tab4 = format_tab("4: remote⇅", mode == PreviewMode::UpstreamDiff);
 
         // Controls use dim yellow to distinguish from dimmed (white) tabs
         // while remaining subdued
@@ -432,7 +434,10 @@ impl WorktreeSkimItem {
             controls_style.render_reset()
         );
 
-        format!("{} | {} | {}\n{}\n\n", tab1, tab2, tab3, controls)
+        format!(
+            "{} | {} | {} | {}\n{}\n\n",
+            tab1, tab2, tab3, tab4, controls
+        )
     }
 
     /// Render preview for the given mode with specified dimensions
@@ -441,6 +446,7 @@ impl WorktreeSkimItem {
             PreviewMode::WorkingTree => self.render_working_tree_preview(width),
             PreviewMode::Log => self.render_log_preview(width, height),
             PreviewMode::BranchDiff => self.render_branch_diff_preview(width),
+            PreviewMode::UpstreamDiff => self.render_upstream_diff_preview(width),
         }
     }
 
@@ -523,10 +529,68 @@ impl WorktreeSkimItem {
         self.render_diff_preview(
             &["diff", &merge_base],
             &cformat!(
-                "{INFO_SYMBOL} <bold>{branch}</> has no changes vs <bold>{default_branch}</>"
+                "{INFO_SYMBOL} <bold>{branch}</> has no file changes vs <bold>{default_branch}</>"
             ),
             width,
         )
+    }
+
+    /// Render Tab 4: Upstream diff preview (ahead/behind vs tracking branch)
+    /// Matches `wt list` "Remote⇅" column
+    fn render_upstream_diff_preview(&self, width: usize) -> String {
+        use worktrunk::styling::INFO_SYMBOL;
+
+        let branch = self.item.branch_name();
+
+        // Check if this branch has an upstream tracking branch
+        // Use as_ref() to avoid cloning UpstreamStatus on every preview render
+        let Some(active) = self.item.upstream.as_ref().and_then(|u| u.active()) else {
+            return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no upstream tracking branch\n");
+        };
+
+        // Use @{u} syntax for performance (avoids extra git command to resolve upstream ref)
+        // Format: branch@{u} resolves to the upstream tracking branch
+        let upstream_ref = format!("{}@{{u}}", branch);
+
+        if active.ahead == 0 && active.behind == 0 {
+            return cformat!("{INFO_SYMBOL} <bold>{branch}</> is up to date with upstream\n");
+        }
+
+        // Handle different states: ahead only, behind only, or diverged
+        // Use ⇡/⇣ symbols to match wt list's Remote⇅ column
+        if active.ahead > 0 && active.behind > 0 {
+            // Diverged: show local changes (what would be pushed)
+            // Use three-dot diff to show changes unique to local branch
+            let range = format!("{}...{}", upstream_ref, self.item.head());
+            self.render_diff_preview(
+                &["diff", &range],
+                &cformat!(
+                    "{INFO_SYMBOL} <bold>{branch}</> has diverged (⇡{} ⇣{}) but no unique file changes",
+                    active.ahead,
+                    active.behind
+                ),
+                width,
+            )
+        } else if active.ahead > 0 {
+            // Ahead only: show unpushed commits
+            let range = format!("{}...{}", upstream_ref, self.item.head());
+            self.render_diff_preview(
+                &["diff", &range],
+                &cformat!("{INFO_SYMBOL} <bold>{branch}</> has no unpushed file changes"),
+                width,
+            )
+        } else {
+            // Behind only: show what upstream has that we don't
+            let range = format!("{}...{}", self.item.head(), upstream_ref);
+            self.render_diff_preview(
+                &["diff", &range],
+                &cformat!(
+                    "{INFO_SYMBOL} <bold>{branch}</> is behind upstream (⇣{}) but no file changes",
+                    active.behind
+                ),
+                width,
+            )
+        }
     }
 
     /// Render Tab 2: Log preview
@@ -872,8 +936,11 @@ pub fn handle_select() -> anyhow::Result<()> {
         }) as Arc<dyn SkimItem>,
     );
 
-    // Get state path for key bindings
-    let state_path_str = state.path.display().to_string();
+    // Get state path for key bindings (shell-escaped for safety)
+    let state_path_display = state.path.display().to_string();
+    let state_path_str = shlex::try_quote(&state_path_display)
+        .map(|s| s.into_owned())
+        .unwrap_or(state_path_display);
 
     // Calculate half-page scroll: skim uses 90% of terminal height, half of that = 45%
     let half_page = terminal_size::terminal_size()
@@ -912,7 +979,7 @@ pub fn handle_select() -> anyhow::Result<()> {
                 .to_string(),
         ))
         .bind(vec![
-            // Mode switching (1/2/3 keys change preview content)
+            // Mode switching (1/2/3/4 keys change preview content)
             format!(
                 "1:execute-silent(echo 1 > {0})+refresh-preview",
                 state_path_str
@@ -923,6 +990,10 @@ pub fn handle_select() -> anyhow::Result<()> {
             ),
             format!(
                 "3:execute-silent(echo 3 > {0})+refresh-preview",
+                state_path_str
+            ),
+            format!(
+                "4:execute-silent(echo 4 > {0})+refresh-preview",
                 state_path_str
             ),
             // Preview toggle (alt-p shows/hides preview)
@@ -988,6 +1059,7 @@ mod tests {
         assert_eq!(PreviewMode::from_u8(1), PreviewMode::WorkingTree);
         assert_eq!(PreviewMode::from_u8(2), PreviewMode::Log);
         assert_eq!(PreviewMode::from_u8(3), PreviewMode::BranchDiff);
+        assert_eq!(PreviewMode::from_u8(4), PreviewMode::UpstreamDiff);
         // Invalid values default to WorkingTree
         assert_eq!(PreviewMode::from_u8(0), PreviewMode::WorkingTree);
         assert_eq!(PreviewMode::from_u8(99), PreviewMode::WorkingTree);
@@ -1048,6 +1120,14 @@ mod tests {
             .unwrap_or(PreviewMode::WorkingTree);
         assert_eq!(mode, PreviewMode::BranchDiff);
 
+        let _ = fs::write(&state_path, "4");
+        let mode = fs::read_to_string(&state_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u8>().ok())
+            .map(PreviewMode::from_u8)
+            .unwrap_or(PreviewMode::WorkingTree);
+        assert_eq!(mode, PreviewMode::UpstreamDiff);
+
         // Cleanup
         let _ = fs::remove_file(&state_path);
     }
@@ -1097,10 +1177,11 @@ mod tests {
     #[test]
     fn test_render_preview_tabs_working_tree_mode() {
         let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::WorkingTree);
-        // Tab 1 should be bold (active), tabs 2 and 3 dimmed
+        // Tab 1 should be bold (active), tabs 2/3/4 dimmed
         assert!(output.contains("1: HEAD±"));
         assert!(output.contains("2: log"));
         assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
         assert!(output.contains("Enter: switch"));
         // Verify structure: tabs on first line, controls on second
         assert!(output.contains(" | "));
@@ -1113,6 +1194,7 @@ mod tests {
         assert!(output.contains("1: HEAD±"));
         assert!(output.contains("2: log"));
         assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
     }
 
     #[test]
@@ -1121,6 +1203,16 @@ mod tests {
         assert!(output.contains("1: HEAD±"));
         assert!(output.contains("2: log"));
         assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
+    }
+
+    #[test]
+    fn test_render_preview_tabs_upstream_diff_mode() {
+        let output = WorktreeSkimItem::render_preview_tabs(PreviewMode::UpstreamDiff);
+        assert!(output.contains("1: HEAD±"));
+        assert!(output.contains("2: log"));
+        assert!(output.contains("3: main…±"));
+        assert!(output.contains("4: remote⇅"));
     }
 
     // format_log_output tests use dependency injection for deterministic time formatting.
