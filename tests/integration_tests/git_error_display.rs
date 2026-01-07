@@ -288,7 +288,6 @@ fn display_hook_command_failed_without_name() {
     assert_snapshot!("hook_command_failed_without_name", err.to_string());
 }
 
-/// Test error display for commands that support --no-verify (merge, commit, etc.)
 /// Shows the complete error with hint, as users would see it.
 #[test]
 fn display_hook_command_failed_with_skip_hint() {
@@ -313,7 +312,6 @@ fn display_hook_command_failed_with_skip_hint() {
 // Integration test: verify error message includes command when git unavailable
 // ============================================================================
 
-/// Test that when git execution fails, the error message includes the command.
 /// This is an integration test because it requires running the actual binary.
 #[test]
 #[cfg(unix)]

@@ -11,7 +11,6 @@ use rstest::rstest;
 // These tests verify that WORKTRUNK_DIRECTIVE_FILE env var causes directives to be
 // written to the file. The shell wrapper sources this file after wt exits.
 
-/// Test that switch with directive file writes cd command to file
 #[rstest]
 fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
@@ -41,7 +40,6 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     });
 }
 
-/// Test merge with directive file (switch back to main after merge)
 #[rstest]
 fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
     let repo = &mut repo_with_remote_and_feature;
@@ -69,7 +67,6 @@ fn test_merge_directive_file(mut repo_with_remote_and_feature: TestRepo) {
     });
 }
 
-/// Test that remove with directive file writes cd command to file
 #[rstest]
 fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let feature_wt = repo.add_worktree("feature");
@@ -100,7 +97,6 @@ fn test_remove_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
 // Non-Directive Mode Tests (no WORKTRUNK_DIRECTIVE_FILE)
 // ============================================================================
 
-/// Test switch without directive file (error case - branch not found)
 #[rstest]
 fn test_switch_without_directive_file(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
@@ -116,7 +112,6 @@ fn test_switch_without_directive_file(repo: TestRepo) {
     });
 }
 
-/// Test remove without directive file (error case - main worktree)
 #[rstest]
 fn test_remove_without_directive_file(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
@@ -130,7 +125,6 @@ fn test_remove_without_directive_file(repo: TestRepo) {
     });
 }
 
-/// Test merge with directive file and --no-remove
 #[rstest]
 fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;
@@ -152,7 +146,6 @@ fn test_merge_directive_no_remove(mut repo_with_feature_worktree: TestRepo) {
     });
 }
 
-/// Test merge with directive file (removes worktree, writes cd to file)
 #[rstest]
 fn test_merge_directive_remove(mut repo_with_feature_worktree: TestRepo) {
     let repo = &mut repo_with_feature_worktree;

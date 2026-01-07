@@ -106,7 +106,6 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::process::Command;
 
-/// Test that Git rejects NUL bytes in commit messages
 ///
 /// Git provides the first line of defense by refusing to create commits
 /// with NUL bytes in the message.
@@ -153,7 +152,6 @@ fn test_git_rejects_nul_in_commit_messages(repo: TestRepo) {
     );
 }
 
-/// Test that Rust/OS prevents NUL bytes in command arguments
 ///
 /// This verifies that the OS/Rust provides protection against NUL injection.
 /// Rust's Command API uses C strings internally, which reject NUL bytes.
@@ -187,7 +185,6 @@ fn test_rust_prevents_nul_bytes_in_args(repo: TestRepo) {
     }
 }
 
-/// Test that branch names that ARE directives themselves don't get executed
 ///
 /// This tests the case where the entire branch name is a directive
 #[rstest]
@@ -229,7 +226,6 @@ fn test_branch_name_is_directive_not_executed(repo: TestRepo) {
     );
 }
 
-/// Test that branch names with newline + directive are not executed
 #[rstest]
 fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     let malicious_branch = "feature\n__WORKTRUNK_EXEC__echo PWNED > /tmp/hacked3";
@@ -266,7 +262,6 @@ fn test_branch_name_with_newline_directive_not_executed(repo: TestRepo) {
     );
 }
 
-/// Test that commit messages with directives in list output don't get executed
 ///
 /// This tests if commit messages shown in output (e.g., wt list, logs) could inject directives
 #[rstest]
@@ -299,7 +294,6 @@ fn test_commit_message_with_directive_not_executed(mut repo: TestRepo) {
     );
 }
 
-/// Test that path display with directives doesn't get executed
 ///
 /// This tests if file paths shown in output could inject directives
 #[cfg(unix)]
@@ -328,7 +322,6 @@ fn test_path_with_directive_not_executed(repo: TestRepo) {
     );
 }
 
-/// Test that CD directive in branch names is not treated as a directive
 ///
 /// Similar to EXEC injection, but for CD directives
 #[rstest]
@@ -364,7 +357,6 @@ fn test_branch_name_with_cd_directive_not_executed(repo: TestRepo) {
     });
 }
 
-/// Test that error messages cannot inject directives
 ///
 /// This tests if error messages (e.g., from git) could inject directives
 #[rstest]
@@ -393,7 +385,6 @@ fn test_error_message_with_directive_not_executed(repo: TestRepo) {
     );
 }
 
-/// Test that execute flag (-x) input is properly handled
 ///
 /// The -x flag is SUPPOSED to execute commands, so this tests that:
 /// 1. Commands from -x are written to the directive file

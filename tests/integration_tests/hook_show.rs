@@ -9,7 +9,6 @@ use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
-/// Test `wt hook show` with both user and project hooks
 #[rstest]
 fn test_hook_show_with_both_configs(repo: TestRepo, temp_home: TempDir) {
     // Create user config with hooks
@@ -48,7 +47,6 @@ test = "cargo test"
     });
 }
 
-/// Test `wt hook show` with no hooks configured
 #[rstest]
 fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     // Create user config without hooks
@@ -72,7 +70,6 @@ fn test_hook_show_no_hooks(repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt hook show` filtering by hook type
 #[rstest]
 fn test_hook_show_filter_by_type(repo: TestRepo, temp_home: TempDir) {
     // Create user config without hooks
@@ -114,7 +111,6 @@ deploy = "scripts/deploy.sh"
     });
 }
 
-/// Test `wt hook show` shows approval status for project hooks
 #[rstest]
 fn test_hook_show_approval_status(repo: TestRepo, temp_home: TempDir) {
     // Create user config at XDG path with one approved command
@@ -153,7 +149,6 @@ test = "cargo test"
     });
 }
 
-/// Test error formatting with context (error message + gutter for multi-line)
 #[rstest]
 fn test_error_with_context_formatting(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -169,7 +164,6 @@ fn test_error_with_context_formatting(temp_home: TempDir) {
     });
 }
 
-/// Test `wt hook show` when project config exists but has no hooks
 #[rstest]
 fn test_hook_show_project_config_no_hooks(repo: TestRepo, temp_home: TempDir) {
     // Create user config without hooks
@@ -201,7 +195,6 @@ worktree-path = "../project.{{ branch }}"
     });
 }
 
-/// Test `wt hook show` outside git repo
 #[rstest]
 fn test_hook_show_outside_git_repo(temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();

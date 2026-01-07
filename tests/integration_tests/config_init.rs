@@ -7,7 +7,6 @@ use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
-/// Test `wt config create` when config already exists (should show info message with emoji)
 #[rstest]
 fn test_config_init_already_exists(temp_home: TempDir) {
     // Create fake global config at XDG path
@@ -39,7 +38,6 @@ fn test_config_init_already_exists(temp_home: TempDir) {
     });
 }
 
-/// Test `wt config create` creates new config file
 #[rstest]
 fn test_config_init_creates_file(temp_home: TempDir) {
     // Don't create config file - let create create it
@@ -66,10 +64,9 @@ fn test_config_init_creates_file(temp_home: TempDir) {
 
     // Verify file was actually created
     let config_path = global_config_dir.join("config.toml");
-    assert!(config_path.exists(), "Config file should be created");
+    assert!(config_path.exists());
 }
 
-/// Test `wt config create --project` creates project config file
 #[rstest]
 fn test_config_create_project_creates_file(repo: TestRepo) {
     let settings = setup_snapshot_settings(&repo);
@@ -96,7 +93,6 @@ fn test_config_create_project_creates_file(repo: TestRepo) {
     );
 }
 
-/// Test `wt config create --project` when project config already exists
 #[rstest]
 fn test_config_create_project_already_exists(repo: TestRepo) {
     // Create project config file

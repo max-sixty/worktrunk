@@ -12,7 +12,6 @@ use rstest::rstest;
 use std::fs;
 use worktrunk::config::WorktrunkConfig;
 
-/// Test that switch with active shell integration doesn't trigger prompt
 ///
 /// When WORKTRUNK_DIRECTIVE_FILE is set (shell integration active), we should:
 /// 1. Never call prompt_shell_integration()
@@ -61,7 +60,6 @@ fn test_switch_with_active_shell_integration_no_prompt(repo: TestRepo) {
     );
 }
 
-/// Test that already-prompted flag prevents prompt
 #[rstest]
 fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
     // Set the skip flag in config
@@ -86,7 +84,6 @@ fn test_switch_with_skip_prompt_flag(repo: TestRepo) {
     );
 }
 
-/// Test that non-TTY stdin shows hint but doesn't prompt
 ///
 /// When stdin is not a TTY (e.g., piped input), we should:
 /// - Skip the prompt (can't interact)
@@ -141,7 +138,6 @@ fn test_switch_non_tty_shows_hint(repo: TestRepo) {
     );
 }
 
-/// Test that unsupported shells show appropriate message
 ///
 /// When SHELL is set to an unsupported shell (like tcsh), we should:
 /// - Show a hint that the shell is not supported
@@ -174,7 +170,6 @@ fn test_switch_unsupported_shell_shows_hint(repo: TestRepo) {
     );
 }
 
-/// Test that unset SHELL shows install hint
 ///
 /// When SHELL is not set (unusual Unix setup or Windows), we should:
 /// - Show the standard install hint

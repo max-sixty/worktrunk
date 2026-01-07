@@ -10,7 +10,7 @@ pager = "test-pager --custom-flag"
 
     let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
 
-    assert!(config.select.is_some(), "Select config should be present");
+    assert!(config.select.is_some());
     let select = config.select.unwrap();
     assert_eq!(select.pager, Some("test-pager --custom-flag".to_string()));
 }
@@ -25,7 +25,7 @@ pager = ""
 
     let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
 
-    assert!(config.select.is_some(), "Select config should be present");
+    assert!(config.select.is_some());
     let select = config.select.unwrap();
     assert_eq!(select.pager, Some("".to_string()));
 }
@@ -39,5 +39,5 @@ full = true
 "#;
 
     let config: WorktrunkConfig = toml::from_str(config_content).unwrap();
-    assert!(config.select.is_none(), "Select config should be absent");
+    assert!(config.select.is_none());
 }

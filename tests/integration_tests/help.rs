@@ -77,7 +77,6 @@ fn test_help(#[case] test_name: &str, #[case] args_str: &str) {
     snapshot_help(test_name, &args);
 }
 
-/// Test --version flag
 #[test]
 fn test_version() {
     let mut settings = Settings::clone_current();
@@ -97,7 +96,6 @@ fn test_version() {
     });
 }
 
-/// Test --help-md flag (raw markdown output without ANSI codes)
 #[test]
 fn test_help_md() {
     let mut settings = Settings::clone_current();
@@ -109,7 +107,6 @@ fn test_help_md() {
     });
 }
 
-/// Test --help-md for subcommand
 #[test]
 fn test_help_md_subcommand() {
     let mut settings = Settings::clone_current();
@@ -121,7 +118,6 @@ fn test_help_md_subcommand() {
     });
 }
 
-/// Test --help-page flag for generating doc pages
 #[test]
 fn test_help_page_merge() {
     let mut settings = Settings::clone_current();
@@ -133,7 +129,6 @@ fn test_help_page_merge() {
     });
 }
 
-/// Test --help-page flag for switch command
 #[test]
 fn test_help_page_switch() {
     let mut settings = Settings::clone_current();
@@ -145,7 +140,6 @@ fn test_help_page_switch() {
     });
 }
 
-/// Test --help-page without subcommand shows usage
 #[test]
 fn test_help_page_no_subcommand() {
     let mut settings = Settings::clone_current();
@@ -157,7 +151,6 @@ fn test_help_page_no_subcommand() {
     });
 }
 
-/// Test --help-page with unknown subcommand
 #[test]
 fn test_help_page_unknown_command() {
     let mut settings = Settings::clone_current();
@@ -169,8 +162,6 @@ fn test_help_page_unknown_command() {
     });
 }
 
-/// Test help output at narrow terminal width (80 columns)
-///
 /// Verifies that markdown tables remain intact (no mid-row breaks) even when
 /// table width exceeds terminal width. Tables should extend past 80 columns
 /// rather than wrap incorrectly.

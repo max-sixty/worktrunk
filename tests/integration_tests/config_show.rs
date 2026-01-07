@@ -6,7 +6,6 @@ use rstest::rstest;
 use std::fs;
 use tempfile::TempDir;
 
-/// Test `wt config show` with both global and project configs present
 #[rstest]
 fn test_config_show_with_project_config(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -50,7 +49,6 @@ server = "npm run dev"
     });
 }
 
-/// Test `wt config show` when there is no project config
 #[rstest]
 fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -78,7 +76,6 @@ fn test_config_show_no_project_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt config show` outside a git repository
 #[rstest]
 fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -107,7 +104,6 @@ fn test_config_show_outside_git_repo(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt config show` warns when zsh compinit is not enabled
 #[rstest]
 fn test_config_show_zsh_compinit_warning(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -141,7 +137,6 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     });
 }
 
-/// Test `wt config show` shows hint when some shells configured, some not
 #[rstest]
 fn test_config_show_partial_shell_config_shows_hint(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -183,7 +178,6 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     });
 }
 
-/// Test `wt config show` shows no warning when zsh compinit is enabled
 #[rstest]
 fn test_config_show_zsh_compinit_correct_order(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -271,10 +265,7 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
 /// This is behind shell-integration-tests because it requires `zsh` to be installed.
 #[rstest]
 #[cfg(all(unix, feature = "shell-integration-tests"))]
-fn test_config_show_zsh_compinit_real_probe_no_warning_when_present(
-    mut repo: TestRepo,
-    temp_home: TempDir,
-) {
+fn test_config_show_zsh_compinit_no_warning_when_present(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
     repo.setup_mock_ci_tools_unauthenticated();
 
@@ -313,7 +304,6 @@ if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)
     });
 }
 
-/// Test `wt config show` warns about unknown/misspelled keys in project config
 #[rstest]
 fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -349,7 +339,6 @@ fn test_config_show_warns_unknown_project_keys(mut repo: TestRepo, temp_home: Te
     });
 }
 
-/// Test `wt config show` warns about unknown keys in user config
 #[rstest]
 fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -376,7 +365,6 @@ fn test_config_show_warns_unknown_user_keys(mut repo: TestRepo, temp_home: TempD
     });
 }
 
-/// Test `wt config show --full` when commit generation is not configured
 #[rstest]
 fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -409,7 +397,6 @@ fn test_config_show_full_not_configured(mut repo: TestRepo, temp_home: TempDir) 
     });
 }
 
-/// Test `wt config show --full` when commit generation command doesn't exist
 #[rstest]
 fn test_config_show_full_command_not_found(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -447,7 +434,6 @@ args = ["-m", "test-model"]
     });
 }
 
-/// Test `wt config show` with GitHub remote shows only gh status
 #[rstest]
 fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -486,7 +472,6 @@ fn test_config_show_github_remote(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt config show` with GitLab remote shows only glab status
 #[rstest]
 fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -525,7 +510,6 @@ fn test_config_show_gitlab_remote(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt config show` with empty project config file
 #[rstest]
 fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -558,7 +542,6 @@ fn test_config_show_empty_project_config(mut repo: TestRepo, temp_home: TempDir)
     });
 }
 
-/// Test `wt config show` with whitespace-only project config file
 #[rstest]
 fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -591,7 +574,6 @@ fn test_config_show_whitespace_only_project_config(mut repo: TestRepo, temp_home
     });
 }
 
-/// Test `wt config show` when user config file doesn't exist
 ///
 /// Should show a hint about creating the config and display the default configuration.
 #[rstest]
@@ -613,7 +595,6 @@ fn test_config_show_no_user_config(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt config show` shows warning for unmatched candidates (potential false negatives)
 ///
 /// When a shell config contains `wt` at a word boundary but it's NOT detected as
 /// shell integration, show a warning with file:line format to help debug detection.
@@ -651,8 +632,6 @@ alias wt="git worktree"
     });
 }
 
-/// Test deprecated template variables show warning with migration hint
-///
 /// When a config uses deprecated variables (repo_root, worktree, main_worktree),
 /// the CLI should:
 /// 1. Show a warning listing the deprecated variables and their replacements
@@ -709,8 +688,6 @@ post-create = "ln -sf {{ repo_root }}/node_modules {{ worktree }}/node_modules"
     );
 }
 
-/// Test that deprecated variables migration file is only written once (hint-based deduplication)
-///
 /// When a migration file has already been written, subsequent commands should:
 /// 1. Still show the deprecation warning
 /// 2. NOT overwrite the migration file
@@ -747,7 +724,7 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
     }
 
     let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists(), "Migration file should exist");
+    assert!(migration_file.exists());
 
     let original_content = fs::read_to_string(&migration_file).unwrap();
 
@@ -778,13 +755,9 @@ fn test_deprecated_template_variables_hint_deduplication(repo: TestRepo, temp_ho
     );
 }
 
-/// Test that if user deletes .new file but hint is set, we show "to regenerate, clear hint"
 /// This tests the skip-write path for project config
 #[rstest]
-fn test_deprecated_project_config_deleted_new_file_shows_clear_hint(
-    repo: TestRepo,
-    temp_home: TempDir,
-) {
+fn test_deprecated_config_deleted_shows_regenerate_hint(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
@@ -810,7 +783,7 @@ fn test_deprecated_project_config_deleted_new_file_shows_clear_hint(
     }
 
     let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists(), "Migration file should exist");
+    assert!(migration_file.exists());
 
     // Delete the migration file (user doesn't want it)
     fs::remove_file(&migration_file).unwrap();
@@ -833,12 +806,8 @@ fn test_deprecated_project_config_deleted_new_file_shows_clear_hint(
     );
 }
 
-/// Test that clearing the deprecation hint allows regenerating the migration file
 #[rstest]
-fn test_deprecated_template_variables_hint_clear_and_regenerate(
-    repo: TestRepo,
-    temp_home: TempDir,
-) {
+fn test_deprecated_variables_hint_clear_regenerates(repo: TestRepo, temp_home: TempDir) {
     // Write project config with deprecated variables
     let project_config_dir = repo.root_path().join(".config");
     fs::create_dir_all(&project_config_dir).unwrap();
@@ -864,7 +833,7 @@ fn test_deprecated_template_variables_hint_clear_and_regenerate(
     }
 
     let migration_file = project_config_path.with_extension("toml.new");
-    assert!(migration_file.exists(), "Migration file should exist");
+    assert!(migration_file.exists());
 
     // Delete the migration file to simulate user having applied and removed it
     fs::remove_file(&migration_file).unwrap();
@@ -914,8 +883,6 @@ fn test_deprecated_template_variables_hint_clear_and_regenerate(
     );
 }
 
-/// Test that project config deprecation warnings are NOT shown from feature worktrees
-///
 /// Deprecation warnings should only appear in the main worktree where the migration
 /// file can be applied. Running from a feature worktree should skip the warning entirely.
 #[rstest]
@@ -975,16 +942,11 @@ fn test_deprecated_project_config_silent_in_feature_worktree(repo: TestRepo, tem
     }
 }
 
-/// Test that user config deprecated variables hint shows "delete file" message on second run
-///
 /// User config has no repo context, so hint deduplication is based on file existence.
 /// When the .new file already exists, subsequent runs should show a hint about deleting
 /// the file to regenerate (not about clearing a git config hint).
 #[rstest]
-fn test_user_config_deprecated_template_variables_hint_deduplication(
-    repo: TestRepo,
-    temp_home: TempDir,
-) {
+fn test_user_config_deprecated_variables_deduplication(repo: TestRepo, temp_home: TempDir) {
     // Write user config with deprecated variables using the test config path
     // (WORKTRUNK_CONFIG_PATH is set by repo.wt_command(), not .config/worktrunk/config.toml)
     repo.write_test_config(
@@ -1012,7 +974,7 @@ fn test_user_config_deprecated_template_variables_hint_deduplication(
     }
 
     let migration_file = user_config_path.with_extension("toml.new");
-    assert!(migration_file.exists(), "Migration file should exist");
+    assert!(migration_file.exists());
 
     // Second run - user config always regenerates (overwrites .new file)
     // Should still show "Wrote migrated" since we overwrite existing .new files
@@ -1034,10 +996,9 @@ fn test_user_config_deprecated_template_variables_hint_deduplication(
     }
 
     // Verify migration file still exists
-    assert!(migration_file.exists(), "Migration file should still exist");
+    assert!(migration_file.exists());
 }
 
-/// Test `wt config show` with shell integration active (WORKTRUNK_DIRECTIVE_FILE set)
 #[rstest]
 fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic BINARIES output
@@ -1071,7 +1032,6 @@ fn test_config_show_shell_integration_active(mut repo: TestRepo, temp_home: Temp
     });
 }
 
-/// Test `wt config show` when the worktrunk plugin is installed in Claude Code
 #[rstest]
 fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output
@@ -1101,7 +1061,6 @@ fn test_config_show_plugin_installed(mut repo: TestRepo, temp_home: TempDir) {
     });
 }
 
-/// Test `wt config show` when claude CLI is available but plugin is not installed
 #[rstest]
 fn test_config_show_claude_available_plugin_not_installed(mut repo: TestRepo, temp_home: TempDir) {
     // Setup mock gh/glab for deterministic output

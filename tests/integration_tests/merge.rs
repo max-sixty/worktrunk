@@ -85,7 +85,6 @@ fn test_merge_fast_forward(merge_scenario: (TestRepo, PathBuf)) {
     ));
 }
 
-/// Test merge when running as a git subcommand (`git wt merge` instead of `wt merge`).
 ///
 /// When git runs a subcommand, it sets `GIT_EXEC_PATH` in the environment.
 /// Shell integration cannot work in this case because cd directives cannot
@@ -103,7 +102,7 @@ fn test_merge_as_git_subcommand(merge_scenario: (TestRepo, PathBuf)) {
 }
 
 #[rstest]
-fn test_merge_when_primary_not_on_default_but_default_has_worktree(
+fn test_merge_primary_not_on_default_with_default_worktree(
     mut repo_with_alternate_primary: TestRepo,
 ) {
     let repo = &mut repo_with_alternate_primary;
@@ -172,7 +171,6 @@ fn test_merge_not_fast_forward(mut repo: TestRepo) {
     ));
 }
 
-/// Test that `wt merge --no-commit` shows merge-context hint when main has newer commits.
 /// The --no-commit flag skips the rebase step, so the push fails with not-fast-forward error.
 /// The hint should say "Run 'wt merge' again" (not "Use 'wt merge'").
 #[rstest]
@@ -1721,9 +1719,7 @@ fn test_merge_when_default_branch_missing_worktree(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_merge_does_not_permanently_set_receive_deny_current_branch(
-    merge_scenario: (TestRepo, PathBuf),
-) {
+fn test_merge_doesnt_set_receive_deny_current_branch(merge_scenario: (TestRepo, PathBuf)) {
     let (repo, feature_wt) = merge_scenario;
 
     // Explicitly set config to "refuse" - this would block pushes to checked-out branches
@@ -2108,7 +2104,6 @@ fn test_step_squash_show_prompt(repo_with_multi_commit_feature: TestRepo) {
 // step rebase tests
 // =============================================================================
 
-/// Test that step rebase correctly handles merge commits.
 ///
 /// When a branch has merged main into it, the merge-base equals main's HEAD,
 /// but there are still commits that need rebasing to linearize the history.

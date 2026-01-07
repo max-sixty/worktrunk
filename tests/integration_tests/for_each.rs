@@ -92,7 +92,6 @@ fn test_for_each_spawn_fails(mut repo: TestRepo) {
     ));
 }
 
-/// Test that prunable worktrees (directory deleted) are skipped without errors.
 #[rstest]
 fn test_for_each_skips_prunable_worktrees(mut repo: TestRepo) {
     let worktree_path = repo.add_worktree("feature");

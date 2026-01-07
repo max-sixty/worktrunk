@@ -142,7 +142,7 @@ fn test_get_default_branch_no_remote_master_fallback(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_get_default_branch_no_remote_init_default_branch_config(repo: TestRepo) {
+fn test_default_branch_no_remote_uses_init_config(repo: TestRepo) {
     // Rename main to something non-standard, create the configured default
     repo.git_command()
         .args(["branch", "-m", "main", "primary"])

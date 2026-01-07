@@ -3,7 +3,6 @@ use std::fs;
 use tempfile::TempDir;
 use worktrunk::config::WorktrunkConfig;
 
-/// Test that approved commands are actually persisted to disk
 ///
 /// This test uses `approve_command()` to ensure it never writes to the user's config
 #[test]
@@ -46,7 +45,6 @@ fn test_approval_saves_to_disk() {
     assert!(config.is_command_approved("github.com/test/repo", "test command"));
 }
 
-/// Test that duplicate approvals are not saved twice
 #[test]
 fn test_duplicate_approvals_not_saved_twice() {
     let temp_dir = TempDir::new().unwrap();
@@ -97,7 +95,6 @@ fn test_duplicate_approvals_not_saved_twice() {
     "#);
 }
 
-/// Test that approvals from different projects don't conflict
 #[test]
 fn test_multiple_project_approvals() {
     let temp_dir = TempDir::new().unwrap();
@@ -153,7 +150,6 @@ fn test_multiple_project_approvals() {
     "#);
 }
 
-/// Test that the isolated config NEVER writes to user's actual config
 #[test]
 fn test_isolated_config_safety() {
     let temp_dir = TempDir::new().unwrap();
@@ -203,7 +199,6 @@ fn test_isolated_config_safety() {
     assert!(isolated_content.contains("THIS SHOULD NOT APPEAR IN USER CONFIG"));
 }
 
-/// Test that --yes flag does NOT save approvals
 ///
 /// The --yes flag should allow commands to run once without saving them
 /// to the config file. This ensures --yes is a one-time bypass, not a
@@ -229,7 +224,6 @@ fn test_yes_flag_does_not_save_approval() {
     ");
 }
 
-/// Test that approval saving logic handles missing config gracefully
 #[test]
 fn test_approval_saves_to_new_config_file() {
     let temp_dir = TempDir::new().unwrap();
@@ -266,7 +260,6 @@ fn test_approval_saves_to_new_config_file() {
     "#);
 }
 
-/// Test that saving config preserves TOML comments
 ///
 /// When a user has a config file with comments and we save an approval,
 /// all their comments should be preserved. This test verifies the behavior.
@@ -328,7 +321,6 @@ args = ["-s"]
     );
 }
 
-/// Test that concurrent approve operations don't lose data
 ///
 /// This tests a race condition where two config instances (simulating separate processes)
 /// both approve commands. Without proper merging, the second save would overwrite
@@ -386,7 +378,6 @@ fn test_concurrent_approve_preserves_all_approvals() {
     );
 }
 
-/// Test that concurrent revoke operations don't lose data
 ///
 /// This tests a race condition where two config instances (simulating separate processes)
 /// both revoke commands. Without proper merging, the second save would restore
@@ -459,7 +450,6 @@ fn test_concurrent_revoke_preserves_all_changes() {
     );
 }
 
-/// Test that concurrent approve operations across different projects also work
 #[test]
 fn test_concurrent_approve_different_projects() {
     let temp_dir = TempDir::new().unwrap();
@@ -510,7 +500,6 @@ fn test_concurrent_approve_different_projects() {
     );
 }
 
-/// Test that permission errors when saving config are handled gracefully
 ///
 /// This tests the lower-level `approve_command()` method fails when permissions
 /// are denied. The higher-level `approve_command_batch()` catches this error and
@@ -589,7 +578,6 @@ fn test_permission_error_prevents_save() {
     // This test verifies the save operation correctly fails with permission errors.
 }
 
-/// Test that set_skip_shell_integration_prompt saves to disk
 #[test]
 fn test_skip_shell_integration_prompt_saves_to_disk() {
     let temp_dir = TempDir::new().unwrap();
@@ -617,7 +605,6 @@ fn test_skip_shell_integration_prompt_saves_to_disk() {
     ");
 }
 
-/// Test that set_skip_shell_integration_prompt is idempotent
 #[test]
 fn test_skip_shell_integration_prompt_idempotent() {
     let temp_dir = TempDir::new().unwrap();
@@ -644,7 +631,6 @@ fn test_skip_shell_integration_prompt_idempotent() {
     assert_eq!(count, 1, "Flag should appear exactly once");
 }
 
-/// Test that saving config through a symlink preserves the symlink
 ///
 /// When the config file is a symlink (e.g., user has config.toml -> dotfiles/worktrunk.toml),
 /// saving should write to the target file without destroying the symlink.

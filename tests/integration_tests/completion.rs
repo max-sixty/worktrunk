@@ -974,7 +974,7 @@ fn test_complete_subcommands_filter_options(repo: TestRepo) {
 }
 
 #[rstest]
-fn test_complete_switch_option_prefix_shows_options_not_branches(repo: TestRepo) {
+fn test_complete_switch_option_prefix_shows_options(repo: TestRepo) {
     repo.commit("initial");
 
     // Create branches that happen to contain "-c" in the name
