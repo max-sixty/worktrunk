@@ -21,6 +21,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_DIRECTIVE_FILE: "[DIRECTIVE_FILE]"
@@ -32,5 +33,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Switched to worktree for [1mfeature[22m @ [1m[PROJECT_ID][22m
 [33m▲[39m [33mBranch-worktree mismatch; expected [1mfeature[22m @ [1m_REPO_.feature[22m [31m⚑[39m[39m
+[2m○[22m Switched to worktree for [1mfeature[22m @ [1m[PROJECT_ID][22m

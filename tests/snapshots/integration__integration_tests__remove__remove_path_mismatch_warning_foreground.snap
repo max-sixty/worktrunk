@@ -34,5 +34,5 @@ exit_code: 0
 
 ----- stderr -----
 [36m◎[39m [36mRemoving [1mfeature-fg[22m worktree...[39m
-[32m✓ Removed [1mfeature-fg[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m
 [33m▲[39m [33mBranch-worktree mismatch; expected [1mfeature-fg[22m @ [1m_REPO_.feature-fg[22m [31m⚑[39m[39m
+[32m✓ Removed [1mfeature-fg[22m worktree & branch (same commit as [1mmain[22m,[39m [2m_[22m[32m)[39m

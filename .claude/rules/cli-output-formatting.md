@@ -195,6 +195,46 @@ show_message_based_on(is_merged);
 spawn_background(build_command_that_checks_merge_again());  // Duplicate check!
 ```
 
+## Warning Ordering
+
+**Core principle:** Warnings about state discovered during evaluation appear
+**before** the action message that follows from that evaluation.
+
+When a command evaluates state, discovers something unexpected, and proceeds
+anyway, the warning should come first:
+
+```
+▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+◎ Removing feature worktree & branch in background (same commit as main, _)
+```
+
+Not:
+
+```
+◎ Removing feature worktree & branch in background (same commit as main, _)
+▲ Branch-worktree mismatch; expected feature @ ~/workspace/project.feature ⚑
+```
+
+**Why this ordering matters:** The action message announces a decision. Warnings
+discovered while making that decision should precede the announcement — they
+explain what we found before we decided to proceed. Showing warnings after the
+action makes them feel like afterthoughts rather than considered observations.
+
+**The pattern:**
+
+1. Evaluate state and gather information (discovery phase)
+2. Show warnings about unexpected state discovered during evaluation
+3. Show the action message (what we decided to do)
+4. Show hints about what the user might do next
+
+This applies to warnings that are:
+- Pre-computed during command evaluation (path mismatches, state anomalies)
+- About the state we found, not about the action we're taking
+- Informational rather than blocking (we proceed despite the warning)
+
+Warnings that result from the action itself (something failed during execution)
+naturally come after the action.
+
 ## Message Types
 
 See `output-system-architecture.md` for the API. This section covers when to use

@@ -311,7 +311,7 @@ pub fn handle_switch_output(
         Some(compute_shell_warning_reason())
     };
 
-    // Show branch-worktree mismatch warning after the main message
+    // Compute branch-worktree mismatch warning (shown before action messages)
     let branch_worktree_mismatch_warning = branch_info
         .expected_path
         .as_ref()
@@ -320,12 +320,13 @@ pub fn handle_switch_output(
     let display_path_for_hooks = match result {
         SwitchResult::AlreadyAt(_) => {
             // Already in target directory — no shell warning needed
-            super::print(info_message(cformat!(
-                "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
-            )))?;
+            // Show path mismatch warning first - discovered while checking current state
             if let Some(warning) = branch_worktree_mismatch_warning {
                 super::print(warning)?;
             }
+            super::print(info_message(cformat!(
+                "Already on worktree for <bold>{branch}</> @ <bold>{path_display}</>"
+            )))?;
             // User is already there - no path annotation needed
             None
         }
@@ -354,14 +355,15 @@ pub fn handle_switch_output(
                 Some(path.clone())
             } else {
                 // Shell integration active — user actually switched
+                // Show path mismatch warning first - discovered while evaluating the switch
+                if let Some(warning) = branch_worktree_mismatch_warning {
+                    super::print(warning)?;
+                }
                 super::print(info_message(format_switch_message(
                     branch, path, false, // worktree_created
                     false, // created_branch
                     None, None,
                 )))?;
-                if let Some(warning) = branch_worktree_mismatch_warning {
-                    super::print(warning)?;
-                }
                 // cd will happen - no path annotation needed
                 None
             }
@@ -677,6 +679,11 @@ fn handle_removed_worktree_output(
         // - Branch kept (any reason): "worktree in background" + hint (if relevant)
         let branch_was_integrated = pre_computed_integration.is_some();
 
+        // Show path mismatch warning first - we discovered this while evaluating the removal
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
+
         let action = if should_delete_branch {
             // Branch will be deleted (integrated or force-deleted)
             cformat!(
@@ -687,11 +694,6 @@ fn handle_removed_worktree_output(
             cformat!("<cyan>◎ Removing <bold>{branch_name}</> worktree in background</>")
         };
         super::print(FormattedMessage::new(action))?;
-
-        // Show path mismatch warning if the worktree is at an unexpected location
-        if let Some(expected) = expected_path {
-            super::print(format_path_mismatch_warning(branch_name, expected))?;
-        }
 
         // Show hints for branch status
         if !should_delete_branch {
@@ -786,6 +788,11 @@ fn handle_removed_worktree_output(
         // Message structure parallel to background mode:
         // - Branch deleted (integrated/force): "worktree & branch (reason)"
         // - Branch kept (any reason): "worktree" + hint (if relevant)
+        // Show path mismatch warning first - we discovered this while evaluating the removal
+        if let Some(expected) = expected_path {
+            super::print(format_path_mismatch_warning(branch_name, expected))?;
+        }
+
         let msg = if branch_deleted {
             let flag_note = get_flag_note(deletion_mode, &outcome, effective_target.as_deref());
             let flag_text = &flag_note.text;
@@ -798,11 +805,6 @@ fn handle_removed_worktree_output(
             cformat!("<green>✓ Removed <bold>{branch_name}</> worktree</>")
         };
         super::print(FormattedMessage::new(msg))?;
-
-        // Show path mismatch warning if the worktree was at an unexpected location
-        if let Some(expected) = expected_path {
-            super::print(format_path_mismatch_warning(branch_name, expected))?;
-        }
 
         // Show hints for branch status
         if !branch_deleted {
