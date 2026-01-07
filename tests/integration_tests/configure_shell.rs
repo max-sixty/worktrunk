@@ -983,6 +983,17 @@ mod pty_tests {
             .unwrap()
             .replace_all(&output, "");
 
+        // Remove echoed user input at end of prompt line (PTY echo timing varies).
+        // The prompt ends with [y/N/?][22m  and then the echoed input appears.
+        // Normalize to just the prompt without echoed input.
+        let output = regex::Regex::new(r"(\[y/N/\?\]\x1b\[22m) [yn]")
+            .unwrap()
+            .replace_all(&output, "$1 ");
+
+        // Remove standalone echoed input lines (just y or n on their own line)
+        // that appear due to PTY timing differences
+        let output = regex::Regex::new(r"^[yn]\n").unwrap().replace(&output, "");
+
         // Replace temp home path with ~/
         let home_path = temp_home.path().to_string_lossy();
         output.replace(&*home_path, "~").to_string()
