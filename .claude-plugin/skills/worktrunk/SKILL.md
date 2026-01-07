@@ -152,6 +152,57 @@ Common request for workflow automation. Follow discovery process:
 
 **See `reference/hook.md` for complete details.**
 
+### Adding Hooks to Existing Config
+
+When users want to add automation to an existing project:
+
+1. **Read existing config**: `cat .config/wt.toml`
+
+2. **Determine hook type** - When should this run?
+   - Creating worktree (blocking) → `post-create`
+   - Creating worktree (background) → `post-start`
+   - Every switch → `post-switch`
+   - Before committing → `pre-commit`
+   - Before merging → `pre-merge`
+   - After merging → `post-merge`
+   - Before removal → `pre-remove`
+
+3. **Handle format conversion if needed**
+
+   Single command to named table:
+   ```toml
+   # Before
+   post-create = "npm install"
+
+   # After (adding db:migrate)
+   [post-create]
+   install = "npm install"
+   migrate = "npm run db:migrate"
+   ```
+
+4. **Preserve existing structure and comments**
+
+### Validation Before Adding Commands
+
+Before adding hooks, validate:
+
+```bash
+# Verify command exists
+which npm
+which cargo
+
+# For npm, verify script exists
+npm run lint --dry-run
+
+# For shell commands, check syntax
+bash -n -c "if [ true ]; then echo ok; fi"
+```
+
+**Dangerous patterns** — Warn users before creating hooks with:
+- Destructive commands: `rm -rf`, `DROP TABLE`
+- External dependencies: `curl http://...`
+- Privilege escalation: `sudo`
+
 ## Permission Models
 
 ### User Config: Conservative

@@ -180,3 +180,39 @@ See [llm documentation](https://llm.datasette.io/) and [aichat](https://github.c
 ## Fallback behavior
 
 When no LLM is configured, worktrunk generates deterministic messages based on changed filenames (e.g., "Changes to auth.rs & config.rs").
+
+## Troubleshooting
+
+### LLM command not found
+
+```bash
+$ which llm
+```
+
+If empty, the tool isn't installed or not in PATH. Install with `uv tool install -U llm`.
+
+### LLM returns an error
+
+Test the command directly:
+
+```bash
+$ echo "say hello" | llm
+```
+
+Common issues:
+- **API key not set**: Run `llm keys set anthropic` (or `openai`)
+- **Model not available**: Check model name with `llm models`
+- **Network issues**: Check internet connectivity
+
+### Config not loading
+
+View current configuration:
+
+```bash
+$ wt config show
+```
+
+Check for:
+- Both `template` and `template-file` set (mutually exclusive)
+- Invalid TOML syntax
+- Template file doesn't exist (if using `template-file`)

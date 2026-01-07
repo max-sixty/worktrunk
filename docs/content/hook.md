@@ -470,6 +470,35 @@ fi
 """
 ```
 
+## Troubleshooting
+
+### Hook not running
+
+1. Verify `.config/wt.toml` exists: `ls -la .config/wt.toml`
+2. Check TOML syntax (use `wt hook show` to see parsed config)
+3. Verify hook type spelling matches one of the seven types
+4. Test command manually in the worktree
+
+### Hook failing
+
+1. Run the command manually in the worktree to see errors
+2. Check for missing dependencies (npm packages, system tools)
+3. Verify template variables expand correctly (use `--verbose`)
+4. For background hooks, check logs: `wt config state logs get`
+
+### Slow blocking hooks
+
+Move long-running commands to background:
+
+```toml
+# Before — blocks for minutes
+post-create = "npm run build"
+
+# After — fast setup, build in background
+post-create = "npm install"
+post-start = "npm run build"
+```
+
 ## See also
 
 - [`wt merge`](@/merge.md) — Runs hooks automatically during merge
