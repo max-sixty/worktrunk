@@ -1,0 +1,45 @@
+---
+source: tests/integration_tests/post_start_commands.rs
+info:
+  program: wt
+  args:
+    - switch
+    - "--create"
+    - feature
+    - "--base"
+    - main
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+[36m◎[39m [36mRunning post-create [1mproject:base[22m @ [1m_REPO_.feature[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Base: main'[0m[2m [0m[2m[36m>[0m[2m base_info.txt
+[0m[36m◎[39m [36mRunning post-create [1mproject:base_path[22m @ [1m_REPO_.feature[22m:[39m
+[107m [0m [2m[0m[2m[34mecho[0m[2m [0m[2m[32m'Base Path: _REPO_'[0m[2m [0m[2m[36m>>[0m[2m base_info.txt
+[0m[32m✓[39m [32mCreated branch [1mfeature[22m and worktree from [1mmain[22m @ [1m_REPO_.feature[22m[39m
+[2m↳[22m [2mCustomize worktree locations: [90mwt config create[39m[22m
+[33m▲[39m [33mCannot change directory — shell integration not installed[39m
+[2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

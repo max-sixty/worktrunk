@@ -551,7 +551,8 @@ fn spawn_post_switch_after_remove(
         &repo_root,
         false, // force=false for CommandContext
     );
-    ctx.spawn_post_switch_commands(super::post_hook_display_path(main_path))
+    // No base context for remove-triggered switch (we're returning to main, not creating)
+    ctx.spawn_post_switch_commands(&[], super::post_hook_display_path(main_path))
 }
 
 /// Handle output for RemovedWorktree removal

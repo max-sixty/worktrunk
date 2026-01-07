@@ -2098,6 +2098,8 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
+| `{{ base }}` | main | Base branch (creation hooks only) |
+| `{{ base_worktree_path }}` | /path/to/myproject | Base branch worktree (creation hooks only) |
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 

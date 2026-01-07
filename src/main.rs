@@ -1315,12 +1315,32 @@ fn main() {
                         yes,
                     );
 
+                    // Build extra vars for base branch context
+                    // "base" is the branch we branched from when creating a new worktree.
+                    // For existing worktrees, there's no base concept.
+                    let (base_branch, base_worktree_path): (Option<&str>, Option<&str>) =
+                        match &result {
+                            SwitchResult::Created {
+                                base_branch,
+                                base_worktree_path,
+                                ..
+                            } => (base_branch.as_deref(), base_worktree_path.as_deref()),
+                            SwitchResult::Existing(_) | SwitchResult::AlreadyAt(_) => (None, None),
+                        };
+                    let extra_vars: Vec<(&str, &str)> = [
+                        base_branch.map(|b| ("base", b)),
+                        base_worktree_path.map(|p| ("base_worktree_path", p)),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+
                     // Post-switch runs first (immediate "I'm here" signal)
-                    ctx.spawn_post_switch_commands(hooks_display_path.as_deref())?;
+                    ctx.spawn_post_switch_commands(&extra_vars, hooks_display_path.as_deref())?;
 
                     // Post-start runs only on creation (setup tasks)
                     if matches!(&result, SwitchResult::Created { .. }) {
-                        ctx.spawn_post_start_commands(hooks_display_path.as_deref())?;
+                        ctx.spawn_post_start_commands(&extra_vars, hooks_display_path.as_deref())?;
                     }
                 }
 

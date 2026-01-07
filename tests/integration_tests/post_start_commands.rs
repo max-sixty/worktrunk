@@ -351,6 +351,76 @@ fn test_post_create_upstream_template(#[from(repo_with_remote)] repo: TestRepo) 
 }
 
 #[rstest]
+fn test_post_create_base_variables(repo: TestRepo) {
+    // Create project config with base template variables
+    repo.write_project_config(
+        r#"[post-create]
+base = "echo 'Base: {{ base }}' > base_info.txt"
+base_path = "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt"
+"#,
+    );
+
+    repo.commit("Add config with base template variables");
+
+    // Pre-approve the commands
+    repo.write_test_config(
+        r#"[projects."repo"]
+approved-commands = [
+    "echo 'Base: {{ base }}' > base_info.txt",
+    "echo 'Base Path: {{ base_worktree_path }}' >> base_info.txt",
+]
+"#,
+    );
+
+    // Create a feature branch worktree from main
+    snapshot_switch(
+        "post_create_base_variables",
+        &repo,
+        &["--create", "feature", "--base", "main"],
+    );
+
+    // Verify template expansion actually worked
+    let worktree_path = repo.root_path().parent().unwrap().join("repo.feature");
+    let base_file = worktree_path.join("base_info.txt");
+
+    assert!(
+        base_file.exists(),
+        "base_info.txt should have been created in the worktree"
+    );
+
+    let contents = fs::read_to_string(&base_file).unwrap();
+
+    // Verify base variable (branch name we branched from)
+    assert!(
+        contents.contains("Base: main"),
+        "Should contain expanded base branch, got: {}",
+        contents
+    );
+
+    // Verify base_worktree_path variable (path to main worktree)
+    // The path should contain the repo root (main worktree is at repo root)
+    assert!(
+        contents.contains("Base Path: "),
+        "Should have base_worktree_path line, got: {}",
+        contents
+    );
+
+    // The base_worktree_path should be the main worktree's path (POSIX format)
+    let base_path_line = contents
+        .lines()
+        .find(|l| l.starts_with("Base Path: "))
+        .expect("Should have Base Path line");
+    let base_path = base_path_line.strip_prefix("Base Path: ").unwrap();
+
+    // Convert expected path to POSIX format for comparison
+    let expected_base_path = worktrunk::path::to_posix_path(&repo.root_path().to_string_lossy());
+    assert_eq!(
+        base_path, expected_base_path,
+        "Base path should match main worktree path"
+    );
+}
+
+#[rstest]
 fn test_post_create_json_stdin(repo: TestRepo) {
     use crate::common::wt_command;
 

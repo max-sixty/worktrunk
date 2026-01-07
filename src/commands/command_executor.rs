@@ -82,9 +82,6 @@ pub fn build_hook_context(
     map.insert("repo_path".into(), repo_path.clone());
     map.insert("worktree_path".into(), worktree.clone());
 
-    // TODO: Add `base` (branch) and `base_worktree_path` for post-create/post-switch hooks.
-    // Requires tracking source worktree before switch and passing via extra_vars.
-
     // Deprecated aliases (kept for backward compatibility)
     map.insert("main_worktree".into(), repo_name.into());
     map.insert("repo_root".into(), repo_path);

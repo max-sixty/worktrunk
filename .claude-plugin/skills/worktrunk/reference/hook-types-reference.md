@@ -6,16 +6,17 @@ Detailed behavior and use cases for all seven Worktrunk hook types.
 
 | Hook | When | Blocking? | Fail-Fast? | Variables | Execution |
 |------|------|-----------|------------|-----------|-----------|
-| `post-create` | After creating worktree | Yes | No | Basic | Sequential |
-| `post-start` | After creating worktree | No (background) | No | Basic | Parallel |
-| `post-switch` | After every switch | No (background) | No | Basic | Parallel |
+| `post-create` | After creating worktree | Yes | No | Basic + Base | Sequential |
+| `post-start` | After creating worktree | No (background) | No | Basic + Base | Parallel |
+| `post-switch` | After every switch | No (background) | No | Basic + Base | Parallel |
 | `pre-commit` | Before committing during merge | Yes | Yes | Basic + Merge | Sequential |
 | `pre-merge` | Before merging to target | Yes | Yes | Basic + Merge | Sequential |
 | `post-merge` | After successful merge | Yes | No | Basic + Merge | Sequential |
 | `pre-remove` | Before worktree removed | Yes | Yes | Basic | Sequential |
 
 **Basic variables**: `{{ repo }}`, `{{ repo_path }}`, `{{ branch }}`, `{{ worktree_name }}`, `{{ worktree_path }}`, `{{ main_worktree_path }}`, `{{ default_branch }}`, `{{ commit }}`, `{{ short_commit }}`, `{{ remote }}`, `{{ remote_url }}`, `{{ upstream }}`
-**Merge variables**: Basic + `{{ target }}`
+**Base variables**: `{{ base }}`, `{{ base_worktree_path }}`
+**Merge variables**: `{{ target }}`
 **Filters**: `{{ branch | sanitize }}` (replace `/` `\` with `-`), `{{ branch | hash_port }}` (port 10000-19999)
 
 ## Detailed Behavior
@@ -263,6 +264,18 @@ Available:
 - `{{ remote }}` - Primary remote name (e.g., "origin")
 - `{{ remote_url }}` - Remote URL (e.g., "git@github.com:user/repo.git")
 - `{{ upstream }}` - Upstream tracking branch (e.g., "origin/feature")
+
+### Base Variables (Creation Hooks)
+
+```toml
+post-create = "echo 'Created from {{ base }} at {{ base_worktree_path }}'"
+```
+
+Available in: `post-create`, `post-start`, `post-switch` — only when creating a new worktree (not when switching to existing worktrees).
+
+Additional variables:
+- `{{ base }}` - Base branch that new worktree was created from (e.g., "main")
+- `{{ base_worktree_path }}` - Absolute path to base branch worktree (empty if base has no worktree)
 
 ### Merge Variables (Merge Hooks Only)
 
