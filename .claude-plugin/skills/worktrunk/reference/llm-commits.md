@@ -87,7 +87,7 @@ Squashes branch commits into one with LLM-generated message:
 $ wt step squash
 ```
 
-See [wt merge](https://worktrunk.dev/merge/) and [wt step](https://worktrunk.dev/step/) for full documentation.
+See [`wt merge`](https://worktrunk.dev/merge/) and [`wt step`](https://worktrunk.dev/step/) for full documentation.
 
 ## Prompt templates
 

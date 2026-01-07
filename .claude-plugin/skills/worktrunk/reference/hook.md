@@ -13,7 +13,7 @@ Hooks run automatically during `wt switch`, `wt merge`, & `wt remove`. `wt hook 
 | `post-switch` | After every switch | No (background) | No |
 | `pre-commit` | Before commit during merge | Yes | Yes |
 | `pre-merge` | Before merging to target | Yes | Yes |
-| `post-merge` | After cleanup | Yes | No |
+| `post-merge` | After successful merge | Yes | No |
 | `pre-remove` | Before worktree removed | Yes | Yes |
 
 **Blocking**: Command waits for hook to complete before continuing.
@@ -72,7 +72,7 @@ lint = "cargo clippy -- -D warnings"
 
 ### pre-merge
 
-Runs before merging to target branch, **fail-fast**. All commands must exit 0 for the merge to proceed. Failures abort the merge but preserve the commit.
+Runs before merging to target branch, **fail-fast**. All commands must exit 0 for the merge to proceed.
 
 **Use cases**: Tests, security scans, build verification.
 
@@ -103,19 +103,14 @@ Runs before worktree removal during `wt remove`, **fail-fast**. All commands mus
 cleanup = "rm -rf /tmp/cache/{{ branch }}"
 ```
 
-### Execution order during merge
+### Timing during merge
 
-Full sequence when running `wt merge`:
+- **pre-commit** — After staging, before squash commit
+- **pre-merge** — After rebase, before merge to target
+- **pre-remove** — Before removing worktree during cleanup
+- **post-merge** — After cleanup completes
 
-1. **Squash** — Stages changes, combines commits; **`pre-commit`** runs if dirty (fail-fast)
-2. **Rebase** — Rebases onto target if behind
-3. **`pre-merge`** (fail-fast)
-4. **Merge** — Fast-forward push to target
-5. **`pre-remove`** (fail-fast, if cleanup enabled)
-6. **Cleanup** — Removes worktree and deletes branch
-7. **`post-merge`** (best-effort)
-
-See [wt merge](https://worktrunk.dev/merge/#pipeline) for details on each step.
+See [`wt merge`](https://worktrunk.dev/merge/#pipeline) for the complete pipeline.
 
 ## Configuration
 
@@ -150,6 +145,8 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
+| `{{ base }}` | main | Base branch (creation hooks only) |
+| `{{ base_worktree_path }}` | /path/to/myproject | Base branch worktree (creation hooks only) |
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 

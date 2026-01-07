@@ -28,6 +28,42 @@ wt step push
 - `push` — Fast-forward target to current branch
 - `for-each` — [experimental] Run a command in every worktree
 
+## Options
+
+### `--stage`
+
+Controls what to stage before committing. Available for `commit` and `squash`:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```bash
+wt step commit --stage=tracked
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+
 ## Command reference
 
 wt step - Run individual operations

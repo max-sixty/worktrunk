@@ -53,7 +53,7 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Shortcuts
 
-`@` (current), `-` (previous), `^` (default branch). See [wt switch](https://worktrunk.dev/switch/#shortcuts).
+`@` (current), `-` (previous), `^` (default branch). See [`wt switch`](https://worktrunk.dev/switch/#shortcuts).
 
 ## Command reference
 
