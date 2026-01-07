@@ -161,7 +161,7 @@ Personal hooks that run for all repositories. Use the same syntax as project hoo
 
 User hooks run before project hooks and don't require approval. Skip with [2m--no-verify[0m.
 
-See wt hook for complete documentation.
+See [2mwt hook[0m for complete documentation.
 
 [32mProject config
 
@@ -176,7 +176,7 @@ Create [2m.config/wt.toml[0m in the repository root:
   [2mtest = "npm test"
   [2mlint = "npm run lint"
 
-See wt hook for complete documentation on hook types, execution order, template variables, and JSON context.
+See [2mwt hook[0m for complete documentation on hook types, execution order, template variables, and JSON context.
 
 [1mDev server URL
 
@@ -187,6 +187,15 @@ The [2m[list][0m section adds a URL column to [2mwt list[0m:
 
 URLs are dimmed when the port isn't listening. The template supports [2m{{ branch }}[0m with filters [2mhash_port[0m (port 10000-19999) and [2msanitize[0m 
 (filesystem-safe).
+
+[1mCI platform override
+
+The [2m[ci][0m section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
+
+  [2m[ci]
+  [2mplatform = "github"  # or "gitlab"
+
+By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., [2mgit.mycompany.com[0m instead of [2mgithub.mycompany.com[0m).
 
 [32mShell integration
 
@@ -206,6 +215,16 @@ Or manually add to the shell config:
   [2mwt config shell init fish | source
 
 Without shell integration, [2mwt switch[0m prints the target directory but cannot [2mcd[0m into it.
+
+[1mSkip first-run prompt
+
+On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+
+  [2mskip-shell-integration-prompt = true
+
+Or via environment variable:
+
+  [2mexport WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
 
 [32mEnvironment variables
 
@@ -241,12 +260,12 @@ Override the LLM command in CI to use a mock:
 
 [1mOther environment variables
 
-               Variable                                               Purpose                                   
-   ───────────────────────────────── ────────────────────────────────────────────────────────────────────────── 
-   WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)    
-   WORKTRUNK_CONFIG_PATH             Override user config file location                                         
-   WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                
-   WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)  
-   WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting resource limits. 
-   NO_COLOR                          Disable colored output (standard)                                          
+               Variable                                                   Purpose                                      
+   ───────────────────────────────── ───────────────────────────────────────────────────────────────────────────────── 
+   WORKTRUNK_BIN                     Override binary path for shell wrappers (useful for testing dev builds)           
+   WORKTRUNK_CONFIG_PATH             Override user config file location                                                
+   WORKTRUNK_DIRECTIVE_FILE          Internal: set by shell wrappers to enable directory changes                       
+   WORKTRUNK_SHELL                   Internal: set by shell wrappers to indicate shell type (e.g., powershell)         
+   WORKTRUNK_MAX_CONCURRENT_COMMANDS Max parallel git commands (default: 32). Lower if hitting file descriptor limits. 
+   NO_COLOR                          Disable colored output (standard)                                                 
    CLICOLOR_FORCE                    Force colored output even when not a TTY

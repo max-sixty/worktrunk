@@ -509,11 +509,11 @@ Without a subcommand, runs `get`."#
     /// CI status cache
     #[command(
         name = "ci-status",
-        after_long_help = r#"Caches GitHub/GitLab CI status for display in [wt list](@/list.md#ci-status).
+        after_long_help = r#"Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
 ## How it works
 
-1. **Platform detection** — Detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
+1. **Platform detection** — From `[ci] platform` in project config, or detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
 2. **CLI requirement** — Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated
 3. **What's checked** — PRs/MRs first, then branch pipelines for branches with upstream
 4. **Caching** — Results cached 30-60 seconds per branch+commit
@@ -529,7 +529,7 @@ Without a subcommand, runs `get`."#
 | `no-ci` | No checks configured |
 | `error` | Fetch error (rate limit, network, auth) |
 
-See [wt list CI status](@/list.md#ci-status) for display symbols and colors.
+See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
 
 ## When to use
 
@@ -1312,10 +1312,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## See also
 
-- [wt select](@/select.md) — Interactive worktree selection
-- [wt list](@/list.md) — View all worktrees
-- [wt remove](@/remove.md) — Delete worktrees when done
-- [wt merge](@/merge.md) — Integrate changes back to the default branch
+- [`wt select`](@/select.md) — Interactive worktree selection
+- [`wt list`](@/list.md) — View all worktrees
+- [`wt remove`](@/remove.md) — Delete worktrees when done
+- [`wt merge`](@/merge.md) — Integrate changes back to the default branch
 "#
     )]
     Switch {
@@ -1482,20 +1482,29 @@ Rows are dimmed when [safe to delete](@/remove.md#branch-cleanup) (`_` same comm
 Query structured data with `--format=json`:
 
 ```console
+# Current worktree path (for scripts)
+wt list --format=json | jq -r '.[] | select(.is_current) | .path'
+
+# Branches with uncommitted changes
+wt list --format=json | jq '.[] | select(.working_tree.modified)'
+
 # Worktrees with merge conflicts
 wt list --format=json | jq '.[] | select(.operation_state == "conflicts")'
 
-# Uncommitted changes
-wt list --format=json | jq '.[] | select(.working_tree.modified)'
+# Branches ahead of main (needs merging)
+wt list --format=json | jq '.[] | select(.main.ahead > 0) | .branch'
 
-# Current worktree
-wt list --format=json | jq '.[] | select(.is_current)'
+# Integrated branches (safe to remove)
+wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty") | .branch'
 
-# Branches ahead of the default branch
-wt list --format=json | jq '.[] | select(.main.ahead > 0)'
+# Branches without worktrees
+wt list --format=json --branches | jq '.[] | select(.kind == "branch") | .branch'
 
-# Integrated branches (ready to clean up)
-wt list --format=json | jq '.[] | select(.main_state == "integrated" or .main_state == "empty")'
+# Worktrees ahead of remote (needs pushing)
+wt list --format=json | jq '.[] | select(.remote.ahead > 0) | {branch, ahead: .remote.ahead}'
+
+# Stale CI (local changes not reflected in CI)
+wt list --format=json --full | jq '.[] | select(.ci.stale) | .branch'
 ```
 
 **Fields:**
@@ -1595,7 +1604,7 @@ Missing a field that would be generally useful? Open an issue at https://github.
 
 ## See also
 
-- [wt select](@/select.md) — Interactive worktree picker with live preview
+- [`wt select`](@/select.md) — Interactive worktree picker with live preview
 "#
     )]
     // TODO: `args_conflicts_with_subcommands` causes confusing errors for unknown
@@ -1690,12 +1699,12 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Shortcuts
 
-`@` (current), `-` (previous), `^` (default branch). See [wt switch](@/switch.md#shortcuts).
+`@` (current), `-` (previous), `^` (default branch). See [`wt switch`](@/switch.md#shortcuts).
 
 ## See also
 
-- [wt merge](@/merge.md) — Remove worktree after merging
-- [wt list](@/list.md) — View all worktrees
+- [`wt merge`](@/merge.md) — Remove worktree after merging
+- [`wt list`](@/list.md) — View all worktrees
 "#
     )]
     Remove {
@@ -1776,7 +1785,7 @@ wt merge --no-commit
 
 1. **Squash** — Stages uncommitted changes, then combines all commits since target into one (like GitHub's "Squash and merge"). Use `--stage` to control what gets staged: `all` (default), `tracked`, or `none`. A backup ref is saved to `refs/wt-backup/<branch>`. With `--no-squash`, uncommitted changes become a separate commit and individual commits are preserved.
 2. **Rebase** — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
-3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [wt hook](@/hook.md).
+3. **Pre-merge hooks** — Hooks run after rebase, before merge. Failures abort. See [`wt hook`](@/hook.md).
 4. **Merge** — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
 5. **Pre-remove hooks** — Hooks run before removing worktree. Failures abort.
 6. **Cleanup** — Removes the worktree and branch. Use `--no-remove` to keep the worktree. When already on the target branch or in the main worktree, the worktree is preserved.
@@ -1800,9 +1809,9 @@ lint = "cargo clippy"
 
 ## See also
 
-- [wt step](@/step.md) — Run individual operations (commit, squash, rebase, push)
-- [wt remove](@/remove.md) — Remove worktrees without merging
-- [wt switch](@/switch.md) — Navigate to other worktrees
+- [`wt step`](@/step.md) — Run individual operations (commit, squash, rebase, push)
+- [`wt remove`](@/remove.md) — Remove worktrees without merging
+- [`wt switch`](@/switch.md) — Navigate to other worktrees
 "#
     )]
     Merge {
@@ -1883,6 +1892,7 @@ Toggle between views with number keys:
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
+4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
 
 ## Keybindings
 
@@ -1892,16 +1902,29 @@ Toggle between views with number keys:
 | `Enter` | Switch to selected worktree |
 | `Esc` | Cancel |
 | (type) | Filter worktrees |
-| `1`/`2`/`3` | Switch preview tab |
+| `1`/`2`/`3`/`4` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
 Branches without worktrees are included — selecting one creates a worktree. (`wt list` requires `--branches` to show them.)
 
+## Configuration
+
+### Pager
+
+The preview panel pipes diff output through git's pager (typically `less` or `delta`). Override pager behavior in user config:
+
+```toml
+[select]
+pager = "delta --paging=never"
+```
+
+This is useful when the default pager doesn't render correctly in the embedded preview panel.
+
 ## See also
 
-- [wt list](@/list.md) — Static table view with all worktree metadata
-- [wt switch](@/switch.md) — Direct switching to a known target branch
+- [`wt list`](@/list.md) — Static table view with all worktree metadata
+- [`wt switch`](@/switch.md) — Direct switching to a known target branch
 "#
     )]
     Select,
@@ -1937,10 +1960,46 @@ wt step push
 - `push` — Fast-forward target to current branch
 - `for-each` — [experimental] Run a command in every worktree
 
+## Options
+
+### `--stage`
+
+Controls what to stage before committing. Available for `commit` and `squash`:
+
+| Value | Behavior |
+|-------|----------|
+| `all` | Stage all changes including untracked files (default) |
+| `tracked` | Stage only modified tracked files |
+| `none` | Don't stage anything, commit only what's already staged |
+
+```bash
+wt step commit --stage=tracked
+wt step squash --stage=none
+```
+
+Configure the default in user config:
+
+```toml
+[commit]
+stage = "tracked"
+```
+
+### `--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+```bash
+# Inspect the rendered prompt
+wt step commit --show-prompt | less
+
+# Pipe to a different LLM
+wt step commit --show-prompt | llm -m gpt-5-nano
+```
+
 ## See also
 
-- [wt merge](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- [wt hook](@/hook.md) — Run configured hooks
+- [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
+- [`wt hook`](@/hook.md) — Run configured hooks
 
 <!-- subdoc: for-each -->
 "#
@@ -2063,7 +2122,7 @@ cleanup = "rm -rf /tmp/cache/{{ branch }}"
 - **pre-remove** — Before removing worktree during cleanup
 - **post-merge** — After cleanup completes
 
-See [wt merge](@/merge.md#pipeline) for the complete pipeline.
+See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 ## Configuration
 
@@ -2098,6 +2157,8 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
+| `{{ base }}` | main | Base branch (creation hooks only) |
+| `{{ base_worktree_path }}` | /path/to/myproject | Base branch worktree (creation hooks only) |
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 
@@ -2415,9 +2476,9 @@ fi
 
 ## See also
 
-- [wt merge](@/merge.md) — Runs hooks automatically during merge
-- [wt switch](@/switch.md) — Runs post-create/post-start hooks on `--create`
-- [wt config](@/config.md) — Manage hook approvals
+- [`wt merge`](@/merge.md) — Runs hooks automatically during merge
+- [`wt switch`](@/switch.md) — Runs post-create/post-start hooks on `--create`
+- [`wt config`](@/config.md) — Manage hook approvals
 
 <!-- subdoc: approvals -->
 "#
@@ -2568,7 +2629,7 @@ notify = "notify-send 'Merging {{ branch }}'"
 
 User hooks run before project hooks and don't require approval. Skip with `--no-verify`.
 
-See [wt hook](@/hook.md#user-hooks) for complete documentation.
+See [`wt hook`](@/hook.md#user-hooks) for complete documentation.
 
 ## Project config
 
@@ -2585,7 +2646,7 @@ test = "npm test"
 lint = "npm run lint"
 ```
 
-See [wt hook](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
+See [`wt hook`](@/hook.md) for complete documentation on hook types, execution order, template variables, and [JSON context](@/hook.md#json-context).
 
 ### Dev server URL
 
@@ -2597,6 +2658,17 @@ url = "http://localhost:{{ branch | hash_port }}"
 ```
 
 URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999) and `sanitize` (filesystem-safe).
+
+### CI platform override
+
+The `[ci]` section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
+
+```toml
+[ci]
+platform = "github"  # or "gitlab"
+```
+
+By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
 
 ## Shell integration
 
@@ -2620,6 +2692,20 @@ wt config shell init fish | source
 ```
 
 Without shell integration, `wt switch` prints the target directory but cannot `cd` into it.
+
+### Skip first-run prompt
+
+On first run without shell integration, Worktrunk offers to install it. Suppress this prompt in CI or automated environments:
+
+```toml
+skip-shell-integration-prompt = true
+```
+
+Or via environment variable:
+
+```bash
+export WORKTRUNK_SKIP_SHELL_INTEGRATION_PROMPT=true
+```
 
 ## Environment variables
 
@@ -2665,7 +2751,7 @@ WORKTRUNK_COMMIT_GENERATION__ARGS="test: automated commit" \
 | `WORKTRUNK_CONFIG_PATH` | Override user config file location |
 | `WORKTRUNK_DIRECTIVE_FILE` | Internal: set by shell wrappers to enable directory changes |
 | `WORKTRUNK_SHELL` | Internal: set by shell wrappers to indicate shell type (e.g., `powershell`) |
-| `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting resource limits. |
+| `WORKTRUNK_MAX_CONCURRENT_COMMANDS` | Max parallel git commands (default: 32). Lower if hitting file descriptor limits. |
 | `NO_COLOR` | Disable colored output ([standard](https://no-color.org/)) |
 | `CLICOLOR_FORCE` | Force colored output even when not a TTY |
 

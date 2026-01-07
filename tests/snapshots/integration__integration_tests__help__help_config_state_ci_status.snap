@@ -13,6 +13,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -43,11 +44,11 @@ Usage: [1m[36mwt config state ci-status[0m [36m[OPTIONS][0m [36m[COMMAND]
   [1m[36m-v[0m, [1m[36m--verbose
           Show commands and debug info
 
-Caches GitHub/GitLab CI status for display in wt list.
+Caches GitHub/GitLab CI status for display in [2mwt list[0m.
 
 [32mHow it works
 
-1. [1mPlatform detection[0m — Detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
+1. [1mPlatform detection[0m — From [2m[ci] platform[0m in project config, or detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
 2. [1mCLI requirement[0m — Requires [2mgh[0m (GitHub) or [2mglab[0m (GitLab) CLI, authenticated
 3. [1mWhat's checked[0m — PRs/MRs first, then branch pipelines for branches with upstream
 4. [1mCaching[0m — Results cached 30-60 seconds per branch+commit
@@ -63,7 +64,7 @@ Caches GitHub/GitLab CI status for display in wt list.
    no-ci     No checks configured                    
    error     Fetch error (rate limit, network, auth) 
 
-See wt list CI status for display symbols and colors.
+See [2mwt list[0m CI status for display symbols and colors.
 
 [32mWhen to use
 

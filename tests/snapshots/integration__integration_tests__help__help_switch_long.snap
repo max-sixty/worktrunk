@@ -134,7 +134,7 @@ To change which branch a worktree is on, use [2mgit switch[0m inside that work
 
 [32mSee also
 
-- wt select — Interactive worktree selection
-- wt list — View all worktrees
-- wt remove — Delete worktrees when done
-- wt merge — Integrate changes back to the default branch
+- [2mwt select[0m — Interactive worktree selection
+- [2mwt list[0m — View all worktrees
+- [2mwt remove[0m — Delete worktrees when done
+- [2mwt merge[0m — Integrate changes back to the default branch

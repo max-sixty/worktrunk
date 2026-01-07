@@ -86,10 +86,10 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
 
 ## See also
 
-- [wt select](@/select.md) — Interactive worktree selection
-- [wt list](@/list.md) — View all worktrees
-- [wt remove](@/remove.md) — Delete worktrees when done
-- [wt merge](@/merge.md) — Integrate changes back to the default branch
+- [`wt select`](@/select.md) — Interactive worktree selection
+- [`wt list`](@/list.md) — View all worktrees
+- [`wt remove`](@/remove.md) — Delete worktrees when done
+- [`wt merge`](@/merge.md) — Integrate changes back to the default branch
 
 ## Command reference
 

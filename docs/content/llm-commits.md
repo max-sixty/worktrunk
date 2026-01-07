@@ -100,7 +100,7 @@ Squashes branch commits into one with LLM-generated message:
 $ wt step squash
 ```
 
-See [wt merge](@/merge.md) and [wt step](@/step.md) for full documentation.
+See [`wt merge`](@/merge.md) and [`wt step`](@/step.md) for full documentation.
 
 ## Prompt templates
 

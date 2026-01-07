@@ -61,12 +61,12 @@ Removal runs in the background by default (returns immediately). Logs are writte
 
 ## Shortcuts
 
-`@` (current), `-` (previous), `^` (default branch). See [wt switch](@/switch.md#shortcuts).
+`@` (current), `-` (previous), `^` (default branch). See [`wt switch`](@/switch.md#shortcuts).
 
 ## See also
 
-- [wt merge](@/merge.md) — Remove worktree after merging
-- [wt list](@/list.md) — View all worktrees
+- [`wt merge`](@/merge.md) — Remove worktree after merging
+- [`wt list`](@/list.md) — View all worktrees
 
 ## Command reference
 

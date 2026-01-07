@@ -395,6 +395,16 @@ mod tests {
     }
 
     #[test]
+    fn test_render_inline_formatting_backticks_in_link() {
+        // Backticks inside link text should be preserved and rendered as code
+        let result = render_inline_formatting("See [`wt hook`](@/hook.md) for details");
+        // Should contain dimmed "wt hook" (code style)
+        assert!(result.contains("\u{1b}[2mwt hook\u{1b}[0m"));
+        assert!(result.contains("See "));
+        assert!(result.contains(" for details"));
+    }
+
+    #[test]
     fn test_render_inline_formatting_nested_brackets() {
         assert_eq!(
             render_inline_formatting("[text [with brackets]](url)"),

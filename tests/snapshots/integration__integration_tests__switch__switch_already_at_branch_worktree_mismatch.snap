@@ -21,6 +21,7 @@ info:
     PATH: "[PATH]"
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     USERPROFILE: "[TEST_HOME]"
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
@@ -31,6 +32,6 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Already on worktree for [1mfeature-already[22m @ [1m[PROJECT_ID][22m
 [33m▲[39m [33mBranch-worktree mismatch; expected [1mfeature-already[22m @ [1m_REPO_.feature-already[22m [31m⚑[39m[39m
+[2m○[22m Already on worktree for [1mfeature-already[22m @ [1m[PROJECT_ID][22m
 [2m↳[22m [2mTo enable automatic cd, run [90mwt config shell install[39m[22m

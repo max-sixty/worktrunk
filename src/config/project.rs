@@ -32,10 +32,37 @@ pub struct ProjectListConfig {
     pub url: Option<String>,
 }
 
+/// Project-level CI configuration.
+///
+/// Override CI platform detection when URL-based detection fails (e.g., GitHub
+/// Enterprise or self-hosted GitLab with custom domains).
+///
+/// # Example
+///
+/// ```toml
+/// [ci]
+/// platform = "github"  # or "gitlab"
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct ProjectCiConfig {
+    /// CI platform override. When set, skips URL-based platform detection.
+    ///
+    /// Values: "github" or "gitlab"
+    #[serde(default)]
+    pub platform: Option<String>,
+}
+
 impl ProjectListConfig {
     /// Returns true if any list configuration is set.
     pub fn is_configured(&self) -> bool {
         self.url.is_some()
+    }
+}
+
+impl ProjectConfig {
+    /// Get the CI platform override if configured.
+    pub fn ci_platform(&self) -> Option<&str> {
+        self.ci.as_ref().and_then(|ci| ci.platform.as_deref())
     }
 }
 
@@ -76,6 +103,10 @@ pub struct ProjectConfig {
     /// Configuration for `wt list` output
     #[serde(default)]
     pub list: Option<ProjectListConfig>,
+
+    /// CI configuration (platform override)
+    #[serde(default)]
+    pub ci: Option<ProjectCiConfig>,
 
     /// Captures unknown fields for validation warnings
     #[serde(flatten, default, skip_serializing)]
@@ -156,6 +187,7 @@ mod tests {
         assert!(config.hooks.post_merge.is_none());
         assert!(config.hooks.pre_remove.is_none());
         assert!(config.list.is_none());
+        assert!(config.ci.is_none());
     }
 
     // ============================================================================
@@ -274,6 +306,51 @@ url = "http://localhost:{{ branch | hash_port }}"
         let config = ProjectListConfig::default();
         assert!(config.url.is_none());
         assert!(!config.is_configured());
+    }
+
+    // ============================================================================
+    // CiConfig Tests
+    // ============================================================================
+
+    #[test]
+    fn test_deserialize_ci_platform_github() {
+        let contents = r#"
+[ci]
+platform = "github"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.ci.is_some());
+        let ci = config.ci.unwrap();
+        assert_eq!(ci.platform.as_deref(), Some("github"));
+    }
+
+    #[test]
+    fn test_deserialize_ci_platform_gitlab() {
+        let contents = r#"
+[ci]
+platform = "gitlab"
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.ci.is_some());
+        let ci = config.ci.unwrap();
+        assert_eq!(ci.platform.as_deref(), Some("gitlab"));
+    }
+
+    #[test]
+    fn test_deserialize_ci_empty() {
+        let contents = r#"
+[ci]
+"#;
+        let config: ProjectConfig = toml::from_str(contents).unwrap();
+        assert!(config.ci.is_some());
+        let ci = config.ci.unwrap();
+        assert!(ci.platform.is_none());
+    }
+
+    #[test]
+    fn test_ci_config_default() {
+        let config = ProjectCiConfig::default();
+        assert!(config.platform.is_none());
     }
 
     // ============================================================================

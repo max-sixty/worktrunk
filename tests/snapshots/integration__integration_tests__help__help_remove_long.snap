@@ -110,9 +110,9 @@ the foreground.
 
 [32mShortcuts
 
-[2m@[0m (current), [2m-[0m (previous), [2m^[0m (default branch). See wt switch.
+[2m@[0m (current), [2m-[0m (previous), [2m^[0m (default branch). See [2mwt switch[0m.
 
 [32mSee also
 
-- wt merge — Remove worktree after merging
-- wt list — View all worktrees
+- [2mwt merge[0m — Remove worktree after merging
+- [2mwt list[0m — View all worktrees

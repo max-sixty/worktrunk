@@ -348,6 +348,8 @@ pub enum SwitchResult {
         created_branch: bool,
         /// Base branch when creating new branch (e.g., "main")
         base_branch: Option<String>,
+        /// Absolute path to base branch's worktree (POSIX format for shell compatibility)
+        base_worktree_path: Option<String>,
         /// Remote tracking branch if created from remote (e.g., "origin/feature")
         /// This is set when git's DWIM created a local branch from a remote
         from_remote: Option<String>,
@@ -693,6 +695,12 @@ pub fn handle_switch(
         None
     };
 
+    // Compute base worktree path once for hooks and result
+    let base_worktree_path = base_for_creation
+        .as_ref()
+        .and_then(|b| repo.worktree_for_branch(b).ok().flatten())
+        .map(|p| worktrunk::path::to_posix_path(&p.to_string_lossy()));
+
     // Execute post-create commands (sequential, blocking)
     // Note: If user declines, continue anyway - worktree already created
     if !no_verify {
@@ -705,8 +713,19 @@ pub fn handle_switch(
             &repo_root,
             force,
         );
+
+        let extra_vars: Vec<(&str, &str)> = [
+            base_for_creation.as_ref().map(|b| ("base", b.as_str())),
+            base_worktree_path
+                .as_ref()
+                .map(|p| ("base_worktree_path", p.as_str())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
         // Approval was handled at the gate
-        ctx.execute_post_create_commands()?;
+        ctx.execute_post_create_commands(&extra_vars)?;
     }
 
     // Note: post-start commands are spawned AFTER success message is shown
@@ -720,6 +739,7 @@ pub fn handle_switch(
             path: worktree_path,
             created_branch: create,
             base_branch: base_for_creation,
+            base_worktree_path,
             from_remote,
         },
         SwitchBranchInfo {
@@ -786,7 +806,9 @@ impl<'a> CommandContext<'a> {
     /// Runs user hooks first, then project hooks.
     /// Shows path in hook announcements when shell integration isn't active (user's shell
     /// won't cd to the new worktree, so they need to know where hooks ran).
-    pub fn execute_post_create_commands(&self) -> anyhow::Result<()> {
+    ///
+    /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
+    pub fn execute_post_create_commands(&self, extra_vars: &[(&str, &str)]) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
         super::hooks::run_hook_with_filter(
             self,
@@ -795,7 +817,7 @@ impl<'a> CommandContext<'a> {
                 .as_ref()
                 .and_then(|c| c.hooks.post_create.as_ref()),
             HookType::PostCreate,
-            &[],
+            extra_vars,
             HookFailureStrategy::Warn,
             None,
             crate::output::post_hook_display_path(self.worktree_path),
@@ -804,10 +826,12 @@ impl<'a> CommandContext<'a> {
 
     /// Spawn post-start commands in parallel as background processes (non-blocking)
     ///
+    /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
     /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
     /// the user's shell won't be in the worktree (shell integration not active).
     pub fn spawn_post_start_commands(
         &self,
+        extra_vars: &[(&str, &str)],
         display_path: Option<&std::path::Path>,
     ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
@@ -819,7 +843,7 @@ impl<'a> CommandContext<'a> {
                 .as_ref()
                 .and_then(|c| c.hooks.post_start.as_ref()),
             HookType::PostStart,
-            &[],
+            extra_vars,
             None,
             display_path,
         )?;
@@ -831,10 +855,12 @@ impl<'a> CommandContext<'a> {
     ///
     /// Runs on every switch, including to existing worktrees and newly created ones.
     ///
+    /// `extra_vars`: Additional template variables (e.g., `base`, `base_worktree_path`).
     /// `display_path`: When `Some`, shows the path in hook announcements. Pass this when
     /// the user's shell won't be in the worktree (shell integration not active).
     pub fn spawn_post_switch_commands(
         &self,
+        extra_vars: &[(&str, &str)],
         display_path: Option<&std::path::Path>,
     ) -> anyhow::Result<()> {
         let project_config = self.repo.load_project_config()?;
@@ -846,7 +872,7 @@ impl<'a> CommandContext<'a> {
                 .as_ref()
                 .and_then(|c| c.hooks.post_switch.as_ref()),
             HookType::PostSwitch,
-            &[],
+            extra_vars,
             None,
             display_path,
         )?;
@@ -1070,6 +1096,7 @@ mod tests {
             path: path.clone(),
             created_branch: true,
             base_branch: Some("main".to_string()),
+            base_worktree_path: Some("/test/main".to_string()),
             from_remote: None,
         };
         assert_eq!(result.path(), &path);
@@ -1082,6 +1109,7 @@ mod tests {
             path: path.clone(),
             created_branch: false,
             base_branch: None,
+            base_worktree_path: None,
             from_remote: Some("origin/feature".to_string()),
         };
         assert_eq!(result.path(), &path);

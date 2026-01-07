@@ -104,7 +104,7 @@ Skip committing/squashing (rebase still runs unless --no-rebase):
 what gets staged: [2mall[0m (default), [2mtracked[0m, or [2mnone[0m. A backup ref is saved to [2mrefs/wt-backup/<branch>[0m. With [2m--no-squash[0m, uncommitted changes become a 
 separate commit and individual commits are preserved.
 2. [1mRebase[0m — Rebases onto target if behind. Skipped if already up-to-date. Conflicts abort immediately.
-3. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See wt hook.
+3. [1mPre-merge hooks[0m — Hooks run after rebase, before merge. Failures abort. See [2mwt hook[0m.
 4. [1mMerge[0m — Fast-forward merge to the target branch. Non-fast-forward merges are rejected.
 5. [1mPre-remove hooks[0m — Hooks run before removing worktree. Failures abort.
 6. [1mCleanup[0m — Removes the worktree and branch. Use [2m--no-remove[0m to keep the worktree. When already on the target branch or in the main worktree, the 
@@ -131,6 +131,6 @@ hooks validate before merging — if they pass, the branch goes to the default b
 
 [32mSee also
 
-- wt step — Run individual operations (commit, squash, rebase, push)
-- wt remove — Remove worktrees without merging
-- wt switch — Navigate to other worktrees
+- [2mwt step[0m — Run individual operations (commit, squash, rebase, push)
+- [2mwt remove[0m — Remove worktrees without merging
+- [2mwt switch[0m — Navigate to other worktrees

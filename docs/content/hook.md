@@ -118,7 +118,7 @@ cleanup = "rm -rf /tmp/cache/{{ branch }}"
 - **pre-remove** — Before removing worktree during cleanup
 - **post-merge** — After cleanup completes
 
-See [wt merge](@/merge.md#pipeline) for the complete pipeline.
+See [`wt merge`](@/merge.md#pipeline) for the complete pipeline.
 
 ## Configuration
 
@@ -153,6 +153,8 @@ Hooks can use template variables that expand at runtime:
 | `{{ remote_url }}` | git@github.com:user/repo.git | Remote URL |
 | `{{ upstream }}` | origin/feature | Upstream tracking branch |
 | `{{ target }}` | main | Target branch (merge hooks only) |
+| `{{ base }}` | main | Base branch (creation hooks only) |
+| `{{ base_worktree_path }}` | /path/to/myproject | Base branch worktree (creation hooks only) |
 
 See [Designing effective hooks](#designing-effective-hooks) for `main_worktree_path` patterns.
 
@@ -470,9 +472,9 @@ fi
 
 ## See also
 
-- [wt merge](@/merge.md) — Runs hooks automatically during merge
-- [wt switch](@/switch.md) — Runs post-create/post-start hooks on `--create`
-- [wt config](@/config.md) — Manage hook approvals
+- [`wt merge`](@/merge.md) — Runs hooks automatically during merge
+- [`wt switch`](@/switch.md) — Runs post-create/post-start hooks on `--create`
+- [`wt config`](@/config.md) — Manage hook approvals
 
 ## Command reference
 

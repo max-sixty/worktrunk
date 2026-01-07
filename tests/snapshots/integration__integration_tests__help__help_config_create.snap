@@ -338,3 +338,12 @@ With [2m--project[0m, creates [2m.config/wt.toml[0m in the current repositor
   [2m# ============================================================================
   [2m# [list]
   [2m# url = "http://localhost:{{ branch | hash_port }}"
+  [2m
+  [2m# ============================================================================
+  [2m# CI Platform Override
+  [2m# ============================================================================
+  [2m# Override CI platform detection for GitHub Enterprise or self-hosted GitLab
+  [2m# with custom domains where URL detection fails.
+  [2m#
+  [2m# [ci]
+  [2m# platform = "github"  # or "gitlab"

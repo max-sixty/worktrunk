@@ -153,7 +153,7 @@ Shows PR/CI status for all branches, including those without worktrees. CI indic
 wt list --format=json
 ```
 
-Structured output for dashboards, statuslines, and scripts. See [wt list](@/list.md) for query examples.
+Structured output for dashboards, statuslines, and scripts. See [`wt list`](@/list.md) for query examples.
 
 ## Reuse `default-branch`
 
@@ -177,7 +177,7 @@ Reference Taskfile/Justfile/Makefile in hooks:
 
 ## Shortcuts
 
-Special arguments work across all commands—see [wt switch](@/switch.md#shortcuts) for the full list.
+Special arguments work across all commands—see [`wt switch`](@/switch.md#shortcuts) for the full list.
 
 ```bash
 wt switch --create hotfix --base=@       # Branch from current HEAD

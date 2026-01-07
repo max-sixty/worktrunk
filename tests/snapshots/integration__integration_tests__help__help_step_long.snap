@@ -69,7 +69,37 @@ Manual merge workflow with review between steps:
 - [2mpush[0m — Fast-forward target to current branch
 - [2mfor-each[0m — [experimental] Run a command in every worktree
 
+[32mOptions
+
+[1m`--stage`
+
+Controls what to stage before committing. Available for [2mcommit[0m and [2msquash[0m:
+
+    Value                         Behavior                         
+   ─────── ─────────────────────────────────────────────────────── 
+   all     Stage all changes including untracked files (default)   
+   tracked Stage only modified tracked files                       
+   none    Don't stage anything, commit only what's already staged 
+
+  [2mwt step commit --stage=tracked
+  [2mwt step squash --stage=none
+
+Configure the default in user config:
+
+  [2m[commit]
+  [2mstage = "tracked"
+
+[1m`--show-prompt`
+
+Output the rendered LLM prompt to stdout without running the command. Useful for inspecting prompt templates or piping to other tools:
+
+  [2m# Inspect the rendered prompt
+  [2mwt step commit --show-prompt | less
+  [2m
+  [2m# Pipe to a different LLM
+  [2mwt step commit --show-prompt | llm -m gpt-5-nano
+
 [32mSee also
 
-- wt merge — Runs commit → squash → rebase → hooks → push → cleanup automatically
-- wt hook — Run configured hooks
+- [2mwt merge[0m — Runs commit → squash → rebase → hooks → push → cleanup automatically
+- [2mwt hook[0m — Run configured hooks

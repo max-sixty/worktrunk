@@ -337,11 +337,11 @@ pub fn pre_hook_display_path(hooks_run_at: &std::path::Path) -> Option<&std::pat
 /// # Examples
 ///
 /// ```ignore
-/// // In post-create, post-switch, post-merge hooks:
-/// ctx.spawn_post_start_commands(post_hook_display_path(&destination))?;
+/// // In post-create, post-start, post-switch hooks (creation path):
+/// ctx.spawn_post_start_commands(&extra_vars, post_hook_display_path(&destination))?;
 ///
 /// // After remove when switching to main:
-/// ctx.spawn_post_switch_commands(post_hook_display_path(main_path))?;
+/// ctx.spawn_post_switch_commands(&[], post_hook_display_path(main_path))?;
 /// ```
 pub fn post_hook_display_path(destination: &std::path::Path) -> Option<&std::path::Path> {
     if is_shell_integration_active() {

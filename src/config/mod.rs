@@ -31,7 +31,8 @@ pub use deprecation::normalize_template_vars;
 pub use expansion::{expand_template, sanitize_branch_name};
 pub use hooks::HooksConfig;
 pub use project::{
-    ProjectConfig, ProjectListConfig, find_unknown_keys as find_unknown_project_keys,
+    ProjectCiConfig, ProjectConfig, ProjectListConfig,
+    find_unknown_keys as find_unknown_project_keys,
 };
 pub use user::{
     CommitGenerationConfig, StageMode, UserProjectConfig, WorktrunkConfig,

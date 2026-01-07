@@ -228,14 +228,16 @@ pub fn handle_list(
             if !ci_tools.any_available() {
                 use ci_status::{CiPlatform, get_platform_for_repo};
                 use color_print::cformat;
-                use worktrunk::git::Repository;
+                use worktrunk::config::ProjectConfig;
                 use worktrunk::styling::hint_message;
 
-                // Detect platform from repo's remote URL
-                let platform = Repository::current()
+                // Detect platform from repo's remote URL (with config override support)
+                let project_config = ProjectConfig::load(&repo, true).ok().flatten();
+                let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
+                let platform = repo
                     .worktree_root()
                     .ok()
-                    .and_then(|root| get_platform_for_repo(root.to_str()?));
+                    .and_then(|root| get_platform_for_repo(root.to_str()?, platform_override));
 
                 // Only show hint for the relevant platform's tool
                 let hint = match platform {

@@ -2197,6 +2197,14 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
+    // Force git to refresh its index to detect the file modification immediately
+    // Without this, git's mtime-based caching can miss the change on fast filesystems (especially macOS)
+    repo.git_command()
+        .args(["update-index", "--refresh"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+
     // Without --full: no conflict symbol (only checks commit-level)
     assert_cmd_snapshot!(
         "working_tree_conflicts_without_full",
