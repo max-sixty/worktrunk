@@ -89,3 +89,12 @@
 # ============================================================================
 # [list]
 # url = "http://localhost:{{ branch | hash_port }}"
+
+# ============================================================================
+# CI Platform Override
+# ============================================================================
+# Override CI platform detection for GitHub Enterprise or self-hosted GitLab
+# with custom domains where URL detection fails.
+#
+# [ci]
+# platform = "github"  # or "gitlab"

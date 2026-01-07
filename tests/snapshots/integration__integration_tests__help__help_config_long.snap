@@ -188,6 +188,15 @@ The [2m[list][0m section adds a URL column to [2mwt list[0m:
 URLs are dimmed when the port isn't listening. The template supports [2m{{ branch }}[0m with filters [2mhash_port[0m (port 10000-19999) and [2msanitize[0m 
 (filesystem-safe).
 
+[1mCI platform override
+
+The [2m[ci][0m section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
+
+  [2m[ci]
+  [2mplatform = "github"  # or "gitlab"
+
+By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., [2mgit.mycompany.com[0m instead of [2mgithub.mycompany.com[0m).
+
 [32mShell integration
 
 Worktrunk needs shell integration to change directories when switching worktrees. Install with:

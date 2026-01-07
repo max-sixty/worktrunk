@@ -7,9 +7,11 @@ use worktrunk::path::sanitize_for_filename;
 use worktrunk::shell_exec::run;
 use worktrunk::utils::get_now;
 
-/// CI platform detected from remote URL
-// TODO: Add a `[ci] platform = "github" | "gitlab"` override in project config
-// for cases where URL detection fails or users want to force a specific platform.
+/// CI platform detected from project config override or remote URL.
+///
+/// Platform is determined by:
+/// 1. Project config `[ci] platform = "github" | "gitlab"` (takes precedence)
+/// 2. Remote URL detection (searches for "github" or "gitlab" in URL)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum CiPlatform {
@@ -29,8 +31,33 @@ fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
     }
 }
 
-/// Get the CI platform for a repository by checking its origin remote URL.
-pub fn get_platform_for_repo(repo_root: &str) -> Option<CiPlatform> {
+/// Get the CI platform for a repository.
+///
+/// If `platform_override` is provided (from project config `[ci] platform`),
+/// uses that value directly. Otherwise, detects platform from the origin
+/// remote URL.
+///
+/// # Arguments
+///
+/// * `repo_root` - Repository root path
+/// * `platform_override` - Optional platform from `[ci] platform` in project config
+pub fn get_platform_for_repo(
+    repo_root: &str,
+    platform_override: Option<&str>,
+) -> Option<CiPlatform> {
+    // Config override takes precedence
+    if let Some(platform_str) = platform_override {
+        if let Ok(platform) = platform_str.parse::<CiPlatform>() {
+            log::debug!("Using CI platform from config override: {}", platform);
+            return Some(platform);
+        }
+        log::warn!(
+            "Invalid CI platform in config: '{}'. Expected 'github' or 'gitlab'.",
+            platform_str
+        );
+    }
+
+    // Fall back to URL detection
     let url = get_remote_url_for_repo(repo_root)?;
     detect_platform_from_url(&url)
 }
@@ -124,6 +151,32 @@ mod tests {
             detect_platform_from_url("https://codeberg.org/owner/repo.git"),
             None
         );
+    }
+
+    #[test]
+    fn test_platform_override_github() {
+        // Config override should take precedence over URL detection
+        assert_eq!(
+            "github".parse::<CiPlatform>().ok(),
+            Some(CiPlatform::GitHub)
+        );
+    }
+
+    #[test]
+    fn test_platform_override_gitlab() {
+        // Config override should take precedence over URL detection
+        assert_eq!(
+            "gitlab".parse::<CiPlatform>().ok(),
+            Some(CiPlatform::GitLab)
+        );
+    }
+
+    #[test]
+    fn test_platform_override_invalid() {
+        // Invalid platform strings should not parse
+        assert!("invalid".parse::<CiPlatform>().is_err());
+        assert!("GITHUB".parse::<CiPlatform>().is_err()); // Case-sensitive
+        assert!("GitHub".parse::<CiPlatform>().is_err()); // Case-sensitive
     }
 
     #[test]
@@ -1142,7 +1195,7 @@ impl PrStatus {
 
     /// Detect CI status without caching (internal implementation)
     ///
-    /// Platform is determined by the remote URL (github.com vs gitlab.com).
+    /// Platform is determined by project config override or remote URL detection.
     /// For unknown platforms (e.g., GitHub Enterprise with custom domains), falls back
     /// to trying both platforms.
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
@@ -1152,8 +1205,15 @@ impl PrStatus {
         repo_root: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        // Determine platform from remote URL
-        let platform = get_platform_for_repo(repo_root);
+        use worktrunk::config::ProjectConfig;
+
+        // Load project config for platform override
+        let repo = Repository::at(repo_root);
+        let project_config = ProjectConfig::load(&repo, false).ok().flatten();
+        let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
+
+        // Determine platform (config override or URL detection)
+        let platform = get_platform_for_repo(repo_root, platform_override);
 
         match platform {
             Some(CiPlatform::GitHub) => {

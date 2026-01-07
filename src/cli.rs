@@ -513,7 +513,7 @@ Without a subcommand, runs `get`."#
 
 ## How it works
 
-1. **Platform detection** — Detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
+1. **Platform detection** — From `[ci] platform` in project config, or detected from remote URL (github.com → GitHub, gitlab.com → GitLab)
 2. **CLI requirement** — Requires `gh` (GitHub) or `glab` (GitLab) CLI, authenticated
 3. **What's checked** — PRs/MRs first, then branch pipelines for branches with upstream
 4. **Caching** — Results cached 30-60 seconds per branch+commit
@@ -2597,6 +2597,17 @@ url = "http://localhost:{{ branch | hash_port }}"
 ```
 
 URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999) and `sanitize` (filesystem-safe).
+
+### CI platform override
+
+The `[ci]` section overrides CI platform detection for GitHub Enterprise or self-hosted GitLab with custom domains:
+
+```toml
+[ci]
+platform = "github"  # or "gitlab"
+```
+
+By default, the platform is detected from the remote URL. Use this when URL detection fails (e.g., `git.mycompany.com` instead of `github.mycompany.com`).
 
 ## Shell integration
 
