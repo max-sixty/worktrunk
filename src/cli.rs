@@ -1883,6 +1883,7 @@ Toggle between views with number keys:
 1. **HEAD±** — Diff of uncommitted changes
 2. **log** — Recent commits; commits already on the default branch have dimmed hashes
 3. **main…±** — Diff of changes since the merge-base with the default branch
+4. **remote⇅** — Diff vs upstream tracking branch (ahead/behind)
 
 ## Keybindings
 
@@ -1892,7 +1893,7 @@ Toggle between views with number keys:
 | `Enter` | Switch to selected worktree |
 | `Esc` | Cancel |
 | (type) | Filter worktrees |
-| `1`/`2`/`3` | Switch preview tab |
+| `1`/`2`/`3`/`4` | Switch preview tab |
 | `Alt-p` | Toggle preview panel |
 | `Ctrl-u`/`Ctrl-d` | Scroll preview up/down |
 
