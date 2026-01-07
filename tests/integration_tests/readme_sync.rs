@@ -1289,3 +1289,231 @@ fn strip_html_tags(s: &str) -> String {
     }
     result
 }
+
+// =============================================================================
+// Docs to Skill File Sync
+// =============================================================================
+
+/// Regex to match Zola frontmatter and extract title
+static ZOLA_FRONTMATTER_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^\+\+\+\n(.*?)\n\+\+\+\n*").unwrap());
+
+/// Regex to extract title from frontmatter
+static ZOLA_TITLE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"title\s*=\s*"([^"]+)""#).unwrap());
+
+/// Regex to strip Zola terminal shortcodes ({% terminal() %}...{% end %})
+static ZOLA_TERMINAL_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\{% terminal\(\) %\}\n?(.*?)\{% end %\}").unwrap());
+
+/// Regex to strip AUTO-GENERATED marker comments (just the comments, not content)
+static AUTO_GENERATED_MARKER_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<!-- ⚠️ AUTO-GENERATED[^>]*-->\n*|<!-- END AUTO-GENERATED[^>]*-->\n*").unwrap()
+});
+
+/// Regex to strip HTML figure/picture elements (demo GIFs)
+static HTML_FIGURE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)<figure[^>]*>.*?</figure>\n*").unwrap());
+
+/// Transform docs content for skill file consumption
+///
+/// Transforms:
+/// - Extracts title from Zola frontmatter and prepends as H1
+/// - Strips Zola terminal shortcodes ({% terminal() %}...{% end %}) - keeps inner content
+/// - Strips AUTO-GENERATED marker comments (keeps content)
+/// - Strips HTML figure elements (demo GIFs not useful for skill)
+/// - Converts Zola internal links (@/page.md) -> full URLs
+/// - Removes "See also" section (just links to other docs pages)
+fn transform_docs_for_skill(content: &str) -> String {
+    // Extract title from frontmatter
+    let title = ZOLA_FRONTMATTER_PATTERN
+        .captures(content)
+        .and_then(|caps| caps.get(1))
+        .and_then(|fm| ZOLA_TITLE_PATTERN.captures(fm.as_str()))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string());
+
+    // Strip frontmatter
+    let content = ZOLA_FRONTMATTER_PATTERN.replace(content, "");
+
+    // Strip terminal shortcodes, keeping inner content
+    let content = ZOLA_TERMINAL_PATTERN.replace_all(&content, "$1");
+
+    // Strip AUTO-GENERATED marker comments (keep content)
+    let content = AUTO_GENERATED_MARKER_PATTERN.replace_all(&content, "");
+
+    // Strip HTML figure elements (demo GIFs)
+    let content = HTML_FIGURE_PATTERN.replace_all(&content, "");
+
+    // Transform Zola internal links to full URLs
+    let content = ZOLA_LINK_PATTERN
+        .replace_all(&content, |caps: &regex::Captures| {
+            let text = caps.get(1).unwrap().as_str();
+            let page = caps.get(2).unwrap().as_str();
+            let anchor = caps.get(3).map_or("", |m| m.as_str());
+            format!("[{text}](https://worktrunk.dev/{page}/{anchor})")
+        })
+        .into_owned();
+
+    // Remove "See also" section (just contains links to other pages)
+    let content = remove_section(&content, "## See also");
+
+    // Clean up multiple consecutive blank lines
+    let content = content
+        .lines()
+        .fold((Vec::new(), false), |(mut acc, prev_blank), line| {
+            let is_blank = line.trim().is_empty();
+            if !(is_blank && prev_blank) {
+                acc.push(line);
+            }
+            (acc, is_blank)
+        })
+        .0
+        .join("\n");
+
+    // Prepend title as H1 if extracted
+    if let Some(title) = title {
+        format!("# {}\n\n{}", title, content.trim())
+    } else {
+        content.trim().to_string()
+    }
+}
+
+/// Remove a section from markdown content (from heading to next same-level heading)
+fn remove_section(content: &str, heading: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let heading_level = heading.chars().take_while(|&c| c == '#').count();
+
+    if let Some(start_idx) = lines.iter().position(|line| line.starts_with(heading)) {
+        // Find end: next heading at same or higher level
+        let end_idx = lines
+            .iter()
+            .skip(start_idx + 1)
+            .position(|line| {
+                let level = line.chars().take_while(|&c| c == '#').count();
+                level > 0 && level <= heading_level
+            })
+            .map(|i| i + start_idx + 1)
+            .unwrap_or(lines.len());
+
+        let mut result: Vec<&str> = lines[..start_idx].to_vec();
+        result.extend(&lines[end_idx..]);
+        result.join("\n")
+    } else {
+        content.to_string()
+    }
+}
+
+/// Skill files to sync from docs
+/// Format: (docs_path, skill_path)
+/// Files are synced with content transformed for skill consumption
+const SKILL_SYNC_FILES: &[(&str, &str)] = &[
+    (
+        "docs/content/hook.md",
+        ".claude-plugin/skills/worktrunk/reference/hook.md",
+    ),
+    (
+        "docs/content/config.md",
+        ".claude-plugin/skills/worktrunk/reference/config.md",
+    ),
+    (
+        "docs/content/switch.md",
+        ".claude-plugin/skills/worktrunk/reference/switch.md",
+    ),
+    (
+        "docs/content/merge.md",
+        ".claude-plugin/skills/worktrunk/reference/merge.md",
+    ),
+    (
+        "docs/content/list.md",
+        ".claude-plugin/skills/worktrunk/reference/list.md",
+    ),
+    (
+        "docs/content/select.md",
+        ".claude-plugin/skills/worktrunk/reference/select.md",
+    ),
+    (
+        "docs/content/step.md",
+        ".claude-plugin/skills/worktrunk/reference/step.md",
+    ),
+    (
+        "docs/content/remove.md",
+        ".claude-plugin/skills/worktrunk/reference/remove.md",
+    ),
+    (
+        "docs/content/llm-commits.md",
+        ".claude-plugin/skills/worktrunk/reference/llm-commits.md",
+    ),
+    (
+        "docs/content/tips-patterns.md",
+        ".claude-plugin/skills/worktrunk/reference/tips-patterns.md",
+    ),
+    (
+        "docs/content/worktrunk.md",
+        ".claude-plugin/skills/worktrunk/reference/worktrunk.md",
+    ),
+    (
+        "docs/content/faq.md",
+        ".claude-plugin/skills/worktrunk/reference/faq.md",
+    ),
+    (
+        "docs/content/claude-code.md",
+        ".claude-plugin/skills/worktrunk/reference/claude-code.md",
+    ),
+];
+
+#[test]
+fn test_skill_files_are_in_sync_with_docs() {
+    let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut errors = Vec::new();
+    let mut updated = 0;
+
+    for (docs_path, skill_path) in SKILL_SYNC_FILES {
+        let docs_file = project_root.join(docs_path);
+        let skill_file = project_root.join(skill_path);
+
+        if !docs_file.exists() {
+            errors.push(format!("Missing docs file: {}", docs_file.display()));
+            continue;
+        }
+
+        let docs_content = fs::read_to_string(&docs_file)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", docs_file.display(), e));
+
+        // Transform and use content directly (docs already have proper H1 titles)
+        let expected = transform_docs_for_skill(&docs_content);
+        let expected = trim_lines(&expected);
+
+        let current = if skill_file.exists() {
+            fs::read_to_string(&skill_file)
+                .unwrap_or_else(|e| panic!("Failed to read {}: {}", skill_file.display(), e))
+        } else {
+            String::new()
+        };
+        let current = trim_lines(&current);
+
+        if current != expected {
+            // Ensure parent directory exists
+            if let Some(parent) = skill_file.parent() {
+                fs::create_dir_all(parent).unwrap_or_else(|e| {
+                    panic!("Failed to create directory {}: {}", parent.display(), e)
+                });
+            }
+            fs::write(&skill_file, format!("{}\n", expected))
+                .unwrap_or_else(|e| panic!("Failed to write {}: {}", skill_file.display(), e));
+            updated += 1;
+        }
+    }
+
+    if !errors.is_empty() {
+        panic!("Skill sync errors:\n\n{}\n", errors.join("\n"));
+    }
+
+    if updated > 0 {
+        panic!(
+            "Skill files out of sync with docs: updated {} file(s). \
+             Run tests locally and commit the changes.",
+            updated
+        );
+    }
+}
