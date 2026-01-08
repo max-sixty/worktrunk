@@ -71,8 +71,9 @@ repos:
         entry: '\.output\(\)'
         # shell_exec.rs: defines run() which legitimately calls .output()
         # select.rs: skim API's selected.output() is not Command::output()
+        # tmux.rs: quick tmux status checks that don't need logging
         # tests/benches: test utilities run commands directly
-        exclude: '^(src/shell_exec\.rs|src/commands/select\.rs|tests/|benches/)'
+        exclude: '^(src/shell_exec\.rs|src/commands/select\.rs|src/commands/tmux\.rs|tests/|benches/)'
 
 ci:
   # pre-commit.ci doesn't have Rust toolchain, so skip Rust-specific hooks.
