@@ -1288,6 +1288,10 @@ fn main() {
                             // Already in tmux, created new window - nothing to print,
                             // tmux new-window switches to the new window automatically
                         }
+                        TmuxSpawnResult::SwitchedWindow(_name) => {
+                            // Switched to existing window - nothing to print,
+                            // tmux select-window switches automatically
+                        }
                         TmuxSpawnResult::Detached(name) => {
                             output::print(success_message(cformat!(
                                 "Worktree creation started in tmux session <bold>{name}</>"

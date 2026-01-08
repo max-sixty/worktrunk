@@ -26,12 +26,36 @@ fn sanitize_name(branch: &str) -> String {
         .replace(':', "-")
 }
 
+/// Check if a tmux session with the given name exists.
+fn session_exists(name: &str) -> bool {
+    Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if a window with the given name exists in the current tmux session.
+fn window_exists(name: &str) -> bool {
+    Command::new("tmux")
+        .args(["list-windows", "-F", "#{window_name}"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|line| line == name)
+        })
+        .unwrap_or(false)
+}
+
 /// Result of spawning a tmux session/window.
 pub enum TmuxSpawnResult {
     /// Created detached session with this name
     Detached(String),
     /// Created new window (already in tmux)
     Window(String),
+    /// Switched to existing window (was inside tmux)
+    SwitchedWindow(String),
 }
 
 /// Spawn worktree switch in a new tmux window/session.
@@ -101,11 +125,26 @@ pub fn spawn_switch_in_tmux(
     let wt_command = format!("wt {} && exec $SHELL", escaped_args.join(" "));
 
     if is_inside_tmux() {
-        // Already in tmux: create new window and switch to it
+        // Already in tmux: check if window exists
+        if window_exists(&name) {
+            // Switch to existing window
+            let mut cmd = Command::new("tmux");
+            cmd.args(["select-window", "-t", &name]);
+            shell_exec::run(&mut cmd, None)?;
+            Ok(TmuxSpawnResult::SwitchedWindow(name))
+        } else {
+            // Create new window and switch to it
+            let mut cmd = Command::new("tmux");
+            cmd.args(["new-window", "-n", &name, &wt_command]);
+            shell_exec::run(&mut cmd, None)?;
+            Ok(TmuxSpawnResult::Window(name))
+        }
+    } else if session_exists(&name) {
+        // Session exists: attach to it (exec replaces process)
         let mut cmd = Command::new("tmux");
-        cmd.args(["new-window", "-n", &name, &wt_command]);
-        shell_exec::run(&mut cmd, None)?;
-        Ok(TmuxSpawnResult::Window(name))
+        cmd.args(["attach-session", "-t", &name]);
+        let err = cmd.exec();
+        Err(err.into())
     } else if detach {
         // Not in tmux, detach mode: create detached session
         let mut cmd = Command::new("tmux");
