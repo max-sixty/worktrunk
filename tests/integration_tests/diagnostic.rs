@@ -509,6 +509,19 @@ fn normalize_report(content: &str) -> String {
         .replace_all(&result, "[HASH]")
         .to_string();
 
+    // Normalize user config path (must come BEFORE generic repo path normalization)
+    result = regex::Regex::new(r"User config: [^\n]+")
+        .unwrap()
+        .replace_all(&result, "User config: [TEST_CONFIG]")
+        .to_string();
+
+    // Normalize project config path (must come BEFORE generic repo path normalization)
+    // Handle both Unix (/) and Windows (\) path separators
+    result = regex::Regex::new(r"Project config: (?:/|[A-Za-z]:)[^\n]+\.config[/\\]wt\.toml")
+        .unwrap()
+        .replace_all(&result, "Project config: _REPO_/.config/wt.toml")
+        .to_string();
+
     // Normalize temp paths in context (repo paths) - handles both Unix and Windows paths
     // Unix: /var/folders/.../repo.xxx or /tmp/.../repo.xxx
     // Windows: D:\a\worktrunk\worktrunk\... or C:\Users\...\repo.xxx
@@ -524,19 +537,6 @@ fn normalize_report(content: &str) -> String {
     result = regex::Regex::new(r"(fatal: not a git repository:)\s*\n\s*(\[REPO_PATH\])")
         .unwrap()
         .replace_all(&result, "$1 $2")
-        .to_string();
-
-    // Normalize user config path
-    result = regex::Regex::new(r"User config: [^\n]+")
-        .unwrap()
-        .replace_all(&result, "User config: [TEST_CONFIG]")
-        .to_string();
-
-    // Normalize project config path - convert absolute path to relative
-    // Handle both Unix (/) and Windows (\) path separators
-    result = regex::Regex::new(r"Project config: (?:/|[A-Za-z]:)[^\n]+\.config[/\\]wt\.toml")
-        .unwrap()
-        .replace_all(&result, "Project config: _REPO_/.config/wt.toml")
         .to_string();
 
     // Truncate verbose log section - it has parallel git commands that interleave
