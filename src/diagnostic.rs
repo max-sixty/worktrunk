@@ -298,3 +298,82 @@ fn format_config_section(path: &std::path::Path, label: &str) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_format_config_section_file_not_found() {
+        let result = format_config_section(std::path::Path::new("/nonexistent/path.toml"), "Test");
+        assert!(result.contains("Test: /nonexistent/path.toml"));
+        assert!(result.contains("(file not found)"));
+    }
+
+    #[test]
+    fn test_format_config_section_empty_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("empty.toml");
+        std::fs::write(&path, "").unwrap();
+
+        let result = format_config_section(&path, "Test");
+        assert!(result.contains("(empty file)"));
+    }
+
+    #[test]
+    fn test_format_config_section_with_content() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "key = \"value\"\n").unwrap();
+
+        let result = format_config_section(&path, "Test");
+        assert!(result.contains("key = \"value\""));
+    }
+
+    #[test]
+    fn test_format_config_section_adds_trailing_newline() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "no-newline").unwrap();
+
+        let result = format_config_section(&path, "Test");
+        assert!(result.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_format_config_section_truncates_long_content() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("big.toml");
+        let content = "x".repeat(5000);
+        std::fs::write(&path, &content).unwrap();
+
+        let result = format_config_section(&path, "Test");
+        assert!(result.contains("(truncated)"));
+        assert!(result.len() < 5000);
+    }
+
+    #[test]
+    fn test_strip_ansi_codes() {
+        // Build ANSI codes programmatically to avoid lint
+        let esc = '\x1b';
+        let input = format!("{esc}[31mred{esc}[0m and {esc}[32mgreen{esc}[0m");
+        let result = strip_ansi_codes(&input);
+        assert_eq!(result, "red and green");
+    }
+
+    #[test]
+    fn test_truncate_log_small_content() {
+        let content = "small log content";
+        let result = truncate_log(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_truncate_log_large_content() {
+        let content = "x".repeat(60 * 1024); // 60KB
+        let result = truncate_log(&content);
+        assert!(result.starts_with("(log truncated to last ~50KB)"));
+        assert!(result.len() < 55 * 1024);
+    }
+}
