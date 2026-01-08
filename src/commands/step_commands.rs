@@ -504,34 +504,24 @@ pub fn step_copy_ignored(
 
     // Copy entries
     for (src_entry, is_dir) in &entries_to_copy {
-        let relative = src_entry.strip_prefix(&source_path).with_context(|| {
-            format!(
-                "Path {} is not under source {}",
-                src_entry.display(),
-                source_path.display()
-            )
-        })?;
+        // Paths from git ls-files are always under source_path
+        let relative = src_entry
+            .strip_prefix(&source_path)
+            .expect("git ls-files path under worktree");
         let dest_entry = dest_path.join(relative);
 
         if *is_dir {
-            // Copy directory recursively using reflink for each file
             copy_dir_recursive(src_entry, &dest_entry)?;
             copied_count += 1;
         } else {
-            // Copy single file, skipping if it already exists (idempotent for hooks)
             if let Some(parent) = dest_entry.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+                fs::create_dir_all(parent)?;
             }
+            // Skip existing files for idempotent hook usage
             match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
                 Ok(_) => copied_count += 1,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Skip existing files for idempotent hook usage
-                }
-                Err(e) => {
-                    return Err(e)
-                        .with_context(|| format!("Failed to copy {}", relative.display()));
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
             }
         }
     }
@@ -621,10 +611,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
             match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
                 Ok(_) => {}
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-                Err(e) => {
-                    return Err(e)
-                        .with_context(|| format!("Failed to copy {}", src_path.display()));
-                }
+                Err(e) => return Err(e.into()),
             }
         }
     }
