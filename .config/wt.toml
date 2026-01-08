@@ -1,11 +1,6 @@
 [post-start]
-# Seed compiled deps from main worktree using CoW (~3s vs ~68s full rebuild)
-deps = """
-[ -d {{ repo_path }}/target/debug/deps ] && [ ! -e target ] &&
-mkdir -p target/debug/deps &&
-cp -c {{ repo_path }}/target/debug/deps/*.rlib {{ repo_path }}/target/debug/deps/*.rmeta target/debug/deps/ &&
-cp -cR {{ repo_path }}/target/debug/.fingerprint {{ repo_path }}/target/debug/build target/debug/
-"""
+# Copy target/ from main worktree using CoW (~3s vs ~68s full rebuild)
+deps = "wt step copy-ignored"
 assets = "./dev/fetch-assets"
 docs = "cd docs && zola serve -p {{ branch | hash_port }}"
 

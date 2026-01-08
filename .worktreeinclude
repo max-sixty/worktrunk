@@ -1,0 +1,4 @@
+# Files to copy between worktrees (must also be gitignored)
+# Used by: wt step copy-ignored
+
+target/
