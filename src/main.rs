@@ -1265,7 +1265,42 @@ fn main() {
             yes,
             clobber,
             verify,
-        } => WorktrunkConfig::load()
+            tmux,
+            detach,
+        } => {
+            // Handle --tmux early: spawn in tmux and skip normal processing
+            if tmux {
+                use crate::commands::tmux::{self, TmuxSpawnResult};
+                use worktrunk::styling::success_message;
+
+                tmux::spawn_switch_in_tmux(
+                    &branch,
+                    create,
+                    base.as_deref(),
+                    yes,
+                    clobber,
+                    verify,
+                    detach,
+                )
+                .and_then(|result| {
+                    match result {
+                        TmuxSpawnResult::Window(_name) => {
+                            // Already in tmux, created new window - nothing to print,
+                            // tmux new-window switches to the new window automatically
+                        }
+                        TmuxSpawnResult::Detached(name) => {
+                            output::print(success_message(cformat!(
+                                "Worktree creation started in tmux session <bold>{name}</>"
+                            )))?;
+                            output::print(hint_message(cformat!(
+                                "Run <bright-black>tmux attach -t {name}</> to view progress"
+                            )))?;
+                        }
+                    }
+                    Ok(())
+                })
+            } else {
+                WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|mut config| {
                 // "Approve at the Gate": collect and approve hooks upfront
@@ -1402,7 +1437,9 @@ fn main() {
                 }
 
                 Ok(())
-            }),
+            })
+            }
+        }
         Commands::Remove {
             branches,
             delete_branch,

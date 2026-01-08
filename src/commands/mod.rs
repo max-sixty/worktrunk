@@ -19,6 +19,7 @@ pub mod repository_ext;
 pub mod select;
 pub mod statusline;
 pub mod step_commands;
+pub mod tmux;
 pub mod worktree;
 
 pub use command_approval::approve_hooks;

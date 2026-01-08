@@ -1046,3 +1046,41 @@ fn test_switch_create_no_hint_with_custom_worktree_path(repo: TestRepo) {
         "Hint should be suppressed when user has custom worktree-path config"
     );
 }
+
+// --tmux flag tests
+
+#[rstest]
+fn test_switch_tmux_conflicts_with_execute(repo: TestRepo) {
+    // --tmux and --execute are mutually exclusive
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--tmux", "--execute", "echo"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be used with"),
+        "Should show conflict error, got: {}",
+        stderr
+    );
+}
+
+#[rstest]
+fn test_switch_detach_requires_tmux(repo: TestRepo) {
+    // --detach requires --tmux
+    let output = repo
+        .wt_command()
+        .args(["switch", "--create", "feature", "--detach"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--tmux") || stderr.contains("required"),
+        "Should indicate --tmux is required, got: {}",
+        stderr
+    );
+}
