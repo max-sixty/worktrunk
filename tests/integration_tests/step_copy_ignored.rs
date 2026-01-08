@@ -7,18 +7,31 @@ use std::fs;
 
 /// Test with no .worktreeinclude file
 #[rstest]
-fn test_copy_ignored_no_worktreeinclude(repo: TestRepo) {
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["copy-ignored"], None,));
+fn test_copy_ignored_no_worktreeinclude(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+    // No .worktreeinclude file exists
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
 }
 
 /// Test with .worktreeinclude but nothing ignored
 #[rstest]
-fn test_copy_ignored_empty_intersection(repo: TestRepo) {
+fn test_copy_ignored_empty_intersection(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
     // Create .worktreeinclude with a pattern
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
     // But don't create .gitignore or .env file
 
-    assert_cmd_snapshot!(make_snapshot_cmd(&repo, "step", &["copy-ignored"], None,));
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
 }
 
 /// Test that files in .worktreeinclude but NOT in .gitignore are not copied
@@ -103,7 +116,10 @@ fn test_copy_ignored_idempotent(mut repo: TestRepo) {
         .current_dir(&feature_path)
         .output()
         .unwrap();
-    assert!(output2.status.success(), "Second copy should succeed (idempotent)");
+    assert!(
+        output2.status.success(),
+        "Second copy should succeed (idempotent)"
+    );
 
     // File should still exist with original content
     assert_eq!(

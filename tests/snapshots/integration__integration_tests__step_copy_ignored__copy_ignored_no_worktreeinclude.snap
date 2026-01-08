@@ -32,4 +32,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Source and destination are the same worktree
+[2m○[22m No [1m.worktreeinclude[22m file found
