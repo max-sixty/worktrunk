@@ -61,35 +61,39 @@ fn window_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Collect environment variables to pass through to tmux session.
-/// Excludes internal/shell-specific vars that shouldn't be inherited.
-fn collect_env_exports() -> String {
-    let skip_vars = [
-        "PWD",
-        "OLDPWD",
-        "_",
-        "SHLVL",
-        "TMUX",
-        "TMUX_PANE",
-        "TERM_SESSION_ID",
-        "SHELL_SESSION_ID",
-        "WORKTRUNK_DIRECTIVE_FILE",
-        "COMP_LINE",
-        "COMP_POINT",
-    ];
+/// Environment variables to skip when passing to tmux session.
+const SKIP_ENV_VARS: &[&str] = &[
+    "PWD",
+    "OLDPWD",
+    "_",
+    "SHLVL",
+    "TMUX",
+    "TMUX_PANE",
+    "TERM_SESSION_ID",
+    "SHELL_SESSION_ID",
+    "WORKTRUNK_DIRECTIVE_FILE",
+    "COMP_LINE",
+    "COMP_POINT",
+];
 
-    let exports: Vec<String> = env::vars()
-        .filter(|(k, _)| !skip_vars.contains(&k.as_str()))
-        .filter(|(k, _)| !k.starts_with("__")) // Skip internal vars
-        .filter_map(|(k, v)| {
-            // Shell-escape the value
-            shlex::try_quote(&v)
-                .ok()
-                .map(|escaped| format!("export {}={}", k, escaped))
-        })
-        .collect();
+/// Write environment variables to a temp file and return the path.
+/// The file contains export statements that can be sourced.
+fn write_env_file() -> Option<std::path::PathBuf> {
+    use std::io::Write;
 
-    exports.join("; ")
+    let path = std::env::temp_dir().join(format!("wt-env-{}", std::process::id()));
+    let mut file = std::fs::File::create(&path).ok()?;
+
+    for (key, value) in env::vars() {
+        if SKIP_ENV_VARS.contains(&key.as_str()) || key.starts_with("__") {
+            continue;
+        }
+        if let Ok(escaped) = shlex::try_quote(&value) {
+            writeln!(file, "export {}={}", key, escaped).ok()?;
+        }
+    }
+
+    Some(path)
 }
 
 /// Capture the visible output from a tmux pane, cleaning up whitespace.
@@ -174,12 +178,18 @@ pub fn spawn_switch_in_tmux(opts: &TmuxSwitchOptions<'_>) -> Result<TmuxSpawnRes
         .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
         .collect();
 
-    // Command to run: export env vars, then wt switch, then keep shell open
-    let env_exports = collect_env_exports();
-    let wt_command = if env_exports.is_empty() {
-        format!("wt {} && exec $SHELL", escaped_args.join(" "))
-    } else {
-        format!("{}; wt {} && exec $SHELL", env_exports, escaped_args.join(" "))
+    // Write env vars to temp file for sourcing in tmux
+    let env_file = write_env_file();
+
+    // Command to run: source env file, then wt switch, then keep shell open
+    let wt_command = match &env_file {
+        Some(path) => format!(
+            "source {} && rm -f {} && wt {} && exec $SHELL",
+            path.display(),
+            path.display(),
+            escaped_args.join(" ")
+        ),
+        None => format!("wt {} && exec $SHELL", escaped_args.join(" ")),
     };
 
     if is_inside_tmux() {
