@@ -36,7 +36,8 @@ pub use merge::{MergeOptions, execute_pre_remove_commands, handle_merge};
 #[cfg(unix)]
 pub use select::handle_select;
 pub use step_commands::{
-    RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_show_squash_prompt,
+    RebaseResult, SquashResult, handle_rebase, handle_squash, step_commit, step_copy_ignored,
+    step_show_squash_prompt,
 };
 pub use worktree::{
     ResolutionContext, compute_worktree_path, handle_remove, handle_remove_current, handle_switch,

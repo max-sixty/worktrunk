@@ -294,6 +294,30 @@ pub enum StepCommand {
         target: Option<String>,
     },
 
+    /// Copy `.worktreeinclude` files to another worktree
+    ///
+    /// Copies files listed in `.worktreeinclude` that are also gitignored.
+    /// Useful in post-create hooks to sync local config files
+    /// (`.env`, IDE settings) to new worktrees. Skips symlinks and existing
+    /// files.
+    CopyIgnored {
+        /// Source worktree branch
+        ///
+        /// Defaults to main worktree.
+        #[arg(long, add = crate::completion::local_branches_completer())]
+        from: Option<String>,
+
+        /// Destination worktree branch
+        ///
+        /// Defaults to current worktree.
+        #[arg(long, add = crate::completion::local_branches_completer())]
+        to: Option<String>,
+
+        /// Show what would be copied
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// \[experimental\] Run command in each worktree
     #[command(
         after_long_help = r#"Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.
@@ -1072,6 +1096,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
+- `copy-ignored` — Copy files listed in `.worktreeinclude`
 - `for-each` — [experimental] Run a command in every worktree
 
 ## Options

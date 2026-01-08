@@ -5,6 +5,9 @@
 //! - `handle_squash` - Squash commits into one
 //! - `step_show_squash_prompt` - Show squash prompt without executing
 //! - `handle_rebase` - Rebase onto target branch
+//! - `step_copy_ignored` - Copy gitignored files matching .worktreeinclude
+
+use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
@@ -402,6 +405,223 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     }
 
     Ok(RebaseResult::Rebased)
+}
+
+/// Handle `wt step copy-ignored` command
+///
+/// Copies files matching the intersection of `.worktreeinclude` and gitignored files
+/// from a source worktree to a destination worktree. Uses COW (reflink) when
+/// available for efficient copying of large directories like `target/`.
+pub fn step_copy_ignored(
+    from: Option<&str>,
+    to: Option<&str>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    use ignore::gitignore::GitignoreBuilder;
+    use std::fs;
+
+    let repo = Repository::current();
+
+    // Resolve source and destination worktree paths
+    let (source_path, source_context) = match from {
+        Some(branch) => {
+            let path = repo
+                .worktree_for_branch(branch)?
+                .ok_or_else(|| anyhow::anyhow!("No worktree found for branch '{}'", branch))?;
+            (path, branch.to_string())
+        }
+        None => (repo.worktree_base()?, repo.default_branch()?.to_string()),
+    };
+
+    let dest_path = match to {
+        Some(branch) => repo
+            .worktree_for_branch(branch)?
+            .ok_or_else(|| anyhow::anyhow!("No worktree found for branch '{}'", branch))?,
+        None => repo.worktree_root()?.to_path_buf(),
+    };
+
+    if source_path == dest_path {
+        crate::output::print(info_message("Source and destination are the same worktree"))?;
+        return Ok(());
+    }
+
+    // Check for .worktreeinclude file
+    let include_path = source_path.join(".worktreeinclude");
+    if !include_path.exists() {
+        crate::output::print(info_message(cformat!(
+            "No <bold>.worktreeinclude</> file found"
+        )))?;
+        return Ok(());
+    }
+
+    // Get ignored entries from git
+    // --directory stops at directory boundaries (avoids listing thousands of files in target/)
+    let ignored_entries = list_ignored_entries(&source_path, &source_context)?;
+
+    // Build include matcher from .worktreeinclude
+    let include_matcher = {
+        let mut builder = GitignoreBuilder::new(&source_path);
+        if let Some(err) = builder.add(&include_path) {
+            return Err(anyhow::anyhow!("Error parsing .worktreeinclude: {}", err));
+        }
+        builder.build().context("Failed to build include matcher")?
+    };
+
+    // Filter to entries that match .worktreeinclude
+    let entries_to_copy: Vec<_> = ignored_entries
+        .into_iter()
+        .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
+        .collect();
+
+    if entries_to_copy.is_empty() {
+        crate::output::print(info_message("No matching files to copy"))?;
+        return Ok(());
+    }
+
+    let mut copied_count = 0;
+
+    // Copy or show what would be copied
+    for (src_entry, is_dir) in &entries_to_copy {
+        let relative = src_entry.strip_prefix(&source_path).with_context(|| {
+            format!(
+                "Path {} is not under source {}",
+                src_entry.display(),
+                source_path.display()
+            )
+        })?;
+        let dest_entry = dest_path.join(relative);
+
+        if dry_run {
+            let entry_type = if *is_dir { "dir" } else { "file" };
+            crate::output::print(info_message(cformat!(
+                "Would copy <bold>{}</> ({})",
+                relative.display(),
+                entry_type
+            )))?;
+            copied_count += 1;
+        } else if *is_dir {
+            // Copy directory recursively using reflink for each file
+            copy_dir_recursive(src_entry, &dest_entry)?;
+            copied_count += 1;
+        } else {
+            // Copy single file, skipping if it already exists (idempotent for hooks)
+            if let Some(parent) = dest_entry.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+            }
+            match reflink_copy::reflink_or_copy(src_entry, &dest_entry) {
+                Ok(_) => copied_count += 1,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Skip existing files for idempotent hook usage
+                }
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("Failed to copy {}", relative.display()));
+                }
+            }
+        }
+    }
+
+    // Show summary
+    let entry_word = if copied_count == 1 {
+        "entry"
+    } else {
+        "entries"
+    };
+    if dry_run {
+        crate::output::print(info_message(format!(
+            "Would copy {copied_count} {entry_word}"
+        )))?;
+    } else {
+        crate::output::print(success_message(format!(
+            "Copied {copied_count} {entry_word}"
+        )))?;
+    }
+
+    Ok(())
+}
+
+/// List ignored entries using git ls-files
+///
+/// Uses `git ls-files --ignored --exclude-standard -o --directory` which:
+/// - Handles all gitignore sources (global, .gitignore, .git/info/exclude, nested)
+/// - Stops at directory boundaries (--directory) to avoid listing thousands of files
+fn list_ignored_entries(
+    worktree_path: &Path,
+    context: &str,
+) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
+    use std::process::Command;
+    use worktrunk::shell_exec;
+
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "ls-files",
+        "--ignored",
+        "--exclude-standard",
+        "-o",
+        "--directory",
+    ])
+    .current_dir(worktree_path);
+
+    let output = shell_exec::run(&mut cmd, Some(context)).context("Failed to run git ls-files")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git ls-files failed: {}", stderr.trim());
+    }
+
+    // Parse output: directories end with /
+    let entries = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| {
+            let is_dir = line.ends_with('/');
+            let path = worktree_path.join(line.trim_end_matches('/'));
+            (path, is_dir)
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Copy a directory recursively using reflink (COW) for each file
+fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    use std::fs;
+    use std::io::ErrorKind;
+
+    fs::create_dir_all(dest)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+
+        // Skip .git (file or directory) and symlinks
+        let file_name = entry.file_name();
+        if file_name == ".git" {
+            continue;
+        }
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        let src_path = entry.path();
+        let dest_path = dest.join(file_name);
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            // Skip existing files for idempotent hook usage
+            match reflink_copy::reflink_or_copy(&src_path, &dest_path) {
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("Failed to copy {}", src_path.display()));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

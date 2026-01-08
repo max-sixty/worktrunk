@@ -25,11 +25,12 @@ wt step - Run individual operations
 Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
 
 [1m[32mCommands:
-  [1m[36mcommit[0m    Commit changes with LLM commit message
-  [1m[36msquash[0m    Squash commits since branching
-  [1m[36mpush[0m      Fast-forward target to current branch
-  [1m[36mrebase[0m    Rebase onto target
-  [1m[36mfor-each[0m  [experimental] Run command in each worktree
+  [1m[36mcommit[0m        Commit changes with LLM commit message
+  [1m[36msquash[0m        Squash commits since branching
+  [1m[36mpush[0m          Fast-forward target to current branch
+  [1m[36mrebase[0m        Rebase onto target
+  [1m[36mcopy-ignored[0m  Copy [1m.worktreeinclude[0m files to another worktree
+  [1m[36mfor-each[0m      [experimental] Run command in each worktree
 
 [1m[32mOptions:
   [1m[36m-h[0m, [1m[36m--help
@@ -67,6 +68,7 @@ Manual merge workflow with review between steps:
 - [2msquash[0m — Squash all branch commits into one with LLM-generated message
 - [2mrebase[0m — Rebase onto target branch
 - [2mpush[0m — Fast-forward target to current branch
+- [2mcopy-ignored[0m — Copy files listed in [2m.worktreeinclude
 - [2mfor-each[0m — [experimental] Run a command in every worktree
 
 [32mOptions

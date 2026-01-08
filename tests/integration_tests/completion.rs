@@ -591,11 +591,15 @@ fn test_complete_step_subcommands(repo: TestRepo) {
     assert!(subcommands.contains(&"squash"), "Missing squash");
     assert!(subcommands.contains(&"push"), "Missing push");
     assert!(subcommands.contains(&"rebase"), "Missing rebase");
+    assert!(
+        subcommands.contains(&"copy-ignored"),
+        "Missing copy-ignored"
+    );
     assert!(subcommands.contains(&"for-each"), "Missing for-each");
     assert_eq!(
         subcommands.len(),
-        5,
-        "Should have exactly 5 step subcommands"
+        6,
+        "Should have exactly 6 step subcommands"
     );
 }
 
