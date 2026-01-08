@@ -38,6 +38,15 @@ pub enum ResolvedWorktree {
     },
 }
 
+/// Controls how branch name resolution is performed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeResolutionMode {
+    /// Exact match only - branch name must exist exactly
+    Strict,
+    /// Allow fuzzy matching on branch names
+    Fuzzy,
+}
+
 /// Global base path for repository operations, set by -C flag
 static BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -357,6 +366,7 @@ impl Repository {
     }
 
     /// Resolve a worktree name, expanding "@" to current, "-" to previous, and "^" to main.
+    /// Fuzzy matches branch names for partial matches (e.g., "onli" matches "online-mods").
     ///
     /// # Arguments
     /// * `name` - The worktree name to resolve:
@@ -366,13 +376,17 @@ impl Repository {
     ///   - any other string is returned as-is
     ///
     /// # Returns
-    /// - `Ok(name)` if not a special symbol
+    /// - `Ok(name)` if not a special symbol (with fuzzy matching on branch names)
     /// - `Ok(current_branch)` if "@" and on a branch
     /// - `Ok(previous_branch)` if "-" and worktrunk.history has a previous branch
     /// - `Ok(default_branch)` if "^"
     /// - `Err(DetachedHead)` if "@" and in detached HEAD state
     /// - `Err` if "-" but no previous branch in history
-    pub fn resolve_worktree_name(&self, name: &str) -> anyhow::Result<String> {
+    pub fn resolve_worktree_name(
+        &self,
+        name: &str,
+        mode: WorktreeResolutionMode,
+    ) -> anyhow::Result<String> {
         match name {
             "@" => self.current_branch()?.map(str::to_string).ok_or_else(|| {
                 GitError::DetachedHead {
@@ -392,8 +406,60 @@ impl Repository {
                 })
             }
             "^" => self.default_branch(),
-            _ => Ok(name.to_string()),
+            _ => {
+                // Try exact match first
+                if self.local_branch_exists(name)? {
+                    return Ok(name.to_string());
+                }
+
+                if mode == WorktreeResolutionMode::Fuzzy {
+                    let all_branches = self.all_branches()?;
+                    if let Some(matched) = Self::fuzzy_match_branch(name, &all_branches) {
+                        return Ok(matched.to_string());
+                    }
+                }
+
+                // If no match found, return the original name
+                // (will fail later when trying to use the branch)
+                Ok(name.to_string())
+            }
         }
+    }
+
+    /// Find the best fuzzy match for a branch name using the nucleo algorithm.
+    ///
+    /// Uses Smith-Waterman with affine gaps for fuzzy matching (like FZF).
+    /// Returns the highest-scored match.
+    ///
+    /// # Arguments
+    /// * `input` - The partial branch name to match (e.g., "onli")
+    /// * `branches` - List of available branch names
+    ///
+    /// # Returns
+    /// The best matching branch name, or None if no match found.
+    fn fuzzy_match_branch<'a>(input: &str, branches: &'a [String]) -> Option<&'a str> {
+        if input.is_empty() || branches.is_empty() {
+            return None;
+        }
+
+        let mut matcher = nucleo_matcher::Matcher::default();
+        let mut best_match: Option<(&str, u16)> = None;
+
+        let needle_chars: Vec<char> = input.chars().collect();
+        let needle = nucleo_matcher::Utf32Str::Unicode(needle_chars.as_slice());
+
+        for branch in branches.iter() {
+            let haystack_chars: Vec<char> = branch.chars().collect();
+            let haystack = nucleo_matcher::Utf32Str::Unicode(haystack_chars.as_slice());
+
+            if let Some(score) = matcher.fuzzy_match(haystack, needle) {
+                if best_match.map_or(true, |(_, best_score)| score > best_score) {
+                    best_match = Some((branch.as_str(), score));
+                }
+            }
+        }
+
+        best_match.map(|(branch, _)| branch)
     }
 
     /// Resolve a worktree by name, returning its path and branch (if known).
@@ -433,7 +499,7 @@ impl Repository {
             }
             _ => {
                 // Resolve to branch name first, then find its worktree
-                let branch = self.resolve_worktree_name(name)?;
+                let branch = self.resolve_worktree_name(name, WorktreeResolutionMode::Strict)?;
                 match self.worktree_for_branch(&branch)? {
                     Some(path) => Ok(ResolvedWorktree::Worktree {
                         path,
@@ -517,8 +583,15 @@ impl Repository {
     /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
     /// Otherwise, queries the default branch.
     /// This is a common pattern used throughout commands that accept an optional --target flag.
-    pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
-        target.map_or_else(|| self.default_branch(), |b| self.resolve_worktree_name(b))
+    pub fn resolve_target_branch(
+        &self,
+        target: Option<&str>,
+        mode: WorktreeResolutionMode,
+    ) -> anyhow::Result<String> {
+        target.map_or_else(
+            || self.default_branch(),
+            |b| self.resolve_worktree_name(b, mode),
+        )
     }
 
     /// Infer the default branch locally (without remote).

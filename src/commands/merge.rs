@@ -2,7 +2,7 @@ use std::path::Path;
 
 use worktrunk::HookType;
 use worktrunk::config::ProjectConfig;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktreeResolutionMode};
 use worktrunk::styling::info_message;
 
 use super::command_approval::approve_command_batch;
@@ -96,7 +96,8 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     let squash_enabled = squash && commit;
 
     // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    // Use strict mode - target branch must exist exactly
+    let target_branch = repo.resolve_target_branch(target, WorktreeResolutionMode::Strict)?;
     // Worktree for target is optional: if present we use it for safety checks and as destination.
     let target_worktree_path = repo.worktree_for_branch(&target_branch)?;
 

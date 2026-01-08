@@ -13,7 +13,7 @@ use anyhow::Context;
 use color_print::cformat;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktreeResolutionMode};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
 };
@@ -103,7 +103,7 @@ pub fn handle_squash(
     let generator = CommitGenerator::new(&env.config.commit_generation);
 
     // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    let target_branch = repo.resolve_target_branch(target, WorktreeResolutionMode::Strict)?;
 
     // Auto-stage changes before running pre-commit hooks so both beta and merge paths behave identically
     match stage_mode {
@@ -296,7 +296,7 @@ pub fn step_show_squash_prompt(
     let repo = Repository::current();
 
     // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    let target_branch = repo.resolve_target_branch(target, WorktreeResolutionMode::Strict)?;
 
     // Get current branch
     let current_branch = repo.current_branch()?.unwrap_or("HEAD");
@@ -342,7 +342,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     let repo = Repository::current();
 
     // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    let target_branch = repo.resolve_target_branch(target, WorktreeResolutionMode::Strict)?;
 
     // Check if already up-to-date (linear extension of target, no merge commits)
     if repo.is_rebased_onto(&target_branch)? {

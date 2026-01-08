@@ -115,6 +115,7 @@ urlencoding = "2.1"
 regex = "1.12"
 ignore = "0.4"
 reflink-copy = "0.1"
+nucleo-matcher = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 skim = "0.20"

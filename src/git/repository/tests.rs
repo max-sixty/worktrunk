@@ -268,7 +268,7 @@ fn test_parse_remote_default_branch_branch_with_slash() {
     assert_eq!(branch, "feature/new-ui");
 }
 
-use super::ResolvedWorktree;
+use super::{Repository, ResolvedWorktree};
 
 #[test]
 fn test_resolved_worktree_debug() {
@@ -403,4 +403,73 @@ fn test_default_branch_name_display() {
             .unwrap();
         assert_eq!(branch, expected);
     }
+}
+
+#[test]
+fn test_fuzzy_match_exact_match() {
+    // Exact match should return the match
+    let branches = vec![
+        "main".to_string(),
+        "online-mods".to_string(),
+        "feature".to_string(),
+    ];
+    let result = Repository::fuzzy_match_branch("online-mods", &branches);
+    assert_eq!(result, Some("online-mods"));
+}
+
+#[test]
+fn test_fuzzy_match_prefix() {
+    // Prefix match: "onli" should match "online-mods"
+    let branches = vec![
+        "main".to_string(),
+        "online-mods".to_string(),
+        "online-config".to_string(),
+        "feature".to_string(),
+    ];
+    let result = Repository::fuzzy_match_branch("onli", &branches);
+    // Should match one of the online branches
+    assert!(result == Some("online-mods") || result == Some("online-config"));
+}
+
+#[test]
+fn test_fuzzy_match_subsequence() {
+    // Subsequence match: "f-b" should match "feature-branch"
+    let branches = vec![
+        "main".to_string(),
+        "feature-branch".to_string(),
+        "feature-build".to_string(),
+    ];
+    let result = Repository::fuzzy_match_branch("f-b", &branches);
+    assert!(result.is_some());
+    let matched = result.unwrap();
+    // Should match one of the feature branches
+    assert!(matched == "feature-build" || matched == "feature-branch");
+}
+
+#[test]
+fn test_fuzzy_match_no_match() {
+    // No match should return None
+    let branches = vec![
+        "main".to_string(),
+        "online-mods".to_string(),
+        "feature".to_string(),
+    ];
+    let result = Repository::fuzzy_match_branch("xyz", &branches);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_fuzzy_match_empty_input() {
+    // Empty input should return None
+    let branches = vec!["main".to_string(), "online-mods".to_string()];
+    let result = Repository::fuzzy_match_branch("", &branches);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_fuzzy_match_empty_branches() {
+    // Empty branches should return None
+    let branches = vec![];
+    let result = Repository::fuzzy_match_branch("onli", &branches);
+    assert_eq!(result, None);
 }

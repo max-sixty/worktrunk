@@ -85,7 +85,7 @@ use normalize_path::NormalizePath;
 use std::path::PathBuf;
 use worktrunk::HookType;
 use worktrunk::config::WorktrunkConfig;
-use worktrunk::git::{GitError, Repository, ResolvedWorktree};
+use worktrunk::git::{GitError, Repository, ResolvedWorktree, WorktreeResolutionMode};
 use worktrunk::styling::{
     format_with_gutter, hint_message, info_message, progress_message, success_message,
     suggest_command, warning_message,
@@ -155,8 +155,7 @@ pub fn resolve_worktree_arg(
         _ => {}
     }
 
-    // Resolve as branch name
-    let branch = repo.resolve_worktree_name(name)?;
+    let branch = repo.resolve_worktree_name(name, WorktreeResolutionMode::Strict)?;
 
     // Branch-first: check if branch has worktree anywhere
     if let Some(path) = repo.worktree_for_branch(&branch)? {
@@ -459,17 +458,22 @@ pub fn handle_switch(
     // This is what we'll record as "previous" in history for `wt switch -` support.
     let actual_current_branch = repo.current_branch().ok().flatten();
 
+    let resolution_mode = if create {
+        WorktreeResolutionMode::Strict
+    } else {
+        WorktreeResolutionMode::Fuzzy
+    };
+
     // Resolve special branch names ("@" for current, "-" for previous)
     let resolved_branch = repo
-        .resolve_worktree_name(branch)
+        .resolve_worktree_name(branch, resolution_mode)
         .context("Failed to resolve branch name")?;
 
     // Record actual current branch as new "previous" for ping-pong behavior
     let new_previous = actual_current_branch;
 
-    // Resolve base if provided
     let resolved_base = if let Some(base_str) = base {
-        Some(repo.resolve_worktree_name(base_str)?)
+        Some(repo.resolve_worktree_name(base_str, WorktreeResolutionMode::Strict)?)
     } else {
         None
     };
@@ -625,7 +629,7 @@ pub fn handle_switch(
                 // Try to use default branch as base, but only if it actually exists
                 // (has commits). For empty repos, the default branch is unborn and
                 // git will automatically create an orphan worktree.
-                repo.resolve_target_branch(None)
+                repo.resolve_target_branch(None, WorktreeResolutionMode::Strict)
                     .ok()
                     .filter(|b| repo.local_branch_exists(b).unwrap_or(false))
             }
@@ -898,7 +902,7 @@ pub fn handle_push(
     let repo = Repository::current();
 
     // Get target branch (default to default branch if not provided)
-    let target_branch = repo.resolve_target_branch(target)?;
+    let target_branch = repo.resolve_target_branch(target, WorktreeResolutionMode::Strict)?;
 
     // A worktree for the target branch is optional for push:
     // - If present, we use it to check for overlapping dirty files.
