@@ -533,7 +533,8 @@ fn normalize_report(content: &str) -> String {
         .to_string();
 
     // Normalize project config path - convert absolute path to relative
-    result = regex::Regex::new(r"Project config: (?:/|[A-Za-z]:)[^\n]+\.config/wt\.toml")
+    // Handle both Unix (/) and Windows (\) path separators
+    result = regex::Regex::new(r"Project config: (?:/|[A-Za-z]:)[^\n]+\.config[/\\]wt\.toml")
         .unwrap()
         .replace_all(&result, "Project config: _REPO_/.config/wt.toml")
         .to_string();
