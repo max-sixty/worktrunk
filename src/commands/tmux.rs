@@ -64,6 +64,8 @@ pub enum TmuxSpawnResult {
 /// * `branch` - Branch name to switch to/create
 /// * `create` - Whether to create a new branch
 /// * `base` - Optional base branch for creation
+/// * `execute` - Optional command to run after switch
+/// * `execute_args` - Additional arguments for execute command
 /// * `yes` - Skip approval prompts
 /// * `clobber` - Remove stale paths at target
 /// * `verify` - Run hooks (false means --no-verify)
@@ -78,6 +80,8 @@ pub fn spawn_switch_in_tmux(
     branch: &str,
     create: bool,
     base: Option<&str>,
+    execute: Option<&str>,
+    execute_args: &[String],
     yes: bool,
     clobber: bool,
     verify: bool,
@@ -101,6 +105,10 @@ pub fn spawn_switch_in_tmux(
         wt_args.push("--base".to_string());
         wt_args.push(b.to_string());
     }
+    if let Some(cmd) = execute {
+        wt_args.push("--execute".to_string());
+        wt_args.push(cmd.to_string());
+    }
     if yes {
         wt_args.push("--yes".to_string());
     }
@@ -109,6 +117,11 @@ pub fn spawn_switch_in_tmux(
     }
     if !verify {
         wt_args.push("--no-verify".to_string());
+    }
+    // Add execute_args after -- separator
+    if !execute_args.is_empty() {
+        wt_args.push("--".to_string());
+        wt_args.extend(execute_args.iter().cloned());
     }
 
     // Shell-escape each argument
@@ -167,6 +180,8 @@ pub fn spawn_switch_in_tmux(
     _branch: &str,
     _create: bool,
     _base: Option<&str>,
+    _execute: Option<&str>,
+    _execute_args: &[String],
     _yes: bool,
     _clobber: bool,
     _verify: bool,

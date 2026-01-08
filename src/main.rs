@@ -1277,6 +1277,8 @@ fn main() {
                     &branch,
                     create,
                     base.as_deref(),
+                    execute.as_deref(),
+                    &execute_args,
                     yes,
                     clobber,
                     verify,
