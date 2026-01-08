@@ -406,3 +406,37 @@ fn test_copy_ignored_nested_gitignore(mut repo: TestRepo) {
         "File ignored by nested .gitignore should be copied"
     );
 }
+
+/// Test --to flag to specify destination worktree
+#[rstest]
+fn test_copy_ignored_to_flag(mut repo: TestRepo) {
+    // Create two worktrees
+    let feature_a = repo.add_worktree("feature-a");
+    let feature_b = repo.add_worktree("feature-b");
+
+    // Create .env in main
+    fs::write(repo.root_path().join(".env"), "from-main").unwrap();
+
+    // Add .env to .gitignore in main
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    // Create .worktreeinclude in main
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    // Run from feature-a, copying from main (default) to feature-b (explicit)
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--to", "feature-b"],
+        Some(&feature_a),
+    ));
+
+    // Verify file was copied to feature-b (not feature-a)
+    assert!(feature_b.join(".env").exists());
+    assert!(!feature_a.join(".env").exists());
+    assert_eq!(
+        fs::read_to_string(feature_b.join(".env")).unwrap(),
+        "from-main"
+    );
+}
+
