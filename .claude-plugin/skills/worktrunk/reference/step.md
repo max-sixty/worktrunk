@@ -26,6 +26,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](https://worktrunk.dev/llm-commits/)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
+- `copy-ignored` — Copy files listed in `.worktreeinclude`
 - `for-each` — [experimental] Run a command in every worktree
 
 ## Options
@@ -71,11 +72,12 @@ wt step - Run individual operations
 Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span class=c>&lt;COMMAND&gt;</span>
 
 <b><span class=g>Commands:</span></b>
-  <b><span class=c>commit</span></b>    Commit changes with LLM commit message
-  <b><span class=c>squash</span></b>    Squash commits since branching
-  <b><span class=c>push</span></b>      Fast-forward target to current branch
-  <b><span class=c>rebase</span></b>    Rebase onto target
-  <b><span class=c>for-each</span></b>  [experimental] Run command in each worktree
+  <b><span class=c>commit</span></b>        Commit changes with LLM commit message
+  <b><span class=c>squash</span></b>        Squash commits since branching
+  <b><span class=c>push</span></b>          Fast-forward target to current branch
+  <b><span class=c>rebase</span></b>        Rebase onto target
+  <b><span class=c>copy-ignored</span></b>  Copy <b>.worktreeinclude</b> files to another worktree
+  <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
 
 <b><span class=g>Options:</span></b>
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>

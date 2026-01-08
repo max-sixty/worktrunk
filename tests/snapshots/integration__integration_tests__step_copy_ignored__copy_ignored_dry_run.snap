@@ -33,5 +33,5 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m Would copy [1m.env[22m (file)
-[2m○[22m Would copy 1 entry
+[2m○[22m Would copy 1 entry:
+[107m [0m .env (file)

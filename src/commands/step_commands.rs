@@ -480,7 +480,29 @@ pub fn step_copy_ignored(
 
     let mut copied_count = 0;
 
-    // Copy or show what would be copied
+    // Handle dry-run: show what would be copied in a gutter list
+    if dry_run {
+        let items: Vec<String> = entries_to_copy
+            .iter()
+            .map(|(src_entry, is_dir)| {
+                let relative = src_entry
+                    .strip_prefix(&source_path)
+                    .unwrap_or(src_entry.as_path());
+                let entry_type = if *is_dir { "dir" } else { "file" };
+                format!("{} ({})", relative.display(), entry_type)
+            })
+            .collect();
+        let entry_word = if items.len() == 1 { "entry" } else { "entries" };
+        crate::output::print(info_message(format!(
+            "Would copy {} {}:\n{}",
+            items.len(),
+            entry_word,
+            format_with_gutter(&items.join("\n"), None)
+        )))?;
+        return Ok(());
+    }
+
+    // Copy entries
     for (src_entry, is_dir) in &entries_to_copy {
         let relative = src_entry.strip_prefix(&source_path).with_context(|| {
             format!(
@@ -491,15 +513,7 @@ pub fn step_copy_ignored(
         })?;
         let dest_entry = dest_path.join(relative);
 
-        if dry_run {
-            let entry_type = if *is_dir { "dir" } else { "file" };
-            crate::output::print(info_message(cformat!(
-                "Would copy <bold>{}</> ({})",
-                relative.display(),
-                entry_type
-            )))?;
-            copied_count += 1;
-        } else if *is_dir {
+        if *is_dir {
             // Copy directory recursively using reflink for each file
             copy_dir_recursive(src_entry, &dest_entry)?;
             copied_count += 1;
@@ -528,15 +542,9 @@ pub fn step_copy_ignored(
     } else {
         "entries"
     };
-    if dry_run {
-        crate::output::print(info_message(format!(
-            "Would copy {copied_count} {entry_word}"
-        )))?;
-    } else {
-        crate::output::print(success_message(format!(
-            "Copied {copied_count} {entry_word}"
-        )))?;
-    }
+    crate::output::print(success_message(format!(
+        "Copied {copied_count} {entry_word}"
+    )))?;
 
     Ok(())
 }
