@@ -1,0 +1,57 @@
+---
+source: tests/integration_tests/config_show.rs
+info:
+  program: wt
+  args:
+    - config
+    - show
+  env:
+    APPDATA: "[TEST_CONFIG_HOME]"
+    CLICOLOR_FORCE: "1"
+    COLUMNS: "150"
+    GIT_AUTHOR_DATE: "2025-01-01T00:00:00Z"
+    GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z"
+    GIT_CONFIG_GLOBAL: "[TEST_GIT_CONFIG]"
+    GIT_CONFIG_SYSTEM: /dev/null
+    GIT_EDITOR: ""
+    GIT_TERMINAL_PROMPT: "0"
+    HOME: "[TEST_HOME]"
+    LANG: C
+    LC_ALL: C
+    PATH: "[PATH]"
+    RUST_LOG: warn
+    SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
+    USERPROFILE: "[TEST_HOME]"
+    WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
+    WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
+    XDG_CONFIG_HOME: "[TEST_CONFIG_HOME]"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+----- stderr -----
+[36mUSER CONFIG[39m  ~/.config/worktrunk/config.toml
+[31m✗[39m [31mInvalid config[39m
+[107m [0m TOML parse error at line 1, column 6
+[107m [0m   |
+[107m [0m 1 | this is not valid toml {{{
+[107m [0m   |      ^
+[107m [0m key with no value, expected `=`
+[107m [0m this is not valid toml {{{
+
+[36mPROJECT CONFIG[39m  _REPO_/.config/wt.toml
+[2m↳[22m [2mNot found[22m
+
+[36mSHELL INTEGRATION[39m
+[33m▲[39m [33mShell integration not active[39m
+[107m [0m Binary invoked as: [1m[PROJECT_ROOT]/target/debug/wt[22m
+
+[2m○[22m [2mSkipped bash; ~/.bashrc not found[22m
+[2m○[22m [2mSkipped zsh; ~/.zshrc not found[22m
+[2m○[22m [2mSkipped fish; ~/.config/fish/conf.d not found[22m
+
+[36mOTHER[39m  wt [VERSION]
+[2m↳[22m [2mClaude Code plugin not installed ([1mclaude[22m not found)[22m
+[2m○[22m Hyperlinks: [1minactive[22m

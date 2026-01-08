@@ -217,6 +217,58 @@ each type.
 | "Use `--yes` to override"     | "Skipping hooks (--no-verify)"        |
 | "Branch can be deleted"       | "Worktree preserved (main worktree)"  |
 
+**Warning placement:** When something unexpected happens, warn somewhere. Where
+depends on the nature of the issue:
+
+```
+Is it unexpected?
+├── No → Silent (e.g., gh not installed when no GitHub remote)
+└── Yes → Warn somewhere:
+    ├── Immediate impact OR temporary → Inline (warning_message or in-band indicator)
+    ├── Persists until user action → wt config show (can be checked later)
+    └── Not user-fixable → log::warn! (developer diagnostics)
+```
+
+**Inline warnings** for issues affecting the current command:
+
+| Issue | Why inline |
+|-------|------------|
+| Rate limit during CI fetch | Temporary — won't be there next time |
+| Network timeout | Temporary — retry might work |
+| Hook failed during operation | Immediate impact on this command |
+
+**`wt config show`** for issues that persist until the user fixes them. These
+don't need to interrupt every command — users can check diagnostics when
+investigating:
+
+| Issue | Why config show |
+|-------|-----------------|
+| `gh` not authenticated | User runs `gh auth login` |
+| Shell integration misconfigured | User updates shell config |
+| Config syntax errors | User fixes config file |
+
+**`log::warn!()`** for issues users cannot fix. These help developers debug but
+shouldn't clutter user output:
+
+| Issue | Why log::warn! |
+|-------|----------------|
+| JSON parse error (API changed) | Requires code fix |
+| Internal invariant violated | Developer bug |
+
+```rust
+// Inline - temporary issue affecting this command
+if is_rate_limited(&stderr) {
+    return Some(CiStatus::Error);  // Shows in CI column
+}
+
+// config show - permanent, user-fixable (checked on-demand by wt config show)
+// Shell integration status is probed by wt config show, not cached
+
+// log::warn! - not user-fixable, for developer debugging
+log::warn!("Failed to parse CI JSON for {}: {}", branch, e);
+return None;
+```
+
 **Command suggestions in hints:** Use "To X, run Y" pattern. End with the
 command for easy copying:
 

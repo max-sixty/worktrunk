@@ -3,8 +3,9 @@ use color_print::cformat;
 use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::fmt::Write as _;
 use std::path::PathBuf;
-use worktrunk::config::WorktrunkConfig;
-use worktrunk::config::{find_unknown_project_keys, find_unknown_user_keys};
+use worktrunk::config::{
+    ProjectConfig, WorktrunkConfig, find_unknown_project_keys, find_unknown_user_keys,
+};
 use worktrunk::git::Repository;
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{Shell, scan_for_detection_details};
@@ -359,8 +360,15 @@ fn render_user_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for unknown keys and warn
-    warn_unknown_keys(out, &find_unknown_user_keys(&contents))?;
+    // Validate config (syntax + schema) and warn if invalid
+    if let Err(e) = toml::from_str::<WorktrunkConfig>(&contents) {
+        // Use gutter for error details to avoid markup interpretation of user content
+        writeln!(out, "{}", error_message("Invalid config"))?;
+        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+    } else {
+        // Only check for unknown keys if config is valid
+        warn_unknown_keys(out, &find_unknown_user_keys(&contents))?;
+    }
 
     // Display TOML with syntax highlighting (gutter at column 0)
     write!(out, "{}", format_toml(&contents))?;
@@ -422,8 +430,15 @@ fn render_project_config(out: &mut String) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for unknown keys and warn
-    warn_unknown_keys(out, &find_unknown_project_keys(&contents))?;
+    // Validate config (syntax + schema) and warn if invalid
+    if let Err(e) = toml::from_str::<ProjectConfig>(&contents) {
+        // Use gutter for error details to avoid markup interpretation of user content
+        writeln!(out, "{}", error_message("Invalid config"))?;
+        writeln!(out, "{}", format_with_gutter(&e.to_string(), None))?;
+    } else {
+        // Only check for unknown keys if config is valid
+        warn_unknown_keys(out, &find_unknown_project_keys(&contents))?;
+    }
 
     // Display TOML with syntax highlighting (gutter at column 0)
     write!(out, "{}", format_toml(&contents))?;
