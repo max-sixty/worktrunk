@@ -78,6 +78,78 @@ fn test_copy_ignored_basic(mut repo: TestRepo) {
     );
 }
 
+/// Test idempotent behavior: running twice should succeed (skips existing files)
+#[rstest]
+fn test_copy_ignored_idempotent(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Setup: .env file that matches both patterns
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+
+    // Run copy-ignored twice - second run should succeed (skip existing)
+    let output1 = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output1.status.success(), "First copy should succeed");
+
+    let output2 = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output2.status.success(), "Second copy should succeed (idempotent)");
+
+    // File should still exist with original content
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".env")).unwrap(),
+        "SECRET=value"
+    );
+}
+
+/// Test copying a single file in a subdirectory (creates parent dirs)
+#[rstest]
+fn test_copy_ignored_nested_file(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create a nested file that's gitignored
+    let cache_dir = repo.root_path().join("cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(cache_dir.join("data.json"), r#"{"key": "value"}"#).unwrap();
+
+    // Gitignore the specific file (not the directory)
+    fs::write(repo.root_path().join(".gitignore"), "cache/data.json\n").unwrap();
+
+    // Worktreeinclude the specific file
+    fs::write(
+        repo.root_path().join(".worktreeinclude"),
+        "cache/data.json\n",
+    )
+    .unwrap();
+
+    // Run from feature worktree
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Verify file was copied (parent dir should be created)
+    let copied_file = feature_path.join("cache").join("data.json");
+    assert!(copied_file.exists(), "Nested file should be copied");
+    assert_eq!(
+        fs::read_to_string(&copied_file).unwrap(),
+        r#"{"key": "value"}"#
+    );
+}
+
 /// Test --dry-run shows what would be copied without copying
 #[rstest]
 fn test_copy_ignored_dry_run(mut repo: TestRepo) {
