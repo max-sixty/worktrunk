@@ -142,6 +142,7 @@ pub fn branch_value_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: false,
+        worktree_only: false,
     })
 }
 
@@ -151,6 +152,7 @@ pub fn worktree_branch_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: true,
         exclude_remote_only: false,
+        worktree_only: false,
     })
 }
 
@@ -159,6 +161,16 @@ pub fn local_branches_completer() -> ArgValueCompleter {
     ArgValueCompleter::new(BranchCompleter {
         suppress_with_create: false,
         exclude_remote_only: true,
+        worktree_only: false,
+    })
+}
+
+/// Branch completion for commands that only operate on worktrees (e.g., copy-ignored).
+pub fn worktree_only_completer() -> ArgValueCompleter {
+    ArgValueCompleter::new(BranchCompleter {
+        suppress_with_create: false,
+        exclude_remote_only: false,
+        worktree_only: true,
     })
 }
 
@@ -256,6 +268,7 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
 struct BranchCompleter {
     suppress_with_create: bool,
     exclude_remote_only: bool,
+    worktree_only: bool,
 }
 
 impl ValueCompleter for BranchCompleter {
@@ -267,21 +280,26 @@ impl ValueCompleter for BranchCompleter {
 
         // Filter branches by prefix - clap doesn't filter ArgValueCompleter results
         let prefix = current.to_string_lossy();
-        complete_branches(self.suppress_with_create, self.exclude_remote_only)
-            .into_iter()
-            .filter(|candidate| {
-                candidate
-                    .get_value()
-                    .to_string_lossy()
-                    .starts_with(&*prefix)
-            })
-            .collect()
+        complete_branches(
+            self.suppress_with_create,
+            self.exclude_remote_only,
+            self.worktree_only,
+        )
+        .into_iter()
+        .filter(|candidate| {
+            candidate
+                .get_value()
+                .to_string_lossy()
+                .starts_with(&*prefix)
+        })
+        .collect()
     }
 }
 
 fn complete_branches(
     suppress_with_create: bool,
     exclude_remote_only: bool,
+    worktree_only: bool,
 ) -> Vec<CompletionCandidate> {
     if suppress_with_create && suppress_switch_branch_completion() {
         return Vec::new();
@@ -299,7 +317,13 @@ fn complete_branches(
     branches
         .into_iter()
         .filter(|branch| {
-            !exclude_remote_only || !matches!(branch.category, BranchCategory::Remote(_))
+            if worktree_only {
+                matches!(branch.category, BranchCategory::Worktree)
+            } else if exclude_remote_only {
+                !matches!(branch.category, BranchCategory::Remote(_))
+            } else {
+                true
+            }
         })
         .map(|branch| {
             let time_str = format_relative_time_short(branch.timestamp);

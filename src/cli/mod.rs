@@ -304,13 +304,13 @@ pub enum StepCommand {
         /// Source worktree branch
         ///
         /// Defaults to main worktree.
-        #[arg(long, add = crate::completion::local_branches_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer())]
         from: Option<String>,
 
         /// Destination worktree branch
         ///
         /// Defaults to current worktree.
-        #[arg(long, add = crate::completion::local_branches_completer())]
+        #[arg(long, add = crate::completion::worktree_only_completer())]
         to: Option<String>,
 
         /// Show what would be copied
