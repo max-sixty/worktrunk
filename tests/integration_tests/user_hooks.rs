@@ -784,6 +784,71 @@ fn test_standalone_hook_post_start_foreground(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_post_start_no_background_deprecated(repo: TestRepo) {
+    // Test that --no-background still works but shows deprecation warning
+    repo.write_project_config(
+        r#"post-start = "echo 'DEPRECATED_FLAG' && echo 'marker' > hook_ran.txt""#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--no-background"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-start --no-background should succeed"
+    );
+
+    // With --no-background, marker file should exist immediately (no waiting)
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(
+        marker.exists(),
+        "hook should have completed synchronously with --no-background"
+    );
+
+    // Output should contain deprecation warning
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-background is deprecated"),
+        "should show deprecation warning, got: {stderr}"
+    );
+
+    // Hook output should still appear
+    assert!(
+        stderr.contains("DEPRECATED_FLAG"),
+        "hook stdout should appear in command output, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_standalone_hook_post_switch_no_background_deprecated(repo: TestRepo) {
+    // Test that --no-background still works but shows deprecation warning for post-switch
+    repo.write_project_config(
+        r#"post-switch = "echo 'SWITCH_DEPRECATED' && echo 'marker' > hook_ran.txt""#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-switch", "--yes", "--no-background"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-switch --no-background should succeed"
+    );
+
+    // Output should contain deprecation warning
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--no-background is deprecated"),
+        "should show deprecation warning, got: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_pre_commit(repo: TestRepo) {
     // Write project config with pre-commit hook
     repo.write_project_config(r#"pre-commit = "echo 'STANDALONE_PRE_COMMIT' > hook_ran.txt""#);

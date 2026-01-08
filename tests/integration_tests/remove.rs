@@ -396,6 +396,21 @@ fn test_remove_foreground(mut repo: TestRepo) {
     ));
 }
 
+/// Tests deprecated --no-background flag shows warning but still works
+#[rstest]
+fn test_remove_no_background_deprecated(mut repo: TestRepo) {
+    // Create a worktree
+    let _worktree_path = repo.add_worktree("feature-deprecated");
+
+    // Remove it with deprecated --no-background flag from main repo
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["--no-background", "feature-deprecated"],
+        None
+    ));
+}
+
 #[rstest]
 fn test_remove_foreground_unmerged(mut repo: TestRepo) {
     // Create a worktree with an unmerged commit
