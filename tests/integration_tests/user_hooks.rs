@@ -751,6 +751,39 @@ fn test_standalone_hook_post_start(repo: TestRepo) {
 }
 
 #[rstest]
+fn test_standalone_hook_post_start_no_background(repo: TestRepo) {
+    // Write project config with post-start hook that echoes to both file and stdout
+    repo.write_project_config(
+        r#"post-start = "echo 'FOREGROUND_POST_START' && echo 'marker' > hook_ran.txt""#,
+    );
+
+    let mut cmd = crate::common::wt_command();
+    cmd.current_dir(repo.root_path());
+    cmd.env("WORKTRUNK_CONFIG_PATH", repo.test_config_path());
+    cmd.args(["hook", "post-start", "--yes", "--no-background"]);
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt hook post-start --no-background should succeed"
+    );
+
+    // With --no-background, marker file should exist immediately (no waiting)
+    let marker = repo.root_path().join("hook_ran.txt");
+    assert!(
+        marker.exists(),
+        "hook should have completed synchronously with --no-background"
+    );
+
+    // Output should contain the hook's stdout (not just spawned message)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("FOREGROUND_POST_START"),
+        "hook stdout should appear in command output with --no-background, got: {stderr}"
+    );
+}
+
+#[rstest]
 fn test_standalone_hook_pre_commit(repo: TestRepo) {
     // Write project config with pre-commit hook
     repo.write_project_config(r#"pre-commit = "echo 'STANDALONE_PRE_COMMIT' > hook_ran.txt""#);

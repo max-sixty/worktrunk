@@ -1130,7 +1130,7 @@ pub enum HookCommand {
 
     /// Run post-start hooks
     ///
-    /// Background — runs without blocking.
+    /// Background by default. Use `--no-background` to run in foreground for debugging.
     PostStart {
         /// Filter by command name
         ///
@@ -1143,6 +1143,10 @@ pub enum HookCommand {
         #[arg(short, long)]
         yes: bool,
 
+        /// Run in foreground (block until complete)
+        #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        background: bool,
+
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
         vars: Vec<(String, String)>,
@@ -1150,7 +1154,7 @@ pub enum HookCommand {
 
     /// Run post-switch hooks
     ///
-    /// Background — runs without blocking.
+    /// Background by default. Use `--no-background` to run in foreground for debugging.
     PostSwitch {
         /// Filter by command name
         ///
@@ -1162,6 +1166,10 @@ pub enum HookCommand {
         /// Skip approval prompts
         #[arg(short, long)]
         yes: bool,
+
+        /// Run in foreground (block until complete)
+        #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        background: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
