@@ -67,6 +67,17 @@ Usage: [1m[36mwt switch[0m [36m[OPTIONS][0m [36m<BRANCH>[0m [1m[36m[--
       [1m[36m--no-verify
           Skip hooks
 
+  [1m[36m-t[0m, [1m[36m--tmux
+          Run in new tmux window/session
+          
+          Creates the worktree in a new tmux window (if already in tmux) or session (if not). All hooks run there instead of the current terminal. By 
+          default, the session/window is attached. Use --detach for background.
+
+  [1m[36m-d[0m, [1m[36m--detach
+          Run tmux session in background
+          
+          Only valid with --tmux. Creates a detached session instead of attaching to it.
+
   [1m[36m-h[0m, [1m[36m--help
           Print help (see a summary with '-h')
 

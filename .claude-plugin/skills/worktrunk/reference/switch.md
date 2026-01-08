@@ -109,6 +109,20 @@ Usage: <b><span class=c>wt switch</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--no-verify</span></b>
           Skip hooks
 
+  <b><span class=c>-t</span></b>, <b><span class=c>--tmux</span></b>
+          Run in new tmux window/session
+
+          Creates the worktree in a new tmux window (if already in tmux) or
+          session (if not). All hooks run there instead of the current terminal.
+          By default, the session/window is attached. Use --detach for
+          background.
+
+  <b><span class=c>-d</span></b>, <b><span class=c>--detach</span></b>
+          Run tmux session in background
+
+          Only valid with --tmux. Creates a detached session instead of
+          attaching to it.
+
   <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
           Print help (see a summary with &#39;-h&#39;)
 
