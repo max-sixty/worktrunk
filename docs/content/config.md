@@ -839,13 +839,7 @@ Caches GitHub/GitLab CI status for display in [`wt list`](@/list.md#ci-status).
 
 See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
 
-### When to use
-
-- **Debug** — See cached status and when it was fetched
-- **Refresh** — Force re-fetch with `get --refresh`
-- **Clear** — Remove stale cache entries
-
-Without a subcommand, runs `get` for the current branch. For `--branch` or `--refresh`, use `get --branch=NAME`.
+Without a subcommand, runs `get` for the current branch. Use `get --refresh` to force re-fetch or `clear --all` to reset cache.
 
 ### Command reference
 

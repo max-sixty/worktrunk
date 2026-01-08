@@ -66,10 +66,4 @@ Caches GitHub/GitLab CI status for display in [2mwt list[0m.
 
 See [2mwt list[0m CI status for display symbols and colors.
 
-[32mWhen to use
-
-- [1mDebug[0m — See cached status and when it was fetched
-- [1mRefresh[0m — Force re-fetch with [2mget --refresh
-- [1mClear[0m — Remove stale cache entries
-
-Without a subcommand, runs [2mget[0m for the current branch. For [2m--branch[0m or [2m--refresh[0m, use [2mget --branch=NAME[0m.
+Without a subcommand, runs [2mget[0m for the current branch. Use [2mget --refresh[0m to force re-fetch or [2mclear --all[0m to reset cache.

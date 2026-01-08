@@ -312,16 +312,7 @@ The local inference fallback uses these heuristics in order:
 
 Updated automatically on every `wt switch`. Stored in git config as `worktrunk.history`.
 
-## When to use
-
-Most users never need this command — the previous branch updates automatically.
-Use it to:
-
-- **Debug** — See what `-` resolves to
-- **Override** — Set a specific branch as "previous"
-- **Clear** — Reset the history
-
-Without a subcommand, runs `get`."#
+Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
     )]
     PreviousBranch {
         #[command(subcommand)]
@@ -353,13 +344,7 @@ Without a subcommand, runs `get`."#
 
 See [`wt list` CI status](@/list.md#ci-status) for display symbols and colors.
 
-## When to use
-
-- **Debug** — See cached status and when it was fetched
-- **Refresh** — Force re-fetch with `get --refresh`
-- **Clear** — Remove stale cache entries
-
-Without a subcommand, runs `get` for the current branch. For `--branch` or `--refresh`, use `get --branch=NAME`."#
+Without a subcommand, runs `get` for the current branch. Use `get --refresh` to force re-fetch or `clear --all` to reset cache."#
     )]
     CiStatus {
         #[command(subcommand)]

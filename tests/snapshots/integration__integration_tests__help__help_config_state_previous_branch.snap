@@ -51,13 +51,4 @@ Enables [2mwt switch -[0m to return to the previous worktree, similar to [2mc
 
 Updated automatically on every [2mwt switch[0m. Stored in git config as [2mworktrunk.history[0m.
 
-[32mWhen to use
-
-Most users never need this command — the previous branch updates automatically.
-Use it to:
-
-- [1mDebug[0m — See what [2m-[0m resolves to
-- [1mOverride[0m — Set a specific branch as "previous"
-- [1mClear[0m — Reset the history
-
-Without a subcommand, runs [2mget[0m.
+Without a subcommand, runs [2mget[0m. Use [2mset[0m to override or [2mclear[0m to reset.
