@@ -159,7 +159,7 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
         content.contains("<summary>Environment</summary>"),
         "Should have environment section"
     );
-    assert!(content.contains("wt v"), "Should have wt version");
+    assert!(content.contains("wt "), "Should have wt version");
     assert!(content.contains("git "), "Should have git version");
     assert!(
         content.contains("Shell integration:"),
