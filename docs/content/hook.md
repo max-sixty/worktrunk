@@ -210,45 +210,37 @@ Many tasks work well in `post-start` — they'll likely be ready by the time you
 
 ### Copying untracked files
 
-Git worktrees share the repository but not untracked files. Common files to copy or link:
+Git worktrees share the repository but not untracked files. Common files to copy:
 
 - **Dependencies**: `node_modules/`, `.venv/`, `target/`, `vendor/`, `Pods/`
 - **Build caches**: `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/`
 - **Generated assets**: Images, ML models, binaries too large for git
 - **Environment files**: `.env` (if not generated per-worktree)
 
-Three strategies:
-
-| Strategy | Speed | Disk | State |
-|----------|-------|------|-------|
-| **Symlink** | Instant | Shared | Shared (changes affect all worktrees) |
-| **Copy** | Slow | Full duplicate | Isolated |
-| **Copy-on-write** | Instant | Shared until modified | Isolated |
-
-### Copy-on-write for disk efficiency
-
-Copy-on-write (CoW) creates instant clones that share disk space until modified. Perfect for large directories.
-
-| OS | Filesystem | Command |
-|----|------------|---------|
-| macOS | APFS | `cp -c` |
-| Linux | Btrfs, XFS | `cp --reflink=auto` |
-| Windows | ReFS | No shell equivalent (requires API) |
-
-Cross-platform pattern that auto-detects and falls back gracefully:
+Use `wt step copy-ignored` to copy files listed in `.worktreeinclude` that are also gitignored:
 
 ```toml
 [post-create]
-deps = """
-if cp -c /dev/null /dev/null 2>/dev/null; then
-    cp -c -r {{ main_worktree_path }}/node_modules .
-elif cp --reflink=auto /dev/null /dev/null 2>/dev/null; then
-    cp --reflink=auto -r {{ main_worktree_path }}/node_modules .
-else
-    cp -r {{ main_worktree_path }}/node_modules .
-fi
-"""
+copy = "wt step copy-ignored"
 ```
+
+Create a `.worktreeinclude` file in your repository root listing patterns to copy (uses gitignore syntax):
+
+```gitignore
+# .worktreeinclude
+.env
+node_modules/
+target/
+.cache/
+```
+
+Files are only copied if they match **both** `.worktreeinclude` **and** are gitignored — this prevents accidentally copying tracked files.
+
+**Features:**
+- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
+- Skips existing files (safe to re-run)
+- Skips symlinks and `.git` entries
 
 ### Dev servers
 
@@ -401,19 +393,14 @@ Each ecosystem has quirks that affect hook design. Contributions welcome for lan
 
 ### Rust
 
-The `target/` directory is huge (often 1-10GB) and benefits most from CoW. Worktrunk's own config seeds compiled dependencies:
+The `target/` directory is huge (often 1-10GB). Use `wt step copy-ignored` with a `.worktreeinclude`:
 
-```toml
-[post-start]
-deps = """
-[ -d {{ main_worktree_path }}/target/debug/deps ] && [ ! -e target ] &&
-mkdir -p target/debug/deps &&
-cp -c {{ main_worktree_path }}/target/debug/deps/*.rlib {{ main_worktree_path }}/target/debug/deps/*.rmeta target/debug/deps/ &&
-cp -cR {{ main_worktree_path }}/target/debug/.fingerprint {{ main_worktree_path }}/target/debug/build target/debug/
-"""
+```gitignore
+# .worktreeinclude
+target/
 ```
 
-This cuts first build from ~68s to ~3s by reusing compiled dependencies. The check `[ ! -e target ]` skips if target already exists.
+This copies `target/` using copy-on-write (reflink), cutting first build from ~68s to ~3s by reusing compiled dependencies.
 
 ### Python
 
@@ -433,11 +420,12 @@ venv = "python -m venv .venv && .venv/bin/pip install -r requirements.txt"
 
 ### Node.js
 
-`node_modules/` is large but mostly static. CoW works well:
+`node_modules/` is large but mostly static. Add to `.worktreeinclude`:
 
-```toml
-[post-create]
-deps = "cp -c -r {{ main_worktree_path }}/node_modules . 2>/dev/null || npm ci"
+```gitignore
+# .worktreeinclude
+node_modules/
+.env
 ```
 
 If the project has no native dependencies, symlinks are even faster:

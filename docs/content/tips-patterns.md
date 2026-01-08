@@ -20,15 +20,24 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 
 ## Eliminate cold starts
 
-`post-create` hooks install deps and copy caches. On macOS, use copy-on-write for instant cache cloning:
+Use `wt step copy-ignored` in a `post-create` or `post-start` hook to copy gitignored files (caches, dependencies) between worktrees:
 
 ```toml
 [post-create]
-"cache" = "cp -c -r ../.cache .cache"  # APFS clones (instant, no disk space)
-"install" = "npm ci"
+copy = "wt step copy-ignored"
+install = "npm ci"
 ```
 
-See [Designing effective hooks](@/hook.md#designing-effective-hooks) for cross-platform CoW commands, language-specific tips, and more patterns.
+Create a `.worktreeinclude` file listing what to copy (uses gitignore syntax):
+
+```gitignore
+# .worktreeinclude
+.cache/
+node_modules/
+target/
+```
+
+See [Copying untracked files](@/hook.md#copying-untracked-files) for more details.
 
 ## Dev server per worktree
 
