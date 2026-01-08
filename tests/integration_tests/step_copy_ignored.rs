@@ -448,4 +448,3 @@ fn test_copy_ignored_to_flag(mut repo: TestRepo) {
         "from-main"
     );
 }
-
