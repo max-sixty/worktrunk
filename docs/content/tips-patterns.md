@@ -20,7 +20,7 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 
 ## Eliminate cold starts
 
-Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files (caches, dependencies) between worktrees:
+Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files listed in `.worktreeinclude` (caches, dependencies) between worktrees:
 
 ```toml
 [post-create]
@@ -28,7 +28,7 @@ copy = "wt step copy-ignored"
 install = "npm ci"
 ```
 
-Create a `.worktreeinclude` file listing what to copy (uses gitignore syntax):
+`.worktreeinclude` uses gitignore syntax:
 
 ```gitignore
 # .worktreeinclude
