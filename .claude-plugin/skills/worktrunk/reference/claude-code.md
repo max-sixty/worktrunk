@@ -1,10 +1,31 @@
 # Claude Code Integration
 
-Worktrunk includes a Claude Code plugin that automatically tracks which worktrees have active Claude sessions. When Claude starts working in a worktree, the plugin sets a status marker; when Claude waits for input, the marker updates. This makes it easy to monitor multiple parallel agents from `wt list`.
+The worktrunk Claude Code plugin provides two features:
 
-## Status tracking
+1. **Configuration skill** — Documentation Claude Code can read, so it can help set up LLM commits, hooks, and troubleshoot issues
+2. **Activity tracking** — Status markers in `wt list` showing which worktrees have active Claude sessions (🤖 working, 💬 waiting)
 
-The plugin adds status indicators to `wt list`:
+## Installation
+
+```bash
+$ claude plugin marketplace add max-sixty/worktrunk
+$ claude plugin install worktrunk@worktrunk
+```
+
+## Configuration skill
+
+The plugin includes a skill — documentation that Claude Code can read — covering worktrunk's configuration system. After installation, Claude Code can help with:
+
+- Setting up LLM-generated commit messages
+- Adding project hooks (post-create, pre-merge, pre-commit)
+- Configuring worktree path templates
+- Fixing shell integration issues
+
+Claude Code is designed to load the skill automatically when it detects worktrunk-related questions.
+
+## Activity tracking
+
+The plugin tracks Claude sessions with status markers in `wt list`:
 
 <span class="prompt">$</span> <span class="cmd">wt list</span>
   <b>Branch</b>       <b>Status</b>        <b>HEAD±</b>    <b>main↕</b>  <b>Path</b>                 <b>Remote⇅</b>  <b>Commit</b>    <b>Age</b>   <b>Message</b>
@@ -17,13 +38,6 @@ The plugin adds status indicators to `wt list`:
 
 - 🤖 — Claude is working
 - 💬 — Claude is waiting for input
-
-### Installation
-
-```bash
-$ claude plugin marketplace add max-sixty/worktrunk
-$ claude plugin install worktrunk@worktrunk
-```
 
 ### Manual status markers
 
