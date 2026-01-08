@@ -61,6 +61,37 @@ fn window_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Collect environment variables to pass through to tmux session.
+/// Excludes internal/shell-specific vars that shouldn't be inherited.
+fn collect_env_exports() -> String {
+    let skip_vars = [
+        "PWD",
+        "OLDPWD",
+        "_",
+        "SHLVL",
+        "TMUX",
+        "TMUX_PANE",
+        "TERM_SESSION_ID",
+        "SHELL_SESSION_ID",
+        "WORKTRUNK_DIRECTIVE_FILE",
+        "COMP_LINE",
+        "COMP_POINT",
+    ];
+
+    let exports: Vec<String> = env::vars()
+        .filter(|(k, _)| !skip_vars.contains(&k.as_str()))
+        .filter(|(k, _)| !k.starts_with("__")) // Skip internal vars
+        .filter_map(|(k, v)| {
+            // Shell-escape the value
+            shlex::try_quote(&v)
+                .ok()
+                .map(|escaped| format!("export {}={}", k, escaped))
+        })
+        .collect();
+
+    exports.join("; ")
+}
+
 /// Capture the visible output from a tmux pane, cleaning up whitespace.
 fn capture_pane(session: &str) -> String {
     Command::new("tmux")
@@ -143,8 +174,13 @@ pub fn spawn_switch_in_tmux(opts: &TmuxSwitchOptions<'_>) -> Result<TmuxSpawnRes
         .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
         .collect();
 
-    // Command to run: wt switch ... && exec $SHELL (keep shell open after completion)
-    let wt_command = format!("wt {} && exec $SHELL", escaped_args.join(" "));
+    // Command to run: export env vars, then wt switch, then keep shell open
+    let env_exports = collect_env_exports();
+    let wt_command = if env_exports.is_empty() {
+        format!("wt {} && exec $SHELL", escaped_args.join(" "))
+    } else {
+        format!("{}; wt {} && exec $SHELL", env_exports, escaped_args.join(" "))
+    };
 
     if is_inside_tmux() {
         // Already in tmux: check if window exists
