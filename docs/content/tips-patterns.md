@@ -20,7 +20,7 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 
 ## Eliminate cold starts
 
-Use `wt step copy-ignored` in a `post-create` or `post-start` hook to copy gitignored files (caches, dependencies) between worktrees:
+Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files (caches, dependencies) between worktrees:
 
 ```toml
 [post-create]
@@ -37,7 +37,7 @@ node_modules/
 target/
 ```
 
-See [Copying untracked files](@/hook.md#copying-untracked-files) for more details.
+See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for common patterns and language-specific notes.
 
 ## Dev server per worktree
 

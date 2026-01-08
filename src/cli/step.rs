@@ -82,6 +82,69 @@ pub enum StepCommand {
     /// Useful in post-create hooks to sync local config files
     /// (`.env`, IDE settings) to new worktrees. Skips symlinks and existing
     /// files.
+    #[command(
+        after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies files listed in `.worktreeinclude` to another worktree, eliminating cold starts.
+
+## Setup
+
+Create a `.worktreeinclude` file in your repository root listing patterns to copy (uses gitignore syntax):
+
+```gitignore
+# .worktreeinclude
+.env
+node_modules/
+target/
+.cache/
+```
+
+Add to your project config:
+
+```toml
+# .config/wt.toml
+[post-create]
+copy = "wt step copy-ignored"
+```
+
+## What gets copied
+
+Files are copied only if they match **both** `.worktreeinclude` **and** are gitignored. This prevents accidentally copying tracked files.
+
+## Common patterns
+
+| Type | Patterns |
+|------|----------|
+| Dependencies | `node_modules/`, `.venv/`, `target/`, `vendor/`, `Pods/` |
+| Build caches | `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/` |
+| Generated assets | Images, ML models, binaries too large for git |
+| Environment files | `.env` (if not generated per-worktree) |
+
+## Features
+
+- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
+- Skips existing files (safe to re-run)
+- Skips symlinks and `.git` entries
+
+## Language-specific notes
+
+### Rust
+
+The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first build from ~68s to ~3s by reusing compiled dependencies.
+
+### Node.js
+
+`node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
+
+```toml
+[post-create]
+deps = "ln -sf {{ main_worktree_path }}/node_modules ."
+```
+
+### Python
+
+Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+"#
+    )]
     CopyIgnored {
         /// Source worktree branch
         ///

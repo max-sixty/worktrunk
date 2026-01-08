@@ -108,6 +108,109 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
           Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
+## wt step copy-ignored
+
+Git worktrees share the repository but not untracked files. This command copies files listed in `.worktreeinclude` to another worktree, eliminating cold starts.
+
+### Setup
+
+Create a `.worktreeinclude` file in your repository root listing patterns to copy (uses gitignore syntax):
+
+```gitignore
+# .worktreeinclude
+.env
+node_modules/
+target/
+.cache/
+```
+
+Add to your project config:
+
+```toml
+# .config/wt.toml
+[post-create]
+copy = "wt step copy-ignored"
+```
+
+### What gets copied
+
+Files are copied only if they match **both** `.worktreeinclude` **and** are gitignored. This prevents accidentally copying tracked files.
+
+### Common patterns
+
+| Type | Patterns |
+|------|----------|
+| Dependencies | `node_modules/`, `.venv/`, `target/`, `vendor/`, `Pods/` |
+| Build caches | `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/` |
+| Generated assets | Images, ML models, binaries too large for git |
+| Environment files | `.env` (if not generated per-worktree) |
+
+### Features
+
+- Uses copy-on-write (reflink) when available for instant, space-efficient copies
+- Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
+- Skips existing files (safe to re-run)
+- Skips symlinks and `.git` entries
+
+### Language-specific notes
+
+#### Rust
+
+The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first build from ~68s to ~3s by reusing compiled dependencies.
+
+#### Node.js
+
+`node_modules/` is large but mostly static. If the project has no native dependencies, symlinks are even faster:
+
+```toml
+[post-create]
+deps = "ln -sf {{ main_worktree_path }}/node_modules ."
+```
+
+#### Python
+
+Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
+
+### Command reference
+
+{% terminal() %}
+wt step copy-ignored - Copy <b>.worktreeinclude</b> files to another worktree
+
+Copies files listed in <b>.worktreeinclude</b> that are also gitignored. Useful in
+post-create hooks to sync local config files (<b>.env</b>, IDE settings) to new
+worktrees. Skips symlinks and existing files.
+
+Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]</span>
+
+<b><span class=g>Options:</span></b>
+      <b><span class=c>--from</span></b><span class=c> &lt;FROM&gt;</span>
+          Source worktree branch
+
+          Defaults to main worktree.
+
+      <b><span class=c>--to</span></b><span class=c> &lt;TO&gt;</span>
+          Destination worktree branch
+
+          Defaults to current worktree.
+
+      <b><span class=c>--dry-run</span></b>
+          Show what would be copied
+
+  <b><span class=c>-h</span></b>, <b><span class=c>--help</span></b>
+          Print help (see a summary with &#39;-h&#39;)
+
+<b><span class=g>Global Options:</span></b>
+  <b><span class=c>-C</span></b><span class=c> &lt;path&gt;</span>
+          Working directory for this command
+
+      <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
+          User config file path
+
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
+{% end %}
+
+
 ## wt step for-each
 
 Executes a command sequentially in every worktree with real-time output. Continues on failure and shows a summary at the end.

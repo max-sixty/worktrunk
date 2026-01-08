@@ -979,6 +979,8 @@ wt step commit --show-prompt | llm -m gpt-5-nano
 - [`wt merge`](@/merge.md) — Runs commit → squash → rebase → hooks → push → cleanup automatically
 - [`wt hook`](@/hook.md) — Run configured hooks
 
+<!-- subdoc: copy-ignored -->
+
 <!-- subdoc: for-each -->
 "#
     )]
@@ -1192,37 +1194,14 @@ Many tasks work well in `post-start` — they'll likely be ready by the time the
 
 ### Copying untracked files
 
-Git worktrees share the repository but not untracked files. Common files to copy:
-
-- **Dependencies**: `node_modules/`, `.venv/`, `target/`, `vendor/`, `Pods/`
-- **Build caches**: `.cache/`, `.next/`, `.parcel-cache/`, `.turbo/`
-- **Generated assets**: Images, ML models, binaries too large for git
-- **Environment files**: `.env` (if not generated per-worktree)
-
-Use `wt step copy-ignored` to copy files listed in `.worktreeinclude` that are also gitignored:
+Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy files listed in `.worktreeinclude`:
 
 ```toml
 [post-create]
 copy = "wt step copy-ignored"
 ```
 
-Create a `.worktreeinclude` file in the repository root listing patterns to copy (uses gitignore syntax):
-
-```gitignore
-# .worktreeinclude
-.env
-node_modules/
-target/
-.cache/
-```
-
-Files are only copied if they match **both** `.worktreeinclude` **and** are gitignored — this prevents accidentally copying tracked files.
-
-**Features:**
-- Uses copy-on-write (reflink) when available for instant, space-efficient copies
-- Handles nested `.gitignore` files, global excludes, and `.git/info/exclude`
-- Skips existing files (safe to re-run)
-- Skips symlinks and `.git` entries
+See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for setup, common patterns, and language-specific notes.
 
 ### Dev servers
 
@@ -1371,22 +1350,11 @@ The `--var KEY=VALUE` flag overrides built-in template variables — useful for 
 
 ## Language-specific tips
 
-Each ecosystem has quirks that affect hook design. Contributions welcome for languages not listed.
-
-### Rust
-
-The `target/` directory is huge (often 1-10GB). Use `wt step copy-ignored` with a `.worktreeinclude`:
-
-```gitignore
-# .worktreeinclude
-target/
-```
-
-This copies `target/` using copy-on-write (reflink), cutting first build from ~68s to ~3s by reusing compiled dependencies.
+Each ecosystem has quirks that affect hook design. For copying dependencies and caches between worktrees, see [`wt step copy-ignored`](@/step.md#language-specific-notes). This section covers hooks.
 
 ### Python
 
-Virtual environments contain absolute paths and can't be copied between directories. Use `uv sync` to recreate — it's fast enough that copying isn't worth it:
+Use `uv sync` to recreate virtual environments:
 
 ```toml
 [post-create]
@@ -1398,23 +1366,6 @@ For pip-based projects without uv:
 ```toml
 [post-create]
 venv = "python -m venv .venv && .venv/bin/pip install -r requirements.txt"
-```
-
-### Node.js
-
-`node_modules/` is large but mostly static. Add to `.worktreeinclude`:
-
-```gitignore
-# .worktreeinclude
-node_modules/
-.env
-```
-
-If the project has no native dependencies, symlinks are even faster:
-
-```toml
-[post-create]
-deps = "ln -sf {{ main_worktree_path }}/node_modules ."
 ```
 
 ### Hook flow patterns
