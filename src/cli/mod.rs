@@ -352,14 +352,14 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         /// Creates the worktree in a new tmux window (if already in tmux) or
         /// session (if not). All hooks run there instead of the current terminal.
         /// By default, the session/window is attached. Use --detach for background.
-        #[arg(long)]
+        #[arg(short = 't', long)]
         tmux: bool,
 
         /// Run tmux session in background
         ///
         /// Only valid with --tmux. Creates a detached session instead of
         /// attaching to it.
-        #[arg(long, requires = "tmux")]
+        #[arg(short = 'd', long, requires = "tmux")]
         detach: bool,
     },
 
