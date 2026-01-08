@@ -1130,27 +1130,43 @@ fn main() {
             HookCommand::PostStart {
                 name,
                 yes,
-                background,
+                foreground,
+                no_background,
                 vars,
-            } => run_hook(
-                HookType::PostStart,
-                yes,
-                Some(background),
-                name.as_deref(),
-                &vars,
-            ),
+            } => {
+                if no_background {
+                    let _ = output::print(warning_message(
+                        "--no-background is deprecated; use --foreground instead",
+                    ));
+                }
+                run_hook(
+                    HookType::PostStart,
+                    yes,
+                    Some(foreground || no_background),
+                    name.as_deref(),
+                    &vars,
+                )
+            }
             HookCommand::PostSwitch {
                 name,
                 yes,
-                background,
+                foreground,
+                no_background,
                 vars,
-            } => run_hook(
-                HookType::PostSwitch,
-                yes,
-                Some(background),
-                name.as_deref(),
-                &vars,
-            ),
+            } => {
+                if no_background {
+                    let _ = output::print(warning_message(
+                        "--no-background is deprecated; use --foreground instead",
+                    ));
+                }
+                run_hook(
+                    HookType::PostSwitch,
+                    yes,
+                    Some(foreground || no_background),
+                    name.as_deref(),
+                    &vars,
+                )
+            }
             HookCommand::PreCommit { name, yes, vars } => {
                 run_hook(HookType::PreCommit, yes, None, name.as_deref(), &vars)
             }
@@ -1384,13 +1400,22 @@ fn main() {
             branches,
             delete_branch,
             force_delete,
-            background,
+            foreground,
+            no_background,
             verify,
             yes,
             force,
         } => WorktrunkConfig::load()
             .context("Failed to load config")
             .and_then(|config| {
+                // Handle deprecated --no-background flag
+                if no_background {
+                    output::print(warning_message(
+                        "--no-background is deprecated; use --foreground instead",
+                    ))?;
+                }
+                let background = !(foreground || no_background);
+
                 // Validate conflicting flags
                 if !delete_branch && force_delete {
                     return Err(worktrunk::git::GitError::Other {

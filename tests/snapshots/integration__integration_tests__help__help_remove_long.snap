@@ -35,8 +35,8 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
   [1m[36m-D[0m, [1m[36m--force-delete
           Delete unmerged branches
 
-      [1m[36m--no-background
-          Run removal in foreground
+      [1m[36m--foreground
+          Run removal in foreground (block until complete)
 
       [1m[36m--no-verify
           Skip hooks
@@ -105,8 +105,8 @@ Use [2m-D[0m to force-delete branches with unmerged changes. Use [2m--no-dele
 
 [32mBackground removal
 
-Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--no-background[0m to run in 
-the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to [2m.git/wt-logs/{branch}-remove.log[0m. Use [2m--foreground[0m to run in the 
+foreground.
 
 [32mShortcuts
 

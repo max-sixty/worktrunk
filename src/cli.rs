@@ -1130,7 +1130,7 @@ pub enum HookCommand {
 
     /// Run post-start hooks
     ///
-    /// Background by default. Use `--no-background` to run in foreground for debugging.
+    /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostStart {
         /// Filter by command name
         ///
@@ -1144,8 +1144,12 @@ pub enum HookCommand {
         yes: bool,
 
         /// Run in foreground (block until complete)
-        #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
-        background: bool,
+        #[arg(long)]
+        foreground: bool,
+
+        /// Deprecated: use --foreground instead
+        #[arg(long = "no-background", hide = true)]
+        no_background: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
@@ -1154,7 +1158,7 @@ pub enum HookCommand {
 
     /// Run post-switch hooks
     ///
-    /// Background by default. Use `--no-background` to run in foreground for debugging.
+    /// Background by default. Use `--foreground` to run in foreground for debugging.
     PostSwitch {
         /// Filter by command name
         ///
@@ -1168,8 +1172,12 @@ pub enum HookCommand {
         yes: bool,
 
         /// Run in foreground (block until complete)
-        #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
-        background: bool,
+        #[arg(long)]
+        foreground: bool,
+
+        /// Deprecated: use --foreground instead
+        #[arg(long = "no-background", hide = true)]
+        no_background: bool,
 
         /// Override built-in template variable (KEY=VALUE)
         #[arg(long = "var", value_name = "KEY=VALUE", value_parser = parse_key_val, action = clap::ArgAction::Append)]
@@ -1753,7 +1761,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--no-background` to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Shortcuts
 
@@ -1778,9 +1786,13 @@ Removal runs in the background by default (returns immediately). Logs are writte
         #[arg(short = 'D', long = "force-delete")]
         force_delete: bool,
 
-        /// Run removal in foreground
-        #[arg(long = "no-background", action = clap::ArgAction::SetFalse, default_value_t = true)]
-        background: bool,
+        /// Run removal in foreground (block until complete)
+        #[arg(long)]
+        foreground: bool,
+
+        /// Deprecated: use --foreground instead
+        #[arg(long = "no-background", hide = true)]
+        no_background: bool,
 
         /// Skip hooks
         #[arg(long = "no-verify", action = clap::ArgAction::SetFalse, default_value_t = true)]

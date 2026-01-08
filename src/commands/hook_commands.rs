@@ -39,15 +39,15 @@ use super::project_config::collect_commands_for_hooks;
 /// Custom variables from `--var KEY=VALUE` are merged into the template context,
 /// allowing hooks to be tested with different values without being in that context.
 ///
-/// The `background` parameter controls execution mode for hooks that normally run
+/// The `foreground` parameter controls execution mode for hooks that normally run
 /// in background (post-start, post-switch):
 /// - `None` = use default behavior for this hook type
-/// - `Some(true)` = run in background (default for post-start/post-switch)
-/// - `Some(false)` = run in foreground (useful for debugging)
+/// - `Some(true)` = run in foreground (for debugging)
+/// - `Some(false)` = run in background (default for post-start/post-switch)
 pub fn run_hook(
     hook_type: HookType,
     yes: bool,
-    background: Option<bool>,
+    foreground: Option<bool>,
     name_filter: Option<&str>,
     custom_vars: &[(String, String)],
 ) -> anyhow::Result<()> {
@@ -126,8 +126,8 @@ pub fn run_hook(
             require_hooks(user_config, project_config, hook_type)?;
 
             // Default to background (matching normal behavior during switch)
-            // Use --no-background to run in foreground for debugging
-            if background.unwrap_or(true) {
+            // Use --foreground to run in foreground for debugging
+            if !foreground.unwrap_or(false) {
                 let commands = prepare_hook_commands(
                     &ctx,
                     user_config,
@@ -165,8 +165,8 @@ pub fn run_hook(
             require_hooks(user_config, project_config, hook_type)?;
 
             // Default to background (matching normal behavior during switch)
-            // Use --no-background to run in foreground for debugging
-            if background.unwrap_or(true) {
+            // Use --foreground to run in foreground for debugging
+            if !foreground.unwrap_or(false) {
                 let commands = prepare_hook_commands(
                     &ctx,
                     user_config,

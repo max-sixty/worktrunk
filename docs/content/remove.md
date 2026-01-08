@@ -57,7 +57,7 @@ Use `-D` to force-delete branches with unmerged changes. Use `--no-delete-branch
 
 ## Background removal
 
-Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--no-background` to run in the foreground.
+Removal runs in the background by default (returns immediately). Logs are written to `.git/wt-logs/{branch}-remove.log`. Use `--foreground` to run in the foreground.
 
 ## Shortcuts
 
@@ -86,8 +86,8 @@ Usage: <b><span class=c>wt remove</span></b> <span class=c>[OPTIONS]</span> <spa
   <b><span class=c>-D</span></b>, <b><span class=c>--force-delete</span></b>
           Delete unmerged branches
 
-      <b><span class=c>--no-background</span></b>
-          Run removal in foreground
+      <b><span class=c>--foreground</span></b>
+          Run removal in foreground (block until complete)
 
       <b><span class=c>--no-verify</span></b>
           Skip hooks

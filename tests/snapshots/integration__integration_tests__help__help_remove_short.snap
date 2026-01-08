@@ -30,7 +30,7 @@ Usage: [1m[36mwt remove[0m [36m[OPTIONS][0m [36m[BRANCHES]...
 [1m[32mOptions:
       [1m[36m--no-delete-branch[0m  Keep branch after removal
   [1m[36m-D[0m, [1m[36m--force-delete[0m      Delete unmerged branches
-      [1m[36m--no-background[0m     Run removal in foreground
+      [1m[36m--foreground[0m        Run removal in foreground (block until complete)
       [1m[36m--no-verify[0m         Skip hooks
   [1m[36m-y[0m, [1m[36m--yes[0m               Skip approval prompts
   [1m[36m-f[0m, [1m[36m--force[0m             Force worktree removal

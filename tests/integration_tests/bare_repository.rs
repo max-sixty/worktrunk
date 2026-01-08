@@ -149,7 +149,7 @@ fn test_bare_repo_remove_worktree() {
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
     configure_directive_file(&mut cmd, &directive_path);
-    cmd.args(["remove", "feature", "--no-background"])
+    cmd.args(["remove", "feature", "--foreground"])
         .current_dir(&main_worktree);
 
     let output = cmd.output().unwrap();
@@ -667,7 +667,7 @@ fn test_nested_bare_repo_full_workflow() {
     let mut cmd = wt_command();
     test.configure_wt_cmd(&mut cmd);
     configure_directive_file(&mut cmd, &directive_path);
-    cmd.args(["remove", "feature", "--no-background"])
+    cmd.args(["remove", "feature", "--foreground"])
         .current_dir(&main_worktree);
     cmd.output().unwrap();
 

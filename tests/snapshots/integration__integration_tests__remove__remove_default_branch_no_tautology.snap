@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - remove
-    - "--no-background"
+    - "--foreground"
     - main
   env:
     CLICOLOR_FORCE: ""
@@ -20,6 +20,7 @@ info:
     NO_COLOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: "[TEST_CONFIG]"
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---

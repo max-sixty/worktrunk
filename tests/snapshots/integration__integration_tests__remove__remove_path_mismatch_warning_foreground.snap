@@ -4,7 +4,7 @@ info:
   program: wt
   args:
     - remove
-    - "--no-background"
+    - "--foreground"
     - feature-fg
   env:
     APPDATA: "[TEST_CONFIG_HOME]"
