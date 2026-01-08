@@ -52,7 +52,6 @@ use worktrunk::git::{LineDiff, Repository, Worktree};
 use worktrunk::styling::{INFO_SYMBOL, format_with_gutter, warning_message};
 
 use crate::commands::is_worktree_at_expected_path_with;
-use crate::diagnostic::DiagnosticReport;
 
 use super::ci_status::PrStatus;
 use super::model::{
@@ -1102,14 +1101,15 @@ pub fn collect(
         }
 
         diag.push_str(
-            "\n\nThis likely indicates a git command hung. Run with --verbose for details.",
+            "\n\nThis likely indicates a git command hung. Run with -v for details, -vv to create a diagnostic file.",
         );
 
         crate::output::print(warning_message(&diag))?;
 
-        // Show issue reporting hint (writes diagnostic file if --verbose was used)
-        let report = DiagnosticReport::collect(repo, diag);
-        crate::output::print(worktrunk::styling::hint_message(report.issue_hint(repo)))?;
+        // Show issue reporting hint (free function - doesn't collect diagnostic data)
+        crate::output::print(worktrunk::styling::hint_message(
+            crate::diagnostic::issue_hint(),
+        ))?;
     }
 
     // Compute status symbols for prunable worktrees (skipped during task spawning).
@@ -1203,9 +1203,10 @@ pub fn collect(
         let warning = warning_parts.join("\n");
         crate::output::print(warning_message(&warning))?;
 
-        // Show issue reporting hint (writes diagnostic file if --verbose was used)
-        let report = DiagnosticReport::collect(repo, warning);
-        crate::output::print(worktrunk::styling::hint_message(report.issue_hint(repo)))?;
+        // Show issue reporting hint (free function - doesn't collect diagnostic data)
+        crate::output::print(worktrunk::styling::hint_message(
+            crate::diagnostic::issue_hint(),
+        ))?;
     }
 
     // Populate display fields for all items (used by JSON output and statusline)

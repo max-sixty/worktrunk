@@ -59,8 +59,8 @@ Usage: [1m[36mwt list[0m [36m[OPTIONS]
       [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose
-          Show commands and debug info
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 Show all worktrees with their status. The table includes uncommitted changes, 
 divergence from the default branch and remote, and optional CI status.

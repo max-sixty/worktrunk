@@ -104,8 +104,8 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
 ## wt step for-each
@@ -186,8 +186,8 @@ Usage: <b><span class=c>wt step for-each</span></b> <span class=c>[OPTIONS]</spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt step --help-page` -->

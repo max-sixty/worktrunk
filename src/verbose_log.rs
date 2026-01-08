@@ -92,10 +92,3 @@ fn try_create_log_file() -> Option<(PathBuf, File)> {
 
     Some((path, file))
 }
-
-/// Check if verbose logging to file is active.
-pub fn is_active() -> bool {
-    VERBOSE_LOG
-        .get()
-        .is_some_and(|mutex| mutex.lock().is_ok_and(|g| g.is_some()))
-}

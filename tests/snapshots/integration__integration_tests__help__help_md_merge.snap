@@ -67,8 +67,8 @@ Global Options:
       --config <path>
           User config file path
 
-  -v, --verbose
-          Show commands and debug info
+  -v, --verbose...
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 Merge the current branch into the default branch — like clicking "Merge pull request" on GitHub.
 <!-- demo: wt-merge.gif 1600x900 -->

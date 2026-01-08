@@ -5,32 +5,23 @@ expression: normalize_report(&content)
 ## Diagnostic Report
 
 **Generated:** [TIMESTAMP]
-**Context:** Some git operations failed:
-  (detached): commit-details (fatal: not a git repository: [REPO_PATH])
-  (detached): ahead-behind (fatal: not a git repository: [REPO_PATH])
-  (detached): committed-trees-match (fatal: not a git repository: [REPO_PATH])
-  (detached): working-tree-diff (fatal: not a git repository: [REPO_PATH])
-
-### What's included
-
-- wt version, OS, git version
-- Worktree paths and branch names
-- Worktree status (prunable, locked, etc.)
-- Shell integration status
-- Verbose logs (if run with --verbose)
-- Commit messages (in verbose logs)
-
-Does NOT contain: file contents, credentials.
+**Command:** `[PROJECT_ROOT]/target/debug/wt list -vv`
+**Result:** Command completed successfully
 
 <details>
-<summary>Diagnostic data</summary>
+<summary>Environment</summary>
 
 ```
 wt [VERSION] ([OS] [ARCH])
 git [GIT_VERSION]
 Shell integration: inactive
+```
+</details>
 
---- git worktree list --porcelain ---
+<details>
+<summary>Worktrees</summary>
+
+```
 worktree [PATH]
 HEAD [COMMIT]
 branch refs/heads/main
@@ -39,6 +30,19 @@ worktree [PATH]
 HEAD [COMMIT]
 ```
 </details>
+
+<details>
+<summary>Config</summary>
+
+```
+User config: [TEST_CONFIG]
+(file not found)
+
+Project config: _REPO_/.config/wt.toml
+(file not found)
+```
+</details>
+
 
 <details>
 <summary>Verbose log</summary>

@@ -45,8 +45,8 @@ Global Options:
       --config <path>
           User config file path
 
-  -v, --verbose
-          Show commands and debug info
+  -v, --verbose...
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 Getting started
 

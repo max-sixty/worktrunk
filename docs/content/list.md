@@ -314,8 +314,8 @@ Usage: <b><span class=c>wt list</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 {% end %}
 
 <!-- END AUTO-GENERATED from `wt list --help-page` -->

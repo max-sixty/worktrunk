@@ -5,28 +5,26 @@
 //!
 //! # When Diagnostics Are Generated
 //!
-//! Diagnostic files are only written when `--verbose` is passed. Without verbose
-//! logging, the hint simply tells users to re-run with `--verbose`. This ensures
-//! the diagnostic file contains useful debug information.
+//! Diagnostic files are written when `-vv` is passed. Without `-vv`, the hint
+//! simply tells users to run with `-vv`. This ensures the diagnostic file
+//! contains useful debug information.
 //!
 //! # Report Format
 //!
 //! The report is a markdown file designed for easy pasting into GitHub issues:
 //!
-//! 1. **Header** — Timestamp and context describing the issue
-//! 2. **Diagnostic data** — Collapsed `<details>` block with:
-//!    - wt version, OS, architecture
-//!    - git version
-//!    - Shell integration status
-//!    - Raw `git worktree list --porcelain` output
-//! 3. **Verbose log** — Debug log output, truncated to ~50KB if large
+//! 1. **Header** — Timestamp, command that was run, and result
+//! 2. **Environment** — wt version, OS, git version, shell integration
+//! 3. **Worktrees** — Raw `git worktree list --porcelain` output
+//! 4. **Config** — User and project config contents
+//! 5. **Verbose log** — Debug log output, truncated to ~50KB if large
 //!
 //! # Privacy
 //!
 //! The report explicitly documents what IS and ISN'T included:
 //!
 //! **Included:** worktree paths, branch names, worktree status (prunable, locked),
-//! verbose logs, commit messages (in verbose logs)
+//! config files, verbose logs, commit messages (in verbose logs)
 //!
 //! **Not included:** file contents, credentials
 //!
@@ -38,11 +36,10 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use crate::diagnostic::DiagnosticReport;
+//! use crate::diagnostic::issue_hint;
 //!
-//! // Show hint (writes diagnostic file only if --verbose was used)
-//! let report = DiagnosticReport::collect(&repo, "Some git operations failed".into());
-//! output::print(hint_message(report.issue_hint(&repo)))?;
+//! // Show hint telling user to run with -vv
+//! output::print(hint_message(issue_hint()))?;
 //! ```
 //!
 use std::path::PathBuf;
@@ -52,7 +49,6 @@ use anyhow::Context;
 use color_print::cformat;
 use minijinja::{Environment, context};
 use worktrunk::git::Repository;
-use worktrunk::path::format_path_for_display;
 use worktrunk::shell_exec::run;
 
 use crate::cli::version_str;
@@ -65,31 +61,35 @@ use crate::output;
 const REPORT_TEMPLATE: &str = r#"## Diagnostic Report
 
 **Generated:** {{ timestamp }}
-**Context:** {{ context }}
-
-### What's included
-
-- wt version, OS, git version
-- Worktree paths and branch names
-- Worktree status (prunable, locked, etc.)
-- Shell integration status
-- Verbose logs (if run with --verbose)
-- Commit messages (in verbose logs)
-
-Does NOT contain: file contents, credentials.
+**Command:** `{{ command }}`
+**Result:** {{ context }}
 
 <details>
-<summary>Diagnostic data</summary>
+<summary>Environment</summary>
 
 ```
 wt {{ version }} ({{ os }} {{ arch }})
 git {{ git_version }}
 Shell integration: {{ shell_integration }}
+```
+</details>
 
---- git worktree list --porcelain ---
+<details>
+<summary>Worktrees</summary>
+
+```
 {{ worktree_list }}
 ```
 </details>
+{% if config_show %}
+<details>
+<summary>Config</summary>
+
+```
+{{ config_show }}
+```
+</details>
+{% endif %}
 {% if verbose_log %}
 <details>
 <summary>Verbose log</summary>
@@ -112,14 +112,15 @@ impl DiagnosticReport {
     ///
     /// # Arguments
     /// * `repo` - Repository to collect worktree info from
-    /// * `context` - Context describing the issue (error message, affected item)
-    pub fn collect(repo: &Repository, context: String) -> Self {
-        let content = Self::format_report(repo, &context);
+    /// * `command` - The command that was run (e.g., "wt list -vv")
+    /// * `context` - Context describing the result (error message or success)
+    pub fn collect(repo: &Repository, command: &str, context: String) -> Self {
+        let content = Self::format_report(repo, command, &context);
         Self { content }
     }
 
     /// Format the complete diagnostic report as markdown using minijinja template.
-    fn format_report(repo: &Repository, context: &str) -> String {
+    fn format_report(repo: &Repository, command: &str, context: &str) -> String {
         // Strip ANSI codes from context - the diagnostic is a markdown file for GitHub
         let context = strip_ansi_codes(context);
 
@@ -139,6 +140,9 @@ impl DiagnosticReport {
             .map(|s| s.trim_end().to_string())
             .unwrap_or_else(|_| "(failed to get worktree list)".to_string());
 
+        // Get config show output (if available)
+        let config_show = get_config_show_output(repo);
+
         // Get verbose log content (if available)
         let verbose_log = crate::verbose_log::log_file_path()
             .and_then(|path| std::fs::read_to_string(&path).ok())
@@ -150,6 +154,7 @@ impl DiagnosticReport {
         let tmpl = env.template_from_str(REPORT_TEMPLATE).unwrap();
         tmpl.render(context! {
             timestamp,
+            command,
             context,
             version,
             os,
@@ -157,37 +162,10 @@ impl DiagnosticReport {
             git_version,
             shell_integration,
             worktree_list,
+            config_show,
             verbose_log,
         })
         .unwrap()
-    }
-
-    /// Write diagnostic file (if verbose) and return issue reporting hint.
-    ///
-    /// If verbose logging is active: writes diagnostic file, returns hint with gh command.
-    /// Otherwise: returns hint to re-run with --verbose (no file written).
-    pub fn issue_hint(&self, repo: &Repository) -> String {
-        if !crate::verbose_log::is_active() {
-            return cformat!("To create a diagnostic file, re-run with <bright-black>--verbose</>");
-        }
-
-        // Write the diagnostic file
-        let Some(path) = self.write_file(repo) else {
-            return "Failed to write diagnostic file".to_string();
-        };
-
-        let path_display = format_path_for_display(&path);
-        let mut hint = format!("Diagnostic saved: {path_display}");
-
-        if is_gh_installed() {
-            // Escape single quotes for shell: 'it'\''s' -> it's
-            let path_str = path.to_string_lossy().replace('\'', "'\\''");
-            hint.push_str(&cformat!(
-                "\n   <bright-black>gh issue create -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
-            ));
-        }
-
-        hint
     }
 
     /// Write the diagnostic report to a file.
@@ -200,17 +178,26 @@ impl DiagnosticReport {
 
         Some(path)
     }
+
+    /// Write the diagnostic report to a file (for -vv flag).
+    ///
+    /// Called from `write_vv_diagnostic()` in main.rs when verbose >= 2.
+    /// Returns the path if successful, None if write failed.
+    pub fn write_diagnostic_file(&self, repo: &Repository) -> Option<PathBuf> {
+        self.write_file(repo)
+    }
 }
 
-/// Check if the GitHub CLI (gh) is installed.
-fn is_gh_installed() -> bool {
-    let mut cmd = Command::new("gh");
-    cmd.args(["--version"]);
-    cmd.stdin(Stdio::null());
-
-    run(&mut cmd, None)
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Return hint telling users to run with `-vv` for diagnostics.
+///
+/// This is a free function (not a method on DiagnosticReport) because it
+/// doesn't require collecting diagnostic data - just returns a static hint.
+///
+/// TODO: Consider showing this hint automatically when any `log::warn!` occurs
+/// during command execution, since runtime warnings often indicate unexpected
+/// conditions that could be bugs worth reporting.
+pub fn issue_hint() -> String {
+    cformat!("To create a diagnostic file, run with <bright-black>-vv</>")
 }
 
 /// Strip ANSI escape codes from a string.
@@ -259,13 +246,55 @@ fn get_git_version() -> anyhow::Result<String> {
     Ok(version)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Get config show output for diagnostic.
+///
+/// Returns a summary of user and project config files.
+fn get_config_show_output(repo: &Repository) -> Option<String> {
+    let mut output = String::new();
 
-    #[test]
-    fn test_is_gh_installed_returns_bool() {
-        // Just verify it doesn't panic and returns a bool
-        let _ = is_gh_installed();
+    // User config
+    if let Some(user_config_path) = worktrunk::config::get_config_path() {
+        output.push_str(&format_config_section(&user_config_path, "User config"));
     }
+
+    // Project config
+    if let Ok(root) = repo.worktree_root() {
+        let project_config_path = root.join(".config/wt.toml");
+        output.push_str(&format!(
+            "\n{}",
+            format_config_section(&project_config_path, "Project config")
+        ));
+    }
+
+    if output.is_empty() {
+        None
+    } else {
+        Some(output.trim().to_string())
+    }
+}
+
+/// Format a config file section for diagnostic output.
+fn format_config_section(path: &std::path::Path, label: &str) -> String {
+    let mut output = format!("{}: {}\n", label, path.display());
+    if path.exists() {
+        match std::fs::read_to_string(path) {
+            Ok(content) if content.trim().is_empty() => output.push_str("(empty file)\n"),
+            Ok(content) => {
+                // Include content, but truncate if very long
+                let content = if content.len() > 4000 {
+                    format!("{}...\n(truncated)", &content[..4000])
+                } else {
+                    content
+                };
+                output.push_str(&content);
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+            }
+            Err(e) => output.push_str(&format!("(read failed: {})\n", e)),
+        }
+    } else {
+        output.push_str("(file not found)\n");
+    }
+    output
 }

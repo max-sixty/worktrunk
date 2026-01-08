@@ -13,6 +13,7 @@ info:
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
+    TERM: alacritty
     WORKTRUNK_CONFIG_PATH: /nonexistent/test/config.toml
     WORKTRUNK_TEST_SKIP_URL_HEALTH_CHECK: "1"
 ---
@@ -39,8 +40,8 @@ Usage: [1m[36mwt hook approvals clear[0m [36m[OPTIONS]
       [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose
-          Show commands and debug info
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 Removes saved approvals, requiring re-approval on next command run.
 

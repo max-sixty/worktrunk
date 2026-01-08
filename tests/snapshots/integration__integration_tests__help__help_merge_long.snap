@@ -69,8 +69,8 @@ Usage: [1m[36mwt merge[0m [36m[OPTIONS][0m [36m[TARGET]
       [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose
-          Show commands and debug info
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 Merge the current branch into the default branch — like clicking "Merge pull request" on GitHub.
 

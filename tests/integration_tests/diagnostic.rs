@@ -6,12 +6,12 @@
 //! # Test Coverage
 //!
 //! - `test_diagnostic_report_file_format`: Snapshot of full diagnostic structure
-//! - `test_diagnostic_not_created_without_verbose`: No file without --verbose
-//! - `test_diagnostic_hint_without_verbose`: Hint tells user to use --verbose
+//! - `test_diagnostic_not_created_without_vv`: No file without -vv
+//! - `test_diagnostic_hint_without_vv`: Hint tells user to use -vv
 //! - `test_diagnostic_contains_required_sections`: All sections present
 //! - `test_diagnostic_context_has_no_ansi_codes`: ANSI stripped for GitHub
 //! - `test_diagnostic_verbose_log_contains_git_commands`: Log has useful data
-//! - `test_diagnostic_shows_gh_command_hint`: gh CLI suggestion when available
+//! - `test_diagnostic_saved_message_with_vv`: Output shows "Diagnostic saved" with -vv
 //! - `test_diagnostic_written_to_correct_location`: File in .git/wt-logs/
 
 use std::fs;
@@ -37,23 +37,19 @@ fn corrupt_worktree_head(repo: &TestRepo, worktree_name: &str) -> PathBuf {
     head_path
 }
 
-/// Snapshot the diagnostic report file generated on git errors with --verbose.
+/// Snapshot the diagnostic report file generated with -vv.
 ///
-/// This test triggers a git error (invalid HEAD) which causes `wt list --verbose`
+/// This test triggers a git error (invalid HEAD) and runs `wt list -vv`
 /// to generate a diagnostic report file. We then read and snapshot the file
 /// to verify its structure.
 ///
-/// Note: Diagnostic files are only generated when --verbose is used.
+/// Note: Diagnostic files are only generated when -vv is used.
 #[rstest]
 fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    let output = repo
-        .wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let diagnostic_path = repo
         .root_path()
@@ -68,10 +64,10 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
 
     let content = fs::read_to_string(&diagnostic_path).unwrap();
 
-    // Verify verbose log section is present (requires --verbose)
+    // Verify verbose log section is present (requires -v or higher)
     assert!(
         content.contains("<summary>Verbose log</summary>"),
-        "Diagnostic should include verbose log section when run with --verbose"
+        "Diagnostic should include verbose log section when run with -vv"
     );
 
     let settings = setup_snapshot_settings(&repo);
@@ -88,16 +84,16 @@ fn test_diagnostic_report_file_format(mut repo: TestRepo) {
     );
 }
 
-/// Without --verbose, no diagnostic file should be created.
+/// Without -vv, no diagnostic file should be created.
 ///
-/// The diagnostic file is only useful with verbose logs, so we don't create
-/// an empty/minimal diagnostic when --verbose is not used.
+/// The diagnostic file is only created when -vv is used. Running without
+/// any verbose flag or with just -v does not create a diagnostic file.
 #[rstest]
-fn test_diagnostic_not_created_without_verbose(mut repo: TestRepo) {
+fn test_diagnostic_not_created_without_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    // Run WITHOUT --verbose
+    // Run WITHOUT -vv
     repo.wt_command().args(["list"]).output().unwrap();
 
     // Diagnostic file should NOT exist
@@ -108,13 +104,13 @@ fn test_diagnostic_not_created_without_verbose(mut repo: TestRepo) {
         .join("diagnostic.md");
     assert!(
         !diagnostic_path.exists(),
-        "Diagnostic file should NOT be created without --verbose"
+        "Diagnostic file should NOT be created without -vv"
     );
 }
 
-/// Without --verbose, the hint should tell users to re-run with --verbose.
+/// Without -vv, the hint should tell users to re-run with -vv.
 #[rstest]
-fn test_diagnostic_hint_without_verbose(mut repo: TestRepo) {
+fn test_diagnostic_hint_without_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
@@ -122,13 +118,13 @@ fn test_diagnostic_hint_without_verbose(mut repo: TestRepo) {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("To create a diagnostic file, re-run with"),
-        "Should hint to use --verbose. stderr: {}",
+        stderr.contains("To create a diagnostic file, run with"),
+        "Should hint to use -vv. stderr: {}",
         stderr
     );
     assert!(
-        stderr.contains("--verbose"),
-        "Hint should mention --verbose flag. stderr: {}",
+        stderr.contains("-vv"),
+        "Hint should mention -vv flag. stderr: {}",
         stderr
     );
 }
@@ -139,10 +135,7 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    repo.wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let content = fs::read_to_string(
         repo.root_path()
@@ -158,30 +151,13 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
         "Should have header"
     );
     assert!(content.contains("**Generated:**"), "Should have timestamp");
-    assert!(content.contains("**Context:**"), "Should have context");
+    assert!(content.contains("**Command:**"), "Should have command");
+    assert!(content.contains("**Result:**"), "Should have result");
 
-    // Privacy notice
+    // Environment section
     assert!(
-        content.contains("### What's included"),
-        "Should have privacy section"
-    );
-    assert!(
-        content.contains("Commit messages"),
-        "Should mention commit messages are included"
-    );
-    assert!(
-        content.contains("Does NOT contain:"),
-        "Should clarify what's excluded"
-    );
-    assert!(
-        content.contains("file contents"),
-        "Should clarify file contents are excluded"
-    );
-
-    // Diagnostic data section
-    assert!(
-        content.contains("<summary>Diagnostic data</summary>"),
-        "Should have diagnostic data section"
+        content.contains("<summary>Environment</summary>"),
+        "Should have environment section"
     );
     assert!(content.contains("wt v"), "Should have wt version");
     assert!(content.contains("git "), "Should have git version");
@@ -189,9 +165,21 @@ fn test_diagnostic_contains_required_sections(mut repo: TestRepo) {
         content.contains("Shell integration:"),
         "Should have shell integration status"
     );
+
+    // Worktrees section
     assert!(
-        content.contains("git worktree list --porcelain"),
-        "Should have worktree list output"
+        content.contains("<summary>Worktrees</summary>"),
+        "Should have worktrees section"
+    );
+    assert!(
+        content.contains("refs/heads/"),
+        "Should have branch refs in worktree list"
+    );
+
+    // Config section
+    assert!(
+        content.contains("<summary>Config</summary>"),
+        "Should have config section"
     );
 
     // Verbose log section
@@ -207,10 +195,7 @@ fn test_diagnostic_context_has_no_ansi_codes(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    repo.wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let content = fs::read_to_string(
         repo.root_path()
@@ -237,10 +222,7 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    repo.wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let content = fs::read_to_string(
         repo.root_path()
@@ -275,43 +257,20 @@ fn test_diagnostic_verbose_log_contains_git_commands(mut repo: TestRepo) {
     );
 }
 
-/// When gh CLI is available, should show command to create issue.
+/// Diagnostic is saved with -vv and output mentions it.
 #[rstest]
-fn test_diagnostic_shows_gh_command_hint(mut repo: TestRepo) {
+fn test_diagnostic_saved_message_with_vv(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    let output = repo
-        .wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Check if gh is installed (the hint varies based on this)
-    let gh_available = std::process::Command::new("gh")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if gh_available {
-        assert!(
-            stderr.contains("gh issue create"),
-            "Should show gh command when gh CLI is available. stderr: {}",
-            stderr
-        );
-        assert!(
-            stderr.contains("--body-file"),
-            "gh command should use --body-file. stderr: {}",
-            stderr
-        );
-    }
-    // If gh is not available, just verify diagnostic was saved
+    // Verify diagnostic was saved
     assert!(
         stderr.contains("Diagnostic saved"),
-        "Should always mention diagnostic was saved. stderr: {}",
+        "Should mention diagnostic was saved. stderr: {}",
         stderr
     );
 }
@@ -322,10 +281,7 @@ fn test_diagnostic_written_to_correct_location(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    repo.wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     // Should be in .git/wt-logs/ directory
     let wt_logs_dir = repo.root_path().join(".git").join("wt-logs");
@@ -351,10 +307,7 @@ fn test_verbose_log_file_created(mut repo: TestRepo) {
     repo.add_worktree("feature");
     corrupt_worktree_head(&repo, "feature");
 
-    repo.wt_command()
-        .args(["list", "--verbose"])
-        .output()
-        .unwrap();
+    repo.wt_command().args(["list", "-vv"]).output().unwrap();
 
     let verbose_log_path = repo
         .root_path()
@@ -363,7 +316,7 @@ fn test_verbose_log_file_created(mut repo: TestRepo) {
         .join("verbose.log");
     assert!(
         verbose_log_path.exists(),
-        "verbose.log should be created with --verbose"
+        "verbose.log should be created with -vv"
     );
 
     let content = fs::read_to_string(&verbose_log_path).unwrap();
@@ -371,6 +324,135 @@ fn test_verbose_log_file_created(mut repo: TestRepo) {
     assert!(
         content.contains("[wt-trace]"),
         "verbose.log should contain trace entries"
+    );
+}
+
+// =============================================================================
+// Tests for -vv verbosity level (always write diagnostic)
+// =============================================================================
+
+/// With -vv, diagnostic file should be written even on successful commands.
+#[rstest]
+fn test_vv_writes_diagnostic_on_success(repo: TestRepo) {
+    // Run a successful command with -vv
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    assert!(output.status.success(), "Command should succeed");
+
+    // Diagnostic file should exist
+    let diagnostic_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("diagnostic.md");
+    assert!(
+        diagnostic_path.exists(),
+        "Diagnostic file should be created with -vv even on success"
+    );
+
+    // Content should indicate success
+    let content = fs::read_to_string(&diagnostic_path).unwrap();
+    assert!(
+        content.contains("Command completed successfully"),
+        "Result should indicate success. Content: {}",
+        content
+    );
+
+    // stderr should mention diagnostic was saved
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Diagnostic saved"),
+        "stderr should mention diagnostic was saved. stderr: {}",
+        stderr
+    );
+}
+
+/// With -vv, diagnostic file should be written on error (same as success case).
+#[rstest]
+fn test_vv_writes_diagnostic_on_error(mut repo: TestRepo) {
+    repo.add_worktree("feature");
+    corrupt_worktree_head(&repo, "feature");
+
+    // Run a command that will hit git errors with -vv
+    let output = repo.wt_command().args(["list", "-vv"]).output().unwrap();
+
+    // Diagnostic file should exist
+    let diagnostic_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("diagnostic.md");
+    assert!(
+        diagnostic_path.exists(),
+        "Diagnostic file should be created with -vv on error"
+    );
+
+    // stderr should mention diagnostic was saved
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Diagnostic saved"),
+        "stderr should mention diagnostic was saved. stderr: {}",
+        stderr
+    );
+}
+
+/// With just -v (not -vv), diagnostic should NOT be written on successful commands.
+/// Diagnostics are only written when -vv is explicitly used (via main.rs hook).
+#[rstest]
+fn test_v_does_not_write_diagnostic_without_error(repo: TestRepo) {
+    // Run a successful command with just -v
+    let output = repo.wt_command().args(["list", "-v"]).output().unwrap();
+
+    assert!(output.status.success(), "Command should succeed");
+
+    // Diagnostic file should NOT exist (no error, not -vv)
+    let diagnostic_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("diagnostic.md");
+    assert!(
+        !diagnostic_path.exists(),
+        "Diagnostic file should NOT be created with just -v on success"
+    );
+
+    // But verbose.log should exist
+    let verbose_log_path = repo
+        .root_path()
+        .join(".git")
+        .join("wt-logs")
+        .join("verbose.log");
+    assert!(
+        verbose_log_path.exists(),
+        "verbose.log should be created with -v"
+    );
+}
+
+/// With -vv outside a git repo, command should still work (no crash).
+#[test]
+fn test_vv_outside_repo_no_crash() {
+    use crate::common::wt_command;
+
+    // Create a temp directory that is NOT a git repo
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let output = wt_command()
+        .args(["--version", "-vv"])
+        .current_dir(temp_dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Command should succeed");
+
+    // No diagnostic file should be created (not in a git repo)
+    let diagnostic_path = temp_dir
+        .path()
+        .join(".git")
+        .join("wt-logs")
+        .join("diagnostic.md");
+    assert!(
+        !diagnostic_path.exists(),
+        "Diagnostic file should NOT be created outside a git repo"
     );
 }
 
@@ -384,6 +466,16 @@ fn normalize_report(content: &str) -> String {
     result = regex::Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
         .unwrap()
         .replace_all(&result, "[TIMESTAMP]")
+        .to_string();
+
+    // Normalize command line path (binary path varies between environments)
+    // Matches: `target/debug/wt ...` or `/path/to/wt ...`
+    result = regex::Regex::new(r"\*\*Command:\*\* `[^`]+`")
+        .unwrap()
+        .replace_all(
+            &result,
+            "**Command:** `[PROJECT_ROOT]/target/debug/wt list -vv`",
+        )
         .to_string();
 
     // Normalize wt version line (e.g., "wt v0.9.3-dirty (macos aarch64)" or "wt be89089 (linux x86_64)")
@@ -432,6 +524,18 @@ fn normalize_report(content: &str) -> String {
     result = regex::Regex::new(r"(fatal: not a git repository:)\s*\n\s*(\[REPO_PATH\])")
         .unwrap()
         .replace_all(&result, "$1 $2")
+        .to_string();
+
+    // Normalize user config path
+    result = regex::Regex::new(r"User config: [^\n]+")
+        .unwrap()
+        .replace_all(&result, "User config: [TEST_CONFIG]")
+        .to_string();
+
+    // Normalize project config path - convert absolute path to relative
+    result = regex::Regex::new(r"Project config: (?:/|[A-Za-z]:)[^\n]+\.config/wt\.toml")
+        .unwrap()
+        .replace_all(&result, "Project config: _REPO_/.config/wt.toml")
         .to_string();
 
     // Truncate verbose log section - it has parallel git commands that interleave

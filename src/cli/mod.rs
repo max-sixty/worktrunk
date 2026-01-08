@@ -204,15 +204,16 @@ pub struct Cli {
     )]
     pub config: Option<std::path::PathBuf>,
 
-    /// Show commands and debug info
+    /// Show debug info (-v), or also write diagnostic report (-vv)
     #[arg(
         long,
         short = 'v',
         global = true,
+        action = clap::ArgAction::Count,
         display_order = 102,
         help_heading = "Global Options"
     )]
-    pub verbose: bool,
+    pub verbose: u8,
 
     #[command(subcommand)]
     pub command: Option<Commands>,

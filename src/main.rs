@@ -744,13 +744,17 @@ fn main() {
 
     // Configure logging based on --verbose flag or RUST_LOG env var
     // When --verbose is set, also write logs to .git/wt-logs/verbose.log
-    if cli.verbose {
+    if cli.verbose >= 1 {
         verbose_log::init();
     }
 
+    // Capture verbose level and command line before cli is partially consumed
+    let verbose_level = cli.verbose;
+    let command_line = std::env::args().collect::<Vec<_>>().join(" ");
+
     // --verbose takes precedence over RUST_LOG: use Builder::new() to ignore env var
     // Otherwise, respect RUST_LOG (defaulting to off)
-    let mut builder = if cli.verbose {
+    let mut builder = if cli.verbose >= 1 {
         let mut b = env_logger::Builder::new();
         b.filter_level(log::LevelFilter::Debug);
         b
@@ -1688,11 +1692,82 @@ fn main() {
         // Preserve exit code from child processes (especially for signals like SIGINT)
         let code = exit_code(&e).unwrap_or(1);
 
+        // Write diagnostic if -vv was used (error case)
+        write_vv_diagnostic(verbose_level, &command_line, Some(&e.to_string()));
+
         // Reset ANSI state before exiting
         let _ = output::terminate_output();
         process::exit(code);
     }
 
+    // Write diagnostic if -vv was used (success case)
+    write_vv_diagnostic(verbose_level, &command_line, None);
+
     // Reset ANSI state before returning to shell (success case)
     let _ = output::terminate_output();
+}
+
+/// Write diagnostic file when -vv is used.
+///
+/// Called at the end of command execution. If verbose level is >= 2, writes
+/// a diagnostic report to `.git/wt-logs/diagnostic.md` for issue filing.
+///
+/// Silently returns if:
+/// - verbose < 2
+/// - Not in a git repository
+///
+/// Warns if diagnostic file write fails.
+fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>) {
+    if verbose < 2 {
+        return;
+    }
+
+    // Use Repository::current() which honors the -C flag
+    let repo = worktrunk::git::Repository::current();
+
+    // Check if we're actually in a git repo
+    if repo.git_dir().is_err() {
+        return;
+    }
+
+    // Build context based on success/error
+    let context = match error_msg {
+        Some(msg) => format!("Command failed: {msg}"),
+        None => "Command completed successfully".to_string(),
+    };
+
+    // Collect and write diagnostic
+    let report = diagnostic::DiagnosticReport::collect(&repo, command_line, context);
+    match report.write_diagnostic_file(&repo) {
+        Some(path) => {
+            let path_display = format_path_for_display(&path);
+            let _ = output::print(info_message(format!("Diagnostic saved: {path_display}")));
+
+            // Only show gh command if gh is installed
+            if is_gh_installed() {
+                // Escape single quotes for shell: 'it'\''s' -> it's
+                let path_str = path.to_string_lossy().replace('\'', "'\\''");
+                let _ = output::print(hint_message(cformat!(
+                    "If this is a bug, create an issue: <bright-black>gh issue create -R max-sixty/worktrunk -t 'Bug report' --body-file '{path_str}'</>"
+                )));
+            }
+        }
+        None => {
+            let _ = output::print(warning_message("Failed to write diagnostic file"));
+        }
+    }
+}
+
+/// Check if the GitHub CLI (gh) is installed.
+fn is_gh_installed() -> bool {
+    use std::process::{Command, Stdio};
+    use worktrunk::shell_exec::run;
+
+    let mut cmd = Command::new("gh");
+    cmd.args(["--version"]);
+    cmd.stdin(Stdio::null());
+
+    run(&mut cmd, None)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }

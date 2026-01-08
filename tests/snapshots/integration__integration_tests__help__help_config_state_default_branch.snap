@@ -42,8 +42,8 @@ Usage: [1m[36mwt config state default-branch[0m [36m[OPTIONS][0m [36m[COMM
       [1m[36m--config[0m[36m [0m[36m<path>
           User config file path
 
-  [1m[36m-v[0m, [1m[36m--verbose
-          Show commands and debug info
+  [1m[36m-v[0m, [1m[36m--verbose[0m[36m...
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 Useful in scripts to avoid hardcoding [2mmain[0m or [2mmaster[0m:
 

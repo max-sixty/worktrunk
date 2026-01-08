@@ -287,8 +287,8 @@ Usage: <b><span class=c>wt config</span></b> <span class=c>[OPTIONS]</span> <spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config create
 
@@ -622,8 +622,8 @@ Usage: <b><span class=c>wt config create</span></b> <span class=c>[OPTIONS]</spa
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config show
 
@@ -664,8 +664,8 @@ Usage: <b><span class=c>wt config show</span></b> <span class=c>[OPTIONS]</span>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config state
 
@@ -739,8 +739,8 @@ Usage: <b><span class=c>wt config state</span></b> <span class=c>[OPTIONS]</span
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config state default-branch
 
@@ -791,8 +791,8 @@ Usage: <b><span class=c>wt config state default-branch</span></b> <span class=c>
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config state ci-status
 
@@ -847,8 +847,8 @@ Usage: <b><span class=c>wt config state ci-status</span></b> <span class=c>[OPTI
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config state marker
 
@@ -903,8 +903,8 @@ Usage: <b><span class=c>wt config state marker</span></b> <span class=c>[OPTIONS
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
 
 ## wt config state logs
 
@@ -967,5 +967,5 @@ Usage: <b><span class=c>wt config state logs</span></b> <span class=c>[OPTIONS]<
       <b><span class=c>--config</span></b><span class=c> &lt;path&gt;</span>
           User config file path
 
-  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b>
-          Show commands and debug info
+  <b><span class=c>-v</span></b>, <b><span class=c>--verbose</span></b><span class=c>...</span>
+          Show debug info (-v), or also write diagnostic report (-vv)
