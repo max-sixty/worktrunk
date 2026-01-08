@@ -1,6 +1,6 @@
 //! Tmux integration for launching worktree operations in new windows/sessions.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::env;
 use std::process::Command;
 
@@ -21,9 +21,22 @@ pub fn is_inside_tmux() -> bool {
 /// Tmux doesn't allow certain characters in session/window names.
 fn sanitize_name(branch: &str) -> String {
     branch
-        .replace('/', "-")
-        .replace('.', "-")
-        .replace(':', "-")
+        .chars()
+        .map(|c| if matches!(c, '/' | '.' | ':') { '-' } else { c })
+        .collect()
+}
+
+/// Options for spawning a worktree switch in tmux.
+pub struct TmuxSwitchOptions<'a> {
+    pub branch: &'a str,
+    pub create: bool,
+    pub base: Option<&'a str>,
+    pub execute: Option<&'a str>,
+    pub execute_args: &'a [String],
+    pub yes: bool,
+    pub clobber: bool,
+    pub verify: bool,
+    pub detach: bool,
 }
 
 /// Check if a tmux session with the given name exists.
@@ -81,78 +94,53 @@ pub enum TmuxSpawnResult {
 
 /// Spawn worktree switch in a new tmux window/session.
 ///
-/// # Arguments
-/// * `branch` - Branch name to switch to/create
-/// * `create` - Whether to create a new branch
-/// * `base` - Optional base branch for creation
-/// * `execute` - Optional command to run after switch
-/// * `execute_args` - Additional arguments for execute command
-/// * `yes` - Skip approval prompts
-/// * `clobber` - Remove stale paths at target
-/// * `verify` - Run hooks (false means --no-verify)
-/// * `detach` - Create detached session instead of attaching
-///
 /// # Returns
 /// * `TmuxSpawnResult::Window` - If already in tmux, created new window
 /// * `TmuxSpawnResult::Detached` - If not in tmux and detach=true
 /// * Never returns if not in tmux and detach=false (exec replaces process)
 #[cfg(unix)]
-pub fn spawn_switch_in_tmux(
-    branch: &str,
-    create: bool,
-    base: Option<&str>,
-    execute: Option<&str>,
-    execute_args: &[String],
-    yes: bool,
-    clobber: bool,
-    verify: bool,
-    detach: bool,
-) -> Result<TmuxSpawnResult> {
+pub fn spawn_switch_in_tmux(opts: &TmuxSwitchOptions<'_>) -> Result<TmuxSpawnResult> {
     use std::os::unix::process::CommandExt;
 
     if !is_available() {
         bail!("tmux not found. Install tmux or run without --tmux");
     }
 
-    let name = sanitize_name(branch);
+    let name = sanitize_name(opts.branch);
 
     // Build the wt command to run inside tmux
     let mut wt_args = vec!["switch".to_string()];
-    if create {
+    if opts.create {
         wt_args.push("--create".to_string());
     }
-    wt_args.push(branch.to_string());
-    if let Some(b) = base {
+    wt_args.push(opts.branch.to_string());
+    if let Some(b) = opts.base {
         wt_args.push("--base".to_string());
         wt_args.push(b.to_string());
     }
-    if let Some(cmd) = execute {
+    if let Some(cmd) = opts.execute {
         wt_args.push("--execute".to_string());
         wt_args.push(cmd.to_string());
     }
-    if yes {
+    if opts.yes {
         wt_args.push("--yes".to_string());
     }
-    if clobber {
+    if opts.clobber {
         wt_args.push("--clobber".to_string());
     }
-    if !verify {
+    if !opts.verify {
         wt_args.push("--no-verify".to_string());
     }
     // Add execute_args after -- separator
-    if !execute_args.is_empty() {
+    if !opts.execute_args.is_empty() {
         wt_args.push("--".to_string());
-        wt_args.extend(execute_args.iter().cloned());
+        wt_args.extend(opts.execute_args.iter().cloned());
     }
 
     // Shell-escape each argument
     let escaped_args: Vec<String> = wt_args
         .iter()
-        .map(|arg| {
-            shlex::try_quote(arg)
-                .unwrap_or(arg.into())
-                .into_owned()
-        })
+        .map(|arg| shlex::try_quote(arg).unwrap_or(arg.into()).into_owned())
         .collect();
 
     // Command to run: wt switch ... && exec $SHELL (keep shell open after completion)
@@ -179,7 +167,7 @@ pub fn spawn_switch_in_tmux(
         cmd.args(["attach-session", "-t", &name]);
         let err = cmd.exec();
         Err(err.into())
-    } else if detach {
+    } else if opts.detach {
         // Not in tmux, detach mode: create detached session
         // Use remain-on-exit so we can capture output if command fails quickly
         let mut cmd = Command::new("tmux");
@@ -189,7 +177,7 @@ pub fn spawn_switch_in_tmux(
             "-s",
             &name,
             "-x",
-            "200",  // Wide enough to not wrap output
+            "200", // Wide enough to not wrap output
             "-y",
             "50",
             &wt_command,
@@ -244,16 +232,6 @@ pub fn spawn_switch_in_tmux(
 
 /// Windows stub - tmux is not available on Windows.
 #[cfg(not(unix))]
-pub fn spawn_switch_in_tmux(
-    _branch: &str,
-    _create: bool,
-    _base: Option<&str>,
-    _execute: Option<&str>,
-    _execute_args: &[String],
-    _yes: bool,
-    _clobber: bool,
-    _verify: bool,
-    _detach: bool,
-) -> Result<TmuxSpawnResult> {
+pub fn spawn_switch_in_tmux(_opts: &TmuxSwitchOptions<'_>) -> Result<TmuxSpawnResult> {
     bail!("tmux is not available on Windows")
 }
