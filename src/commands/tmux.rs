@@ -48,10 +48,31 @@ fn window_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Capture the visible output from a tmux pane, cleaning up whitespace.
+fn capture_pane(session: &str) -> String {
+    Command::new("tmux")
+        .args(["capture-pane", "-t", session, "-p"])
+        .output()
+        .map(|o| {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            // Filter out blank lines and tmux's "Pane is dead" message
+            raw.lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    !trimmed.is_empty() && !trimmed.starts_with("Pane is dead")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
 /// Result of spawning a tmux session/window.
 pub enum TmuxSpawnResult {
     /// Created detached session with this name
     Detached(String),
+    /// Detached session failed quickly - includes captured output
+    DetachedFailed { name: String, output: String },
     /// Created new window (already in tmux)
     Window(String),
     /// Switched to existing window (was inside tmux)
@@ -160,10 +181,57 @@ pub fn spawn_switch_in_tmux(
         Err(err.into())
     } else if detach {
         // Not in tmux, detach mode: create detached session
+        // Use remain-on-exit so we can capture output if command fails quickly
         let mut cmd = Command::new("tmux");
-        cmd.args(["new-session", "-d", "-s", &name, &wt_command]);
+        cmd.args([
+            "new-session",
+            "-d",
+            "-s",
+            &name,
+            "-x",
+            "200",  // Wide enough to not wrap output
+            "-y",
+            "50",
+            &wt_command,
+        ]);
         shell_exec::run(&mut cmd, None)?;
-        Ok(TmuxSpawnResult::Detached(name))
+
+        // Set remain-on-exit so pane stays if command fails
+        let mut cmd = Command::new("tmux");
+        cmd.args(["set-option", "-t", &name, "remain-on-exit", "on"]);
+        let _ = cmd.output(); // Ignore errors
+
+        // Wait briefly and check if the command is still running
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Check if the pane is dead (command exited)
+        let pane_dead = Command::new("tmux")
+            .args(["list-panes", "-t", &name, "-F", "#{pane_dead}"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+            .unwrap_or(false);
+
+        if pane_dead {
+            // Command exited quickly - likely an error
+            let output = capture_pane(&name);
+
+            // Kill the dead session
+            let mut cmd = Command::new("tmux");
+            cmd.args(["kill-session", "-t", &name]);
+            let _ = cmd.output();
+
+            Ok(TmuxSpawnResult::DetachedFailed {
+                name: name.clone(),
+                output,
+            })
+        } else {
+            // Command still running - turn off remain-on-exit for normal behavior
+            let mut cmd = Command::new("tmux");
+            cmd.args(["set-option", "-t", &name, "remain-on-exit", "off"]);
+            let _ = cmd.output();
+
+            Ok(TmuxSpawnResult::Detached(name))
+        }
     } else {
         // Not in tmux, attach mode: exec into tmux (replaces process)
         let mut cmd = Command::new("tmux");

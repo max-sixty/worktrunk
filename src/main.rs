@@ -1285,6 +1285,8 @@ fn main() {
                     detach,
                 )
                 .and_then(|result| {
+                    use worktrunk::styling::{error_message, format_with_gutter};
+
                     match result {
                         TmuxSpawnResult::Window(_name) => {
                             // Already in tmux, created new window - nothing to print,
@@ -1301,6 +1303,15 @@ fn main() {
                             output::print(hint_message(cformat!(
                                 "Run <bright-black>tmux attach -t {name}</> to view progress"
                             )))?;
+                        }
+                        TmuxSpawnResult::DetachedFailed { name, output } => {
+                            output::print(error_message(cformat!(
+                                "Worktree creation failed in tmux session <bold>{name}</>"
+                            )))?;
+                            if !output.is_empty() {
+                                output::print(format_with_gutter(&output, None))?;
+                            }
+                            return Err(anyhow::anyhow!("tmux session exited with error"));
                         }
                     }
                     Ok(())
