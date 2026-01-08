@@ -388,9 +388,12 @@ wt hook pre-merge project:     # Run all project hooks
 wt hook pre-merge user:test    # Run only user's "test" hook
 wt hook pre-merge project:test # Run only project's "test" hook
 wt hook pre-merge --yes        # Skip approval prompts (for CI)
+wt hook post-create --var branch=feature/test  # Override template variable
 ```
 
 The `user:` and `project:` prefixes filter by source. Use `user:` or `project:` alone to run all hooks from that source, or `user:name` / `project:name` to run a specific hook.
+
+The `--var KEY=VALUE` flag lets you override built-in template variables — useful for testing hooks with different contexts without switching to that context.
 
 ## Language-specific tips
 

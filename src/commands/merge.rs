@@ -179,7 +179,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
     if verify {
         let ctx = env.context(yes);
         let project_config = repo.load_project_config()?.unwrap_or_default();
-        run_pre_merge_commands(&project_config, &ctx, &target_branch, None)?;
+        run_pre_merge_commands(&project_config, &ctx, &target_branch, None, &[])?;
     }
 
     // Fast-forward push to target branch with commit/squash/rebase info for consolidated message
@@ -267,7 +267,7 @@ pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
             // or worktree preserved so they stay in feature)
             crate::output::pre_hook_display_path(&destination_path)
         };
-        execute_post_merge_commands(&ctx, &target_branch, None, display_path)?;
+        execute_post_merge_commands(&ctx, &target_branch, None, display_path, &[])?;
     }
 
     Ok(())
@@ -282,13 +282,17 @@ pub fn run_pre_merge_commands(
     ctx: &CommandContext,
     target_branch: &str,
     name_filter: Option<&str>,
+    extra_vars: &[(&str, &str)],
 ) -> anyhow::Result<()> {
+    // Combine target with any custom vars (custom vars take precedence, added last)
+    let mut vars = vec![("target", target_branch)];
+    vars.extend_from_slice(extra_vars);
     run_hook_with_filter(
         ctx,
         ctx.config.hooks.pre_merge.as_ref(),
         project_config.hooks.pre_merge.as_ref(),
         HookType::PreMerge,
-        &[("target", target_branch)],
+        &vars,
         HookFailureStrategy::FailFast,
         name_filter,
         crate::output::pre_hook_display_path(ctx.worktree_path),
@@ -308,10 +312,14 @@ pub fn execute_post_merge_commands(
     target_branch: &str,
     name_filter: Option<&str>,
     display_path: Option<&Path>,
+    extra_vars: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     // Load project config from the main worktree path
     let project_config = ctx.repo.load_project_config()?;
 
+    // Combine target with any custom vars (custom vars take precedence, added last)
+    let mut vars = vec![("target", target_branch)];
+    vars.extend_from_slice(extra_vars);
     run_hook_with_filter(
         ctx,
         ctx.config.hooks.post_merge.as_ref(),
@@ -319,7 +327,7 @@ pub fn execute_post_merge_commands(
             .as_ref()
             .and_then(|c| c.hooks.post_merge.as_ref()),
         HookType::PostMerge,
-        &[("target", target_branch)],
+        &vars,
         HookFailureStrategy::Warn,
         name_filter,
         display_path,
@@ -339,6 +347,7 @@ pub fn execute_pre_remove_commands(
     ctx: &CommandContext,
     name_filter: Option<&str>,
     display_path: Option<&Path>,
+    extra_vars: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     let project_config = ctx.repo.load_project_config()?;
 
@@ -349,7 +358,7 @@ pub fn execute_pre_remove_commands(
             .as_ref()
             .and_then(|c| c.hooks.pre_remove.as_ref()),
         HookType::PreRemove,
-        &[],
+        extra_vars,
         HookFailureStrategy::FailFast,
         name_filter,
         display_path,

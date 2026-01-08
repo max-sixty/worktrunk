@@ -35,7 +35,15 @@ use super::project_config::collect_commands_for_hooks;
 /// There's no skip flag - if you explicitly run hooks, all configured hooks run.
 ///
 /// Works in detached HEAD state - `{{ branch }}` template variable will be "HEAD".
-pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> anyhow::Result<()> {
+///
+/// Custom variables from `--var KEY=VALUE` are merged into the template context,
+/// allowing hooks to be tested with different values without being in that context.
+pub fn run_hook(
+    hook_type: HookType,
+    yes: bool,
+    name_filter: Option<&str>,
+    custom_vars: &[(String, String)],
+) -> anyhow::Result<()> {
     use super::command_approval::approve_hooks_filtered;
 
     // Derive context from current environment (branch-optional for CI compatibility)
@@ -55,8 +63,11 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
         return Ok(());
     }
 
-    // TODO: Add support for custom variable overrides (e.g., --var key=value)
-    // This would allow testing hooks with different contexts without being in that context
+    // Build extra vars from command-line --var flags
+    let custom_vars_refs: Vec<(&str, &str)> = custom_vars
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     // Helper to get user hook config
     macro_rules! user_hook {
@@ -94,7 +105,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 user_config,
                 project_config,
                 hook_type,
-                &[],
+                &custom_vars_refs,
                 HookFailureStrategy::FailFast,
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
@@ -112,7 +123,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 user_config,
                 project_config,
                 hook_type,
-                &[],
+                &custom_vars_refs,
                 name_filter,
                 None,
             )?;
@@ -131,7 +142,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 user_config,
                 project_config,
                 hook_type,
-                &[],
+                &custom_vars_refs,
                 name_filter,
                 None,
             )?;
@@ -145,12 +156,14 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 .and_then(|c| c.hooks.pre_commit.as_ref());
             require_hooks(user_config, project_config, hook_type)?;
             // Pre-commit hook can optionally use target branch context
+            // Custom vars take precedence (added last)
             let target_branch = repo.default_branch().ok();
-            let extra_vars: Vec<(&str, &str)> = target_branch
+            let mut extra_vars: Vec<(&str, &str)> = target_branch
                 .as_deref()
                 .into_iter()
                 .map(|t| ("target", t))
                 .collect();
+            extra_vars.extend(&custom_vars_refs);
             // Manual wt hook: user stays at cwd (no cd happens)
             run_hook_with_filter(
                 &ctx,
@@ -168,7 +181,13 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
             // which already handle user hooks (approval already happened at gate)
             // Use current branch as target (matches approval prompt for wt hook)
             let project_cfg = project_config.unwrap_or_default();
-            run_pre_merge_commands(&project_cfg, &ctx, ctx.branch_or_head(), name_filter)
+            run_pre_merge_commands(
+                &project_cfg,
+                &ctx,
+                ctx.branch_or_head(),
+                name_filter,
+                &custom_vars_refs,
+            )
         }
         HookType::PostMerge => {
             // Manual wt hook: user stays at cwd (no cd happens)
@@ -177,6 +196,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 ctx.branch_or_head(),
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
+                &custom_vars_refs,
             )
         }
         HookType::PreRemove => {
@@ -185,6 +205,7 @@ pub fn run_hook(hook_type: HookType, yes: bool, name_filter: Option<&str>) -> an
                 &ctx,
                 name_filter,
                 crate::output::pre_hook_display_path(ctx.worktree_path),
+                &custom_vars_refs,
             )
         }
     }

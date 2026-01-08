@@ -1064,3 +1064,200 @@ first = "echo 'FIRST'"
         "Error should list available commands, got: {stderr}"
     );
 }
+
+// ============================================================================
+// Custom Variable (--var) Tests
+// ============================================================================
+
+#[rstest]
+fn test_var_flag_overrides_template_variable(repo: TestRepo) {
+    // Write user config with a hook that uses a template variable
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ target }}' > target_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--var",
+            "target=CUSTOM_TARGET",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success(), "Hook should succeed");
+
+    let output_file = repo.root_path().join("target_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("CUSTOM_TARGET"),
+        "Variable should be overridden in hook, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_flag_multiple_variables(repo: TestRepo) {
+    // Write user config with a hook that uses multiple template variables
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ target }} {{ remote }}' > multi_var_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--var",
+            "target=FIRST",
+            "--var",
+            "remote=SECOND",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success(), "Hook should succeed");
+
+    let output_file = repo.root_path().join("multi_var_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("FIRST") && contents.contains("SECOND"),
+        "Both variables should be overridden, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_flag_overrides_builtin_variable(repo: TestRepo) {
+    // Write user config with a hook that uses the builtin branch variable
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ branch }}' > branch_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--var",
+            "branch=CUSTOM_BRANCH_NAME",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success(), "Hook should succeed");
+
+    let output_file = repo.root_path().join("branch_output.txt");
+    let contents = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        contents.contains("CUSTOM_BRANCH_NAME"),
+        "Custom variable should override builtin, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_flag_invalid_format_fails() {
+    // Test that invalid KEY=VALUE format is rejected
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["hook", "post-create", "--var", "no_equals_sign"])
+        .output()
+        .expect("Failed to run wt");
+
+    assert!(!output.status.success(), "Invalid --var format should fail");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid KEY=VALUE") || stderr.contains("no `=` found"),
+        "Error should mention invalid format, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_var_flag_unknown_variable_fails() {
+    // Test that unknown variable names are rejected
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_wt"))
+        .args(["hook", "post-create", "--var", "custom_var=value"])
+        .output()
+        .expect("Failed to run wt");
+
+    assert!(!output.status.success(), "Unknown variable should fail");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown variable"),
+        "Error should mention unknown variable, got: {stderr}"
+    );
+}
+
+#[rstest]
+fn test_var_flag_last_value_wins(repo: TestRepo) {
+    // Test that when the same variable is specified multiple times, the last value wins
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ target }}' > target_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--var",
+            "target=FIRST",
+            "--var",
+            "target=SECOND",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let output_file = repo.root_path().join("target_output.txt");
+    let contents = std::fs::read_to_string(&output_file).expect("Should have created output file");
+    assert!(
+        contents.contains("SECOND"),
+        "Last --var value should win, got: {contents}"
+    );
+}
+
+#[rstest]
+fn test_var_flag_deprecated_alias_works(repo: TestRepo) {
+    // Test that deprecated variable aliases (main_worktree, repo_root, worktree) can be overridden
+    repo.write_test_config(
+        r#"[post-create]
+test = "echo '{{ main_worktree }}' > alias_output.txt"
+"#,
+    );
+
+    let output = repo
+        .wt_command()
+        .args([
+            "hook",
+            "post-create",
+            "--yes",
+            "--var",
+            "main_worktree=/custom/path",
+        ])
+        .output()
+        .expect("Failed to run wt hook");
+
+    assert!(output.status.success());
+
+    let output_file = repo.root_path().join("alias_output.txt");
+    let contents = std::fs::read_to_string(&output_file).expect("Should have created output file");
+    assert!(
+        contents.contains("/custom/path"),
+        "Deprecated alias should be overridden, got: {contents}"
+    );
+}

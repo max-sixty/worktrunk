@@ -599,7 +599,7 @@ fn handle_removed_worktree_output(
         } else {
             Some(worktree_path) // Show path when user is elsewhere
         };
-        execute_pre_remove_commands(&ctx, None, display_path)?;
+        execute_pre_remove_commands(&ctx, None, display_path, &[])?;
     }
 
     // Handle detached HEAD case (no branch known)

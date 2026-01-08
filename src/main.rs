@@ -1124,26 +1124,26 @@ fn main() {
                 hook_type,
                 expanded,
             } => handle_hook_show(hook_type.as_deref(), expanded),
-            HookCommand::PostCreate { name, yes } => {
-                run_hook(HookType::PostCreate, yes, name.as_deref())
+            HookCommand::PostCreate { name, yes, vars } => {
+                run_hook(HookType::PostCreate, yes, name.as_deref(), &vars)
             }
-            HookCommand::PostStart { name, yes } => {
-                run_hook(HookType::PostStart, yes, name.as_deref())
+            HookCommand::PostStart { name, yes, vars } => {
+                run_hook(HookType::PostStart, yes, name.as_deref(), &vars)
             }
-            HookCommand::PostSwitch { name, yes } => {
-                run_hook(HookType::PostSwitch, yes, name.as_deref())
+            HookCommand::PostSwitch { name, yes, vars } => {
+                run_hook(HookType::PostSwitch, yes, name.as_deref(), &vars)
             }
-            HookCommand::PreCommit { name, yes } => {
-                run_hook(HookType::PreCommit, yes, name.as_deref())
+            HookCommand::PreCommit { name, yes, vars } => {
+                run_hook(HookType::PreCommit, yes, name.as_deref(), &vars)
             }
-            HookCommand::PreMerge { name, yes } => {
-                run_hook(HookType::PreMerge, yes, name.as_deref())
+            HookCommand::PreMerge { name, yes, vars } => {
+                run_hook(HookType::PreMerge, yes, name.as_deref(), &vars)
             }
-            HookCommand::PostMerge { name, yes } => {
-                run_hook(HookType::PostMerge, yes, name.as_deref())
+            HookCommand::PostMerge { name, yes, vars } => {
+                run_hook(HookType::PostMerge, yes, name.as_deref(), &vars)
             }
-            HookCommand::PreRemove { name, yes } => {
-                run_hook(HookType::PreRemove, yes, name.as_deref())
+            HookCommand::PreRemove { name, yes, vars } => {
+                run_hook(HookType::PreRemove, yes, name.as_deref(), &vars)
             }
             HookCommand::Approvals { action } => match action {
                 ApprovalsCommand::Add { all } => add_approvals(all),
