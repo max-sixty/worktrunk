@@ -174,7 +174,7 @@ The `[list]` section adds a URL column to `wt list`:
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999), `sanitize` (filesystem-safe), and `sanitize_db` (database-safe).
+URLs are dimmed when the port isn't listening.
 
 ### CI platform override
 
@@ -339,9 +339,10 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 
 # Worktree Path Template
 # Variables:
-#   {{ repo }}              - Repository directory name (e.g., "myproject")
-#   {{ branch }}            - Raw branch name (e.g., "feature/auth")
-#   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
+#   {{ repo }}                 - Repository directory name (e.g., "myproject")
+#   {{ branch }}               - Raw branch name (e.g., "feature/auth")
+#   {{ branch | sanitize }}    - Filesystem-safe: / and \ replaced by - (e.g., "feature-auth")
+#   {{ branch | sanitize_db }} - Database-safe: lowercase, underscores (e.g., "feature_auth")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
@@ -545,8 +546,9 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 #   {{ target }}             - Target branch for the merge
 #
 # Filters:
-#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
-#   {{ branch | hash_port }} - Deterministic port 10000-19999
+#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
+#   {{ branch | sanitize_db }}  - Database-safe identifier (e.g., "feature_auth")
+#   {{ branch | hash_port }}    - Deterministic port 10000-19999
 
 # ============================================================================
 # Hooks
