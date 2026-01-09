@@ -552,7 +552,10 @@ pub fn configure_cli_command(cmd: &mut Command) {
     cmd.env("WORKTRUNK_CONFIG_PATH", "/nonexistent/test/config.toml");
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env("SOURCE_DATE_EPOCH", TEST_EPOCH.to_string());
-    cmd.env("COLUMNS", "150");
+    // Use wide terminal to prevent wrapping differences across platforms.
+    // macOS temp paths (~80 chars) are much longer than Linux (~10 chars),
+    // so error messages containing paths need room to avoid platform-specific line breaks.
+    cmd.env("COLUMNS", "500");
     // Set consistent terminal type for hyperlink detection via supports-hyperlinks crate
     cmd.env("TERM", "alacritty");
     // Enable warn-level logging so diagnostics show up in test failures

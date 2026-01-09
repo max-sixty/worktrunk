@@ -981,7 +981,10 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 .unwrap_or_default();
 
             if head.is_empty() {
-                anyhow::bail!("Branch '{branch_name}' not found");
+                return Err(worktrunk::git::GitError::InvalidReference {
+                    reference: branch_name,
+                }
+                .into());
             }
 
             if refresh {

@@ -6,14 +6,15 @@
 //   - worktree_scaling: Worktree count scaling (1, 4, 8 worktrees; warm + cold)
 //   - real_repo: rust-lang/rust clone (1, 4, 8 worktrees; warm + cold)
 //   - many_branches: 100 branches (warm + cold)
-//   - divergent_branches: 200 branches × 20 commits / GH #461 (warm + cold)
+//   - divergent_branches: 200 branches × 20 commits on synthetic repo (warm + cold)
+//   - real_repo_many_branches: 50 branches at different history depths / GH #461 (warm only)
 //
 // Run examples:
-//   cargo bench --bench list                    # All benchmarks
-//   cargo bench --bench list skeleton           # Progressive rendering
-//   cargo bench --bench list divergent_branches # GH #461 scenario
-//   cargo bench --bench list -- --skip cold     # Skip cold cache variants
-//   cargo bench --bench list -- --skip real     # Skip rust repo clone
+//   cargo bench --bench list                         # All benchmarks
+//   cargo bench --bench list skeleton                # Progressive rendering
+//   cargo bench --bench list real_repo_many_branches # GH #461 scenario (large repo + many branches)
+//   cargo bench --bench list -- --skip cold          # Skip cold cache variants
+//   cargo bench --bench list -- --skip real          # Skip rust repo clone
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::path::{Path, PathBuf};
@@ -582,12 +583,85 @@ fn bench_divergent_branches(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark GH #461 scenario: large real repo (rust-lang/rust) with branches at different
+/// historical points.
+///
+/// This reproduces the `wt select` delay reported in #461. The key factor is NOT commits
+/// per branch, but rather how far back in history branches diverge from each other.
+///
+/// Scaling (rust-lang/rust repo):
+/// - 20 branches at different depths: ~5s
+/// - 50 branches at different depths: ~11s
+/// - 100 branches at different depths: ~24s
+/// - 200 branches at different depths: >30s (times out)
+///
+/// The slowdown comes from expensive merge-base calculations when branches have very different
+/// ancestry depths in the commit graph.
+fn bench_real_repo_many_branches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("real_repo_many_branches");
+    group.measurement_time(std::time::Duration::from_secs(60));
+    group.sample_size(10);
+
+    let binary = get_release_binary();
+
+    // Only test warm cache - cold cache would be extremely slow
+    group.bench_function("warm", |b| {
+        let rust_repo = get_or_clone_rust_repo();
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_main = temp.path().join("main");
+
+        // Clone rust repo locally
+        let clone_output = Command::new("git")
+            .args([
+                "clone",
+                "--local",
+                rust_repo.to_str().unwrap(),
+                workspace_main.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            clone_output.status.success(),
+            "Failed to clone rust repo to workspace"
+        );
+
+        // Get commits spread across history (every 100th commit from last 5000 = 50 branches)
+        let log_output = Command::new("git")
+            .args(["log", "--oneline", "-n", "5000", "--format=%H"])
+            .current_dir(&workspace_main)
+            .output()
+            .unwrap();
+        let log_str = String::from_utf8_lossy(&log_output.stdout);
+        let commits: Vec<&str> = log_str.lines().step_by(100).take(50).collect();
+
+        // Create 50 branches pointing to different historical commits
+        // This is fast (just creates refs, no checkout needed)
+        for (i, commit) in commits.iter().enumerate() {
+            let branch_name = format!("feature-{i:03}");
+            run_git(&workspace_main, &["branch", &branch_name, commit]);
+        }
+
+        // Warm the cache
+        run_git(&workspace_main, &["status"]);
+
+        b.iter(|| {
+            Command::new(&binary)
+                .args(["list", "--branches"])
+                .current_dir(&workspace_main)
+                .output()
+                .unwrap();
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(30)
         .measurement_time(std::time::Duration::from_secs(15))
         .warm_up_time(std::time::Duration::from_secs(3));
-    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches
+    targets = bench_skeleton, bench_complete, bench_worktree_scaling, bench_real_repo, bench_many_branches, bench_divergent_branches, bench_real_repo_many_branches
 }
 criterion_main!(benches);

@@ -935,7 +935,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
-- `copy-ignored` — Copy files listed in `.worktreeinclude`
+- `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 
 ## Options
@@ -1194,14 +1194,14 @@ Many tasks work well in `post-start` — they'll likely be ready by the time the
 
 ### Copying untracked files
 
-Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy files listed in `.worktreeinclude`:
+Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) to copy gitignored files:
 
 ```toml
 [post-create]
 copy = "wt step copy-ignored"
 ```
 
-See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for setup, common patterns, and language-specific notes.
+See [`wt step copy-ignored`](@/step.md#wt-step-copy-ignored) for limiting what gets copied, common patterns, and language-specific notes.
 
 ### Dev servers
 

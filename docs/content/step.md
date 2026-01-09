@@ -34,7 +34,7 @@ wt step push
 - `squash` — Squash all branch commits into one with [LLM-generated message](@/llm-commits.md)
 - `rebase` — Rebase onto target branch
 - `push` — Fast-forward target to current branch
-- `copy-ignored` — Copy files listed in `.worktreeinclude`
+- `copy-ignored` — Copy gitignored files between worktrees
 - `for-each` — [experimental] Run a command in every worktree
 
 ## Options
@@ -90,7 +90,7 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
   <b><span class=c>squash</span></b>        Squash commits since branching
   <b><span class=c>push</span></b>          Fast-forward target to current branch
   <b><span class=c>rebase</span></b>        Rebase onto target
-  <b><span class=c>copy-ignored</span></b>  Copy <b>.worktreeinclude</b> files to another worktree
+  <b><span class=c>copy-ignored</span></b>  Copy gitignored files to another worktree
   <b><span class=c>for-each</span></b>      [experimental] Run command in each worktree
 
 <b><span class=g>Options:</span></b>
@@ -110,19 +110,9 @@ Usage: <b><span class=c>wt step</span></b> <span class=c>[OPTIONS]</span> <span 
 
 ## wt step copy-ignored
 
-Git worktrees share the repository but not untracked files. This command copies files listed in `.worktreeinclude` to another worktree, eliminating cold starts.
+Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
 ### Setup
-
-Create a `.worktreeinclude` file in your repository root listing patterns to copy (uses gitignore syntax):
-
-```gitignore
-# .worktreeinclude
-.env
-node_modules/
-target/
-.cache/
-```
 
 Add to your project config:
 
@@ -132,9 +122,19 @@ Add to your project config:
 copy = "wt step copy-ignored"
 ```
 
+All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
+
+```gitignore
+# .worktreeinclude — optional, limits what gets copied
+.env
+node_modules/
+target/
+.cache/
+```
+
 ### What gets copied
 
-Files are copied only if they match **both** `.worktreeinclude` **and** are gitignored. This prevents accidentally copying tracked files.
+Only gitignored files are copied — tracked files are never touched. If `.worktreeinclude` exists, files must match **both** `.worktreeinclude` **and** be gitignored.
 
 ### Common patterns
 
@@ -174,11 +174,12 @@ Virtual environments contain absolute paths and can't be copied. Use `uv sync` i
 ### Command reference
 
 {% terminal() %}
-wt step copy-ignored - Copy <b>.worktreeinclude</b> files to another worktree
+wt step copy-ignored - Copy gitignored files to another worktree
 
-Copies files listed in <b>.worktreeinclude</b> that are also gitignored. Useful in
-post-create hooks to sync local config files (<b>.env</b>, IDE settings) to new
-worktrees. Skips symlinks and existing files.
+Copies gitignored files to another worktree. By default copies all gitignored
+files; use <b>.worktreeinclude</b> to limit what gets copied. Useful in post-create
+hooks to sync local config files (<b>.env</b>, IDE settings) to new worktrees. Skips
+symlinks and existing files.
 
 Usage: <b><span class=c>wt step copy-ignored</span></b> <span class=c>[OPTIONS]</span>
 

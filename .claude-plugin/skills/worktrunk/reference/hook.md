@@ -202,14 +202,14 @@ Many tasks work well in `post-start` — they'll likely be ready by the time the
 
 ### Copying untracked files
 
-Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) to copy files listed in `.worktreeinclude`:
+Git worktrees share the repository but not untracked files (dependencies, caches, `.env`). Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) to copy gitignored files:
 
 ```toml
 [post-create]
 copy = "wt step copy-ignored"
 ```
 
-See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for setup, common patterns, and language-specific notes.
+See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for limiting what gets copied, common patterns, and language-specific notes.
 
 ### Dev servers
 
