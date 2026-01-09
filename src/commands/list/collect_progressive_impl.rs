@@ -5,13 +5,17 @@
 //!
 //! ## Architecture
 //!
-//! The framework guarantees that every spawned task is registered in `ExpectedResults`
-//! and sends exactly one `TaskResult`:
+//! All tasks are executed in a single Rayon thread pool (flat parallelism):
 //!
-//! - `Task` trait: Each task type implements `compute()` returning a `TaskResult`
-//! - `TaskSpawner`: Ties together registration + spawn + send in a single operation
+//! 1. **Work item generation**: `work_items_for_worktree()` and `work_items_for_branch()`
+//!    generate `WorkItem` instances for each task, registering expected results upfront.
 //!
-//! This eliminates the "spawn but forget to register" failure mode from the old design.
+//! 2. **Parallel execution**: All work items are collected into a `Vec` and processed
+//!    via `into_par_iter()`. Rayon schedules optimally across its thread pool (~8 threads).
+//!
+//! 3. **Result delivery**: Each `WorkItem::execute()` returns a result; the caller sends it.
+//!
+//! This avoids nested parallelism (Rayon → thread::scope) which could create 100+ threads.
 
 use crossbeam_channel::Sender;
 use std::fmt::Display;
@@ -38,7 +42,7 @@ pub struct CollectOptions {
     /// Tasks to skip (not compute). Empty set means compute everything.
     ///
     /// This controls both:
-    /// - Task spawning (in `collect_worktree_progressive`/`collect_branch_progressive`)
+    /// - Work item generation (in `work_items_for_worktree`/`work_items_for_branch`)
     /// - Column visibility (layout filters columns via `ColumnSpec::requires_task`)
     pub skip_tasks: std::collections::HashSet<super::collect::TaskKind>,
 
@@ -110,98 +114,204 @@ pub trait Task: Send + Sync + 'static {
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError>;
 }
 
-/// Spawner that ties together registration + spawn + send.
+// ============================================================================
+// Work Item Dispatch (for flat parallelism)
+// ============================================================================
+
+/// A unit of work for the thread pool.
 ///
-/// Using `TaskSpawner::spawn<T>()` is the only way to run a task, and it
-/// automatically registers the expected result kind before spawning.
-pub struct TaskSpawner {
-    tx: Sender<Result<TaskResult, TaskError>>,
-    expected: Arc<ExpectedResults>,
+/// Each work item represents a single task to be executed. Work items are
+/// collected upfront and then processed in parallel via Rayon's thread pool,
+/// avoiding nested parallelism (Rayon par_iter → thread::scope).
+#[derive(Clone)]
+pub struct WorkItem {
+    pub ctx: TaskContext,
+    pub kind: TaskKind,
 }
 
-impl TaskSpawner {
-    pub fn new(tx: Sender<Result<TaskResult, TaskError>>, expected: Arc<ExpectedResults>) -> Self {
-        Self { tx, expected }
+impl WorkItem {
+    /// Execute this work item, returning the task result.
+    pub fn execute(self) -> Result<TaskResult, TaskError> {
+        let result = dispatch_task(self.kind, self.ctx);
+        if let Ok(ref task_result) = result {
+            debug_assert_eq!(TaskKind::from(task_result), self.kind);
+        }
+        result
+    }
+}
+
+/// Dispatch a task by kind, calling the appropriate Task::compute().
+fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskError> {
+    match kind {
+        TaskKind::CommitDetails => CommitDetailsTask::compute(ctx),
+        TaskKind::AheadBehind => AheadBehindTask::compute(ctx),
+        TaskKind::CommittedTreesMatch => CommittedTreesMatchTask::compute(ctx),
+        TaskKind::HasFileChanges => HasFileChangesTask::compute(ctx),
+        TaskKind::WouldMergeAdd => WouldMergeAddTask::compute(ctx),
+        TaskKind::IsAncestor => IsAncestorTask::compute(ctx),
+        TaskKind::BranchDiff => BranchDiffTask::compute(ctx),
+        TaskKind::WorkingTreeDiff => WorkingTreeDiffTask::compute(ctx),
+        TaskKind::MergeTreeConflicts => MergeTreeConflictsTask::compute(ctx),
+        TaskKind::WorkingTreeConflicts => WorkingTreeConflictsTask::compute(ctx),
+        TaskKind::GitOperation => GitOperationTask::compute(ctx),
+        TaskKind::UserMarker => UserMarkerTask::compute(ctx),
+        TaskKind::Upstream => UpstreamTask::compute(ctx),
+        TaskKind::CiStatus => CiStatusTask::compute(ctx),
+        TaskKind::UrlStatus => UrlStatusTask::compute(ctx),
+    }
+}
+
+/// Generate work items for a worktree.
+///
+/// Returns a list of work items representing all tasks that should run for this
+/// worktree. Expected results are registered internally as each work item is added.
+/// The caller is responsible for executing the work items.
+pub fn work_items_for_worktree(
+    wt: &Worktree,
+    item_idx: usize,
+    default_branch: &str,
+    target: &str,
+    options: &CollectOptions,
+    expected_results: &Arc<ExpectedResults>,
+    tx: &Sender<Result<TaskResult, TaskError>>,
+) -> Vec<WorkItem> {
+    // Skip git operations for prunable worktrees (directory missing).
+    if wt.is_prunable() {
+        return vec![];
     }
 
-    /// Spawn a task, registering its expected result and sending on completion.
-    ///
-    /// This is the only way to run a `Task`. It guarantees:
-    /// 1. The expected result is registered before the task runs
-    /// 2. Exactly one result (Ok or Err) is sent when the task completes
-    pub fn spawn<'scope, T: Task>(
-        &self,
-        scope: &'scope std::thread::Scope<'scope, '_>,
-        ctx: &TaskContext,
-    ) {
-        // 1. Register expectation
-        self.expected.expect(ctx.item_idx, T::KIND);
+    // Expand URL template for this item
+    let item_url = options.url_template.as_ref().and_then(|template| {
+        wt.branch.as_ref().and_then(|branch| {
+            let mut vars = std::collections::HashMap::new();
+            vars.insert("branch", branch.as_str());
+            worktrunk::config::expand_template(template, &vars, false).ok()
+        })
+    });
 
-        // 2. Clone for the spawned thread
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
+    // Send URL immediately (before health check) so it appears right away.
+    // The UrlStatusTask will later update with active status.
+    if let Some(ref url) = item_url {
+        expected_results.expect(item_idx, TaskKind::UrlStatus);
+        let _ = tx.send(Ok(TaskResult::UrlStatus {
+            item_idx,
+            url: Some(url.clone()),
+            active: None,
+        }));
+    }
 
-        // 3. Spawn the work
-        scope.spawn(move || {
-            let result = T::compute(ctx);
-            if let Ok(ref task_result) = result {
-                debug_assert_eq!(TaskKind::from(task_result), T::KIND);
-            }
-            let _ = tx.send(result);
+    let ctx = TaskContext {
+        repo_path: wt.path.clone(),
+        commit_sha: wt.head.clone(),
+        branch: wt.branch.clone(),
+        default_branch: Some(default_branch.to_string()),
+        target: Some(target.to_string()),
+        item_idx,
+        item_url,
+    };
+
+    let skip = &options.skip_tasks;
+    let mut items = Vec::with_capacity(15);
+
+    // Helper to add a work item and register the expected result
+    let mut add_item = |kind: TaskKind| {
+        expected_results.expect(item_idx, kind);
+        items.push(WorkItem {
+            ctx: ctx.clone(),
+            kind,
+        });
+    };
+
+    for kind in [
+        TaskKind::CommitDetails,
+        TaskKind::AheadBehind,
+        TaskKind::CommittedTreesMatch,
+        TaskKind::HasFileChanges,
+        TaskKind::IsAncestor,
+        TaskKind::Upstream,
+        TaskKind::WorkingTreeDiff,
+        TaskKind::GitOperation,
+        TaskKind::UserMarker,
+        TaskKind::WorkingTreeConflicts,
+        TaskKind::BranchDiff,
+        TaskKind::MergeTreeConflicts,
+        TaskKind::CiStatus,
+        TaskKind::WouldMergeAdd,
+    ] {
+        if !skip.contains(&kind) {
+            add_item(kind);
+        }
+    }
+    // URL status health check task (if we have a URL).
+    // Note: We already registered and sent an immediate UrlStatus above with url + active=None.
+    // This work item will send a second UrlStatus with active=Some(bool) after health check.
+    // Both results must be registered and expected.
+    if !skip.contains(&TaskKind::UrlStatus) && ctx.item_url.is_some() {
+        expected_results.expect(item_idx, TaskKind::UrlStatus);
+        items.push(WorkItem {
+            ctx: ctx.clone(),
+            kind: TaskKind::UrlStatus,
         });
     }
 
-    fn spawn_core_tasks<'scope>(
-        &self,
-        scope: &'scope std::thread::Scope<'scope, '_>,
-        ctx: &TaskContext,
-    ) {
-        self.spawn::<CommitDetailsTask>(scope, ctx);
-        self.spawn::<AheadBehindTask>(scope, ctx);
-        self.spawn::<CommittedTreesMatchTask>(scope, ctx);
-        self.spawn::<HasFileChangesTask>(scope, ctx);
-        self.spawn::<IsAncestorTask>(scope, ctx);
-        self.spawn::<UpstreamTask>(scope, ctx);
+    items
+}
+
+/// Generate work items for a branch (no worktree).
+///
+/// Returns a list of work items representing all tasks that should run for this
+/// branch. Branches have fewer tasks than worktrees (no working tree operations).
+#[allow(clippy::too_many_arguments)]
+pub fn work_items_for_branch(
+    branch_name: &str,
+    commit_sha: &str,
+    repo_path: &std::path::Path,
+    item_idx: usize,
+    default_branch: &str,
+    target: &str,
+    options: &CollectOptions,
+    expected_results: &Arc<ExpectedResults>,
+) -> Vec<WorkItem> {
+    let ctx = TaskContext {
+        repo_path: repo_path.to_path_buf(),
+        commit_sha: commit_sha.to_string(),
+        branch: Some(branch_name.to_string()),
+        default_branch: Some(default_branch.to_string()),
+        target: Some(target.to_string()),
+        item_idx,
+        item_url: None, // Branches without worktrees don't have URLs
+    };
+
+    let skip = &options.skip_tasks;
+    let mut items = Vec::with_capacity(11);
+
+    // Helper to add a work item and register the expected result
+    let mut add_item = |kind: TaskKind| {
+        expected_results.expect(item_idx, kind);
+        items.push(WorkItem {
+            ctx: ctx.clone(),
+            kind,
+        });
+    };
+
+    for kind in [
+        TaskKind::CommitDetails,
+        TaskKind::AheadBehind,
+        TaskKind::CommittedTreesMatch,
+        TaskKind::HasFileChanges,
+        TaskKind::IsAncestor,
+        TaskKind::Upstream,
+        TaskKind::BranchDiff,
+        TaskKind::MergeTreeConflicts,
+        TaskKind::CiStatus,
+        TaskKind::WouldMergeAdd,
+    ] {
+        if !skip.contains(&kind) {
+            add_item(kind);
+        }
     }
 
-    fn spawn_worktree_only_tasks<'scope>(
-        &self,
-        scope: &'scope std::thread::Scope<'scope, '_>,
-        ctx: &TaskContext,
-        skip: &std::collections::HashSet<TaskKind>,
-    ) {
-        self.spawn::<WorkingTreeDiffTask>(scope, ctx);
-        self.spawn::<GitOperationTask>(scope, ctx);
-        self.spawn::<UserMarkerTask>(scope, ctx);
-        // Working tree conflict check only with --full
-        if !skip.contains(&TaskKind::WorkingTreeConflicts) {
-            self.spawn::<WorkingTreeConflictsTask>(scope, ctx);
-        }
-    }
-
-    fn spawn_optional_tasks<'scope>(
-        &self,
-        scope: &'scope std::thread::Scope<'scope, '_>,
-        ctx: &TaskContext,
-        skip: &std::collections::HashSet<TaskKind>,
-    ) {
-        if !skip.contains(&TaskKind::BranchDiff) {
-            self.spawn::<BranchDiffTask>(scope, ctx);
-        }
-        if !skip.contains(&TaskKind::MergeTreeConflicts) {
-            self.spawn::<MergeTreeConflictsTask>(scope, ctx);
-        }
-        if !skip.contains(&TaskKind::CiStatus) {
-            self.spawn::<CiStatusTask>(scope, ctx);
-        }
-        if !skip.contains(&TaskKind::WouldMergeAdd) {
-            self.spawn::<WouldMergeAddTask>(scope, ctx);
-        }
-        // URL status only runs if this item has a URL
-        if !skip.contains(&TaskKind::UrlStatus) && ctx.item_url.is_some() {
-            self.spawn::<UrlStatusTask>(scope, ctx);
-        }
-    }
+    items
 }
 
 // ============================================================================
@@ -680,122 +790,6 @@ pub(crate) fn parse_port_from_url(url: &str) -> Option<u16> {
     let host_port = url.split(&['/', '?', '#'][..]).next()?;
     let (_host, port_str) = host_port.rsplit_once(':')?;
     port_str.parse().ok()
-}
-
-// ============================================================================
-// Collection Entry Points
-// ============================================================================
-
-fn collect_progressive(
-    ctx: TaskContext,
-    include_worktree_tasks: bool,
-    options: &CollectOptions,
-    tx: Sender<Result<TaskResult, TaskError>>,
-    expected_results: &Arc<ExpectedResults>,
-) {
-    let spawner = TaskSpawner::new(tx, expected_results.clone());
-    let skip = &options.skip_tasks;
-
-    std::thread::scope(|s| {
-        // Core tasks (always run)
-        spawner.spawn_core_tasks(s, &ctx);
-        if include_worktree_tasks {
-            spawner.spawn_worktree_only_tasks(s, &ctx, skip);
-        }
-        spawner.spawn_optional_tasks(s, &ctx, skip);
-    });
-}
-
-/// Collect worktree data progressively, sending results as each task completes.
-///
-/// Spawns parallel git operations (up to 10). Each task sends a TaskResult when it
-/// completes, enabling progressive UI updates. Tasks in `options.skip_tasks` are not spawned.
-///
-/// # Parameters
-/// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
-/// - `target`: Effective target for integration checks (may be upstream if ahead)
-pub fn collect_worktree_progressive(
-    wt: &Worktree,
-    item_idx: usize,
-    default_branch: &str,
-    target: &str,
-    options: &CollectOptions,
-    tx: Sender<Result<TaskResult, TaskError>>,
-    expected_results: &Arc<ExpectedResults>,
-) {
-    // Skip git operations for prunable worktrees (directory missing).
-    // Git operations would fail anyway since the directory doesn't exist.
-    if wt.is_prunable() {
-        return;
-    }
-
-    // Expand URL template for this item (deferred from pre-skeleton)
-    let item_url = options.url_template.as_ref().and_then(|template| {
-        wt.branch.as_ref().and_then(|branch| {
-            let mut vars = std::collections::HashMap::new();
-            vars.insert("branch", branch.as_str());
-            worktrunk::config::expand_template(template, &vars, false).ok()
-        })
-    });
-
-    // Send URL immediately (before health check) so it appears in normal styling right away.
-    // The health check task will later send url_active to dim if inactive.
-    if let Some(ref url) = item_url {
-        expected_results.expect(item_idx, TaskKind::UrlStatus);
-        let _ = tx.send(Ok(TaskResult::UrlStatus {
-            item_idx,
-            url: Some(url.clone()),
-            active: None,
-        }));
-    }
-
-    let ctx = TaskContext {
-        repo_path: wt.path.clone(),
-        commit_sha: wt.head.clone(),
-        branch: wt.branch.clone(),
-        default_branch: Some(default_branch.to_string()),
-        target: Some(target.to_string()),
-        item_idx,
-        item_url,
-    };
-
-    collect_progressive(ctx, true, options, tx, expected_results);
-}
-
-/// Collect branch data progressively, sending results as each task completes.
-///
-/// Spawns parallel git operations (up to 7, similar to worktrees but without working
-/// tree operations). Tasks in `options.skip_tasks` are not spawned.
-///
-/// # Parameters
-/// - `default_branch`: Local default branch for informational stats (ahead/behind, branch diff)
-/// - `target`: Effective target for integration checks (may be upstream if ahead)
-#[allow(clippy::too_many_arguments)]
-pub fn collect_branch_progressive(
-    branch_name: &str,
-    commit_sha: &str,
-    repo_path: &std::path::Path,
-    item_idx: usize,
-    default_branch: &str,
-    target: &str,
-    options: &CollectOptions,
-    tx: Sender<Result<TaskResult, TaskError>>,
-    expected_results: &Arc<ExpectedResults>,
-) {
-    // Branches without worktrees don't have URLs - there's no directory to run a dev server from.
-    // URL templates only make sense for worktrees where post-start hooks can start servers.
-
-    let ctx = TaskContext {
-        repo_path: repo_path.to_path_buf(),
-        commit_sha: commit_sha.to_string(),
-        branch: Some(branch_name.to_string()),
-        default_branch: Some(default_branch.to_string()),
-        target: Some(target.to_string()),
-        item_idx,
-        item_url: None,
-    };
-
-    collect_progressive(ctx, false, options, tx, expected_results);
 }
 
 // ============================================================================

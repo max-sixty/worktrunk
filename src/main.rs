@@ -709,6 +709,20 @@ fn enhance_and_exit_error(err: clap::Error) -> ! {
 }
 
 fn main() {
+    // Configure Rayon's global thread pool for mixed I/O workloads.
+    // The `wt list` command runs git operations (CPU + disk I/O) and network
+    // requests (CI status, URL health checks) in parallel. Using 2x CPU cores
+    // allows threads blocked on I/O to overlap with compute work.
+    //
+    // TODO: Benchmark different thread counts to find optimal value.
+    // Test with `RAYON_NUM_THREADS=N wt list` on repos with many worktrees.
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get() * 2)
+        .unwrap_or(8);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build_global();
+
     // Tell crossterm to always emit ANSI sequences
     crossterm::style::force_color_output(true);
 
