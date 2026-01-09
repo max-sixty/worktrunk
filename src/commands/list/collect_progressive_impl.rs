@@ -574,9 +574,15 @@ impl Task for WorkingTreeConflictsTask {
         let base = ctx.require_default_branch(Self::KIND)?;
         let repo = ctx.repo();
 
+        // Refresh index to detect recent file changes (handles "racy git" timing issues
+        // where modifications within the same timestamp granularity may not be detected)
+        // update-index --refresh exits with status 1 when it finds changes, so use run_command_check
+        let _ = repo.run_command_check(&["update-index", "--refresh"]);
+
         // Quick check if working tree is dirty via git status
+        // Use --no-optional-locks to force a fresh check without using cached index data
         let status_output = repo
-            .run_command(&["status", "--porcelain"])
+            .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         let is_dirty = !status_output.trim().is_empty();
