@@ -84,6 +84,63 @@ fn test_doc_sanitize_filter() {
 }
 
 // =============================================================================
+// Sanitize DB Filter (docs/content/hook.md: Filters table)
+// "Transform to database-safe identifier ([a-z0-9_], max 63 chars)"
+// =============================================================================
+
+#[test]
+fn test_doc_sanitize_db_filter() {
+    let mut vars = HashMap::new();
+
+    // From docs: {{ branch | sanitize_db }} transforms to database-safe identifier
+    vars.insert("branch", "feature/auth-oauth2");
+    assert_eq!(
+        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+        "feature_auth_oauth2",
+        "sanitize_db should replace non-alphanumeric with _ and lowercase"
+    );
+
+    // Leading digits get underscore prefix
+    vars.insert("branch", "123-bug-fix");
+    assert_eq!(
+        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+        "_123_bug_fix",
+        "sanitize_db should prefix leading digits with _"
+    );
+
+    // Uppercase conversion
+    vars.insert("branch", "UPPERCASE.Branch");
+    assert_eq!(
+        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+        "uppercase_branch",
+        "sanitize_db should convert to lowercase"
+    );
+
+    // Consecutive underscores collapsed
+    vars.insert("branch", "a--b//c");
+    assert_eq!(
+        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+        "a_b_c",
+        "sanitize_db should collapse consecutive underscores"
+    );
+}
+
+#[test]
+fn test_doc_sanitize_db_truncation() {
+    let mut vars = HashMap::new();
+
+    // Truncates to 63 characters (PostgreSQL limit)
+    let long_branch = "a".repeat(100);
+    vars.insert("branch", long_branch.as_str());
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert_eq!(
+        result.len(),
+        63,
+        "sanitize_db should truncate to 63 characters"
+    );
+}
+
+// =============================================================================
 // Hash Port Filter (docs/content/hook.md: Filters table)
 // "Hash to port 10000-19999"
 // =============================================================================

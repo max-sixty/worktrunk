@@ -13,6 +13,11 @@
 //!   {{ branch | sanitize }} → feature-foo
 //!   ```
 //!
+//! - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
+//!   ```text
+//!   {{ branch | sanitize_db }} → feature_auth_oauth2
+//!   ```
+//!
 //! - `hash_port` — Hash a string to a deterministic port number (10000-19999)
 //!   ```text
 //!   {{ branch | hash_port }}              → 12472
@@ -78,6 +83,60 @@ pub fn sanitize_branch_name(branch: &str) -> String {
     branch.replace(['/', '\\'], "-")
 }
 
+/// Sanitize a string for use as a database identifier.
+///
+/// Transforms input into an identifier compatible with most SQL databases
+/// (PostgreSQL, MySQL, SQL Server). The transformation is more aggressive than
+/// `sanitize_branch_name` to ensure compatibility with database identifier rules.
+///
+/// # Transformation Rules (applied in order)
+/// 1. Convert to lowercase (ensures portability across case-sensitive systems)
+/// 2. Replace non-alphanumeric characters with `_` (only `[a-z0-9_]` are safe)
+/// 3. Collapse consecutive underscores into single underscore
+/// 4. Add `_` prefix if identifier starts with a digit (SQL prohibits leading digits)
+/// 5. Truncate to 63 characters (PostgreSQL limit; MySQL=64, SQL Server=128)
+///
+/// # Limitations
+/// - Empty input produces empty output (not a valid identifier in most DBs)
+/// - SQL reserved words (e.g., `user`, `select`) are not escaped
+/// - Different inputs may collide after transformation (e.g., `a-b` and `a_b`)
+///
+/// # Examples
+/// ```
+/// use worktrunk::config::sanitize_db;
+///
+/// assert_eq!(sanitize_db("feature/auth-oauth2"), "feature_auth_oauth2");
+/// assert_eq!(sanitize_db("123-bug-fix"), "_123_bug_fix");
+/// assert_eq!(sanitize_db("UPPERCASE.Branch"), "uppercase_branch");
+/// ```
+pub fn sanitize_db(s: &str) -> String {
+    // Single pass: lowercase, replace non-alphanumeric with underscore, collapse consecutive
+    let mut result = String::with_capacity(s.len());
+    let mut prev_underscore = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            result.push(c.to_ascii_lowercase());
+            prev_underscore = false;
+        } else if !prev_underscore {
+            result.push('_');
+            prev_underscore = true;
+        }
+    }
+
+    // Prefix with underscore if starts with digit
+    if result.starts_with(|c: char| c.is_ascii_digit()) {
+        result.insert(0, '_');
+    }
+
+    // Truncate to 63 characters (PostgreSQL limit)
+    // Safe to slice by bytes since output is ASCII-only
+    if result.len() > 63 {
+        result.truncate(63);
+    }
+
+    result
+}
+
 /// Expand a template with variable substitution.
 ///
 /// # Arguments
@@ -87,9 +146,9 @@ pub fn sanitize_branch_name(branch: &str) -> String {
 ///   If false, substitute values literally (for filesystem paths).
 ///
 /// # Filters
-/// The `sanitize` filter is available for branch names, replacing `/` and `\` with `-`:
-/// - `{{ branch }}` — raw branch name (e.g., `feature/foo`)
-/// - `{{ branch | sanitize }}` — sanitized for paths (e.g., `feature-foo`)
+/// - `sanitize` — Replace `/` and `\` with `-` for filesystem-safe paths
+/// - `sanitize_db` — Transform to database-safe identifier (`[a-z0-9_]`, max 63 chars)
+/// - `hash_port` — Hash to deterministic port number (10000-19999)
 ///
 /// # Examples
 /// ```
@@ -140,6 +199,9 @@ pub fn expand_template(
     env.add_filter("sanitize", |value: Value| -> String {
         sanitize_branch_name(value.as_str().unwrap_or_default())
     });
+    env.add_filter("sanitize_db", |value: Value| -> String {
+        sanitize_db(value.as_str().unwrap_or_default())
+    });
     env.add_filter("hash_port", |value: String| string_to_port(&value));
 
     let tmpl = env
@@ -170,6 +232,75 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(sanitize_branch_name(input), expected, "input: {input}");
         }
+    }
+
+    #[test]
+    fn test_sanitize_db() {
+        let cases = [
+            // Examples from spec
+            ("feature/auth-oauth2", "feature_auth_oauth2"),
+            ("123-bug-fix", "_123_bug_fix"),
+            ("UPPERCASE.Branch", "uppercase_branch"),
+            // Lowercase conversion
+            ("MyBranch", "mybranch"),
+            ("ALLCAPS", "allcaps"),
+            // Non-alphanumeric replacement
+            ("feature/foo", "feature_foo"),
+            ("feature-bar", "feature_bar"),
+            ("feature.baz", "feature_baz"),
+            ("feature@qux", "feature_qux"),
+            // Consecutive underscore collapse
+            ("a--b", "a_b"),
+            ("a///b", "a_b"),
+            ("a...b", "a_b"),
+            ("a-/-b", "a_b"),
+            // Leading digit prefix
+            ("1branch", "_1branch"),
+            ("123", "_123"),
+            ("0test", "_0test"),
+            // No prefix needed
+            ("branch1", "branch1"),
+            ("_already", "_already"),
+            // Edge cases
+            ("", ""),
+            ("a", "a"),
+            ("_", "_"),
+            ("-", "_"),
+            ("---", "_"),
+            // Mixed cases
+            ("Feature/Auth-OAuth2", "feature_auth_oauth2"),
+            ("user/TASK/123", "user_task_123"),
+            // Non-ASCII characters become underscores
+            ("naïve-impl", "na_ve_impl"),
+            ("日本語", "_"),
+            ("über-feature", "_ber_feature"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(sanitize_db(input), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_sanitize_db_truncation() {
+        // Test truncation at 63 characters
+        let long_input = "a".repeat(100);
+        let result = sanitize_db(&long_input);
+        assert_eq!(result.len(), 63);
+        assert_eq!(result, "a".repeat(63));
+
+        // Exactly 63 should not be truncated
+        let exact = "b".repeat(63);
+        assert_eq!(sanitize_db(&exact), exact);
+
+        // 64 should be truncated
+        let over = "c".repeat(64);
+        assert_eq!(sanitize_db(&over).len(), 63);
+
+        // Truncation happens after prefix is added
+        let digit_start = format!("1{}", "x".repeat(100));
+        let result = sanitize_db(&digit_start);
+        assert_eq!(result.len(), 63);
+        assert!(result.starts_with("_1"));
     }
 
     #[test]
@@ -282,6 +413,39 @@ mod tests {
         assert_eq!(
             expand_template("{{ branch | sanitize }}", &vars, false).unwrap(),
             "user-feature-task"
+        );
+
+        // Raw branch is unchanged
+        vars.insert("branch", "feature/foo");
+        assert_eq!(
+            expand_template("{{ branch }}", &vars, false).unwrap(),
+            "feature/foo"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_sanitize_db_filter() {
+        let mut vars = HashMap::new();
+
+        // Basic transformation
+        vars.insert("branch", "feature/auth-oauth2");
+        assert_eq!(
+            expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+            "feature_auth_oauth2"
+        );
+
+        // Leading digit gets underscore prefix
+        vars.insert("branch", "123-bug-fix");
+        assert_eq!(
+            expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+            "_123_bug_fix"
+        );
+
+        // Uppercase conversion
+        vars.insert("branch", "UPPERCASE.Branch");
+        assert_eq!(
+            expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
+            "uppercase_branch"
         );
 
         // Raw branch is unchanged

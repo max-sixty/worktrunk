@@ -174,7 +174,7 @@ The `[list]` section adds a URL column to `wt list`:
 url = "http://localhost:{{ branch | hash_port }}"
 ```
 
-URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999) and `sanitize` (filesystem-safe).
+URLs are dimmed when the port isn't listening. The template supports `{{ branch }}` with filters `hash_port` (port 10000-19999), `sanitize` (filesystem-safe), and `sanitize_db` (database-safe).
 
 ### CI platform override
 

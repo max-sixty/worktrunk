@@ -167,9 +167,10 @@ Templates support Jinja2 filters for transforming values:
 | Filter | Example | Description |
 |--------|---------|-------------|
 | `sanitize` | `{{ branch \| sanitize }}` | Replace `/` and `\` with `-` |
+| `sanitize_db` | `{{ branch \| sanitize_db }}` | Database-safe identifier (`[a-z0-9_]`, max 63 chars) |
 | `hash_port` | `{{ branch \| hash_port }}` | Hash to port 10000-19999 |
 
-The `sanitize` filter makes branch names safe for filesystem paths. The `hash_port` filter is useful for running dev servers on unique ports per worktree:
+The `sanitize` filter makes branch names safe for filesystem paths. The `sanitize_db` filter produces database-safe identifiers (lowercase alphanumeric and underscores, no leading digits). The `hash_port` filter is useful for running dev servers on unique ports per worktree:
 
 ```toml
 [post-start]
