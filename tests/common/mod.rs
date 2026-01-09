@@ -2493,6 +2493,39 @@ pub fn wait_for_valid_json(path: &Path) -> serde_json::Value {
     );
 }
 
+/// Poll until a condition is met, with exponential backoff.
+///
+/// Use this instead of fixed sleeps for any condition that may take time to become true.
+/// Fast initial checks (10ms) catch quick completions; backs off to reduce CPU on slow CI.
+///
+/// # Arguments
+/// * `description` - Human-readable description for the panic message if timeout is reached
+/// * `check` - Closure that returns `true` when the condition is met
+///
+/// # Example
+/// ```ignore
+/// // Wait for git to detect file changes (handles "racy git" timing issues)
+/// wait_for("git to detect dirty working tree", || {
+///     repo.git_command()
+///         .args(["status", "--porcelain"])
+///         .output()
+///         .map(|o| !o.stdout.is_empty())
+///         .unwrap_or(false)
+/// });
+/// ```
+pub fn wait_for(description: &str, mut check: impl FnMut() -> bool) {
+    let start = std::time::Instant::now();
+    let mut attempt = 0;
+    while start.elapsed() < BG_TIMEOUT {
+        if check() {
+            return;
+        }
+        exponential_sleep(attempt);
+        attempt += 1;
+    }
+    panic!("Condition not met within {:?}: {}", BG_TIMEOUT, description);
+}
+
 /// Convert Unix timestamp to ISO 8601 format for consistent git date handling
 ///
 /// Git interprets `@timestamp` format inconsistently across versions and platforms.
