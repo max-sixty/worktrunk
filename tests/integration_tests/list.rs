@@ -2197,9 +2197,8 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
-    // On Windows, git's mtime-based change detection may need a moment to see the file change
-    // due to lower timestamp resolution (especially in CI environments)
-    #[cfg(target_os = "windows")]
+    // Git's mtime-based change detection may need a moment to see the file change
+    // due to lower timestamp resolution in CI environments (Windows, Linux tmpfs)
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Force git to refresh its index to detect the file modification immediately
