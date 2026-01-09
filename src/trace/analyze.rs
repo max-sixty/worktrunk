@@ -196,6 +196,12 @@ mod tests {
     use super::*;
     use crate::trace::parse::parse_lines;
 
+    #[test]
+    fn test_percentile_empty() {
+        // Edge case: percentile of empty slice returns ZERO
+        assert_eq!(percentile(&[], 50), Duration::ZERO);
+    }
+
     fn sample_trace() -> &'static str {
         r#"[wt-trace] cmd="git status" dur=10.0ms ok=true
 [wt-trace] cmd="git status" dur=15.0ms ok=true

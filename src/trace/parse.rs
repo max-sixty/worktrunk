@@ -215,6 +215,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_trailing_whitespace() {
+        // Trailing whitespace should be handled (exercises trim_start + break)
+        let line = "[wt-trace] cmd=\"git status\" dur=5.0ms ok=true   ";
+        let entry = parse_line(line).unwrap();
+        assert_eq!(entry.command, "git status");
+    }
+
+    #[test]
     fn test_parse_lines() {
         let input = r#"
 DEBUG some other log
