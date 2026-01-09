@@ -102,6 +102,12 @@ db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null |
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
 Jinja2's operator precedence has pipe `|` with higher precedence than concatenation `~`, meaning expressions need parentheses to filter concatenated values.
 
+To use branch names as database names, use `sanitize_db` which produces database-safe identifiers (lowercase, underscores, no leading digits):
+
+```toml
+-e POSTGRES_DB={{ branch | sanitize_db }}
+```
+
 Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
 
 ```toml
