@@ -36,6 +36,8 @@ jobs:
             github.event.issue.number) || github.ref }}
           fetch-depth: 0 # Get more history for better context
           fetch-tags: true
+          # Use bot token so pushed commits trigger CI workflows
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 🔧 Configure git for Claude
         run: |
@@ -68,6 +70,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use bot token so pushed commits trigger CI workflows
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
