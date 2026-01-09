@@ -33,5 +33,4 @@ exit_code: 1
 
 ----- stderr -----
 [31m✗[39m [31mError parsing [1m.worktreeinclude[22m[39m
-[107m [0m _REPO_/.worktreeinclude: line 1: error parsing glob '{unclosed': unclosed
-[107m [0m alternate group; missing '}' (maybe escape '{' with '[{]'?)
+[107m [0m _REPO_/.worktreeinclude: line 1: error parsing glob '{unclosed': unclosed alternate group; missing '}' (maybe escape '{' with '[{]'?)

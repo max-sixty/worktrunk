@@ -710,13 +710,17 @@ impl std::error::Error for HookErrorWithHint {
 }
 
 /// Format an error with header and gutter content
+///
+/// Uses a fixed width (500) to prevent wrapping - error messages should
+/// display fully regardless of terminal size.
 fn format_error_block(header: impl Into<String>, error: &str) -> String {
     let header = header.into();
     let trimmed = error.trim();
     if trimmed.is_empty() {
         header
     } else {
-        format!("{header}\n{}", format_with_gutter(trimmed, None))
+        // Use fixed large width to prevent wrapping in error messages
+        format!("{header}\n{}", format_with_gutter(trimmed, Some(500)))
     }
 }
 
