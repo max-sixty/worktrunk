@@ -59,6 +59,12 @@ pub struct CollectOptions {
     /// will skip merge-base-dependent tasks (HasFileChanges, IsAncestor, WouldMergeAdd,
     /// BranchDiff, MergeTreeConflicts). AheadBehind uses batch data instead of skipping.
     /// CommittedTreesMatch is cheap and kept for integration detection.
+    ///
+    /// **Display implications:** When tasks are skipped:
+    /// - BranchDiff column shows `…` instead of diff stats
+    /// - Status symbols (conflict `✗`, integrated `⊂`) may be missing or incorrect
+    ///   since they depend on skipped tasks. The presence of `…` in the row signals
+    ///   that status symbols are also incomplete.
     pub skip_expensive_threshold: Option<usize>,
 }
 
