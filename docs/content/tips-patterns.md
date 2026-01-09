@@ -204,6 +204,24 @@ wt switch --create feature-part2 --base=@
 
 Creates a worktree that builds on the current branch's changes.
 
+## Agent handoffs in tmux
+
+Spawn a worktree with Claude running in a detached tmux session:
+
+```bash
+tmux new-session -d -s fix-auth-bug "wt switch --create fix-auth-bug -x claude -- \
+  'The login session expires after 5 minutes. Find the session timeout config and extend it to 24 hours.'"
+```
+
+This lets one Claude session hand off work to another that runs in the background. Hooks run inside the tmux session.
+
+The [worktrunk skill](@/claude-code.md) includes guidance for Claude Code to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree in tmux for...") or add to `CLAUDE.md`:
+
+```markdown
+When I ask you to spawn parallel worktrees, use tmux to create detached sessions
+with `wt switch --create -x claude` inside.
+```
+
 ## Bare repository layout
 
 An alternative to the default sibling layout (`myproject.feature/`) uses a bare repository with worktrees as subdirectories:
