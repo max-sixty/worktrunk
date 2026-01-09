@@ -152,17 +152,15 @@ fn detect_windows_shell() -> ShellConfig {
 /// (WSL launcher) often comes before Git Bash in PATH.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
-    // Primary method: Find Git installation via `git.exe` in PATH
+    // Primary: find git in PATH and derive bash location
     if let Ok(git_path) = which::which("git") {
         // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
         // bash.exe is at Git/bin/bash.exe or Git/usr/bin/bash.exe
         if let Some(git_dir) = git_path.parent().and_then(|p| p.parent()) {
-            // Try bin/bash.exe first (most common)
             let bash_path = git_dir.join("bin").join("bash.exe");
             if bash_path.exists() {
                 return Some(bash_path);
             }
-            // Also try usr/bin/bash.exe (some Git for Windows layouts)
             let bash_path = git_dir.join("usr").join("bin").join("bash.exe");
             if bash_path.exists() {
                 return Some(bash_path);
@@ -170,7 +168,8 @@ fn find_git_bash() -> Option<PathBuf> {
         }
     }
 
-    // Fallback: Standard Git for Windows installation path
+    // Fallback: standard Git for Windows path (needed on some CI environments
+    // where `which` doesn't find git even though it's installed)
     let bash_path = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
     if bash_path.exists() {
         return Some(bash_path);
