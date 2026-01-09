@@ -264,4 +264,18 @@ mod tests {
         assert_eq!(slowest[0].0, Duration::from_millis(500));
         assert!(slowest[0].1.contains("merge-base"));
     }
+
+    #[test]
+    fn test_empty_entries() {
+        let entries: Vec<TraceEntry> = vec![];
+        let analysis = super::analyze(&entries);
+
+        assert!(analysis.command_stats.is_empty());
+        assert_eq!(analysis.total_duration, Duration::ZERO);
+        assert!(analysis.slowest_commands.is_empty());
+        // Histogram buckets exist but all have 0 count
+        assert!(analysis.histogram.iter().all(|b| b.count == 0));
+        // Timeout impacts have 0% saved
+        assert!(analysis.timeout_impacts.iter().all(|i| i.percent_of_total == 0.0));
+    }
 }

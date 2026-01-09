@@ -205,6 +205,15 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_unknown_keys_ignored() {
+        // Unknown keys should be ignored for forward compatibility
+        let line = r#"[wt-trace] future_field=xyz cmd="git status" dur=5.0ms ok=true extra=ignored"#;
+        let entry = parse_line(line).unwrap();
+        assert_eq!(entry.command, "git status");
+        assert!(entry.is_success());
+    }
+
+    #[test]
     fn test_parse_lines() {
         let input = r#"
 DEBUG some other log
