@@ -1,0 +1,148 @@
+[a] [wt-trace] context=. cmd="git worktree list --porcelain" dur=8.7ms ok=true
+[c] [wt-trace] context=. cmd="git config --bool core.bare" dur=6.2ms ok=true
+[b] [wt-trace] context=. cmd="git config --get worktrunk.default-branch" dur=6.2ms ok=true
+[e] [wt-trace] context=. cmd="git for-each-ref --format=%(refname:lstrip=2) %(objectname) refs/heads/" dur=7.2ms ok=true
+[a] [wt-trace] context=. cmd="git show -s --format=%H %ct d4698b1abec3cc27d7791b06422f4954316177fb 45521479ea0dd4442f4e1094394493989e635593 d4698b1abec3cc27d7791b06422f4954316177fb b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f b6f88689b20ee1c5899f64010834b5d51a80de72 4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c c792ae28ab73d4d8b6405fb550fd45b526b8e1ae d4698b1abec3cc27d7791b06422f4954316177fb" dur=9.4ms ok=true
+[a] [wt-trace] context=. cmd="git rev-parse --show-toplevel" dur=6.7ms ok=true
+[a] [wt-trace] context=. cmd="git rev-parse --git-common-dir" dur=6.2ms ok=true
+[a] [wt-trace] context=. cmd="git config --get worktrunk.history" dur=4.9ms ok=true
+[a] [wt-trace] context=. cmd="git rev-parse --abbrev-ref main@{u}" dur=5.6ms ok=true
+[a] [wt-trace] context=. cmd="git rev-parse main origin/main" dur=5.1ms ok=true
+[a] [wt-trace] context=worktrunk cmd="git config --get core.fsmonitor" dur=5.0ms ok=true
+[a] [wt-trace] context=worktrunk.command-attribution cmd="git fsmonitor--daemon start" dur=5.5ms ok=false
+[a] [wt-trace] context=worktrunk cmd="git fsmonitor--daemon start" dur=5.6ms ok=false
+[a] [wt-trace] context=worktrunk.461-skip cmd="git fsmonitor--daemon start" dur=5.3ms ok=false
+[a] [wt-trace] context=worktrunk.tmux cmd="git fsmonitor--daemon start" dur=4.9ms ok=false
+[a] [wt-trace] context=worktrunk.sanitize-db cmd="git fsmonitor--daemon start" dur=5.2ms ok=false
+[a] [wt-trace] context=worktrunk.461 cmd="git fsmonitor--daemon start" dur=5.2ms ok=false
+[a] [wt-trace] context=worktrunk.461-timeout cmd="git fsmonitor--daemon start" dur=5.2ms ok=false
+[a] [wt-trace] context=worktrunk.plugin cmd="git fsmonitor--daemon start" dur=5.0ms ok=false
+[G] [wt-trace] context=worktrunk.command-attribution cmd="git merge-tree --write-tree main command-attribution" dur=9.4ms ok=true
+[b] [wt-trace] context=worktrunk.command-attribution cmd="git show -s --format=%ct b6f88689b20ee1c5899f64010834b5d51a80de72" dur=10.0ms ok=true
+[e] [wt-trace] context=worktrunk cmd="git rev-list --left-right --count main...d4698b1abec3cc27d7791b06422f4954316177fb" dur=10.1ms ok=true
+[C] [wt-trace] context=worktrunk.461-timeout cmd="git show -s --format=%ct b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f" dur=9.9ms ok=true
+[s] [wt-trace] context=worktrunk.461 cmd="git config --get worktrunk.state.461.marker" dur=9.3ms ok=true
+[u] [wt-trace] context=worktrunk.command-attribution cmd="git rev-parse --abbrev-ref command-attribution@{u}" dur=10.2ms ok=false
+[f] [wt-trace] context=worktrunk.command-attribution cmd="git diff --name-only main...command-attribution" dur=11.9ms ok=true
+[l] [wt-trace] context=worktrunk cmd="git rev-parse --git-dir" dur=11.5ms ok=true
+[c] [wt-trace] context=worktrunk.sanitize-db cmd="git merge-base --is-ancestor c792ae28ab73d4d8b6405fb550fd45b526b8e1ae main" dur=13.6ms ok=false
+[d] [wt-trace] context=worktrunk.461-skip cmd="git rev-parse d4698b1abec3cc27d7791b06422f4954316177fb^{tree} main^{tree}" dur=14.2ms ok=true
+[n] [wt-trace] context=worktrunk cmd="git rev-parse d4698b1abec3cc27d7791b06422f4954316177fb^{tree} main^{tree}" dur=14.3ms ok=true
+[y] [wt-trace] context=worktrunk.command-attribution cmd="git rev-parse --git-dir" dur=14.4ms ok=true
+[h] [wt-trace] context=worktrunk.tmux cmd="git diff --name-only main...tmux" dur=14.6ms ok=true
+[B] [wt-trace] context=worktrunk.461-skip cmd="git rev-parse --abbrev-ref 461-skip@{u}" dur=14.7ms ok=false
+[i] [wt-trace] context=worktrunk.461-skip cmd="git config --get worktrunk.state.461-skip.marker" dur=14.9ms ok=true
+[t] [wt-trace] context=worktrunk.tmux cmd="git merge-tree --write-tree main d4698b1abec3cc27d7791b06422f4954316177fb" dur=15.1ms ok=true
+[k] [wt-trace] context=worktrunk.command-attribution cmd="git rev-list --left-right --count main...b6f88689b20ee1c5899f64010834b5d51a80de72" dur=15.3ms ok=true
+[q] [wt-trace] context=worktrunk.461 cmd="git rev-parse --abbrev-ref 461@{u}" dur=15.6ms ok=false
+[D] [wt-trace] context=worktrunk.command-attribution cmd="git config --get worktrunk.state.command-attribution.marker" dur=15.0ms ok=true
+[x] [wt-trace] context=worktrunk.command-attribution cmd="git merge-tree --write-tree main b6f88689b20ee1c5899f64010834b5d51a80de72" dur=15.8ms ok=true
+[E] [wt-trace] context=worktrunk.461-timeout cmd="git merge-tree --write-tree main b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f" dur=16.8ms ok=true
+[m] [wt-trace] context=worktrunk cmd="git merge-base --is-ancestor d4698b1abec3cc27d7791b06422f4954316177fb main" dur=16.3ms ok=true
+[F] [wt-trace] context=worktrunk cmd="git rev-parse --abbrev-ref main@{u}" dur=15.2ms ok=true
+[p] [wt-trace] context=worktrunk.command-attribution cmd="git merge-base --is-ancestor b6f88689b20ee1c5899f64010834b5d51a80de72 main" dur=18.2ms ok=true
+[z] [wt-trace] context=worktrunk.plugin cmd="git rev-parse --git-dir" dur=17.2ms ok=true
+[o] [wt-trace] context=worktrunk.command-attribution cmd="git rev-parse b6f88689b20ee1c5899f64010834b5d51a80de72^{tree} main^{tree}" dur=18.7ms ok=true
+[w] [wt-trace] context=worktrunk.tmux cmd="git show -s --format=%ct d4698b1abec3cc27d7791b06422f4954316177fb" dur=18.0ms ok=true
+[A] [wt-trace] context=worktrunk.plugin cmd="git rev-list --left-right --count main...4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c" dur=17.6ms ok=true
+[l] [wt-trace] context=worktrunk cmd="git rev-parse --git-dir" dur=10.0ms ok=true
+[G] [wt-trace] context=worktrunk.command-attribution cmd="git rev-parse main^{tree}" dur=12.4ms ok=true
+[f] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-parse --git-dir" dur=10.5ms ok=true
+[v] [wt-trace] context=worktrunk.plugin cmd="git merge-tree --write-tree main plugin" dur=22.7ms ok=true
+[s] [wt-trace] context=worktrunk.461 cmd="git merge-tree --write-tree main 45521479ea0dd4442f4e1094394493989e635593" dur=13.3ms ok=true
+[C] [wt-trace] context=worktrunk.461-timeout cmd="git show -s --format=%s b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f" dur=14.1ms ok=true
+[b] [wt-trace] context=worktrunk.command-attribution cmd="git show -s --format=%s b6f88689b20ee1c5899f64010834b5d51a80de72" dur=14.4ms ok=true
+[c] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-parse --abbrev-ref sanitize-db@{u}" dur=9.9ms ok=true
+[E] [wt-trace] context=worktrunk.461-timeout cmd="git merge-tree --write-tree main 461-timeout" dur=8.5ms ok=true
+[r] [wt-trace] context=worktrunk.tmux cmd="git status --porcelain" dur=25.0ms ok=true
+[d] [wt-trace] context=worktrunk.461-skip cmd="git diff --name-only main...461-skip" dur=12.5ms ok=true
+[h] [wt-trace] context=worktrunk.tmux cmd="git merge-base --is-ancestor d4698b1abec3cc27d7791b06422f4954316177fb main" dur=12.3ms ok=true
+[i] [wt-trace] context=worktrunk.461-skip cmd="git merge-tree --write-tree main d4698b1abec3cc27d7791b06422f4954316177fb" dur=12.0ms ok=true
+[D] [wt-trace] context=worktrunk.461-skip cmd="git rev-parse --git-dir" dur=12.5ms ok=true
+[g] [wt-trace] context=worktrunk.command-attribution cmd="git status --porcelain" dur=28.2ms ok=true
+[e] [wt-trace] context=worktrunk cmd="git show -s --format=%ct d4698b1abec3cc27d7791b06422f4954316177fb" dur=19.1ms ok=true
+[n] [wt-trace] context=worktrunk cmd="git diff --name-only main...main" dur=15.0ms ok=true
+[y] [wt-trace] context=worktrunk.command-attribution cmd="git rev-parse --git-dir" dur=17.4ms ok=true
+[A] [wt-trace] context=worktrunk.plugin cmd="git rev-parse 4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c^{tree} main^{tree}" dur=14.0ms ok=true
+[p] [wt-trace] context=worktrunk.tmux cmd="git rev-parse --git-dir" dur=15.5ms ok=true
+[G] [wt-trace] context=worktrunk.461-skip cmd="git merge-base --is-ancestor d4698b1abec3cc27d7791b06422f4954316177fb main" dur=12.3ms ok=true
+[u] [wt-trace] context=worktrunk.sanitize-db cmd="git merge-tree --write-tree main sanitize-db" dur=23.9ms ok=true
+[j] [wt-trace] context=worktrunk.461-timeout cmd="git status --porcelain" dur=34.0ms ok=true
+[l] [wt-trace] context=worktrunk cmd="git config --get worktrunk.state.main.marker" dur=13.6ms ok=true
+[B] [wt-trace] context=worktrunk.461-skip cmd="git status --porcelain" dur=21.5ms ok=true
+[E] [wt-trace] context=worktrunk.461-timeout cmd="git rev-parse main^{tree}" dur=12.0ms ok=true
+[x] [wt-trace] context=worktrunk.461 cmd="git rev-parse --git-dir" dur=20.9ms ok=true
+[F] [wt-trace] context=worktrunk cmd="git rev-list --left-right --count origin/main...d4698b1abec3cc27d7791b06422f4954316177fb" dur=20.5ms ok=true
+[o] [wt-trace] context=worktrunk.plugin cmd="git merge-tree --write-tree main 4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c" dur=19.5ms ok=true
+[C] [wt-trace] context=worktrunk.461-timeout cmd="git rev-list --left-right --count main...b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f" dur=14.2ms ok=true
+[k] [wt-trace] context=worktrunk.plugin cmd="git config --get worktrunk.state.plugin.marker" dur=23.5ms ok=false
+[n] [wt-trace] context=worktrunk.461-timeout cmd="git rev-parse --git-dir" dur=10.4ms ok=true
+[i] [wt-trace] context=worktrunk.461-skip cmd="git merge-tree --write-tree main 461-skip" dur=12.1ms ok=true
+[D] [wt-trace] context=worktrunk.461-skip cmd="git rev-parse --git-dir" dur=11.5ms ok=true
+[c] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-list --left-right --count origin/sanitize-db...c792ae28ab73d4d8b6405fb550fd45b526b8e1ae" dur=15.4ms ok=true
+[w] [wt-trace] context=worktrunk.tmux cmd="git show -s --format=%s d4698b1abec3cc27d7791b06422f4954316177fb" dur=21.7ms ok=true
+[d] [wt-trace] context=worktrunk.plugin cmd="git merge-base --is-ancestor 4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c main" dur=13.8ms ok=false
+[f] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-parse --git-dir" dur=19.3ms ok=true
+[h] [wt-trace] context=worktrunk.tmux cmd="git rev-parse --abbrev-ref tmux@{u}" dur=16.1ms ok=false
+[z] [wt-trace] context=worktrunk.plugin cmd="git rev-parse --git-dir" dur=25.1ms ok=true
+[b] [wt-trace] context=worktrunk.tmux cmd="git rev-list --left-right --count main...d4698b1abec3cc27d7791b06422f4954316177fb" dur=20.1ms ok=true
+[y] [wt-trace] context=worktrunk.sanitize-db cmd="git config --get worktrunk.state.sanitize-db.marker" dur=12.6ms ok=true
+[e] [wt-trace] context=worktrunk cmd="git show -s --format=%s d4698b1abec3cc27d7791b06422f4954316177fb" dur=15.9ms ok=true
+[t] [wt-trace] context=worktrunk.tmux cmd="git merge-tree --write-tree main tmux" dur=27.3ms ok=true
+[q] [wt-trace] context=worktrunk.461 cmd="git status --porcelain" dur=29.9ms ok=true
+[s] [wt-trace] context=worktrunk.461 cmd="git merge-tree --write-tree main 461" dur=22.3ms ok=true
+[x] [wt-trace] context=worktrunk.461 cmd="git rev-parse --git-dir" dur=10.7ms ok=true
+[v] [wt-trace] context=worktrunk.plugin cmd="git rev-parse main^{tree}" dur=25.3ms ok=true
+[B] [wt-trace] context=worktrunk.461-skip cmd="git rev-parse HEAD^{tree} main^{tree}" dur=12.7ms ok=true
+[l] [wt-trace] context=worktrunk cmd="git merge-tree --write-tree main d4698b1abec3cc27d7791b06422f4954316177fb" dur=13.3ms ok=true
+[r] [wt-trace] context=worktrunk.tmux cmd="git diff --numstat HEAD" dur=24.2ms ok=true
+[G] [wt-trace] context=worktrunk.461-timeout cmd="git diff --name-only main...461-timeout" dur=15.6ms ok=true
+[A] [wt-trace] context=worktrunk.plugin cmd="git diff --name-only main...plugin" dur=18.1ms ok=true
+[m] [wt-trace] context=worktrunk.sanitize-db cmd="git status --porcelain" dur=33.8ms ok=true
+[d] [wt-trace] context=worktrunk.plugin cmd="git rev-parse --abbrev-ref plugin@{u}" dur=11.0ms ok=true
+[o] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-list --left-right --count main...c792ae28ab73d4d8b6405fb550fd45b526b8e1ae" dur=14.0ms ok=true
+[i] [wt-trace] context=worktrunk.461-skip cmd="git rev-parse main^{tree}" dur=13.0ms ok=true
+[E] [wt-trace] context=worktrunk.plugin cmd="git show -s --format=%ct 4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c" dur=15.8ms ok=true
+[c] [wt-trace] context=worktrunk.461-timeout cmd="git rev-parse --abbrev-ref 461-timeout@{u}" dur=13.9ms ok=false
+[C] [wt-trace] context=worktrunk.461-timeout cmd="git rev-parse b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f^{tree} main^{tree}" dur=15.9ms ok=true
+[f] [wt-trace] context=worktrunk cmd="git merge-tree --write-tree main main" dur=13.9ms ok=true
+[b] [wt-trace] context=worktrunk.461-skip cmd="git show -s --format=%ct d4698b1abec3cc27d7791b06422f4954316177fb" dur=11.3ms ok=true
+[w] [wt-trace] context=worktrunk.tmux cmd="git rev-parse d4698b1abec3cc27d7791b06422f4954316177fb^{tree} main^{tree}" dur=15.7ms ok=true
+[y] [wt-trace] context=worktrunk.461-skip cmd="git rev-list --left-right --count main...d4698b1abec3cc27d7791b06422f4954316177fb" dur=14.2ms ok=true
+[z] [wt-trace] context=worktrunk.sanitize-db cmd="git merge-tree --write-tree main c792ae28ab73d4d8b6405fb550fd45b526b8e1ae" dur=15.3ms ok=true
+[t] [wt-trace] context=worktrunk.tmux cmd="git rev-parse main^{tree}" dur=14.9ms ok=true
+[j] [wt-trace] context=worktrunk.461-timeout cmd="git diff --numstat HEAD" dur=25.1ms ok=true
+[F] [wt-trace] context=worktrunk cmd="git status --porcelain" dur=22.8ms ok=true
+[e] [wt-trace] context=worktrunk.461-timeout cmd="git config --get worktrunk.state.461-timeout.marker" dur=15.7ms ok=true
+[h] [wt-trace] context=worktrunk.plugin cmd="git status --porcelain" dur=17.9ms ok=true
+[l] [wt-trace] context=worktrunk.sanitize-db cmd="git diff --name-only main...sanitize-db" dur=12.3ms ok=true
+[G] [wt-trace] context=worktrunk.461 cmd="git show -s --format=%ct 45521479ea0dd4442f4e1094394493989e635593" dur=11.3ms ok=true
+[n] [wt-trace] context=worktrunk.461-timeout cmd="git rev-parse --git-dir" dur=21.7ms ok=true
+[D] [wt-trace] context=worktrunk.461-timeout cmd="git merge-base --is-ancestor b521bbe6955f2be4aa51d0979bb4f77afaa7ef1f main" dur=21.6ms ok=false
+[r] [wt-trace] context=worktrunk.tmux cmd="git rev-parse HEAD^{tree} main^{tree}" dur=12.1ms ok=true
+[g] [wt-trace] context=worktrunk.command-attribution cmd="git diff --numstat HEAD" dur=33.0ms ok=true
+[d] [wt-trace] context=worktrunk.plugin cmd="git rev-list --left-right --count origin/plugin...4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c" dur=10.4ms ok=true
+[q] [wt-trace] context=worktrunk.461 cmd="git diff --numstat HEAD" dur=16.5ms ok=true
+[v] [wt-trace] context=worktrunk.461 cmd="git rev-parse 45521479ea0dd4442f4e1094394493989e635593^{tree} main^{tree}" dur=12.6ms ok=true
+[p] [wt-trace] context=worktrunk.tmux cmd="git rev-parse --git-dir" dur=28.4ms ok=true
+[B] [wt-trace] context=worktrunk.sanitize-db cmd="git show -s --format=%ct c792ae28ab73d4d8b6405fb550fd45b526b8e1ae" dur=13.9ms ok=true
+[x] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-parse c792ae28ab73d4d8b6405fb550fd45b526b8e1ae^{tree} main^{tree}" dur=14.7ms ok=true
+[s] [wt-trace] context=worktrunk.461 cmd="git rev-parse main^{tree}" dur=17.6ms ok=true
+[A] [wt-trace] context=worktrunk.461 cmd="git rev-list --left-right --count main...45521479ea0dd4442f4e1094394493989e635593" dur=12.9ms ok=true
+[m] [wt-trace] context=worktrunk.sanitize-db cmd="git diff --numstat HEAD" dur=18.8ms ok=true
+[k] [wt-trace] context=worktrunk.tmux cmd="git config --get worktrunk.state.tmux.marker" dur=37.6ms ok=true
+[u] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-parse main^{tree}" dur=42.2ms ok=true
+[f] [wt-trace] context=worktrunk cmd="git rev-parse main^{tree}" dur=21.2ms ok=true
+[F] [wt-trace] context=worktrunk cmd="git rev-parse HEAD^{tree} main^{tree}" dur=23.4ms ok=true
+[h] [wt-trace] context=worktrunk.plugin cmd="git rev-parse HEAD^{tree} main^{tree}" dur=26.3ms ok=true
+[q] [wt-trace] context=worktrunk.461 cmd="git rev-parse HEAD^{tree} main^{tree}" dur=25.4ms ok=true
+[g] [wt-trace] context=worktrunk.command-attribution cmd="git rev-parse HEAD^{tree} main^{tree}" dur=25.6ms ok=true
+[o] [wt-trace] context=worktrunk.461 cmd="git diff --name-only main...461" dur=38.5ms ok=true
+[i] [wt-trace] context=worktrunk.461 cmd="git merge-base --is-ancestor 45521479ea0dd4442f4e1094394493989e635593 main" dur=37.9ms ok=true
+[j] [wt-trace] context=worktrunk.461-timeout cmd="git rev-parse HEAD^{tree} main^{tree}" dur=30.6ms ok=true
+[E] [wt-trace] context=worktrunk.plugin cmd="git show -s --format=%s 4d95ed9d94d4c9d6848d5f7261aebd61d327cc5c" dur=38.0ms ok=true
+[m] [wt-trace] context=worktrunk.sanitize-db cmd="git rev-parse HEAD^{tree} main^{tree}" dur=21.8ms ok=true
+[G] [wt-trace] context=worktrunk.461 cmd="git show -s --format=%s 45521479ea0dd4442f4e1094394493989e635593" dur=31.7ms ok=true
+[b] [wt-trace] context=worktrunk.461-skip cmd="git show -s --format=%s d4698b1abec3cc27d7791b06422f4954316177fb" dur=37.2ms ok=true
+[B] [wt-trace] context=worktrunk.sanitize-db cmd="git show -s --format=%s c792ae28ab73d4d8b6405fb550fd45b526b8e1ae" dur=30.7ms ok=true
+[r] [wt-trace] context=worktrunk.tmux cmd="git diff --numstat main" dur=41.1ms ok=true

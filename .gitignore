@@ -11,3 +11,7 @@ test-concurrent.sh
 *.snap.pending
 logo-variant-*.png
 test-results/
+
+# Nix build outputs
+/result
+/result-*

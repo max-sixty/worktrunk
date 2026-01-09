@@ -5,6 +5,7 @@ pub mod shell;
 pub mod shell_exec;
 pub mod styling;
 pub mod sync;
+pub mod trace;
 pub mod utils;
 
 // Re-export HookType for convenience
