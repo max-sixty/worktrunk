@@ -276,6 +276,11 @@ mod tests {
         // Histogram buckets exist but all have 0 count
         assert!(analysis.histogram.iter().all(|b| b.count == 0));
         // Timeout impacts have 0% saved
-        assert!(analysis.timeout_impacts.iter().all(|i| i.percent_of_total == 0.0));
+        assert!(
+            analysis
+                .timeout_impacts
+                .iter()
+                .all(|i| i.percent_of_total == 0.0)
+        );
     }
 }
