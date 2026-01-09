@@ -186,7 +186,8 @@ pub fn handle_list(
         show_progress,
         render_table,
         config,
-        None, // No timeout for wt list
+        None,  // No timeout for wt list
+        false, // Don't skip expensive tasks — show full data
     )?;
 
     let Some(ListData { items, .. }) = list_data else {

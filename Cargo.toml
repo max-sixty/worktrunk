@@ -60,6 +60,10 @@ name = "git-wt"
 path = "src/git_wt.rs"
 required-features = ["git-wt"]
 
+# Trace log analyzer for performance debugging
+[[bin]]
+name = "analyze-trace"
+path = "src/bin/analyze-trace.rs"
 
 [dependencies]
 anyhow = "1.0"

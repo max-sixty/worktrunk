@@ -670,8 +670,12 @@ fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str
 /// The `command_timeout` parameter, if set, limits how long individual git commands can run.
 /// This is useful for `wt select` to show the TUI faster by skipping slow operations.
 ///
-/// TODO: Now that we skip expensive tasks for stale branches (see batch_ahead_behind),
+/// TODO: Now that we skip expensive tasks for stale branches (see `skip_expensive_for_stale`),
 /// the timeout may be unnecessary. Consider removing it if it doesn't provide value.
+///
+/// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
+/// skipping expensive merge-base operations for branches far behind the default branch.
+/// This dramatically improves performance for repos with many stale branches.
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
     repo: &Repository,
@@ -682,6 +686,7 @@ pub fn collect(
     render_table: bool,
     config: &worktrunk::config::WorktrunkConfig,
     command_timeout: Option<std::time::Duration>,
+    skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
 
@@ -952,16 +957,13 @@ pub fn collect(
     // Deferred until after skeleton to avoid blocking initial render.
     let integration_target = repo.effective_integration_target(&default_branch);
 
-    // In wt select, batch-fetch ahead/behind counts to identify branches that are far behind.
+    // Batch-fetch ahead/behind counts to identify branches that are far behind.
     // This allows skipping expensive merge-base operations for diverged branches, dramatically
-    // improving performance on repos with many stale branches.
+    // improving performance on repos with many stale branches (e.g., wt select).
     //
     // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
     // counts in a single command. On older git versions, returns empty and all tasks run.
-    //
-    // Gated on command_timeout (which is only set for wt select) rather than !render_table,
-    // so JSON mode still gets full data.
-    if command_timeout.is_some() {
+    if skip_expensive_for_stale {
         // Branches more than 50 commits behind skip expensive merge-base operations.
         // 50 is low enough to catch truly stale branches while keeping info for
         // recently-diverged ones. The "behind" count is the primary expense driver -

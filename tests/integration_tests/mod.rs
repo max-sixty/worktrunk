@@ -4,6 +4,7 @@
 //
 // Windows path differences are handled by snapshot filters in setup_snapshot_settings().
 
+pub mod analyze_trace;
 // column_alignment merged into spacing_edge_cases
 pub mod approval_pty;
 
