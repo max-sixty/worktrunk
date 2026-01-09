@@ -2197,13 +2197,32 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
+    // On Windows, git's mtime-based change detection may need a moment to see the file change
+    // due to lower timestamp resolution (especially in CI environments)
+    #[cfg(target_os = "windows")]
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     // Force git to refresh its index to detect the file modification immediately
-    // Without this, git's mtime-based caching can miss the change on fast filesystems (especially macOS)
+    // Without this, git's mtime-based caching can miss the change on fast filesystems (especially macOS/Windows)
     repo.git_command()
         .args(["update-index", "--refresh"])
         .current_dir(&feature)
         .output()
         .unwrap();
+
+    // Verify git sees the change (especially important on Windows)
+    let status_output = repo
+        .git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(&feature)
+        .output()
+        .unwrap();
+    let status_str = String::from_utf8(status_output.stdout).unwrap();
+    assert!(
+        !status_str.trim().is_empty(),
+        "Git should detect the modified file. Status output: {:?}",
+        status_str
+    );
 
     // Without --full: no conflict symbol (only checks commit-level)
     assert_cmd_snapshot!(
