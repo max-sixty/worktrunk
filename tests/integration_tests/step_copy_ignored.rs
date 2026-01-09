@@ -5,11 +5,57 @@ use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
 
-/// Test with no .worktreeinclude file
+/// Test with no .worktreeinclude file and no gitignored files
 #[rstest]
 fn test_copy_ignored_no_worktreeinclude(mut repo: TestRepo) {
     let feature_path = repo.add_worktree("feature");
-    // No .worktreeinclude file exists
+    // No .worktreeinclude file and no gitignored files → nothing to copy
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
+}
+
+/// Test default behavior: copies all gitignored files when no .worktreeinclude exists
+#[rstest]
+fn test_copy_ignored_default_copies_all(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create gitignored files but NO .worktreeinclude
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join("cache.db"), "cached data").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\ncache.db\n").unwrap();
+
+    // Without .worktreeinclude, all gitignored files should be copied
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
+
+    // Verify both files were copied
+    assert!(
+        feature_path.join(".env").exists(),
+        ".env should be copied without .worktreeinclude"
+    );
+    assert!(
+        feature_path.join("cache.db").exists(),
+        "cache.db should be copied without .worktreeinclude"
+    );
+}
+
+/// Test error handling when .worktreeinclude has invalid syntax
+#[rstest]
+fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
+    let feature_path = repo.add_worktree("feature");
+
+    // Create invalid .worktreeinclude (unclosed brace in alternate group)
+    fs::write(repo.root_path().join(".worktreeinclude"), "{unclosed\n").unwrap();
+
+    // Should fail with parse error
     assert_cmd_snapshot!(make_snapshot_cmd(
         &repo,
         "step",

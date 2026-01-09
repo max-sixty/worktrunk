@@ -76,26 +76,16 @@ pub enum StepCommand {
         target: Option<String>,
     },
 
-    /// Copy `.worktreeinclude` files to another worktree
+    /// Copy gitignored files to another worktree
     ///
-    /// Copies files listed in `.worktreeinclude` that are also gitignored.
-    /// Useful in post-create hooks to sync local config files
-    /// (`.env`, IDE settings) to new worktrees. Skips symlinks and existing
-    /// files.
+    /// Copies gitignored files to another worktree. By default copies all
+    /// gitignored files; use `.worktreeinclude` to limit what gets copied.
+    /// Useful in post-create hooks to sync local config files (`.env`, IDE
+    /// settings) to new worktrees. Skips symlinks and existing files.
     #[command(
-        after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies files listed in `.worktreeinclude` to another worktree, eliminating cold starts.
+        after_long_help = r#"Git worktrees share the repository but not untracked files. This command copies gitignored files to another worktree, eliminating cold starts.
 
 ## Setup
-
-Create a `.worktreeinclude` file in your repository root listing patterns to copy (uses gitignore syntax):
-
-```gitignore
-# .worktreeinclude
-.env
-node_modules/
-target/
-.cache/
-```
 
 Add to your project config:
 
@@ -105,9 +95,19 @@ Add to your project config:
 copy = "wt step copy-ignored"
 ```
 
+All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
+
+```gitignore
+# .worktreeinclude — optional, limits what gets copied
+.env
+node_modules/
+target/
+.cache/
+```
+
 ## What gets copied
 
-Files are copied only if they match **both** `.worktreeinclude` **and** are gitignored. This prevents accidentally copying tracked files.
+Only gitignored files are copied — tracked files are never touched. If `.worktreeinclude` exists, files must match **both** `.worktreeinclude` **and** be gitignored.
 
 ## Common patterns
 

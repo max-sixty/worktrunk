@@ -6,9 +6,11 @@ info:
     - step
     - "-h"
   env:
+    CARGO_LLVM_COV: "1"
     CLICOLOR_FORCE: "1"
     COLUMNS: "150"
     GIT_EDITOR: ""
+    LLVM_PROFILE_FILE: /Users/maximilian/workspace/worktrunk.worktreeinclude/target/llvm-cov-target/worktrunk.worktreeinclude-%p-%m.profraw
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
     TERM: alacritty
@@ -29,7 +31,7 @@ Usage: [1m[36mwt step[0m [36m[OPTIONS][0m [36m<COMMAND>
   [1m[36msquash[0m        Squash commits since branching
   [1m[36mpush[0m          Fast-forward target to current branch
   [1m[36mrebase[0m        Rebase onto target
-  [1m[36mcopy-ignored[0m  Copy [1m.worktreeinclude[0m files to another worktree
+  [1m[36mcopy-ignored[0m  Copy gitignored files to another worktree
   [1m[36mfor-each[0m      [experimental] Run command in each worktree
 
 [1m[32mOptions:

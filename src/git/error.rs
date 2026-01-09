@@ -131,6 +131,9 @@ pub enum GitError {
     ParseError {
         message: String,
     },
+    WorktreeIncludeParseError {
+        error: String,
+    },
     LlmCommandFailed {
         command: String,
         error: String,
@@ -543,6 +546,11 @@ impl std::fmt::Display for GitError {
 
             GitError::ParseError { message } => {
                 write!(f, "{}", error_message(message))
+            }
+
+            GitError::WorktreeIncludeParseError { error } => {
+                let header = error_message(cformat!("Error parsing <bold>.worktreeinclude</>"));
+                write!(f, "{}", format_error_block(header, error))
             }
 
             GitError::Other { message } => {
