@@ -31,6 +31,8 @@ jobs:
           ref: main
           fetch-depth: 0
           fetch-tags: true
+          # Use bot token so pushed commits trigger CI workflows
+          token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
 
       - name: 🔧 Configure git for Claude
         run: |
@@ -62,12 +64,16 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Use bot token so pushed commits trigger CI workflows
+          github_token: ${{ secrets.WORKTRUNK_BOT_TOKEN }}
           additional_permissions: |
             actions: read
 
           # Provide Claude with context about the failure and instructions
           prompt: |
+            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
+
             CI has failed on main branch. Your job is to diagnose and fix the failure, then create a PR.
 
             ## Failed workflow information
