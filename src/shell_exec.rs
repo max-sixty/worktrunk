@@ -147,18 +147,12 @@ fn detect_windows_shell() -> ShellConfig {
 
 /// Find Git Bash executable on Windows
 ///
-/// Detection order (designed to always return absolute paths and avoid WSL):
-/// 1. `git.exe` in PATH - derive bash.exe location from Git installation
-/// 2. Standard Git for Windows and MSYS2 installation paths
-///
-/// We explicitly avoid `which bash` because on systems with WSL installed,
-/// `C:\Windows\System32\bash.exe` (WSL launcher) often comes before Git Bash
-/// in PATH, even when MSYSTEM is set.
+/// Finds `git.exe` in PATH and derives the bash.exe location from the Git installation.
+/// We avoid `which bash` because on systems with WSL, `C:\Windows\System32\bash.exe`
+/// (WSL launcher) often comes before Git Bash in PATH.
 #[cfg(windows)]
 fn find_git_bash() -> Option<PathBuf> {
     // Primary method: Find Git installation via `git.exe` in PATH
-    // This is the most reliable method and always returns an absolute path.
-    // Works on CI systems like GitHub Actions where Git might be in non-standard locations.
     if let Ok(git_path) = which::which("git") {
         // git.exe is typically at Git/cmd/git.exe or Git/bin/git.exe
         // bash.exe is at Git/bin/bash.exe or Git/usr/bin/bash.exe
@@ -176,24 +170,10 @@ fn find_git_bash() -> Option<PathBuf> {
         }
     }
 
-    // Fallback: Check standard installation paths for bash.exe
-    // (Git for Windows and MSYS2 both provide POSIX-compatible bash)
-    let bash_paths = [
-        // Git for Windows
-        r"C:\Program Files\Git\bin\bash.exe",
-        r"C:\Program Files\Git\usr\bin\bash.exe",
-        r"C:\Program Files (x86)\Git\bin\bash.exe",
-        r"C:\Git\bin\bash.exe",
-        // MSYS2 standalone (popular alternative to Git Bash)
-        r"C:\msys64\usr\bin\bash.exe",
-        r"C:\msys32\usr\bin\bash.exe",
-    ];
-
-    for path in &bash_paths {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return Some(path);
-        }
+    // Fallback: Standard Git for Windows installation path
+    let bash_path = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
+    if bash_path.exists() {
+        return Some(bash_path);
     }
 
     None
