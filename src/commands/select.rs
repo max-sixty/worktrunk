@@ -871,6 +871,12 @@ pub fn handle_select() -> anyhow::Result<()> {
     .into_iter()
     .collect();
 
+    // Use 500ms timeout for git commands to show TUI faster on large repos.
+    // Typical slow operations: merge-tree ~400-1800ms, rev-list ~200-600ms.
+    // 500ms allows most operations to complete while cutting off tail latency.
+    // Operations that timeout fail silently (data not shown), but TUI stays responsive.
+    let command_timeout = Some(std::time::Duration::from_millis(500));
+
     let Some(list_data) = collect::collect(
         &repo,
         true,  // show_branches (include branches without worktrees)
@@ -879,6 +885,7 @@ pub fn handle_select() -> anyhow::Result<()> {
         false, // show_progress (no progress bars)
         false, // render_table (select renders its own UI)
         &config,
+        command_timeout,
     )?
     else {
         return Ok(());

@@ -8,7 +8,7 @@ info:
     - "--help"
   env:
     CLICOLOR_FORCE: "1"
-    COLUMNS: "150"
+    COLUMNS: "500"
     GIT_EDITOR: ""
     RUST_LOG: warn
     SOURCE_DATE_EPOCH: "1735776000"
@@ -58,5 +58,4 @@ Clear global approvals:
 
 [32mHow approvals work
 
-Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass 
-prompts in CI.
+Approved commands are saved to user config. Re-approval is required when the command template changes or the project moves. Use [2m--yes[0m to bypass prompts in CI.

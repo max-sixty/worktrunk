@@ -378,7 +378,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
         }
         // Not a rebase conflict, return original error
         return Err(worktrunk::git::GitError::Other {
-            message: format!("Failed to rebase onto '{}': {}", target_branch, e),
+            message: cformat!("Failed to rebase onto <bold>{}</>: {}", target_branch, e),
         }
         .into());
     }
@@ -409,9 +409,11 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
 
 /// Handle `wt step copy-ignored` command
 ///
-/// Copies files matching the intersection of `.worktreeinclude` and gitignored files
-/// from a source worktree to a destination worktree. Uses COW (reflink) when
-/// available for efficient copying of large directories like `target/`.
+/// Copies gitignored files from a source worktree to a destination worktree.
+/// If a `.worktreeinclude` file exists, only files matching both `.worktreeinclude`
+/// and gitignore patterns are copied. Without `.worktreeinclude`, all gitignored
+/// files are copied. Uses COW (reflink) when available for efficient copying of
+/// large directories like `target/`.
 pub fn step_copy_ignored(
     from: Option<&str>,
     to: Option<&str>,
@@ -425,18 +427,22 @@ pub fn step_copy_ignored(
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
         Some(branch) => {
-            let path = repo
-                .worktree_for_branch(branch)?
-                .ok_or_else(|| anyhow::anyhow!("No worktree found for branch '{}'", branch))?;
+            let path = repo.worktree_for_branch(branch)?.ok_or_else(|| {
+                worktrunk::git::GitError::WorktreeNotFound {
+                    branch: branch.to_string(),
+                }
+            })?;
             (path, branch.to_string())
         }
         None => (repo.worktree_base()?, repo.default_branch()?.to_string()),
     };
 
     let dest_path = match to {
-        Some(branch) => repo
-            .worktree_for_branch(branch)?
-            .ok_or_else(|| anyhow::anyhow!("No worktree found for branch '{}'", branch))?,
+        Some(branch) => repo.worktree_for_branch(branch)?.ok_or_else(|| {
+            worktrunk::git::GitError::WorktreeNotFound {
+                branch: branch.to_string(),
+            }
+        })?,
         None => repo.worktree_root()?.to_path_buf(),
     };
 
@@ -445,33 +451,32 @@ pub fn step_copy_ignored(
         return Ok(());
     }
 
-    // Check for .worktreeinclude file
-    let include_path = source_path.join(".worktreeinclude");
-    if !include_path.exists() {
-        crate::output::print(info_message(cformat!(
-            "No <bold>.worktreeinclude</> file found"
-        )))?;
-        return Ok(());
-    }
-
     // Get ignored entries from git
     // --directory stops at directory boundaries (avoids listing thousands of files in target/)
     let ignored_entries = list_ignored_entries(&source_path, &source_context)?;
 
-    // Build include matcher from .worktreeinclude
-    let include_matcher = {
-        let mut builder = GitignoreBuilder::new(&source_path);
-        if let Some(err) = builder.add(&include_path) {
-            return Err(anyhow::anyhow!("Error parsing .worktreeinclude: {}", err));
-        }
-        builder.build().context("Failed to build include matcher")?
+    // Filter to entries that match .worktreeinclude (or all if no file exists)
+    let include_path = source_path.join(".worktreeinclude");
+    let entries_to_copy: Vec<_> = if include_path.exists() {
+        // Build include matcher from .worktreeinclude
+        let include_matcher = {
+            let mut builder = GitignoreBuilder::new(&source_path);
+            if let Some(err) = builder.add(&include_path) {
+                return Err(worktrunk::git::GitError::WorktreeIncludeParseError {
+                    error: err.to_string(),
+                }
+                .into());
+            }
+            builder.build().context("Failed to build include matcher")?
+        };
+        ignored_entries
+            .into_iter()
+            .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
+            .collect()
+    } else {
+        // No .worktreeinclude file — default to copying all ignored entries
+        ignored_entries
     };
-
-    // Filter to entries that match .worktreeinclude
-    let entries_to_copy: Vec<_> = ignored_entries
-        .into_iter()
-        .filter(|(path, is_dir)| include_matcher.matched(path, *is_dir).is_ignore())
-        .collect();
 
     if entries_to_copy.is_empty() {
         crate::output::print(info_message("No matching files to copy"))?;

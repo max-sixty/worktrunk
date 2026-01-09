@@ -32,4 +32,4 @@ exit_code: 0
 ----- stdout -----
 
 ----- stderr -----
-[2m○[22m No matching files to copy
+[32m✓[39m [32mCopied 2 entries[39m
