@@ -1,0 +1,35 @@
+name: nightly-benchmark
+
+on:
+  schedule:
+    # Run at 4:17 UTC every day (off-peak minute)
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📂 Checkout code
+      uses: actions/checkout@v6
+
+    - name: 💰 Cargo cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: 💰 Rust repo cache
+      uses: actions/cache@v4
+      with:
+        path: target/bench-repos
+        key: bench-repos-rust-${{ runner.os }}
+
+    - name: 📊 Run all benchmarks
+      run: cargo bench --bench list
+
+    - name: 📦 Upload benchmark results
+      uses: actions/upload-artifact@v6
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: target/criterion

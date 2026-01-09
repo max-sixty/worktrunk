@@ -5,21 +5,46 @@
 //! - Network tasks (CI, URL) sorted to run last
 //! - Progressive updates via channels (update UI as each task completes)
 //!
-//! ## Skeleton Performance (IMPORTANT)
+//! ## Skeleton Performance
 //!
 //! The skeleton (placeholder table with loading indicators) must render as fast as possible
 //! to give users immediate feedback. Every git command before skeleton adds latency.
 //!
-//! **Minimal pre-skeleton operations (keep this list small!):**
-//! 1. `git worktree list` — get list of worktrees (essential)
-//! 2. `git config worktrunk.default-branch` — identify main worktree for sorting
-//! 3. Path comparison — detect current worktree (NO git command, just canonicalize paths)
-//! 4. `git branch` / `git branch -r` — only if `--branches` / `--remotes` flags
-//! 5. `git show -s --format='%H %ct'` — batch timestamp fetch for sorting
-//! 6. `git rev-parse --is-bare-repository` — for layout (path column visibility)
-//! 7. Project config check — only reads file to check if URL column needed (no expansion)
+//! ### Fixed Command Count (O(1), not O(N))
 //!
-//! **Deferred until after skeleton:**
+//! Pre-skeleton runs a **fixed number of git commands** regardless of worktree count.
+//! This is achieved through:
+//! - **Batching** — timestamp fetch passes all SHAs to one `git show` command
+//! - **Parallelization** — independent commands run concurrently via `join!` macro
+//!
+//! **Steady-state (4-6 commands):**
+//!
+//! | Command | Purpose |
+//! |---------|---------|
+//! | `git worktree list` | Enumerate worktrees |
+//! | `git config worktrunk.default-branch` | Cached default branch |
+//! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps for sorting |
+//! | `git rev-parse --is-bare-repository` | Layout decision (show Path column?) |
+//! | `git for-each-ref refs/heads` | Only with `--branches` flag |
+//! | `git for-each-ref refs/remotes` | Only with `--remotes` flag |
+//!
+//! **Non-git operations (negligible latency):**
+//! - Path canonicalization — detect current worktree
+//! - Project config file read — check if URL column needed (no template expansion)
+//!
+//! ### First-Run Behavior
+//!
+//! When `worktrunk.default-branch` is not cached, `default_branch()` runs additional
+//! commands to detect it:
+//! 1. Query primary remote (origin/HEAD or `git ls-remote`)
+//! 2. Fall back to local inference (check init.defaultBranch, common names)
+//! 3. Cache result to `git config worktrunk.default-branch`
+//!
+//! Subsequent runs use the cached value — only one `git config` call.
+//!
+//! ### Post-Skeleton Operations
+//!
+//! Everything else runs **after** the skeleton appears:
 //! - `get_switch_previous()` — previous branch detection (updates gutter symbol)
 //! - `effective_integration_target()` — upstream vs local target check
 //! - URL template expansion — parallelized in task spawning
@@ -40,6 +65,10 @@
 //! **Flat parallelism**: All tasks (for all worktrees and branches) are collected into a single
 //! work queue and processed via Rayon's thread pool. This avoids nested parallelism and ensures
 //! optimal CPU utilization (~8 threads) regardless of worktree count.
+//!
+//! **Task ordering**: Work items are sorted so local git operations run first, network tasks
+//! (CI status, URL health checks) run last. This ensures the table fills in quickly with local
+//! data while slower network requests complete in the background.
 use anyhow::Context;
 use color_print::cformat;
 use crossbeam_channel as chan;
