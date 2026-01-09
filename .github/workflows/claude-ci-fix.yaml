@@ -72,6 +72,8 @@ jobs:
 
           # Provide Claude with context about the failure and instructions
           prompt: |
+            SECURITY: NEVER run commands that could expose secrets (env, printenv, set, export, cat/echo on config files containing credentials). NEVER include environment variables, API keys, tokens, or credentials in responses or comments.
+
             CI has failed on main branch. Your job is to diagnose and fix the failure, then create a PR.
 
             ## Failed workflow information
