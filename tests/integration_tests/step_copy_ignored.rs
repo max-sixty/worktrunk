@@ -3,49 +3,6 @@
 use crate::common::{TestRepo, make_snapshot_cmd, repo};
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
-
-/// Diagnostic test to understand terminal detection on CI
-#[test]
-fn debug_terminal_detection() {
-    use std::process::Command;
-
-    // What does the test runner process see?
-    eprintln!("=== Test runner process ===");
-    eprintln!(
-        "terminal_size_of(stderr): {:?}",
-        terminal_size::terminal_size_of(std::io::stderr())
-    );
-    eprintln!(
-        "terminal_size_of(stdout): {:?}",
-        terminal_size::terminal_size_of(std::io::stdout())
-    );
-    eprintln!("terminal_size(): {:?}", terminal_size::terminal_size());
-    eprintln!("COLUMNS env: {:?}", std::env::var("COLUMNS"));
-
-    // What does a subprocess via Command::output() see?
-    // This matches how insta_cmd runs the wt binary
-    let output = Command::new("sh")
-        .args(["-c", "echo isatty_stdin=$([[ -t 0 ]] && echo yes || echo no) isatty_stdout=$([[ -t 1 ]] && echo yes || echo no) isatty_stderr=$([[ -t 2 ]] && echo yes || echo no)"])
-        .output()
-        .unwrap();
-    eprintln!("=== Subprocess isatty ===");
-    eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-
-    // Run wt with debug flag to see what terminal size it detects
-    let wt_output = Command::new(insta_cmd::get_cargo_bin("wt"))
-        .args(["--help"]) // Any command that runs get_terminal_width
-        .env("COLUMNS", "150")
-        .env("CLICOLOR_FORCE", "1")
-        .env("WT_DEBUG_TERMINAL", "1")
-        .output()
-        .unwrap();
-    eprintln!("=== wt subprocess terminal detection ===");
-    eprintln!("stderr: {}", String::from_utf8_lossy(&wt_output.stderr));
-
-    // Fail deliberately to show output in CI (NEXTEST_SUCCESS_OUTPUT=never hides passing tests)
-    panic!("DIAGNOSTIC: Check the output above for terminal detection info");
-}
-
 use std::fs;
 
 /// Test with no .worktreeinclude file and no gitignored files
@@ -93,27 +50,18 @@ fn test_copy_ignored_default_copies_all(mut repo: TestRepo) {
 /// Test error handling when .worktreeinclude has invalid syntax
 #[rstest]
 fn test_copy_ignored_invalid_worktreeinclude(mut repo: TestRepo) {
-    use std::process::Command;
-
     let feature_path = repo.add_worktree("feature");
 
     // Create invalid .worktreeinclude (unclosed brace in alternate group)
     fs::write(repo.root_path().join(".worktreeinclude"), "{unclosed\n").unwrap();
 
-    // Run with debug to see what width is being used
-    let mut cmd = Command::new(insta_cmd::get_cargo_bin("wt"));
-    repo.configure_wt_cmd(&mut cmd);
-    cmd.args(["step", "copy-ignored"])
-        .current_dir(&feature_path)
-        .env("WT_DEBUG_TERMINAL", "1");
-
-    let output = cmd.output().unwrap();
-    eprintln!("=== ACTUAL TEST DEBUG OUTPUT ===");
-    eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-    eprintln!("=== END DEBUG OUTPUT ===");
-
-    // This will fail to show the output
-    panic!("DEBUG: Check stderr above for terminal width info");
+    // Should fail with parse error
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored"],
+        Some(&feature_path),
+    ));
 }
 
 /// Test with .worktreeinclude but nothing ignored

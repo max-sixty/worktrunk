@@ -46,24 +46,11 @@ const DEFAULT_TERMINAL_WIDTH: usize = 80;
 ///
 /// Checks stderr first (for status messages), then stdout (for table output).
 pub fn get_terminal_width() -> usize {
-    // DEBUG: Temporary logging to diagnose CI terminal detection issues
-    let debug = std::env::var("WT_DEBUG_TERMINAL").is_ok();
-
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
     // Check stderr first (status messages), then stdout (table output)
-    let stderr_size = terminal_size::terminal_size_of(std::io::stderr());
-    let fallback_size = terminal_size::terminal_size();
-
-    if debug {
-        eprintln!("[DEBUG] terminal_size_of(stderr): {:?}", stderr_size);
-        eprintln!("[DEBUG] terminal_size(): {:?}", fallback_size);
-        eprintln!("[DEBUG] COLUMNS env: {:?}", std::env::var("COLUMNS"));
-    }
-
-    if let Some((terminal_size::Width(w), _)) = stderr_size.or(fallback_size) {
-        if debug {
-            eprintln!("[DEBUG] Using detected width: {}", w);
-        }
+    if let Some((terminal_size::Width(w), _)) =
+        terminal_size::terminal_size_of(std::io::stderr()).or_else(terminal_size::terminal_size)
+    {
         return w as usize;
     }
 
@@ -71,15 +58,9 @@ pub fn get_terminal_width() -> usize {
     if let Ok(cols) = std::env::var("COLUMNS")
         && let Ok(width) = cols.parse::<usize>()
     {
-        if debug {
-            eprintln!("[DEBUG] Using COLUMNS width: {}", width);
-        }
         return width;
     }
 
-    if debug {
-        eprintln!("[DEBUG] Using default width: {}", DEFAULT_TERMINAL_WIDTH);
-    }
     DEFAULT_TERMINAL_WIDTH
 }
 
