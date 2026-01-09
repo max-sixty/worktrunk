@@ -669,6 +669,9 @@ fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str
 ///
 /// The `command_timeout` parameter, if set, limits how long individual git commands can run.
 /// This is useful for `wt select` to show the TUI faster by skipping slow operations.
+///
+/// TODO: Now that we skip expensive tasks for stale branches (see batch_ahead_behind),
+/// the timeout may be unnecessary. Consider removing it if it doesn't provide value.
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
     repo: &Repository,
@@ -868,9 +871,10 @@ pub fn collect(
     let max_width = crate::display::get_terminal_width();
 
     // Create collection options from skip set
-    let options = super::collect_progressive_impl::CollectOptions {
+    let mut options = super::collect_progressive_impl::CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
+        ..Default::default()
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -948,6 +952,28 @@ pub fn collect(
     // Deferred until after skeleton to avoid blocking initial render.
     let integration_target = repo.effective_integration_target(&default_branch);
 
+    // In wt select, batch-fetch ahead/behind counts to identify branches that are far behind.
+    // This allows skipping expensive merge-base operations for diverged branches, dramatically
+    // improving performance on repos with many stale branches.
+    //
+    // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
+    // counts in a single command. On older git versions, returns empty and all tasks run.
+    //
+    // Gated on command_timeout (which is only set for wt select) rather than !render_table,
+    // so JSON mode still gets full data.
+    if command_timeout.is_some() {
+        // Branches more than 50 commits behind skip expensive merge-base operations.
+        // 50 is low enough to catch truly stale branches while keeping info for
+        // recently-diverged ones. The "behind" count is the primary expense driver -
+        // git must traverse all those commits to find the merge-base.
+        const SKIP_EXPENSIVE_THRESHOLD: usize = 50;
+        let ahead_behind = repo.batch_ahead_behind(&default_branch);
+        if !ahead_behind.is_empty() {
+            options.branch_ahead_behind = ahead_behind;
+            options.skip_expensive_threshold = Some(SKIP_EXPENSIVE_THRESHOLD);
+        }
+    }
+
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
 
@@ -990,7 +1016,7 @@ pub fn collect(
     let default_branch_clone = default_branch.clone();
     let target_clone = integration_target.clone();
     let expected_results_clone = expected_results.clone();
-    let options_clone = options.clone();
+    // Move options into the worker thread (not cloned - it can be large with branch_ahead_behind)
     let main_path = main_worktree.path.clone();
 
     // Prepare branch data if needed (before moving into closure)
@@ -1031,7 +1057,7 @@ pub fn collect(
                 idx,
                 &default_branch_clone,
                 &target_clone,
-                &options_clone,
+                &options,
                 &expected_results_clone,
                 &tx_worker,
             ));
@@ -1046,8 +1072,9 @@ pub fn collect(
                 *item_idx,
                 &default_branch_clone,
                 &target_clone,
-                &options_clone,
+                &options,
                 &expected_results_clone,
+                &tx_worker,
             ));
         }
 
