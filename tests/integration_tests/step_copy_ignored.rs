@@ -494,3 +494,43 @@ fn test_copy_ignored_to_flag(mut repo: TestRepo) {
         "from-main"
     );
 }
+
+/// Test --from with a branch that has no worktree
+#[rstest]
+fn test_copy_ignored_from_nonexistent_worktree(repo: TestRepo) {
+    // Create a branch without a worktree
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
+        .output()
+        .unwrap();
+
+    // Try to copy from a branch with no worktree
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--from", "orphan-branch"],
+        None,
+    ));
+}
+
+/// Test --to with a branch that has no worktree
+#[rstest]
+fn test_copy_ignored_to_nonexistent_worktree(repo: TestRepo) {
+    // Create a branch without a worktree
+    repo.git_command()
+        .args(["branch", "orphan-branch"])
+        .output()
+        .unwrap();
+
+    // Setup a file to copy
+    fs::write(repo.root_path().join(".env"), "value").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\n").unwrap();
+
+    // Try to copy to a branch with no worktree
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--to", "orphan-branch"],
+        None,
+    ));
+}
