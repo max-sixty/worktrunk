@@ -2221,6 +2221,23 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
         list_snapshots::command(&repo, repo.root_path())
     );
 
+    // Verify git still sees the dirty working tree before running --full
+    // The previous command may have refreshed git's index, potentially causing
+    // the racy git issue to reappear on systems with coarse timestamp resolution
+    crate::common::wait_for("git to detect dirty working tree before --full", || {
+        let _ = repo
+            .git_command()
+            .args(["update-index", "--refresh"])
+            .current_dir(&feature)
+            .output();
+        repo.git_command()
+            .args(["status", "--porcelain"])
+            .current_dir(&feature)
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false)
+    });
+
     // With --full: should show conflict symbol because uncommitted changes conflict
     assert_cmd_snapshot!("working_tree_conflicts_with_full", {
         let mut cmd = list_snapshots::command(&repo, repo.root_path());
