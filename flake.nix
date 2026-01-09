@@ -69,9 +69,11 @@
         worktrunk = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
 
-          # Run tests (unit and binary tests only, not integration)
-          doCheck = true;
-          cargoTestExtraArgs = "--lib --bins";
+          # Skip tests during package build - they require:
+          # - Snapshot files (insta) which bloat the source
+          # - Real system time (SOURCE_DATE_EPOCH breaks some tests)
+          # Tests should run in CI instead
+          doCheck = false;
 
           meta = with pkgs.lib; {
             description = "A CLI for Git worktree management, designed for parallel AI agent workflows";
