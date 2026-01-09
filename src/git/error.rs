@@ -710,21 +710,13 @@ impl std::error::Error for HookErrorWithHint {
 }
 
 /// Format an error with header and gutter content
-///
-/// External error messages (from git, ignore crate, etc.) are displayed verbatim
-/// without wrapping. These messages often contain file paths that vary in length
-/// across platforms (e.g., macOS temp paths like `/private/var/folders/.../` are
-/// much longer than Linux `/tmp/...`). Wrapping would cause inconsistent line
-/// breaks that depend on runtime path lengths.
 fn format_error_block(header: impl Into<String>, error: &str) -> String {
     let header = header.into();
     let trimmed = error.trim();
     if trimmed.is_empty() {
         header
     } else {
-        // Use a large fixed width to prevent wrapping of external error content.
-        // External errors contain paths that vary by platform and test environment.
-        format!("{header}\n{}", format_with_gutter(trimmed, Some(500)))
+        format!("{header}\n{}", format_with_gutter(trimmed, None))
     }
 }
 
