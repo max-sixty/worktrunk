@@ -30,9 +30,10 @@
 
 # Worktree Path Template
 # Variables:
-#   {{ repo }}              - Repository directory name (e.g., "myproject")
-#   {{ branch }}            - Raw branch name (e.g., "feature/auth")
-#   {{ branch | sanitize }} - Branch name with / and \ replaced by - (e.g., "feature-auth")
+#   {{ repo }}                 - Repository directory name (e.g., "myproject")
+#   {{ branch }}               - Raw branch name (e.g., "feature/auth")
+#   {{ branch | sanitize }}    - Filesystem-safe: / and \ replaced by - (e.g., "feature-auth")
+#   {{ branch | sanitize_db }} - Database-safe: lowercase, underscores (e.g., "feature_auth")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #

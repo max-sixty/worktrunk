@@ -33,8 +33,9 @@
 #   {{ target }}             - Target branch for the merge
 #
 # Filters:
-#   {{ branch | sanitize }}  - Replace / and \ with - (e.g., "feature-auth")
-#   {{ branch | hash_port }} - Deterministic port 10000-19999
+#   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
+#   {{ branch | sanitize_db }}  - Database-safe identifier (e.g., "feature_auth")
+#   {{ branch | hash_port }}    - Deterministic port 10000-19999
 
 # ============================================================================
 # Hooks
