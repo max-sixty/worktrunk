@@ -93,35 +93,46 @@ fn test_doc_sanitize_db_filter() {
     let mut vars = HashMap::new();
 
     // From docs: {{ branch | sanitize_db }} transforms to database-safe identifier
+    // Output includes a 3-character hash suffix for uniqueness
     vars.insert("branch", "feature/auth-oauth2");
-    assert_eq!(
-        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-        "feature_auth_oauth2",
-        "sanitize_db should replace non-alphanumeric with _ and lowercase"
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("feature_auth_oauth2_"),
+        "sanitize_db should replace non-alphanumeric with _ and lowercase, got: {result}"
     );
 
     // Leading digits get underscore prefix
     vars.insert("branch", "123-bug-fix");
-    assert_eq!(
-        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-        "_123_bug_fix",
-        "sanitize_db should prefix leading digits with _"
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("_123_bug_fix_"),
+        "sanitize_db should prefix leading digits with _, got: {result}"
     );
 
     // Uppercase conversion
     vars.insert("branch", "UPPERCASE.Branch");
-    assert_eq!(
-        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-        "uppercase_branch",
-        "sanitize_db should convert to lowercase"
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("uppercase_branch_"),
+        "sanitize_db should convert to lowercase, got: {result}"
     );
 
     // Consecutive underscores collapsed
     vars.insert("branch", "a--b//c");
-    assert_eq!(
-        expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-        "a_b_c",
-        "sanitize_db should collapse consecutive underscores"
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("a_b_c_"),
+        "sanitize_db should collapse consecutive underscores, got: {result}"
+    );
+
+    // Different inputs that would otherwise collide get different suffixes
+    vars.insert("branch", "a-b");
+    let result1 = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    vars.insert("branch", "a_b");
+    let result2 = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert_ne!(
+        result1, result2,
+        "a-b and a_b should produce different outputs"
     );
 }
 

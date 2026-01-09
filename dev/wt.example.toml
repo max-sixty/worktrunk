@@ -34,7 +34,7 @@
 #
 # Filters:
 #   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
-#   {{ branch | sanitize_db }}  - Database-safe identifier (e.g., "feature_auth")
+#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")
 #   {{ branch | hash_port }}    - Deterministic port 10000-19999
 
 # ============================================================================

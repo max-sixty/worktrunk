@@ -78,7 +78,7 @@ db = """
 docker run -d --rm \
   --name {{ repo }}-{{ branch | sanitize }}-postgres \
   -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  -e POSTGRES_DB={{ repo }} \
+  -e POSTGRES_DB={{ branch | sanitize_db }} \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
@@ -90,13 +90,15 @@ db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null |
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
 Jinja2's operator precedence has pipe `|` with higher precedence than concatenation `~`, meaning expressions need parentheses to filter concatenated values.
 
+The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
+
 Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
 
 ```toml
 [post-create]
 env = """
 cat > .env.local << EOF
-DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
+DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
 DEV_PORT={{ branch | hash_port }}
 EOF
 """

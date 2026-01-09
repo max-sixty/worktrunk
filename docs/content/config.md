@@ -342,7 +342,7 @@ Creates `~/.config/worktrunk/config.toml` with the following content:
 #   {{ repo }}                 - Repository directory name (e.g., "myproject")
 #   {{ branch }}               - Raw branch name (e.g., "feature/auth")
 #   {{ branch | sanitize }}    - Filesystem-safe: / and \ replaced by - (e.g., "feature-auth")
-#   {{ branch | sanitize_db }} - Database-safe: lowercase, underscores (e.g., "feature_auth")
+#   {{ branch | sanitize_db }} - Database-safe: lowercase, underscores, hash suffix (e.g., "feature_auth_x7k")
 #
 # Paths are relative to the main worktree root (original repository directory).
 #
@@ -547,7 +547,7 @@ With `--project`, creates `.config/wt.toml` in the current repository:
 #
 # Filters:
 #   {{ branch | sanitize }}     - Replace / and \ with - (e.g., "feature-auth")
-#   {{ branch | sanitize_db }}  - Database-safe identifier (e.g., "feature_auth")
+#   {{ branch | sanitize_db }}  - Database-safe identifier with hash suffix (e.g., "feature_auth_x7k")
 #   {{ branch | hash_port }}    - Deterministic port 10000-19999
 
 # ============================================================================

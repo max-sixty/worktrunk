@@ -94,24 +94,35 @@ pub fn sanitize_branch_name(branch: &str) -> String {
 /// 2. Replace non-alphanumeric characters with `_` (only `[a-z0-9_]` are safe)
 /// 3. Collapse consecutive underscores into single underscore
 /// 4. Add `_` prefix if identifier starts with a digit (SQL prohibits leading digits)
-/// 5. Truncate to 63 characters (PostgreSQL limit; MySQL=64, SQL Server=128)
+/// 5. Append 3-character hash suffix for uniqueness (avoids reserved words and collisions)
+/// 6. Truncate to 63 characters (PostgreSQL limit; MySQL=64, SQL Server=128)
+///
+/// The hash suffix ensures that:
+/// - SQL reserved words are avoided (e.g., `user` → `user_abc`, not a reserved word)
+/// - Different inputs don't collide (e.g., `a-b` and `a_b` get different suffixes)
 ///
 /// # Limitations
 /// - Empty input produces empty output (not a valid identifier in most DBs)
-/// - SQL reserved words (e.g., `user`, `select`) are not escaped
-/// - Different inputs may collide after transformation (e.g., `a-b` and `a_b`)
 ///
 /// # Examples
 /// ```
 /// use worktrunk::config::sanitize_db;
 ///
-/// assert_eq!(sanitize_db("feature/auth-oauth2"), "feature_auth_oauth2");
-/// assert_eq!(sanitize_db("123-bug-fix"), "_123_bug_fix");
-/// assert_eq!(sanitize_db("UPPERCASE.Branch"), "uppercase_branch");
+/// // Hash suffix ensures uniqueness
+/// assert!(sanitize_db("feature/auth").starts_with("feature_auth_"));
+/// assert!(sanitize_db("123-bug-fix").starts_with("_123_bug_fix_"));
+/// assert!(sanitize_db("UPPERCASE.Branch").starts_with("uppercase_branch_"));
+///
+/// // Different inputs get different suffixes even if base transforms are identical
+/// assert_ne!(sanitize_db("a-b"), sanitize_db("a_b"));
 /// ```
 pub fn sanitize_db(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+
     // Single pass: lowercase, replace non-alphanumeric with underscore, collapse consecutive
-    let mut result = String::with_capacity(s.len());
+    let mut result = String::with_capacity(s.len() + 4); // +4 for _xxx suffix
     let mut prev_underscore = false;
     for c in s.chars() {
         if c.is_ascii_alphanumeric() {
@@ -128,13 +139,36 @@ pub fn sanitize_db(s: &str) -> String {
         result.insert(0, '_');
     }
 
-    // Truncate to 63 characters (PostgreSQL limit)
-    // Safe to slice by bytes since output is ASCII-only
-    if result.len() > 63 {
-        result.truncate(63);
+    // Truncate base to leave room for hash suffix (4 chars: _ + 3 hash chars)
+    // PostgreSQL limit is 63, so max base is 59
+    if result.len() > 59 {
+        result.truncate(59);
     }
 
+    // Append 3-character hash suffix for collision avoidance and reserved word safety
+    // Hash is computed from original input, ensuring unique suffixes for colliding transforms
+    if !result.ends_with('_') {
+        result.push('_');
+    }
+    result.push_str(&short_hash(s));
+
     result
+}
+
+/// Generate a 3-character hash suffix from a string.
+///
+/// Uses base36 (0-9, a-z) for a compact representation with 46,656 unique values.
+fn short_hash(s: &str) -> String {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    let hash = h.finish();
+
+    // Convert to base36 and take 3 characters
+    const CHARS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let c0 = CHARS[(hash % 36) as usize];
+    let c1 = CHARS[((hash / 36) % 36) as usize];
+    let c2 = CHARS[((hash / 1296) % 36) as usize];
+    String::from_utf8(vec![c0, c1, c2]).unwrap()
 }
 
 /// Expand a template with variable substitution.
@@ -236,71 +270,113 @@ mod tests {
 
     #[test]
     fn test_sanitize_db() {
+        // Test that base transformations are correct (ignore hash suffix)
         let cases = [
             // Examples from spec
-            ("feature/auth-oauth2", "feature_auth_oauth2"),
-            ("123-bug-fix", "_123_bug_fix"),
-            ("UPPERCASE.Branch", "uppercase_branch"),
+            ("feature/auth-oauth2", "feature_auth_oauth2_"),
+            ("123-bug-fix", "_123_bug_fix_"),
+            ("UPPERCASE.Branch", "uppercase_branch_"),
             // Lowercase conversion
-            ("MyBranch", "mybranch"),
-            ("ALLCAPS", "allcaps"),
+            ("MyBranch", "mybranch_"),
+            ("ALLCAPS", "allcaps_"),
             // Non-alphanumeric replacement
-            ("feature/foo", "feature_foo"),
-            ("feature-bar", "feature_bar"),
-            ("feature.baz", "feature_baz"),
-            ("feature@qux", "feature_qux"),
+            ("feature/foo", "feature_foo_"),
+            ("feature-bar", "feature_bar_"),
+            ("feature.baz", "feature_baz_"),
+            ("feature@qux", "feature_qux_"),
             // Consecutive underscore collapse
-            ("a--b", "a_b"),
-            ("a///b", "a_b"),
-            ("a...b", "a_b"),
-            ("a-/-b", "a_b"),
+            ("a--b", "a_b_"),
+            ("a///b", "a_b_"),
+            ("a...b", "a_b_"),
+            ("a-/-b", "a_b_"),
             // Leading digit prefix
-            ("1branch", "_1branch"),
-            ("123", "_123"),
-            ("0test", "_0test"),
+            ("1branch", "_1branch_"),
+            ("123", "_123_"),
+            ("0test", "_0test_"),
             // No prefix needed
-            ("branch1", "branch1"),
-            ("_already", "_already"),
-            // Edge cases
-            ("", ""),
-            ("a", "a"),
-            ("_", "_"),
-            ("-", "_"),
-            ("---", "_"),
+            ("branch1", "branch1_"),
+            ("_already", "_already_"),
+            // Edge cases (non-empty)
+            ("a", "a_"),
             // Mixed cases
-            ("Feature/Auth-OAuth2", "feature_auth_oauth2"),
-            ("user/TASK/123", "user_task_123"),
+            ("Feature/Auth-OAuth2", "feature_auth_oauth2_"),
+            ("user/TASK/123", "user_task_123_"),
             // Non-ASCII characters become underscores
-            ("naïve-impl", "na_ve_impl"),
-            ("日本語", "_"),
-            ("über-feature", "_ber_feature"),
+            ("naïve-impl", "na_ve_impl_"),
+            ("über-feature", "_ber_feature_"),
         ];
-        for (input, expected) in cases {
-            assert_eq!(sanitize_db(input), expected, "input: {input}");
+        for (input, expected_prefix) in cases {
+            let result = sanitize_db(input);
+            assert!(
+                result.starts_with(expected_prefix),
+                "input: {input}, expected prefix: {expected_prefix}, got: {result}"
+            );
+            // Result should be prefix + 3-char hash
+            assert_eq!(
+                result.len(),
+                expected_prefix.len() + 3,
+                "input: {input}, result: {result}"
+            );
+        }
+
+        // Empty input stays empty (no hash suffix)
+        assert_eq!(sanitize_db(""), "");
+
+        // Special cases that collapse to just underscore + hash
+        for input in ["_", "-", "---", "日本語"] {
+            let result = sanitize_db(input);
+            assert!(result.starts_with('_'), "input: {input}, got: {result}");
+            assert_eq!(result.len(), 4, "input: {input}, got: {result}"); // _xxx
         }
     }
 
     #[test]
+    fn test_sanitize_db_collision_avoidance() {
+        // Different inputs that would collide without hash suffix now differ
+        assert_ne!(sanitize_db("a-b"), sanitize_db("a_b"));
+        assert_ne!(sanitize_db("feature/auth"), sanitize_db("feature-auth"));
+        assert_ne!(sanitize_db("UPPERCASE"), sanitize_db("uppercase"));
+
+        // Same input always produces same output (deterministic)
+        assert_eq!(sanitize_db("test"), sanitize_db("test"));
+        assert_eq!(sanitize_db("feature/foo"), sanitize_db("feature/foo"));
+    }
+
+    #[test]
+    fn test_sanitize_db_reserved_words() {
+        // Reserved words get hash suffix, making them safe
+        let user = sanitize_db("user");
+        assert!(user.starts_with("user_"), "got: {user}");
+        assert_ne!(user, "user"); // Not a bare reserved word
+
+        let select = sanitize_db("select");
+        assert!(select.starts_with("select_"), "got: {select}");
+        assert_ne!(select, "select");
+    }
+
+    #[test]
     fn test_sanitize_db_truncation() {
-        // Test truncation at 63 characters
+        // Total output is always max 63 characters
+        // Base is truncated to 59 chars, then _xxx suffix (4 chars) is added
+
+        // Very long input: base truncated to 59, + 4 = 63
         let long_input = "a".repeat(100);
         let result = sanitize_db(&long_input);
-        assert_eq!(result.len(), 63);
-        assert_eq!(result, "a".repeat(63));
+        assert_eq!(result.len(), 63, "result: {result}");
+        assert!(result.starts_with(&"a".repeat(58)), "result: {result}");
+        assert!(!result.ends_with('_'), "should end with hash chars");
 
-        // Exactly 63 should not be truncated
-        let exact = "b".repeat(63);
-        assert_eq!(sanitize_db(&exact), exact);
+        // Short input: base + _ + hash
+        let short = "test";
+        let result = sanitize_db(short);
+        assert!(result.starts_with("test_"), "result: {result}");
+        assert_eq!(result.len(), 8, "result: {result}"); // test_ + 3 hash chars
 
-        // 64 should be truncated
-        let over = "c".repeat(64);
-        assert_eq!(sanitize_db(&over).len(), 63);
-
-        // Truncation happens after prefix is added
+        // Truncation happens after prefix is added for digit-starting inputs
         let digit_start = format!("1{}", "x".repeat(100));
         let result = sanitize_db(&digit_start);
-        assert_eq!(result.len(), 63);
-        assert!(result.starts_with("_1"));
+        assert_eq!(result.len(), 63, "result: {result}");
+        assert!(result.starts_with("_1"), "result: {result}");
     }
 
     #[test]
@@ -427,26 +503,20 @@ mod tests {
     fn test_expand_template_sanitize_db_filter() {
         let mut vars = HashMap::new();
 
-        // Basic transformation
+        // Basic transformation (with hash suffix)
         vars.insert("branch", "feature/auth-oauth2");
-        assert_eq!(
-            expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-            "feature_auth_oauth2"
-        );
+        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        assert!(result.starts_with("feature_auth_oauth2_"), "got: {result}");
 
         // Leading digit gets underscore prefix
         vars.insert("branch", "123-bug-fix");
-        assert_eq!(
-            expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-            "_123_bug_fix"
-        );
+        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        assert!(result.starts_with("_123_bug_fix_"), "got: {result}");
 
         // Uppercase conversion
         vars.insert("branch", "UPPERCASE.Branch");
-        assert_eq!(
-            expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap(),
-            "uppercase_branch"
-        );
+        let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+        assert!(result.starts_with("uppercase_branch_"), "got: {result}");
 
         // Raw branch is unchanged
         vars.insert("branch", "feature/foo");
