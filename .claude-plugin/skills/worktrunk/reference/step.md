@@ -107,7 +107,7 @@ Add to your project config:
 copy = "wt step copy-ignored"
 ```
 
-By default, all gitignored files are copied (as if `.worktreeinclude` contained `**`). To copy only specific patterns, create a `.worktreeinclude` file in your repository root (uses gitignore syntax):
+All gitignored files are copied by default, as if `.worktreeinclude` contained `**`. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
 
 ```gitignore
 # .worktreeinclude — optional, limits what gets copied
