@@ -974,6 +974,15 @@ mod pty_tests {
         // that appear due to PTY timing differences
         let output = regex::Regex::new(r"^[yn]\n").unwrap().replace(&output, "");
 
+        // Normalize blank lines caused by PTY echo timing variations.
+        // The newline from user input can appear at different positions relative
+        // to the prompt text depending on the system. Collapse consecutive newlines
+        // to a single newline, then strip any leading newline.
+        let output = regex::Regex::new(r"\n{2,}")
+            .unwrap()
+            .replace_all(&output, "\n");
+        let output = output.trim_start_matches('\n');
+
         // Replace temp home path with ~/
         let home_path = temp_home.path().to_string_lossy();
         output.replace(&*home_path, "~").to_string()
