@@ -1,3 +1,4 @@
+# Test OAuth token auth
 name: claude-mention
 
 on:
