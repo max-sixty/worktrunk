@@ -13,5 +13,5 @@ logo-variant-*.png
 test-results/
 
 # Nix build outputs
-result
-result-*
+/result
+/result-*
