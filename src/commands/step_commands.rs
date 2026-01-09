@@ -378,7 +378,7 @@ pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
         }
         // Not a rebase conflict, return original error
         return Err(worktrunk::git::GitError::Other {
-            message: format!("Failed to rebase onto '{}': {}", target_branch, e),
+            message: cformat!("Failed to rebase onto <bold>{}</>: {}", target_branch, e),
         }
         .into());
     }
@@ -427,18 +427,22 @@ pub fn step_copy_ignored(
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {
         Some(branch) => {
-            let path = repo
-                .worktree_for_branch(branch)?
-                .ok_or_else(|| anyhow::anyhow!("No worktree found for branch '{}'", branch))?;
+            let path = repo.worktree_for_branch(branch)?.ok_or_else(|| {
+                worktrunk::git::GitError::WorktreeNotFound {
+                    branch: branch.to_string(),
+                }
+            })?;
             (path, branch.to_string())
         }
         None => (repo.worktree_base()?, repo.default_branch()?.to_string()),
     };
 
     let dest_path = match to {
-        Some(branch) => repo
-            .worktree_for_branch(branch)?
-            .ok_or_else(|| anyhow::anyhow!("No worktree found for branch '{}'", branch))?,
+        Some(branch) => repo.worktree_for_branch(branch)?.ok_or_else(|| {
+            worktrunk::git::GitError::WorktreeNotFound {
+                branch: branch.to_string(),
+            }
+        })?,
         None => repo.worktree_root()?.to_path_buf(),
     };
 

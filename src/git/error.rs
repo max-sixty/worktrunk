@@ -143,6 +143,9 @@ pub enum GitError {
     ProjectConfigNotFound {
         config_path: PathBuf,
     },
+    WorktreeNotFound {
+        branch: String,
+    },
     Other {
         message: String,
     },
@@ -551,6 +554,14 @@ impl std::fmt::Display for GitError {
             GitError::WorktreeIncludeParseError { error } => {
                 let header = error_message(cformat!("Error parsing <bold>.worktreeinclude</>"));
                 write!(f, "{}", format_error_block(header, error))
+            }
+
+            GitError::WorktreeNotFound { branch } => {
+                write!(
+                    f,
+                    "{}",
+                    error_message(cformat!("No worktree found for branch <bold>{branch}</>"))
+                )
             }
 
             GitError::Other { message } => {
