@@ -637,6 +637,9 @@ fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str
 /// When false, behavior depends on `render_table`:
 /// - If `render_table` is true: renders final table (buffered mode)
 /// - If `render_table` is false: returns data without rendering (JSON mode)
+///
+/// The `command_timeout` parameter, if set, limits how long individual git commands can run.
+/// This is useful for `wt select` to show the TUI faster by skipping slow operations.
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
     repo: &Repository,
@@ -646,6 +649,7 @@ pub fn collect(
     show_progress: bool,
     render_table: bool,
     config: &worktrunk::config::WorktrunkConfig,
+    command_timeout: Option<std::time::Duration>,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
 
@@ -1022,7 +1026,9 @@ pub fn collect(
         all_work_items.sort_by_key(|item| item.kind.is_network());
 
         // Phase 2: Execute all work items in Rayon's thread pool
+        // Set thread-local timeout for each worker (used by shell_exec::run)
         all_work_items.into_par_iter().for_each(|item| {
+            worktrunk::shell_exec::set_command_timeout(command_timeout);
             let result = item.execute();
             let _ = tx_worker.send(result);
         });

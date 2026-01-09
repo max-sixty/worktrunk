@@ -203,10 +203,40 @@ fn find_git_bash() -> Option<PathBuf> {
 /// Hooks and other child processes should not be able to write to the directive file.
 pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 
+// ============================================================================
+// Thread-Local Command Timeout
+// ============================================================================
+
+use std::cell::Cell;
+use std::time::Duration;
+
+thread_local! {
+    /// Thread-local command timeout. When set, all commands executed via `run()` on this
+    /// thread will be killed if they exceed this duration.
+    ///
+    /// This is used by `wt select` to make the TUI responsive faster on large repos.
+    /// The timeout is set per-worker-thread in Rayon's thread pool.
+    static COMMAND_TIMEOUT: Cell<Option<Duration>> = const { Cell::new(None) };
+}
+
+/// Set the command timeout for the current thread.
+///
+/// When set, all commands executed via `run()` on this thread will be killed if they
+/// exceed the specified duration. Set to `None` to disable timeout.
+///
+/// This is typically called at the start of a Rayon worker task to apply timeout
+/// to all git operations within that task.
+pub fn set_command_timeout(timeout: Option<Duration>) {
+    COMMAND_TIMEOUT.with(|t| t.set(timeout));
+}
+
 /// Execute a command with timing and debug logging.
 ///
 /// This is the **only** way to run external commands in worktrunk. All command execution
 /// must go through this function to ensure consistent logging and tracing.
+///
+/// If a thread-local timeout is set via `set_command_timeout()`, the command will be
+/// killed if it exceeds that duration.
 ///
 /// The `WORKTRUNK_DIRECTIVE_FILE` environment variable is automatically removed from spawned
 /// processes to prevent hooks from discovering and writing to the directive file.
@@ -220,6 +250,21 @@ pub const DIRECTIVE_FILE_ENV_VAR: &str = "WORKTRUNK_DIRECTIVE_FILE";
 /// The `context` parameter is typically the worktree name for git commands, or `None` for
 /// standalone CLI tools like `gh` and `glab`.
 pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::process::Output> {
+    let timeout = COMMAND_TIMEOUT.with(|t| t.get());
+    run_with_timeout(cmd, context, timeout)
+}
+
+/// Execute a command with an optional timeout.
+///
+/// Like `run()`, but allows specifying a timeout. If the command doesn't complete within
+/// the timeout, it is killed and an error is returned.
+///
+/// Returns `std::io::ErrorKind::TimedOut` if the command times out.
+pub fn run_with_timeout(
+    cmd: &mut Command,
+    context: Option<&str>,
+    timeout: Option<std::time::Duration>,
+) -> std::io::Result<std::process::Output> {
     use std::time::Instant;
 
     // Remove WORKTRUNK_DIRECTIVE_FILE to prevent hooks from writing to it
@@ -245,7 +290,13 @@ pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::pro
     let _guard = get_semaphore().acquire();
 
     let t0 = Instant::now();
-    let result = cmd.output();
+
+    // Execute with or without timeout
+    let result = match timeout {
+        None => cmd.output(),
+        Some(timeout_duration) => run_with_timeout_impl(cmd, timeout_duration),
+    };
+
     let duration_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Log trace with timing
@@ -287,6 +338,85 @@ pub fn run(cmd: &mut Command, context: Option<&str>) -> std::io::Result<std::pro
     }
 
     result
+}
+
+/// Implementation of timeout-based command execution.
+///
+/// Spawns the process, captures stdout/stderr in background threads, and waits with timeout.
+/// If the timeout is exceeded, kills the process and returns TimedOut error.
+fn run_with_timeout_impl(
+    cmd: &mut Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::{ErrorKind, Read};
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    // Spawn process with piped stdout/stderr
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Take ownership of stdout/stderr handles
+    let mut stdout_handle = child.stdout.take();
+    let mut stderr_handle = child.stderr.take();
+
+    // Spawn threads to read stdout/stderr in parallel
+    // This prevents deadlock when buffers fill up
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(ref mut handle) = stdout_handle {
+            let _ = handle.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(ref mut handle) = stderr_handle {
+            let _ = handle.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    // Wait for process with timeout
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None => {
+                if Instant::now() >= deadline {
+                    // Timeout exceeded - kill the process (SIGKILL on Unix)
+                    let _ = child.kill();
+                    let _ = child.wait(); // Reap the process
+
+                    // Wait for reader threads to complete (they'll see EOF after kill)
+                    // This prevents thread leaks
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+
+                    return Err(std::io::Error::new(
+                        ErrorKind::TimedOut,
+                        "command timed out",
+                    ));
+                }
+                // Sleep briefly before checking again
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    };
+
+    // Collect output from threads
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 // ============================================================================
@@ -702,5 +832,69 @@ mod tests {
     fn test_unix_is_not_windows_without_git_bash() {
         let config = ShellConfig::get();
         assert!(!config.is_windows_without_git_bash());
+    }
+
+    // ========================================================================
+    // Timeout tests
+    // ========================================================================
+
+    #[test]
+    fn test_run_with_timeout_completes_fast_command() {
+        let mut cmd = Command::new("echo");
+        cmd.arg("hello");
+        let result = run_with_timeout(&mut cmd, None, Some(Duration::from_secs(5)));
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("hello"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_run_with_timeout_kills_slow_command() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("10");
+        let result = run_with_timeout(&mut cmd, None, Some(Duration::from_millis(50)));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn test_run_with_no_timeout_completes() {
+        let mut cmd = Command::new("echo");
+        cmd.arg("no timeout");
+        let result = run_with_timeout(&mut cmd, None, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_thread_local_timeout_setting() {
+        // Initially no timeout
+        let initial = COMMAND_TIMEOUT.with(|t| t.get());
+        assert!(initial.is_none() || initial == Some(Duration::from_millis(500)));
+
+        // Set a timeout
+        set_command_timeout(Some(Duration::from_millis(100)));
+        let after_set = COMMAND_TIMEOUT.with(|t| t.get());
+        assert_eq!(after_set, Some(Duration::from_millis(100)));
+
+        // Clear the timeout
+        set_command_timeout(None);
+        let after_clear = COMMAND_TIMEOUT.with(|t| t.get());
+        assert!(after_clear.is_none());
+    }
+
+    #[test]
+    fn test_run_uses_thread_local_timeout() {
+        // Set no timeout (ensure fast completion)
+        set_command_timeout(None);
+
+        let mut cmd = Command::new("echo");
+        cmd.arg("thread local test");
+        let result = run(&mut cmd, None);
+        assert!(result.is_ok());
+
+        // Clean up
+        set_command_timeout(None);
     }
 }
