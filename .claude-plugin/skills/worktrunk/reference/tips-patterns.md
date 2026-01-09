@@ -206,8 +206,8 @@ This lets one Claude session hand off work to another that runs in the backgroun
 The [worktrunk skill](https://worktrunk.dev/claude-code/) includes guidance for Claude Code to execute this pattern. To enable it, request it explicitly ("spawn a parallel worktree in tmux for...") or add to `CLAUDE.md`:
 
 ```markdown
-When I ask you to spawn parallel worktrees, use tmux to create detached sessions
-with `wt switch --create -x claude` inside.
+When I ask you to spawn parallel worktrees, run `wt switch --create -x claude`
+in a detached tmux session.
 ```
 
 ## Bare repository layout
