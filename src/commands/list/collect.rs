@@ -380,7 +380,7 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].is_ancestor = Some(false);
         }
         TaskKind::BranchDiff => {
-            items[idx].branch_diff = Some(BranchDiffTotals::default());
+            // Leave as None — UI shows `…` for skipped/failed tasks
         }
         TaskKind::WorkingTreeDiff => {
             if let ItemKind::Worktree(data) = &mut items[idx].kind {
@@ -669,6 +669,13 @@ fn worktree_branch_set(worktrees: &[Worktree]) -> std::collections::HashSet<&str
 ///
 /// The `command_timeout` parameter, if set, limits how long individual git commands can run.
 /// This is useful for `wt select` to show the TUI faster by skipping slow operations.
+///
+/// TODO: Now that we skip expensive tasks for stale branches (see `skip_expensive_for_stale`),
+/// the timeout may be unnecessary. Consider removing it if it doesn't provide value.
+///
+/// The `skip_expensive_for_stale` parameter enables batch-fetching ahead/behind counts and
+/// skipping expensive merge-base operations for branches far behind the default branch.
+/// This dramatically improves performance for repos with many stale branches.
 #[allow(clippy::too_many_arguments)]
 pub fn collect(
     repo: &Repository,
@@ -679,6 +686,7 @@ pub fn collect(
     render_table: bool,
     config: &worktrunk::config::WorktrunkConfig,
     command_timeout: Option<std::time::Duration>,
+    skip_expensive_for_stale: bool,
 ) -> anyhow::Result<Option<super::model::ListData>> {
     use super::progressive_table::ProgressiveTable;
 
@@ -868,9 +876,10 @@ pub fn collect(
     let max_width = crate::display::get_terminal_width();
 
     // Create collection options from skip set
-    let options = super::collect_progressive_impl::CollectOptions {
+    let mut options = super::collect_progressive_impl::CollectOptions {
         skip_tasks: effective_skip_tasks,
         url_template: url_template.clone(),
+        ..Default::default()
     };
 
     // Track expected results per item - populated as spawns are queued
@@ -948,6 +957,28 @@ pub fn collect(
     // Deferred until after skeleton to avoid blocking initial render.
     let integration_target = repo.effective_integration_target(&default_branch);
 
+    // Batch-fetch ahead/behind counts to identify branches that are far behind.
+    // This allows skipping expensive merge-base operations for diverged branches, dramatically
+    // improving performance on repos with many stale branches (e.g., wt select).
+    //
+    // Uses `git for-each-ref --format='%(ahead-behind:...)'` (git 2.36+) which gets all
+    // counts in a single command. On older git versions, returns empty and all tasks run.
+    if skip_expensive_for_stale {
+        // Branches more than 50 commits behind skip expensive merge-base operations.
+        // 50 is low enough to catch truly stale branches while keeping info for
+        // recently-diverged ones. The "behind" count is the primary expense driver -
+        // git must traverse all those commits to find the merge-base.
+        let threshold: usize = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50);
+        let ahead_behind = repo.batch_ahead_behind(&default_branch);
+        if !ahead_behind.is_empty() {
+            options.branch_ahead_behind = ahead_behind;
+            options.skip_expensive_threshold = Some(threshold);
+        }
+    }
+
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
     // and collect_branch_progressive). This parallelizes the work and minimizes time-to-skeleton.
 
@@ -990,7 +1021,7 @@ pub fn collect(
     let default_branch_clone = default_branch.clone();
     let target_clone = integration_target.clone();
     let expected_results_clone = expected_results.clone();
-    let options_clone = options.clone();
+    // Move options into the worker thread (not cloned - it can be large with branch_ahead_behind)
     let main_path = main_worktree.path.clone();
 
     // Prepare branch data if needed (before moving into closure)
@@ -1031,7 +1062,7 @@ pub fn collect(
                 idx,
                 &default_branch_clone,
                 &target_clone,
-                &options_clone,
+                &options,
                 &expected_results_clone,
                 &tx_worker,
             ));
@@ -1046,8 +1077,9 @@ pub fn collect(
                 *item_idx,
                 &default_branch_clone,
                 &target_clone,
-                &options_clone,
+                &options,
                 &expected_results_clone,
+                &tx_worker,
             ));
         }
 

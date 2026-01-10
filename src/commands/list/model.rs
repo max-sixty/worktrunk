@@ -433,8 +433,8 @@ impl ListItem {
         self.counts.unwrap_or_default()
     }
 
-    pub fn branch_diff(&self) -> BranchDiffTotals {
-        self.branch_diff.unwrap_or_default()
+    pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
+        self.branch_diff.as_ref()
     }
 
     pub fn upstream(&self) -> UpstreamStatus {
@@ -556,8 +556,8 @@ impl ListItem {
         }
 
         // 5. Branch diff vs main (priority 5)
-        let branch_diff = self.branch_diff();
-        if !branch_diff.diff.is_empty()
+        if let Some(branch_diff) = self.branch_diff()
+            && !branch_diff.diff.is_empty()
             && let Some(formatted) = ColumnKind::BranchDiff
                 .format_diff_plain(branch_diff.diff.added, branch_diff.diff.deleted)
         {
@@ -2036,8 +2036,8 @@ mod tests {
     #[test]
     fn test_list_item_branch_diff() {
         let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        let diff = item.branch_diff();
-        assert!(diff.diff.is_empty());
+        // New items have no branch_diff computed yet
+        assert!(item.branch_diff().is_none());
     }
 
     #[test]

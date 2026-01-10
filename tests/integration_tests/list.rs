@@ -2363,3 +2363,60 @@ fn test_list_skips_operations_for_prunable_worktrees(mut repo: TestRepo) {
     // wt list should show the prunable worktree with ⊟ symbol but NO error warnings
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
+
+/// Tests that branches far behind main show `…` instead of diff stats when
+/// skip_expensive_for_stale is enabled. This saves time in `wt select` for
+/// repos with many stale branches.
+///
+/// The `…` indicator distinguishes "not computed" from "zero changes" (blank).
+#[rstest]
+fn test_list_skips_expensive_for_stale_branches(mut repo: TestRepo) {
+    // Create feature branch at current main
+    let feature_path = repo.add_worktree("feature");
+
+    // Advance main by 2 commits (feature will be 2 behind)
+    repo.commit("Second commit on main");
+    repo.commit("Third commit on main");
+
+    // Add a change on feature so it's not integrated
+    std::fs::write(feature_path.join("feature.txt"), "feature content").unwrap();
+    repo.git_command()
+        .args(["add", "feature.txt"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    repo.git_command()
+        .args(["commit", "-m", "Feature work"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+
+    // With threshold=1, feature branch (2 behind) should skip expensive tasks
+    // and show `…` instead of actual diff stats
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.arg("--full"); // Need --full to show BranchDiff column
+        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
+        cmd
+    });
+}
+
+/// Tests skip_expensive_for_stale with branch-only entries (no worktree).
+/// This exercises a different code path than the worktree test above.
+#[rstest]
+fn test_list_skips_expensive_for_stale_branches_only(repo: TestRepo) {
+    // Create a branch without a worktree
+    repo.create_branch("stale-branch");
+
+    // Advance main by 2 commits (stale-branch will be 2 behind)
+    repo.commit("Second commit on main");
+    repo.commit("Third commit on main");
+
+    // With threshold=1, stale-branch (2 behind) should skip expensive tasks
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--branches", "--full"]);
+        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
+        cmd
+    });
+}

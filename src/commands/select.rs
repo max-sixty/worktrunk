@@ -886,6 +886,7 @@ pub fn handle_select() -> anyhow::Result<()> {
         false, // render_table (select renders its own UI)
         &config,
         command_timeout,
+        true, // skip_expensive_for_stale (faster for repos with many stale branches)
     )?
     else {
         return Ok(());
