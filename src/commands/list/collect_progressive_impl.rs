@@ -49,6 +49,28 @@ pub struct CollectOptions {
     /// URL template from project config (e.g., "http://localhost:{{ branch | hash_port }}").
     /// Expanded per-item in task spawning (post-skeleton) to minimize time-to-skeleton.
     pub url_template: Option<String>,
+
+    /// Pre-fetched ahead/behind counts for branches (from batched `git for-each-ref`).
+    /// Used to skip expensive tasks for branches that are far behind the default branch.
+    /// The counts are (ahead, behind). If empty, all tasks run normally.
+    pub branch_ahead_behind: std::collections::HashMap<String, (usize, usize)>,
+
+    /// Threshold for skipping expensive tasks. Branches with `behind > threshold`
+    /// will skip merge-base-dependent tasks (HasFileChanges, IsAncestor, WouldMergeAdd,
+    /// BranchDiff, MergeTreeConflicts). AheadBehind uses batch data instead of skipping.
+    /// CommittedTreesMatch is cheap and kept for integration detection.
+    ///
+    /// **Display implications:** When tasks are skipped:
+    /// - BranchDiff column shows `…` instead of diff stats
+    /// - Status symbols (conflict `✗`, integrated `⊂`) may be missing or incorrect
+    ///   since they depend on skipped tasks
+    ///
+    /// Note: `wt select` doesn't show the BranchDiff column, so `…` isn't visible there.
+    /// This is similar to how `✗` conflict only shows with `--full` even in `wt list`.
+    ///
+    /// TODO: Consider adding a visible indicator in Status column when integration
+    /// checks are skipped, so users know the `⊂` symbol may be incomplete.
+    pub skip_expensive_threshold: Option<usize>,
 }
 
 /// Context for task computation. Cloned and moved into spawned threads.
@@ -161,6 +183,31 @@ fn dispatch_task(kind: TaskKind, ctx: TaskContext) -> Result<TaskResult, TaskErr
     }
 }
 
+// Tasks that are expensive because they require merge-base computation or merge simulation.
+// These are skipped for branches that are far behind the default branch (in wt select).
+// AheadBehind is NOT here - we use batch data for it instead of skipping.
+// CommittedTreesMatch is NOT here - it's a cheap tree comparison that aids integration detection.
+const EXPENSIVE_TASKS: &[TaskKind] = &[
+    TaskKind::HasFileChanges,     // git diff with three-dot range
+    TaskKind::IsAncestor,         // git merge-base --is-ancestor
+    TaskKind::WouldMergeAdd,      // git merge-tree simulation
+    TaskKind::BranchDiff,         // git diff with three-dot range
+    TaskKind::MergeTreeConflicts, // git merge-tree simulation
+];
+
+/// Check if a branch should skip expensive tasks based on how far behind it is.
+/// Returns Some((ahead, behind)) if should skip, None otherwise.
+fn should_skip_expensive(branch: Option<&str>, options: &CollectOptions) -> Option<(usize, usize)> {
+    let threshold = options.skip_expensive_threshold?;
+    let branch = branch?;
+    let &(ahead, behind) = options.branch_ahead_behind.get(branch)?;
+    if behind > threshold {
+        Some((ahead, behind))
+    } else {
+        None
+    }
+}
+
 /// Generate work items for a worktree.
 ///
 /// Returns a list of work items representing all tasks that should run for this
@@ -179,6 +226,8 @@ pub fn work_items_for_worktree(
     if wt.is_prunable() {
         return vec![];
     }
+
+    let skip = &options.skip_tasks;
 
     // Expand URL template for this item
     let item_url = options.url_template.as_ref().and_then(|template| {
@@ -210,8 +259,22 @@ pub fn work_items_for_worktree(
         item_url,
     };
 
-    let skip = &options.skip_tasks;
-    let mut items = Vec::with_capacity(16);
+    // Check if this branch is far behind and should skip expensive tasks.
+    // If so, we get the batch-computed (ahead, behind) to send immediately.
+    let batch_counts = should_skip_expensive(wt.branch.as_deref(), options);
+
+    // If we have batch counts and AheadBehind isn't skipped, send result immediately
+    if let Some((ahead, behind)) = batch_counts
+        && !skip.contains(&TaskKind::AheadBehind)
+    {
+        expected_results.expect(item_idx, TaskKind::AheadBehind);
+        let _ = tx.send(Ok(TaskResult::AheadBehind {
+            item_idx,
+            counts: AheadBehind { ahead, behind },
+        }));
+    }
+
+    let mut items = Vec::with_capacity(15);
 
     // Helper to add a work item and register the expected result
     let mut add_item = |kind: TaskKind| {
@@ -238,9 +301,17 @@ pub fn work_items_for_worktree(
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
     ] {
-        if !skip.contains(&kind) {
-            add_item(kind);
+        if skip.contains(&kind) {
+            continue;
         }
+        // Skip AheadBehind if we already sent batch data
+        if batch_counts.is_some() && kind == TaskKind::AheadBehind {
+            continue;
+        }
+        if batch_counts.is_some() && EXPENSIVE_TASKS.contains(&kind) {
+            continue;
+        }
+        add_item(kind);
     }
     // URL status health check task (if we have a URL).
     // Note: We already registered and sent an immediate UrlStatus above with url + active=None.
@@ -271,7 +342,10 @@ pub fn work_items_for_branch(
     target: &str,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
+    tx: &Sender<Result<TaskResult, TaskError>>,
 ) -> Vec<WorkItem> {
+    let skip = &options.skip_tasks;
+
     let ctx = TaskContext {
         repo_path: repo_path.to_path_buf(),
         commit_sha: commit_sha.to_string(),
@@ -282,8 +356,22 @@ pub fn work_items_for_branch(
         item_url: None, // Branches without worktrees don't have URLs
     };
 
-    let skip = &options.skip_tasks;
-    let mut items = Vec::with_capacity(12);
+    // Check if this branch is far behind and should skip expensive tasks.
+    // If so, we get the batch-computed (ahead, behind) to send immediately.
+    let batch_counts = should_skip_expensive(Some(branch_name), options);
+
+    // If we have batch counts and AheadBehind isn't skipped, send result immediately
+    if let Some((ahead, behind)) = batch_counts
+        && !skip.contains(&TaskKind::AheadBehind)
+    {
+        expected_results.expect(item_idx, TaskKind::AheadBehind);
+        let _ = tx.send(Ok(TaskResult::AheadBehind {
+            item_idx,
+            counts: AheadBehind { ahead, behind },
+        }));
+    }
+
+    let mut items = Vec::with_capacity(11);
 
     // Helper to add a work item and register the expected result
     let mut add_item = |kind: TaskKind| {
@@ -306,9 +394,17 @@ pub fn work_items_for_branch(
         TaskKind::CiStatus,
         TaskKind::WouldMergeAdd,
     ] {
-        if !skip.contains(&kind) {
-            add_item(kind);
+        if skip.contains(&kind) {
+            continue;
         }
+        // Skip AheadBehind if we already sent batch data
+        if batch_counts.is_some() && kind == TaskKind::AheadBehind {
+            continue;
+        }
+        if batch_counts.is_some() && EXPENSIVE_TASKS.contains(&kind) {
+            continue;
+        }
+        add_item(kind);
     }
 
     items

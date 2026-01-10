@@ -333,7 +333,8 @@ struct ListRowContext<'a> {
     item: &'a ListItem,
     worktree_data: Option<&'a WorktreeData>,
     counts: AheadBehind,
-    branch_diff: LineDiff,
+    /// None means task was skipped (show `…`), Some means computed (may be zero)
+    branch_diff: Option<LineDiff>,
     upstream: UpstreamStatus,
     commit: CommitDetails,
     head: &'a str,
@@ -347,7 +348,7 @@ impl<'a> ListRowContext<'a> {
         let worktree_data = item.worktree_data();
         let counts = item.counts();
         let commit = item.commit_details();
-        let branch_diff = item.branch_diff().diff;
+        let branch_diff = item.branch_diff().map(|bd| bd.diff);
         let upstream = item.upstream();
         let head = item.head();
 
@@ -478,7 +479,17 @@ impl ColumnLayout {
                 if ctx.item.is_main() {
                     return StyledLine::new();
                 }
-                self.render_diff_cell(ctx.branch_diff.added, ctx.branch_diff.deleted)
+                match ctx.branch_diff {
+                    Some(diff) => self.render_diff_cell(diff.added, diff.deleted),
+                    None => {
+                        // Task was skipped — show ellipsis to indicate "not computed"
+                        let mut cell = StyledLine::new();
+                        let padding = self.width.saturating_sub(1);
+                        cell.push_raw(" ".repeat(padding));
+                        cell.push_styled("…", Style::new().dimmed());
+                        cell
+                    }
+                }
             }
             ColumnKind::Path => {
                 let Some(data) = ctx.worktree_data else {

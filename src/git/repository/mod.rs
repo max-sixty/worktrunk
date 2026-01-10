@@ -1145,6 +1145,43 @@ impl Repository {
         Ok((ahead, behind))
     }
 
+    /// Batch-fetch ahead/behind counts for all local branches vs a base ref.
+    ///
+    /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to get
+    /// all counts in a single command. Returns a map from branch name to (ahead, behind).
+    ///
+    /// On git < 2.36 or if the command fails, returns an empty map.
+    pub fn batch_ahead_behind(
+        &self,
+        base: &str,
+    ) -> std::collections::HashMap<String, (usize, usize)> {
+        let format = format!("%(refname:lstrip=2) %(ahead-behind:{})", base);
+        let output = match self.run_command(&[
+            "for-each-ref",
+            &format!("--format={}", format),
+            "refs/heads/",
+        ]) {
+            Ok(output) => output,
+            Err(e) => {
+                // Fails on git < 2.36 (no %(ahead-behind:) support), invalid base ref, etc.
+                log::debug!("batch_ahead_behind({base}): git for-each-ref failed: {e}");
+                return std::collections::HashMap::new();
+            }
+        };
+
+        output
+            .lines()
+            .filter_map(|line| {
+                // Format: "branch-name ahead behind"
+                let mut parts = line.rsplitn(3, ' ');
+                let behind: usize = parts.next()?.parse().ok()?;
+                let ahead: usize = parts.next()?.parse().ok()?;
+                let branch = parts.next()?.to_string();
+                Some((branch, (ahead, behind)))
+            })
+            .collect()
+    }
+
     /// List all local branches with their HEAD commit SHA.
     /// Returns a vector of (branch_name, commit_sha) tuples.
     pub fn list_local_branches(&self) -> anyhow::Result<Vec<(String, String)>> {
