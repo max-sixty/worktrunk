@@ -299,7 +299,7 @@ pub fn step_show_squash_prompt(
     let target_branch = repo.resolve_target_branch(target)?;
 
     // Get current branch
-    let current_branch = repo.current_branch()?.unwrap_or("HEAD");
+    let current_branch = repo.current_branch()?.unwrap_or_else(|| "HEAD".to_string());
 
     // Get merge base with target branch
     let merge_base = repo.merge_base("HEAD", &target_branch)?;
@@ -319,7 +319,7 @@ pub fn step_show_squash_prompt(
         &target_branch,
         &merge_base,
         &subjects,
-        current_branch,
+        &current_branch,
         repo_name,
         config,
     )?;

@@ -994,7 +994,7 @@ impl CachedCiStatus {
             Err(_) => return Vec::new(),
         };
 
-        let Some(cache_dir) = Self::cache_dir(repo_root) else {
+        let Some(cache_dir) = Self::cache_dir(&repo_root) else {
             return Vec::new();
         };
 
@@ -1028,7 +1028,7 @@ impl CachedCiStatus {
             Err(_) => return 0,
         };
 
-        let Some(cache_dir) = Self::cache_dir(repo_root) else {
+        let Some(cache_dir) = Self::cache_dir(&repo_root) else {
             return 0;
         };
 

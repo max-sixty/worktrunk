@@ -995,7 +995,7 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             }
 
             let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();
-            let ci_status = PrStatus::detect(&branch_name, &head, repo_root, has_upstream)
+            let ci_status = PrStatus::detect(&branch_name, &head, &repo_root, has_upstream)
                 .map_or(super::list::ci_status::CiStatus::NoCI, |s| s.ci_status);
             let status_str: &'static str = ci_status.into();
             crate::output::stdout(status_str)?;
