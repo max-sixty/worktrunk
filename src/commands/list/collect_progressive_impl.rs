@@ -35,8 +35,8 @@ use super::model::{
 
 /// Options for controlling what data to collect.
 ///
-/// Uses a skip set to control which tasks are spawned. Tasks not in the set
-/// will be computed; tasks in the set will be skipped.
+/// This is operation parameters for a single `wt list` invocation, not a cache.
+/// For cached repo data, see Repository's global cache.
 #[derive(Clone, Default)]
 pub struct CollectOptions {
     /// Tasks to skip (not compute). Empty set means compute everything.
@@ -50,15 +50,15 @@ pub struct CollectOptions {
     /// Expanded per-item in task spawning (post-skeleton) to minimize time-to-skeleton.
     pub url_template: Option<String>,
 
-    /// Pre-fetched ahead/behind counts for branches (from batched `git for-each-ref`).
-    /// Used to skip expensive tasks for branches that are far behind the default branch.
-    /// The counts are (ahead, behind). If empty, all tasks run normally.
-    pub branch_ahead_behind: std::collections::HashMap<String, (usize, usize)>,
-
-    /// Threshold for skipping expensive tasks. Branches with `behind > threshold`
-    /// will skip merge-base-dependent tasks (HasFileChanges, IsAncestor, WouldMergeAdd,
-    /// BranchDiff, MergeTreeConflicts). AheadBehind uses batch data instead of skipping.
-    /// CommittedTreesMatch is cheap and kept for integration detection.
+    /// Branches to skip expensive tasks for (behind > threshold).
+    ///
+    /// Presence in set = skip expensive tasks for this branch (HasFileChanges,
+    /// IsAncestor, WouldMergeAdd, BranchDiff, MergeTreeConflicts).
+    ///
+    /// Built by filtering `batch_ahead_behind()` results on local branches only.
+    /// Remote-only branches are never in this set (they use individual git commands).
+    /// The threshold (default 50) is applied at construction time. Ahead/behind
+    /// counts are cached in Repository and looked up by AheadBehindTask.
     ///
     /// **Display implications:** When tasks are skipped:
     /// - BranchDiff column shows `…` instead of diff stats
@@ -70,7 +70,7 @@ pub struct CollectOptions {
     ///
     /// TODO: Consider adding a visible indicator in Status column when integration
     /// checks are skipped, so users know the `⊂` symbol may be incomplete.
-    pub skip_expensive_threshold: Option<usize>,
+    pub stale_branches: std::collections::HashSet<String>,
 }
 
 /// Context for task computation. Cloned and moved into spawned threads.
@@ -195,19 +195,6 @@ const EXPENSIVE_TASKS: &[TaskKind] = &[
     TaskKind::MergeTreeConflicts, // git merge-tree simulation
 ];
 
-/// Check if a branch should skip expensive tasks based on how far behind it is.
-/// Returns Some((ahead, behind)) if should skip, None otherwise.
-fn should_skip_expensive(branch: Option<&str>, options: &CollectOptions) -> Option<(usize, usize)> {
-    let threshold = options.skip_expensive_threshold?;
-    let branch = branch?;
-    let &(ahead, behind) = options.branch_ahead_behind.get(branch)?;
-    if behind > threshold {
-        Some((ahead, behind))
-    } else {
-        None
-    }
-}
-
 /// Generate work items for a worktree.
 ///
 /// Returns a list of work items representing all tasks that should run for this
@@ -259,20 +246,11 @@ pub fn work_items_for_worktree(
         item_url,
     };
 
-    // Check if this branch is far behind and should skip expensive tasks.
-    // If so, we get the batch-computed (ahead, behind) to send immediately.
-    let batch_counts = should_skip_expensive(wt.branch.as_deref(), options);
-
-    // If we have batch counts and AheadBehind isn't skipped, send result immediately
-    if let Some((ahead, behind)) = batch_counts
-        && !skip.contains(&TaskKind::AheadBehind)
-    {
-        expected_results.expect(item_idx, TaskKind::AheadBehind);
-        let _ = tx.send(Ok(TaskResult::AheadBehind {
-            item_idx,
-            counts: AheadBehind { ahead, behind },
-        }));
-    }
+    // Check if this branch is stale and should skip expensive tasks.
+    let is_stale = wt
+        .branch
+        .as_deref()
+        .is_some_and(|b| options.stale_branches.contains(b));
 
     let mut items = Vec::with_capacity(15);
 
@@ -304,11 +282,8 @@ pub fn work_items_for_worktree(
         if skip.contains(&kind) {
             continue;
         }
-        // Skip AheadBehind if we already sent batch data
-        if batch_counts.is_some() && kind == TaskKind::AheadBehind {
-            continue;
-        }
-        if batch_counts.is_some() && EXPENSIVE_TASKS.contains(&kind) {
+        // Skip expensive tasks for stale branches (far behind default branch)
+        if is_stale && EXPENSIVE_TASKS.contains(&kind) {
             continue;
         }
         add_item(kind);
@@ -342,7 +317,6 @@ pub fn work_items_for_branch(
     target: &str,
     options: &CollectOptions,
     expected_results: &Arc<ExpectedResults>,
-    tx: &Sender<Result<TaskResult, TaskError>>,
 ) -> Vec<WorkItem> {
     let skip = &options.skip_tasks;
 
@@ -356,20 +330,8 @@ pub fn work_items_for_branch(
         item_url: None, // Branches without worktrees don't have URLs
     };
 
-    // Check if this branch is far behind and should skip expensive tasks.
-    // If so, we get the batch-computed (ahead, behind) to send immediately.
-    let batch_counts = should_skip_expensive(Some(branch_name), options);
-
-    // If we have batch counts and AheadBehind isn't skipped, send result immediately
-    if let Some((ahead, behind)) = batch_counts
-        && !skip.contains(&TaskKind::AheadBehind)
-    {
-        expected_results.expect(item_idx, TaskKind::AheadBehind);
-        let _ = tx.send(Ok(TaskResult::AheadBehind {
-            item_idx,
-            counts: AheadBehind { ahead, behind },
-        }));
-    }
+    // Check if this branch is stale and should skip expensive tasks.
+    let is_stale = options.stale_branches.contains(branch_name);
 
     let mut items = Vec::with_capacity(11);
 
@@ -397,11 +359,8 @@ pub fn work_items_for_branch(
         if skip.contains(&kind) {
             continue;
         }
-        // Skip AheadBehind if we already sent batch data
-        if batch_counts.is_some() && kind == TaskKind::AheadBehind {
-            continue;
-        }
-        if batch_counts.is_some() && EXPENSIVE_TASKS.contains(&kind) {
+        // Skip expensive tasks for stale branches (far behind default branch)
+        if is_stale && EXPENSIVE_TASKS.contains(&kind) {
             continue;
         }
         add_item(kind);
@@ -447,9 +406,21 @@ impl Task for AheadBehindTask {
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let base = ctx.require_default_branch(Self::KIND)?;
         let repo = ctx.repo();
-        let (ahead, behind) = repo
-            .ahead_behind(base, &ctx.commit_sha)
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+
+        // Check cache first (populated by batch_ahead_behind if it ran).
+        // Cache lookup has minor overhead (rev-parse for cache key + allocations),
+        // but saves the expensive ahead_behind computation on cache hit.
+        let (ahead, behind) = if let Some(branch) = ctx.branch.as_deref() {
+            if let Some(counts) = repo.get_cached_ahead_behind(base, branch) {
+                counts
+            } else {
+                repo.ahead_behind(base, &ctx.commit_sha)
+                    .map_err(|e| ctx.error(Self::KIND, e))?
+            }
+        } else {
+            repo.ahead_behind(base, &ctx.commit_sha)
+                .map_err(|e| ctx.error(Self::KIND, e))?
+        };
 
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,

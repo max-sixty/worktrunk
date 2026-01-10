@@ -974,11 +974,14 @@ pub fn collect(
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(50);
+        // batch_ahead_behind populates the Repository cache with all counts
         let ahead_behind = repo.batch_ahead_behind(&default_branch);
-        if !ahead_behind.is_empty() {
-            options.branch_ahead_behind = ahead_behind;
-            options.skip_expensive_threshold = Some(threshold);
-        }
+        // Filter to stale branches (behind > threshold). The set indicates which
+        // branches should skip expensive tasks; counts come from the cache.
+        options.stale_branches = ahead_behind
+            .into_iter()
+            .filter_map(|(branch, (_, behind))| (behind > threshold).then_some(branch))
+            .collect();
     }
 
     // Note: URL template expansion is deferred to task spawning (in collect_worktree_progressive
@@ -1023,7 +1026,7 @@ pub fn collect(
     let default_branch_clone = default_branch.clone();
     let target_clone = integration_target.clone();
     let expected_results_clone = expected_results.clone();
-    // Move options into the worker thread (not cloned - it can be large with branch_ahead_behind)
+    // Move options into the worker thread (not cloned - contains stale_branches set)
     let main_path = main_worktree.path.clone();
 
     // Prepare branch data if needed (before moving into closure)
@@ -1081,7 +1084,6 @@ pub fn collect(
                 &target_clone,
                 &options,
                 &expected_results_clone,
-                &tx_worker,
             ));
         }
 
