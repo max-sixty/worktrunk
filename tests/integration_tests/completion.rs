@@ -1147,3 +1147,79 @@ fn test_complete_single_dash_shows_both_short_and_long_flags(repo: TestRepo) {
         );
     }
 }
+
+/// Deprecated args should never appear in completions.
+///
+/// Args like `--no-background` are deprecated and hidden from help. They should also
+/// be hidden from tab completion, even when completing `--` (which shows other hidden args).
+#[rstest]
+fn test_complete_excludes_deprecated_args(repo: TestRepo) {
+    repo.commit("initial");
+
+    // Deprecated args that should never appear
+    let deprecated = ["--no-background"];
+
+    for shell in ["bash", "zsh", "fish"] {
+        // Test: wt remove --<cursor> - should NOT show --no-background
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "remove", "--"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Should have regular options
+        assert!(
+            stdout.contains("--foreground"),
+            "{shell}: should show --foreground, got:\n{stdout}"
+        );
+
+        // Should NOT have deprecated options
+        for arg in &deprecated {
+            assert!(
+                !stdout.contains(arg),
+                "{shell}: should NOT show deprecated {arg}, got:\n{stdout}"
+            );
+        }
+
+        // Test: wt hook post-start --<cursor> - same behavior
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "hook", "post-start", "--"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            stdout.contains("--foreground"),
+            "{shell}: hook post-start should show --foreground, got:\n{stdout}"
+        );
+
+        for arg in &deprecated {
+            assert!(
+                !stdout.contains(arg),
+                "{shell}: hook post-start should NOT show deprecated {arg}, got:\n{stdout}"
+            );
+        }
+
+        // Test: wt hook post-switch --<cursor> - same behavior
+        let output = repo
+            .completion_cmd_for_shell(&["wt", "hook", "post-switch", "--"], shell)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: completion failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            stdout.contains("--foreground"),
+            "{shell}: hook post-switch should show --foreground, got:\n{stdout}"
+        );
+
+        for arg in &deprecated {
+            assert!(
+                !stdout.contains(arg),
+                "{shell}: hook post-switch should NOT show deprecated {arg}, got:\n{stdout}"
+            );
+        }
+    }
+}

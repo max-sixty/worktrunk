@@ -36,15 +36,16 @@ pub use hyperlink::{Stream, hyperlink_stdout, supports_hyperlinks};
 pub use line::{StyledLine, StyledString, truncate_visible};
 pub use suggest::suggest_command;
 
-/// Default terminal width fallback if detection fails
-const DEFAULT_TERMINAL_WIDTH: usize = 80;
-
-/// Get terminal width, defaulting to 80 if detection fails
+/// Get terminal width, or `usize::MAX` if detection fails.
 ///
 /// Prefers direct terminal size detection over COLUMNS environment variable,
 /// because tools like cargo may set COLUMNS incorrectly.
 ///
 /// Checks stderr first (for status messages), then stdout (for table output).
+///
+/// When detection fails (piped context, no TTY), returns `usize::MAX` rather than
+/// an arbitrary default. Callers that need width-based formatting will produce
+/// full output, letting the consumer handle truncation.
 pub fn get_terminal_width() -> usize {
     // Prefer direct terminal detection (more accurate than COLUMNS which may be stale/wrong)
     // Check stderr first (status messages), then stdout (table output)
@@ -61,7 +62,8 @@ pub fn get_terminal_width() -> usize {
         return width;
     }
 
-    DEFAULT_TERMINAL_WIDTH
+    // Can't detect width — don't truncate, let the consumer handle it
+    usize::MAX
 }
 
 /// Calculate visual width of a string, ignoring ANSI escape codes

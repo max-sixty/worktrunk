@@ -2110,12 +2110,16 @@ fn setup_snapshot_settings_for_paths(
     // On Windows, clap shows "wt.exe" instead of "wt"
     settings.add_filter(r"wt\.exe", "wt");
 
-    // Normalize version strings in `wt config show` OTHER section (formerly RUNTIME)
-    // Version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
-    // Format: "OTHER  wt v0.9.0" with cyan ANSI codes around OTHER
-    // Pattern: <cyan>OTHER</cyan>  wt VERSION
+    // Normalize version strings in `wt config show` OTHER section
+    // wt version can be: v0.8.5, v0.8.5-2-gabcdef, v0.8.5-dirty, or bare git hash (b9ffe83)
+    // Format: "○ wt: <bold>VERSION</>" on its own line
     settings.add_filter(
-        r"(OTHER\x1b\[39m  wt )(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        r"(wt: \x1b\[1m)(?:v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9]+-g[0-9a-f]+)?(?:-dirty)?|[0-9a-f]{7,40})",
+        "${1}[VERSION]",
+    );
+    // git version format: "○ git: <bold>VERSION</>" (e.g., "2.47.1")
+    settings.add_filter(
+        r"(git: \x1b\[1m)[0-9]+\.[0-9]+\.[0-9]+[^\x1b]*",
         "${1}[VERSION]",
     );
 

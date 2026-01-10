@@ -619,6 +619,10 @@ fn handle_removed_worktree_output(
                 None,
             )?;
         } else {
+            // Progress message after pre-remove hooks, before actual removal
+            super::print(progress_message(
+                "Removing worktree (detached HEAD, no branch to delete)...",
+            ))?;
             let target_repo = worktrunk::git::Repository::at(worktree_path);
             let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
             if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
@@ -741,6 +745,11 @@ fn handle_removed_worktree_output(
         Ok(())
     } else {
         // Synchronous mode: remove immediately and report actual results
+
+        // Progress message after pre-remove hooks, before actual removal
+        super::print(progress_message(cformat!(
+            "Removing <bold>{branch_name}</> worktree..."
+        )))?;
 
         // Stop fsmonitor daemon first (best effort - ignore errors)
         // This prevents zombie daemons from accumulating when using builtin fsmonitor

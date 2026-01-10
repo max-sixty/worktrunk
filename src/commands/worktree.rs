@@ -754,18 +754,11 @@ pub fn handle_remove(
     no_delete_branch: bool,
     force_delete: bool,
     force_worktree: bool,
-    background: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
 
-    // Show progress (unless running in background - output handler will show command)
-    if !background {
-        crate::output::print(progress_message(cformat!(
-            "Removing <bold>{worktree_name}</> worktree..."
-        )))?;
-    }
-
+    // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
     repo.prepare_worktree_removal(
         RemoveTarget::Branch(worktree_name),
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
@@ -782,16 +775,11 @@ pub fn handle_remove_current(
     no_delete_branch: bool,
     force_delete: bool,
     force_worktree: bool,
-    background: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
     let repo = Repository::current();
 
-    // Show progress (unless running in background - output handler will show command)
-    if !background {
-        crate::output::print(progress_message("Removing current worktree..."))?;
-    }
-
+    // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
     repo.prepare_worktree_removal(
         RemoveTarget::Current,
         BranchDeletionMode::from_flags(no_delete_branch, force_delete),
