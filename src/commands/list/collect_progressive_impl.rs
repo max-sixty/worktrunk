@@ -63,8 +63,13 @@ pub struct CollectOptions {
     /// **Display implications:** When tasks are skipped:
     /// - BranchDiff column shows `…` instead of diff stats
     /// - Status symbols (conflict `✗`, integrated `⊂`) may be missing or incorrect
-    ///   since they depend on skipped tasks. The presence of `…` in the row signals
-    ///   that status symbols are also incomplete.
+    ///   since they depend on skipped tasks
+    ///
+    /// Note: `wt select` doesn't show the BranchDiff column, so `…` isn't visible there.
+    /// This is similar to how `✗` conflict only shows with `--full` even in `wt list`.
+    ///
+    /// TODO: Consider adding a visible indicator in Status column when integration
+    /// checks are skipped, so users know the `⊂` symbol may be incomplete.
     pub skip_expensive_threshold: Option<usize>,
 }
 
