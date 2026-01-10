@@ -111,7 +111,7 @@ pub fn build_hook_context(
     if let Ok(remote) = ctx.repo.primary_remote() {
         map.insert("remote".into(), remote.to_string());
         // Add remote URL for conditional hook execution (e.g., GitLab vs GitHub)
-        if let Some(url) = ctx.repo.remote_url(remote) {
+        if let Some(url) = ctx.repo.remote_url(&remote) {
             map.insert("remote_url".into(), url);
         }
         if let Some(branch) = ctx.branch

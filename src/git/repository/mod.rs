@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
-use once_cell::sync::OnceCell;
+use dashmap::DashMap;
+use once_cell::sync::{Lazy, OnceCell};
 
 use anyhow::{Context, bail};
 use normalize_path::NormalizePath;
@@ -16,6 +18,75 @@ use super::{
     BranchCategory, CompletionBranch, DefaultBranchName, DiffStats, GitError, GitRemoteUrl,
     LineDiff, Worktree,
 };
+
+// ============================================================================
+// Global Cache
+// ============================================================================
+
+/// Global cache keyed by `git_common_dir`.
+///
+/// NOTE: Using a HashMap is slightly wasteful since every Repository instance
+/// must compute `git rev-parse --git-common-dir` to look up the cache. However,
+/// tests require isolation (each test creates different repos that need their
+/// own cached values), and the HashMap approach is the simplest way to achieve
+/// this. Alternative approaches (test-only cache clearing with RwLock instead
+/// of OnceCell) have their own trade-offs.
+static REPO_CACHE: Lazy<RwLock<HashMap<PathBuf, Arc<RepoCache>>>> = Lazy::new(Default::default);
+
+/// Get the shared cache for a repository, creating it if needed.
+///
+/// Returns an Arc to the cache, allowing the caller to release the HashMap
+/// lock before accessing cached values. This prevents deadlocks when cached
+/// methods call each other.
+fn get_cache(key: PathBuf) -> Arc<RepoCache> {
+    // Try read-only first
+    {
+        let caches = REPO_CACHE.read().unwrap();
+        if let Some(cache) = caches.get(&key) {
+            return Arc::clone(cache);
+        }
+    }
+
+    // Cache miss - need write lock to insert
+    let mut caches = REPO_CACHE.write().unwrap();
+    let cache = caches
+        .entry(key)
+        .or_insert_with(|| Arc::new(RepoCache::default()));
+    Arc::clone(cache)
+}
+
+/// Cached data for a single repository.
+///
+/// Contains:
+/// - Repo-wide values (same for all worktrees): is_bare, default_branch, etc.
+/// - Per-worktree values keyed by path: worktree_root, current_branch
+///
+/// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
+/// cached values, avoiding deadlocks when cached methods call each other.
+#[derive(Debug, Default)]
+struct RepoCache {
+    // ========== Repo-wide values (same for all worktrees) ==========
+    /// Whether this is a bare repository
+    is_bare: OnceCell<bool>,
+    /// Default branch (main, master, etc.)
+    default_branch: OnceCell<String>,
+    /// Primary remote name (usually "origin")
+    primary_remote: OnceCell<String>,
+    /// Project identifier derived from remote URL
+    project_identifier: OnceCell<String>,
+    /// Base path for worktrees (repo root for normal repos, bare repo path for bare)
+    worktree_base: OnceCell<PathBuf>,
+    /// Project config (loaded from .config/wt.toml in main worktree)
+    project_config: OnceCell<Option<ProjectConfig>>,
+    /// Merge-base cache: (commit1, commit2) -> merge_base_sha
+    merge_base: DashMap<(String, String), String>,
+
+    // ========== Per-worktree values (keyed by path) ==========
+    /// Worktree root paths: worktree_path -> canonicalized root
+    worktree_roots: DashMap<PathBuf, PathBuf>,
+    /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
+    current_branches: DashMap<PathBuf, Option<String>>,
+}
 
 /// Result of resolving a worktree name.
 ///
@@ -57,28 +128,6 @@ fn base_path() -> &'static PathBuf {
         .unwrap_or_else(|| DEFAULT.get_or_init(|| PathBuf::from(".")))
 }
 
-/// Cached values for expensive git queries.
-///
-/// These values don't change during a process run, so we cache them
-/// after the first lookup to avoid repeated git command spawns.
-/// See `.claude/rules/caching-strategy.md` for what should/shouldn't be cached.
-#[derive(Debug, Default)]
-struct RepoCache {
-    git_common_dir: OnceCell<PathBuf>,
-    worktree_root: OnceCell<PathBuf>,
-    current_branch: OnceCell<Option<String>>,
-    primary_remote: OnceCell<String>,
-    project_identifier: OnceCell<String>,
-    /// Base path for worktrees (repo root for normal repos, bare repo path for bare repos)
-    worktree_base: OnceCell<PathBuf>,
-    /// Whether this is a bare repository
-    is_bare: OnceCell<bool>,
-    /// Project config (loaded from .config/wt.toml, cached per Repository instance)
-    project_config: OnceCell<Option<ProjectConfig>>,
-    /// Default branch (main, master, etc.) - cached from git config or detection
-    default_branch: OnceCell<String>,
-}
-
 /// Repository context for git operations.
 ///
 /// Provides a more ergonomic API than the `*_in(path, ...)` functions by
@@ -97,7 +146,8 @@ struct RepoCache {
 #[derive(Debug)]
 pub struct Repository {
     path: PathBuf,
-    cache: RepoCache,
+    /// Per-instance cache of git_common_dir, used as key for global cache lookup.
+    git_common_dir: OnceCell<PathBuf>,
 }
 
 impl Repository {
@@ -105,7 +155,7 @@ impl Repository {
     pub fn at(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            cache: RepoCache::default(),
+            git_common_dir: OnceCell::new(),
         }
     }
 
@@ -122,6 +172,24 @@ impl Repository {
         &self.path
     }
 
+    /// Compute and cache the git common directory for this instance.
+    ///
+    /// This is the key used to look up the shared cache.
+    fn compute_git_common_dir(&self) -> anyhow::Result<PathBuf> {
+        self.git_common_dir
+            .get_or_try_init(|| {
+                let stdout = self.run_command(&["rev-parse", "--git-common-dir"])?;
+                let path = PathBuf::from(stdout.trim());
+                if path.is_relative() {
+                    canonicalize(self.path.join(&path))
+                        .context("Failed to resolve git common directory")
+                } else {
+                    Ok(path)
+                }
+            })
+            .cloned()
+    }
+
     /// Get the primary remote name for this repository.
     ///
     /// Returns a consistent value across all worktrees (not branch-specific).
@@ -131,19 +199,20 @@ impl Repository {
     /// 2. Otherwise, get the first remote with a configured URL
     /// 3. Fall back to "origin" if no remotes exist
     ///
-    /// Result is cached for the lifetime of this Repository instance.
+    /// Result is cached in the shared repo cache (shared across all worktrees).
     ///
     /// [1]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-checkoutdefaultRemote
-    pub fn primary_remote(&self) -> anyhow::Result<&str> {
-        self.cache
+    pub fn primary_remote(&self) -> anyhow::Result<String> {
+        let cache = get_cache(self.compute_git_common_dir()?);
+        Ok(cache
             .primary_remote
-            .get_or_try_init(|| {
+            .get_or_init(|| {
                 // Check git's checkout.defaultRemote config
                 if let Ok(default_remote) = self.run_command(&["config", "checkout.defaultRemote"])
                 {
                     let default_remote = default_remote.trim();
                     if !default_remote.is_empty() && self.remote_has_url(default_remote) {
-                        return Ok(default_remote.to_string());
+                        return default_remote.to_string();
                     }
                 }
 
@@ -161,9 +230,9 @@ impl Repository {
                         .map(|(name, _)| name)
                 });
 
-                Ok(first_remote.unwrap_or("origin").to_string())
+                first_remote.unwrap_or("origin").to_string()
             })
-            .map(String::as_str)
+            .clone())
     }
 
     /// Check if a remote has a URL configured.
@@ -234,27 +303,34 @@ impl Repository {
     }
 
     /// Get the current branch name, or None if in detached HEAD state.
-    /// Result is cached for the lifetime of this Repository instance.
-    pub fn current_branch(&self) -> anyhow::Result<Option<&str>> {
-        self.cache
-            .current_branch
-            .get_or_try_init(|| {
-                let stdout = self.run_command(&["branch", "--show-current"])?;
-                let branch = stdout.trim();
-                Ok(if branch.is_empty() {
-                    None // Detached HEAD
-                } else {
-                    Some(branch.to_string())
-                })
+    ///
+    /// Result is cached in the global shared cache (keyed by worktree path).
+    pub fn current_branch(&self) -> anyhow::Result<Option<String>> {
+        let cache = get_cache(self.compute_git_common_dir()?);
+
+        Ok(cache
+            .current_branches
+            .entry(self.path.clone())
+            .or_insert_with(|| {
+                self.run_command(&["branch", "--show-current"])
+                    .ok()
+                    .and_then(|s| {
+                        let branch = s.trim();
+                        if branch.is_empty() {
+                            None // Detached HEAD
+                        } else {
+                            Some(branch.to_string())
+                        }
+                    })
             })
-            .map(|opt| opt.as_deref())
+            .clone())
     }
 
     /// Get the current branch name, or error if in detached HEAD state.
     ///
     /// `action` describes what requires being on a branch (e.g., "merge").
     pub fn require_current_branch(&self, action: &str) -> anyhow::Result<String> {
-        self.current_branch()?.map(str::to_string).ok_or_else(|| {
+        self.current_branch()?.ok_or_else(|| {
             GitError::DetachedHead {
                 action: Some(action.into()),
             }
@@ -374,7 +450,7 @@ impl Repository {
     /// - `Err` if "-" but no previous branch in history
     pub fn resolve_worktree_name(&self, name: &str) -> anyhow::Result<String> {
         match name {
-            "@" => self.current_branch()?.map(str::to_string).ok_or_else(|| {
+            "@" => self.current_branch()?.ok_or_else(|| {
                 GitError::DetachedHead {
                     action: Some("resolve '@' to current branch".into()),
                 }
@@ -461,8 +537,10 @@ impl Repository {
     /// 4. Infer from local branches if no remote
     ///
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
+    /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn default_branch(&self) -> anyhow::Result<String> {
-        self.cache
+        let cache = get_cache(self.compute_git_common_dir()?);
+        cache
             .default_branch
             .get_or_try_init(|| {
                 // Fast path: check worktrunk's persistent cache (git config)
@@ -491,12 +569,12 @@ impl Repository {
         // Try to get from the primary remote
         if let Ok(remote) = self.primary_remote() {
             // Try git's cache for this remote (e.g., origin/HEAD)
-            if let Ok(branch) = self.get_local_default_branch(remote) {
+            if let Ok(branch) = self.get_local_default_branch(&remote) {
                 return Ok(branch);
             }
 
             // Query remote (no caching to git's remote HEAD - we only manage worktrunk's cache)
-            if let Ok(branch) = self.query_remote_default_branch(remote) {
+            if let Ok(branch) = self.query_remote_default_branch(&remote) {
                 return Ok(branch);
             }
         }
@@ -589,23 +667,11 @@ impl Repository {
     /// See [`--git-common-dir`][1] for details.
     ///
     /// Always returns an absolute path, resolving any relative paths returned by git.
-    /// Result is cached for the lifetime of this Repository instance.
+    /// Result is cached per Repository instance (also used as key for global cache).
     ///
     /// [1]: https://git-scm.com/docs/git-rev-parse#Documentation/git-rev-parse.txt---git-common-dir
-    pub fn git_common_dir(&self) -> anyhow::Result<&Path> {
-        self.cache
-            .git_common_dir
-            .get_or_try_init(|| {
-                let stdout = self.run_command(&["rev-parse", "--git-common-dir"])?;
-                let path = PathBuf::from(stdout.trim());
-                if path.is_relative() {
-                    canonicalize(self.path.join(&path))
-                        .context("Failed to resolve git common directory")
-                } else {
-                    Ok(path)
-                }
-            })
-            .map(PathBuf::as_path)
+    pub fn git_common_dir(&self) -> anyhow::Result<PathBuf> {
+        self.compute_git_common_dir()
     }
 
     /// Get the directory where worktrunk background logs are stored.
@@ -637,9 +703,10 @@ impl Repository {
     /// For bare repositories: the bare repository directory itself.
     ///
     /// This is the path that should be used when constructing worktree paths.
-    /// Result is cached for the lifetime of this Repository instance.
+    /// Result is cached in the global shared cache (same for all worktrees in a repo).
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
-        self.cache
+        let cache = get_cache(self.compute_git_common_dir()?);
+        cache
             .worktree_base
             .get_or_try_init(|| {
                 let git_common_dir =
@@ -687,9 +754,10 @@ impl Repository {
     ///
     /// Bare repositories have no main worktree — all worktrees are linked
     /// worktrees at templated paths, including the default branch.
-    /// Result is cached for the lifetime of this Repository instance.
+    /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        self.cache
+        let cache = get_cache(self.compute_git_common_dir()?);
+        cache
             .is_bare
             .get_or_try_init(|| {
                 let output = self.run_command(&["config", "--bool", "core.bare"])?;
@@ -728,16 +796,21 @@ impl Repository {
     ///
     /// Returns the canonicalized absolute path to the top-level directory of the
     /// current working tree. This could be the main worktree or a linked worktree.
-    /// Result is cached for the lifetime of this Repository instance.
-    pub fn worktree_root(&self) -> anyhow::Result<&Path> {
-        self.cache
-            .worktree_root
-            .get_or_try_init(|| {
-                let stdout = self.run_command(&["rev-parse", "--show-toplevel"])?;
-                let path = PathBuf::from(stdout.trim());
-                canonicalize(&path).context("Failed to canonicalize worktree root")
+    /// Result is cached in the global shared cache (keyed by worktree path).
+    pub fn worktree_root(&self) -> anyhow::Result<PathBuf> {
+        let cache = get_cache(self.compute_git_common_dir()?);
+
+        Ok(cache
+            .worktree_roots
+            .entry(self.path.clone())
+            .or_insert_with(|| {
+                self.run_command(&["rev-parse", "--show-toplevel"])
+                    .ok()
+                    .map(|s| PathBuf::from(s.trim()))
+                    .and_then(|p| canonicalize(&p).ok())
+                    .unwrap_or_else(|| self.path.clone())
             })
-            .map(PathBuf::as_path)
+            .clone())
     }
 
     /// Check if this is a linked worktree (vs the main worktree).
@@ -811,39 +884,29 @@ impl Repository {
 
     /// Check if a branch has file changes beyond the merge-base with target.
     ///
-    /// Uses [three-dot diff][1] (`target...branch`) which shows files changed from
-    /// merge-base to branch. Returns false when the diff is empty (no added changes).
+    /// Uses merge-base (cached) to find common ancestor, then two-dot diff to
+    /// check for file changes. Returns false when the diff is empty (no added changes).
     ///
     /// For orphan branches (no common ancestor with target), returns true since all
     /// their changes are unique.
-    ///
-    /// [1]: https://git-scm.com/docs/git-diff#Documentation/git-diff.txt-emgitdiffemltoptionsgtltcommitgtltcommitgt--telepathhellip
     pub fn has_added_changes(&self, branch: &str, target: &str) -> anyhow::Result<bool> {
-        use crate::shell_exec::run;
-
-        // git diff --name-only target...branch shows files changed from merge-base to branch
-        let range = format!("{target}...{branch}");
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(["diff", "--name-only", &range]);
-        cmd.current_dir(&self.path);
-
-        let output = run(&mut cmd, Some(&self.logging_context()))
-            .with_context(|| format!("Failed to execute: git diff --name-only {range}"))?;
-
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(!stdout.trim().is_empty())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Orphan branches have no merge base with target - they definitely have unique changes.
-            // Alternative: pre-check with `git merge-base`, but that adds a git call for every
-            // branch. String matching here only costs extra for the rare orphan branch case.
-            if stderr.contains("no merge base") {
-                Ok(true)
-            } else {
-                bail!("{}", stderr.trim())
+        // Try to get merge-base (cached). Orphan branches will fail here.
+        let merge_base = match self.merge_base(target, branch) {
+            Ok(base) => base,
+            Err(e) => {
+                // Check if it's an orphan branch (no common ancestor)
+                let msg = e.to_string();
+                if msg.contains("no merge base") || msg.contains("Not a valid commit") {
+                    return Ok(true); // Orphan branches have unique changes
+                }
+                return Err(e);
             }
-        }
+        };
+
+        // git diff --name-only merge_base..branch shows files changed from merge-base to branch
+        let range = format!("{merge_base}..{branch}");
+        let output = self.run_command(&["diff", "--name-only", &range])?;
+        Ok(!output.trim().is_empty())
     }
 
     /// Count commits between base and head.
@@ -1041,21 +1104,30 @@ impl Repository {
     ///
     /// Returns (ahead, behind) where ahead is commits in head not in base,
     /// and behind is commits in base not in head.
+    ///
+    /// Uses `merge_base()` internally (which is cached) to compute the common
+    /// ancestor, then counts commits using two-dot syntax. This allows the
+    /// merge-base result to be reused across multiple operations.
     pub fn ahead_behind(&self, base: &str, head: &str) -> anyhow::Result<(usize, usize)> {
-        // Use single git call with --left-right --count for better performance
-        let range = format!("{}...{}", base, head);
-        let output = self.run_command(&["rev-list", "--left-right", "--count", &range])?;
+        // Get merge-base (cached in shared repo cache)
+        let merge_base = self.merge_base(base, head)?;
 
-        // Parse output: "<behind>\t<ahead>" format
-        // Example: "5\t3" means 5 commits behind, 3 commits ahead
-        // git rev-list --left-right outputs left (base) first, then right (head)
-        let (behind_str, ahead_str) = output
+        // Count commits using two-dot syntax (faster when merge-base is cached)
+        // ahead = commits in head but not in merge_base
+        // behind = commits in base but not in merge_base
+        let ahead_output =
+            self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, head)])?;
+        let behind_output =
+            self.run_command(&["rev-list", "--count", &format!("{}..{}", merge_base, base)])?;
+
+        let ahead: usize = ahead_output
             .trim()
-            .split_once('\t')
-            .ok_or_else(|| anyhow::anyhow!("Unexpected rev-list output format: {}", output))?;
-
-        let behind: usize = behind_str.parse().context("Failed to parse behind count")?;
-        let ahead: usize = ahead_str.parse().context("Failed to parse ahead count")?;
+            .parse()
+            .context("Failed to parse ahead count")?;
+        let behind: usize = behind_output
+            .trim()
+            .parse()
+            .context("Failed to parse behind count")?;
 
         Ok((ahead, behind))
     }
@@ -1249,13 +1321,20 @@ impl Repository {
         }
     }
 
-    /// Get line diff statistics between two refs (using three-dot diff for merge base).
+    /// Get line diff statistics between two refs.
     ///
+    /// Uses merge-base (cached) to find common ancestor, then two-dot diff
+    /// to get the stats. This allows the merge-base result to be reused
+    /// across multiple operations.
     pub fn branch_diff_stats(&self, base: &str, head: &str) -> anyhow::Result<LineDiff> {
         // Limit concurrent diff operations to reduce mmap thrash on pack files
         let _guard = super::HEAVY_OPS_SEMAPHORE.acquire();
 
-        let range = format!("{}...{}", base, head);
+        // Get merge-base (cached in shared repo cache)
+        let merge_base = self.merge_base(base, head)?;
+
+        // Use two-dot syntax with the cached merge-base
+        let range = format!("{}..{}", merge_base, head);
         let stdout = self.run_command(&["diff", "--numstat", &range])?;
         LineDiff::from_numstat(&stdout)
     }
@@ -1397,7 +1476,7 @@ impl Repository {
             local_branches.iter().map(|(n, _)| n.clone()).collect();
 
         // Get remote branches with timestamps
-        let remote = self.primary_remote().unwrap_or("origin");
+        let remote = self.primary_remote().unwrap_or_else(|_| "origin".into());
         let remote_ref_path = format!("refs/remotes/{}/", remote);
         let remote_prefix = format!("{}/", remote);
 
@@ -1471,9 +1550,29 @@ impl Repository {
     }
 
     /// Get the merge base between two commits.
+    ///
+    /// Results are cached in the shared repo cache to avoid redundant git commands
+    /// when multiple tasks need the same merge-base (e.g., parallel `wt list` tasks).
+    /// The cache key is normalized (sorted) since merge-base(A, B) == merge-base(B, A).
     pub fn merge_base(&self, commit1: &str, commit2: &str) -> anyhow::Result<String> {
-        let output = self.run_command(&["merge-base", commit1, commit2])?;
-        Ok(output.trim().to_owned())
+        // Normalize key order since merge-base is symmetric: merge-base(A, B) == merge-base(B, A)
+        let key = if commit1 <= commit2 {
+            (commit1.to_string(), commit2.to_string())
+        } else {
+            (commit2.to_string(), commit1.to_string())
+        };
+
+        let cache = get_cache(self.compute_git_common_dir()?);
+
+        Ok(cache
+            .merge_base
+            .entry(key)
+            .or_insert_with(|| {
+                self.run_command(&["merge-base", commit1, commit2])
+                    .map(|output| output.trim().to_owned())
+                    .unwrap_or_default()
+            })
+            .clone())
     }
 
     /// Check if merging head into base would result in conflicts.
@@ -1658,7 +1757,7 @@ impl Repository {
     /// Returns the refreshed default branch name.
     pub fn refresh_default_branch(&self) -> anyhow::Result<String> {
         let remote = self.primary_remote()?;
-        let branch = self.query_remote_default_branch(remote)?;
+        let branch = self.query_remote_default_branch(&remote)?;
         // Update worktrunk's cache
         let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
         Ok(branch)
@@ -1735,15 +1834,16 @@ impl Repository {
     /// This identifier is used to track which commands have been approved
     /// for execution in this project.
     ///
-    /// Result is cached for the lifetime of this Repository instance.
-    pub fn project_identifier(&self) -> anyhow::Result<&str> {
-        self.cache
+    /// Result is cached in the shared repo cache (shared across all worktrees).
+    pub fn project_identifier(&self) -> anyhow::Result<String> {
+        let cache = get_cache(self.compute_git_common_dir()?);
+        cache
             .project_identifier
             .get_or_try_init(|| {
                 // Try to get the remote URL first
                 let remote = self.primary_remote()?;
 
-                if let Some(url) = self.remote_url(remote) {
+                if let Some(url) = self.remote_url(&remote) {
                     if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
                         return Ok(parsed.project_identifier());
                     }
@@ -1777,15 +1877,16 @@ impl Repository {
 
                 Ok(repo_name.to_string())
             })
-            .map(String::as_str)
+            .cloned()
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
     ///
-    /// Result is cached for the lifetime of this Repository instance.
+    /// Result is cached in the global shared cache (same config for all worktrees).
     /// Returns `None` if not in a worktree or if no config file exists.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
-        self.cache
+        let cache = get_cache(self.compute_git_common_dir()?);
+        cache
             .project_config
             .get_or_try_init(|| {
                 match self.worktree_root() {
