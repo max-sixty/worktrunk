@@ -324,3 +324,51 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
         assert_cmd_snapshot!(cmd);
     });
 }
+
+#[rstest]
+fn test_list_full_with_invalid_platform_override(mut repo: TestRepo) {
+    // Add GitHub remote
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/test-owner/test-repo.git",
+    ]);
+
+    // Set INVALID platform override - should warn and fall back to URL detection
+    repo.write_project_config(
+        r#"
+[ci]
+platform = "invalid_platform"
+"#,
+    );
+
+    // Create a feature branch
+    repo.add_worktree("feature");
+    let head_sha = get_branch_sha(&repo, "feature");
+
+    // Setup mock gh - platform should fall back to GitHub via URL detection
+    let pr_json = format!(
+        r#"[{{
+        "headRefOid": "{}",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [
+            {{"status": "COMPLETED", "conclusion": "SUCCESS"}}
+        ],
+        "url": "https://github.com/test-owner/test-repo/pull/1",
+        "headRepositoryOwner": {{"login": "test-owner"}}
+    }}]"#,
+        head_sha
+    );
+    repo.setup_mock_gh_with_ci_data(&pr_json, "[]");
+
+    let mut settings = setup_snapshot_settings(&repo);
+    // Normalize worker thread ID prefix in log output (e.g., [n], [z], [A] -> [W])
+    settings.add_filter(r"\[[a-zA-Z]\]", "[W]");
+    settings.bind(|| {
+        let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+        repo.configure_mock_commands(&mut cmd);
+        // Invalid platform should fall back to URL detection (GitHub)
+        assert_cmd_snapshot!(cmd);
+    });
+}

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use worktrunk::git::{Repository, parse_owner_repo, parse_remote_host, parse_remote_owner};
+use worktrunk::git::{Repository, parse_owner_repo, parse_remote_owner};
 use worktrunk::path::sanitize_for_filename;
 use worktrunk::shell_exec::run;
 use worktrunk::utils::get_now;
@@ -55,20 +55,6 @@ pub fn get_platform_for_repo(
     // Fall back to URL detection
     let url = repo.primary_remote_url()?;
     detect_platform_from_url(&url)
-}
-
-/// Get the GitLab hostname for a repository by parsing its primary remote URL.
-///
-/// Returns the hostname if the remote URL contains "gitlab", None otherwise.
-/// Used to check glab auth status against a specific host.
-pub fn get_gitlab_host_for_repo(repo: &Repository) -> Option<String> {
-    let url = repo.primary_remote_url()?;
-    // Only return host if this looks like a GitLab URL
-    if detect_platform_from_url(&url) == Some(CiPlatform::GitLab) {
-        parse_remote_host(&url)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
@@ -788,11 +774,6 @@ impl CiToolsStatus {
             glab_installed,
             glab_authenticated,
         }
-    }
-
-    /// Returns true if at least one CI tool can fetch status
-    pub fn any_available(&self) -> bool {
-        self.gh_authenticated || self.glab_authenticated
     }
 }
 
