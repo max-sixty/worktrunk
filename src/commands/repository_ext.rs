@@ -340,7 +340,7 @@ fn compute_integration_reason(
     // Use main_path for git operations - this is where the user will end up,
     // and integration checks need to run from a stable location that won't be
     // removed during the operation.
-    let repo = Repository::at(main_path);
+    let repo = Repository::at(main_path).ok()?;
     let effective_target = repo.effective_integration_target(target);
     let mut provider = worktrunk::git::LazyGitIntegration::new(&repo, branch, &effective_target);
     worktrunk::git::check_integration(&mut provider)
@@ -390,7 +390,14 @@ impl StashData {
             format_path_for_display(&self.path)
         )));
 
-        let repo = Repository::current();
+        let Ok(repo) = Repository::current() else {
+            let _ = crate::output::print(warning_message(cformat!(
+                "Failed to restore stash <bold>{stash_ref}</> - run <bold>git stash pop {stash_ref}</> in <bold>{path}</>",
+                stash_ref = self.stash_ref,
+                path = format_path_for_display(&self.path),
+            )));
+            return;
+        };
         if let Err(_e) =
             repo.worktree_at(&self.path)
                 .run_command(&["stash", "pop", "--quiet", &self.stash_ref])

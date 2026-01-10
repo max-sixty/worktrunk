@@ -451,7 +451,7 @@ pub fn generate_commit_message(
     }
 
     // Fallback: generate a descriptive commit message based on changed files
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     // Use -z for NUL-separated output to handle filenames with spaces/newlines
     let file_list = repo.run_command(&["diff", "--staged", "--name-only", "-z"])?;
     let staged_files = file_list
@@ -494,7 +494,7 @@ fn try_generate_commit_message(
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
 /// the prompt template. Used by both normal commit generation and `--show-prompt`.
 pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<String> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get staged diff and diffstat
     // Use -c flags to ensure consistent format regardless of user's git config
@@ -595,7 +595,7 @@ pub fn build_squash_prompt(
     repo_name: &str,
     config: &CommitGenerationConfig,
 ) -> anyhow::Result<String> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get the combined diff and diffstat for all commits being squashed
     // Use -c flags to ensure consistent format regardless of user's git config

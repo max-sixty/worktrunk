@@ -171,8 +171,9 @@ pub fn run(claude_code: bool) -> Result<()> {
     };
 
     // Git status segments (skip links in claude-code mode - OSC 8 not supported)
-    let repo = Repository::current();
-    if repo.worktree_at(&cwd).git_dir().is_ok() {
+    if let Ok(repo) = Repository::current()
+        && repo.worktree_at(&cwd).git_dir().is_ok()
+    {
         let git_segments = get_git_status_segments(&repo, &cwd, !claude_code)?;
 
         // In claude-code mode, skip branch segment if directory matches worktrunk template

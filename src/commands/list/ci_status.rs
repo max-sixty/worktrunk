@@ -921,21 +921,20 @@ impl CachedCiStatus {
     }
 
     /// Get the cache directory path: `.git/wt-cache/ci-status/`
-    fn cache_dir(repo: &Repository) -> Option<PathBuf> {
-        let git_common_dir = repo.git_common_dir().ok()?;
-        Some(git_common_dir.join("wt-cache").join("ci-status"))
+    fn cache_dir(repo: &Repository) -> PathBuf {
+        repo.git_common_dir().join("wt-cache").join("ci-status")
     }
 
     /// Get the cache file path for a branch.
-    fn cache_file(repo: &Repository, branch: &str) -> Option<PathBuf> {
-        let dir = Self::cache_dir(repo)?;
+    fn cache_file(repo: &Repository, branch: &str) -> PathBuf {
+        let dir = Self::cache_dir(repo);
         let safe_branch = sanitize_for_filename(branch);
-        Some(dir.join(format!("{safe_branch}.json")))
+        dir.join(format!("{safe_branch}.json"))
     }
 
     /// Read cached CI status from file.
     fn read(repo: &Repository, branch: &str) -> Option<Self> {
-        let path = Self::cache_file(repo, branch)?;
+        let path = Self::cache_file(repo, branch);
         let json = fs::read_to_string(&path).ok()?;
         serde_json::from_str(&json).ok()
     }
@@ -945,10 +944,7 @@ impl CachedCiStatus {
     /// Uses atomic write (write to temp file, then rename) to avoid corruption
     /// and minimize lock contention on Windows.
     fn write(&self, repo: &Repository, branch: &str) {
-        let Some(path) = Self::cache_file(repo, branch) else {
-            log::debug!("Failed to get cache path for {}", branch);
-            return;
-        };
+        let path = Self::cache_file(repo, branch);
 
         // Create cache directory if needed
         if let Some(parent) = path.parent()
@@ -979,9 +975,7 @@ impl CachedCiStatus {
 
     /// List all cached CI statuses as (branch_name, cached_status) pairs.
     pub(crate) fn list_all(repo: &Repository) -> Vec<(String, Self)> {
-        let Some(cache_dir) = Self::cache_dir(repo) else {
-            return Vec::new();
-        };
+        let cache_dir = Self::cache_dir(repo);
 
         let entries = match fs::read_dir(&cache_dir) {
             Ok(entries) => entries,
@@ -1008,9 +1002,7 @@ impl CachedCiStatus {
 
     /// Clear all cached CI statuses, returns count cleared.
     pub(crate) fn clear_all(repo: &Repository) -> usize {
-        let Some(cache_dir) = Self::cache_dir(repo) else {
-            return 0;
-        };
+        let cache_dir = Self::cache_dir(repo);
 
         let entries = match fs::read_dir(&cache_dir) {
             Ok(entries) => entries,

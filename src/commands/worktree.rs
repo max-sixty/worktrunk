@@ -453,7 +453,7 @@ pub fn handle_switch(
     no_verify: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<(SwitchResult, SwitchBranchInfo)> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get the actual current branch BEFORE switching.
     // This is what we'll record as "previous" in history for `wt switch -` support.
@@ -755,7 +755,7 @@ pub fn handle_remove(
     force_worktree: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
     repo.prepare_worktree_removal(
@@ -776,7 +776,7 @@ pub fn handle_remove_current(
     force_worktree: bool,
     config: &WorktrunkConfig,
 ) -> anyhow::Result<RemoveResult> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Progress message is shown in handle_removed_worktree_output() after pre-remove hooks run
     repo.prepare_worktree_removal(
@@ -882,7 +882,7 @@ pub fn handle_push(
     verb: &str,
     operations: Option<MergeOperations>,
 ) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
@@ -988,7 +988,7 @@ pub fn handle_push(
     }
 
     // Get git common dir for the push
-    let git_common_dir = repo.git_common_dir()?;
+    let git_common_dir = repo.git_common_dir();
     let git_common_dir_str = git_common_dir.to_string_lossy();
 
     // Perform the push - stash guard will auto-restore on any exit path

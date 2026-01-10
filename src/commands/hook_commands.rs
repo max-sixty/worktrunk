@@ -263,7 +263,7 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     use super::command_approval::approve_command_batch;
     use worktrunk::config::WorktrunkConfig;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     let project_id = repo.project_identifier()?;
     let config = WorktrunkConfig::load().context("Failed to load config")?;
 
@@ -349,7 +349,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
         )))?;
     } else {
         // Clear approvals for current project (default)
-        let repo = Repository::current();
+        let repo = Repository::current()?;
         let project_id = repo.project_identifier()?;
 
         // Check if project has any approvals
@@ -384,7 +384,7 @@ pub fn clear_approvals(global: bool) -> anyhow::Result<()> {
 pub fn handle_hook_show(hook_type_filter: Option<&str>, expanded: bool) -> anyhow::Result<()> {
     use crate::help_pager::show_help_in_pager;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
     let config = WorktrunkConfig::load().context("Failed to load user config")?;
     let project_config = repo.load_project_config()?;
     let project_id = repo.project_identifier().ok();

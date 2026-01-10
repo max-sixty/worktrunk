@@ -293,7 +293,7 @@ pub fn step_show_squash_prompt(
     target: Option<&str>,
     config: &worktrunk::config::CommitGenerationConfig,
 ) -> anyhow::Result<()> {
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
@@ -342,7 +342,7 @@ pub enum RebaseResult {
 pub fn handle_rebase(target: Option<&str>) -> anyhow::Result<RebaseResult> {
     use super::repository_ext::RepositoryCliExt;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Get target branch (default to default branch if not provided)
     let target_branch = repo.resolve_target_branch(target)?;
@@ -425,7 +425,7 @@ pub fn step_copy_ignored(
     use ignore::gitignore::GitignoreBuilder;
     use std::fs;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Resolve source and destination worktree paths
     let (source_path, source_context) = match from {

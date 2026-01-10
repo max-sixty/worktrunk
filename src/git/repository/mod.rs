@@ -139,7 +139,7 @@ fn base_path() -> &'static PathBuf {
 /// ```no_run
 /// use worktrunk::git::Repository;
 ///
-/// let repo = Repository::current();
+/// let repo = Repository::current()?;
 /// let wt = repo.current_worktree();
 ///
 /// // Repo-wide operations
@@ -150,13 +150,14 @@ fn base_path() -> &'static PathBuf {
 /// let dirty = wt.is_dirty()?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Repository {
     /// Path used for discovering the repository and running git commands.
     /// For repo-wide operations, any path within the repo works.
     discovery_path: PathBuf,
-    /// Per-instance cache of git_common_dir, used as key for global cache lookup.
-    git_common_dir: OnceCell<PathBuf>,
+    /// The shared .git directory, computed at construction time.
+    /// Used as key for global cache lookup.
+    git_common_dir: PathBuf,
 }
 
 /// A view into a specific worktree within a repository.
@@ -170,7 +171,7 @@ pub struct Repository {
 /// ```no_run
 /// use worktrunk::git::Repository;
 ///
-/// let repo = Repository::current();
+/// let repo = Repository::current()?;
 /// let wt = repo.current_worktree();
 ///
 /// // Worktree-specific operations
@@ -257,7 +258,7 @@ impl<'a> WorktreeView<'a> {
     ///
     /// Result is cached in the global shared cache (keyed by worktree path).
     pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        let cache = get_cache(self.repo.git_common_dir()?);
+        let cache = get_cache(self.repo.git_common_dir.clone());
 
         Ok(cache
             .current_branches
@@ -289,7 +290,7 @@ impl<'a> WorktreeView<'a> {
     /// This could be the main worktree or a linked worktree.
     /// Result is cached in the global shared cache (keyed by worktree path).
     pub fn root(&self) -> anyhow::Result<PathBuf> {
-        let cache = get_cache(self.repo.git_common_dir()?);
+        let cache = get_cache(self.repo.git_common_dir.clone());
 
         Ok(cache
             .worktree_roots
@@ -343,7 +344,7 @@ impl<'a> WorktreeView<'a> {
     /// For bare repos, all worktrees are "linked" (returns `true`).
     pub fn is_linked(&self) -> anyhow::Result<bool> {
         let git_dir = self.git_dir()?;
-        let common_dir = self.repo.git_common_dir()?;
+        let common_dir = self.repo.git_common_dir();
         Ok(git_dir != common_dir)
     }
 
@@ -372,7 +373,7 @@ impl Repository {
     ///
     /// For worktree-specific operations on paths other than cwd, use
     /// `repo.worktree_at(path)` to get a [`WorktreeView`].
-    pub fn current() -> Self {
+    pub fn current() -> anyhow::Result<Self> {
         Self::at(base_path().clone())
     }
 
@@ -387,10 +388,41 @@ impl Repository {
     ///   (e.g., `wt list` tasks that analyze each worktree in parallel)
     /// - **Tests**: Tests run from the project directory but need to operate on
     ///   test repositories in temporary directories
-    pub fn at(path: impl Into<PathBuf>) -> Self {
-        Self {
-            discovery_path: path.into(),
-            git_common_dir: OnceCell::new(),
+    pub fn at(path: impl Into<PathBuf>) -> anyhow::Result<Self> {
+        let discovery_path = path.into();
+        let git_common_dir = Self::resolve_git_common_dir(&discovery_path)?;
+        Ok(Self {
+            discovery_path,
+            git_common_dir,
+        })
+    }
+
+    /// Resolve the git common directory for a path.
+    // TODO: Consolidate the "Failed to execute: git ..." context pattern.
+    // Currently duplicated in WorktreeView::run_command, Repository::run_command, and here.
+    // Consider extracting a helper that handles the context message consistently.
+    fn resolve_git_common_dir(discovery_path: &Path) -> anyhow::Result<PathBuf> {
+        use crate::shell_exec::run;
+
+        let mut cmd = Command::new("git");
+        cmd.args(["rev-parse", "--git-common-dir"]);
+        cmd.current_dir(discovery_path);
+
+        let output = run(&mut cmd, Some(&path_to_logging_context(discovery_path)))
+            .context("Failed to execute: git rev-parse --git-common-dir")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("{}", stderr.trim());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let path = PathBuf::from(stdout.trim());
+        if path.is_relative() {
+            canonicalize(discovery_path.join(&path))
+                .context("Failed to resolve git common directory")
+        } else {
+            Ok(path)
         }
     }
 
@@ -419,24 +451,6 @@ impl Repository {
         }
     }
 
-    /// Compute and cache the git common directory for this instance.
-    ///
-    /// This is the key used to look up the shared cache.
-    fn compute_git_common_dir(&self) -> anyhow::Result<PathBuf> {
-        self.git_common_dir
-            .get_or_try_init(|| {
-                let stdout = self.run_command(&["rev-parse", "--git-common-dir"])?;
-                let path = PathBuf::from(stdout.trim());
-                if path.is_relative() {
-                    canonicalize(self.discovery_path.join(&path))
-                        .context("Failed to resolve git common directory")
-                } else {
-                    Ok(path)
-                }
-            })
-            .cloned()
-    }
-
     /// Get the primary remote name for this repository.
     ///
     /// Returns a consistent value across all worktrees (not branch-specific).
@@ -450,7 +464,7 @@ impl Repository {
     ///
     /// [1]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-checkoutdefaultRemote
     pub fn primary_remote(&self) -> anyhow::Result<String> {
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
         cache
             .primary_remote
             .get_or_init(|| {
@@ -775,7 +789,7 @@ impl Repository {
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn default_branch(&self) -> anyhow::Result<String> {
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
         cache
             .default_branch
             .get_or_try_init(|| {
@@ -906,16 +920,16 @@ impl Repository {
     /// Result is cached per Repository instance (also used as key for global cache).
     ///
     /// [1]: https://git-scm.com/docs/git-rev-parse#Documentation/git-rev-parse.txt---git-common-dir
-    pub fn git_common_dir(&self) -> anyhow::Result<PathBuf> {
-        self.compute_git_common_dir()
+    pub fn git_common_dir(&self) -> &Path {
+        &self.git_common_dir
     }
 
     /// Get the directory where worktrunk background logs are stored.
     ///
     /// Logs are centralized under the main worktree's git directory:
     /// `.git/wt-logs/`.
-    pub fn wt_logs_dir(&self) -> anyhow::Result<PathBuf> {
-        Ok(self.git_common_dir()?.join("wt-logs"))
+    pub fn wt_logs_dir(&self) -> PathBuf {
+        self.git_common_dir().join("wt-logs")
     }
 
     /// Get the base directory where worktrees are created relative to.
@@ -926,12 +940,12 @@ impl Repository {
     /// This is the path that should be used when constructing worktree paths.
     /// Result is cached in the global shared cache (same for all worktrees in a repo).
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
         cache
             .worktree_base
             .get_or_try_init(|| {
                 let git_common_dir =
-                    canonicalize(self.git_common_dir()?).context("Failed to canonicalize path")?;
+                    canonicalize(self.git_common_dir()).context("Failed to canonicalize path")?;
 
                 if self.is_bare()? {
                     Ok(git_common_dir)
@@ -977,7 +991,7 @@ impl Repository {
     /// worktrees at templated paths, including the default branch.
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
         cache
             .is_bare
             .get_or_try_init(|| {
@@ -1531,7 +1545,7 @@ impl Repository {
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
-    /// let repo = Repository::current();
+    /// let repo = Repository::current()?;
     /// let sha = repo.create_safety_backup("feature → main (squash)")?;
     /// println!("Backup created: {}", sha);
     /// # Ok::<(), anyhow::Error>(())
@@ -1724,7 +1738,7 @@ impl Repository {
             (commit2.to_string(), commit1.to_string())
         };
 
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
 
         Ok(cache
             .merge_base
@@ -1746,7 +1760,7 @@ impl Repository {
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
-    /// let repo = Repository::current();
+    /// let repo = Repository::current()?;
     /// let has_conflicts = repo.has_merge_conflicts("main", "feature-branch")?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
@@ -2001,7 +2015,7 @@ impl Repository {
     ///
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn project_identifier(&self) -> anyhow::Result<String> {
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
         cache
             .project_identifier
             .get_or_try_init(|| {
@@ -2050,7 +2064,7 @@ impl Repository {
     /// Result is cached in the global shared cache (same config for all worktrees).
     /// Returns `None` if not in a worktree or if no config file exists.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
-        let cache = get_cache(self.compute_git_common_dir()?);
+        let cache = get_cache(self.git_common_dir.clone());
         cache
             .project_config
             .get_or_try_init(|| {
@@ -2080,7 +2094,7 @@ impl Repository {
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
-    /// let repo = Repository::current();
+    /// let repo = Repository::current()?;
     /// let branches = repo.run_command(&["branch", "--list"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
@@ -2132,7 +2146,7 @@ impl Repository {
     /// ```no_run
     /// use worktrunk::git::Repository;
     ///
-    /// let repo = Repository::current();
+    /// let repo = Repository::current()?;
     /// let is_clean = repo.run_command_check(&["diff", "--quiet", "--exit-code"])?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```

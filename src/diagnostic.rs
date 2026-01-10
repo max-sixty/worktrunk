@@ -170,7 +170,7 @@ impl DiagnosticReport {
 
     /// Write the diagnostic report to a file.
     fn write_file(&self, repo: &Repository) -> Option<PathBuf> {
-        let log_dir = repo.wt_logs_dir().ok()?;
+        let log_dir = repo.wt_logs_dir();
         std::fs::create_dir_all(&log_dir).ok()?;
 
         let path = log_dir.join("diagnostic.md");

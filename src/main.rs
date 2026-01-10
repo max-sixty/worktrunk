@@ -1286,7 +1286,7 @@ fn main() {
                 // This ensures approval happens once at the command entry point
                 // If user declines, skip hooks but continue with worktree operation
                 let approved = if verify {
-                    let repo = Repository::current();
+                    let repo = Repository::current().context("Failed to switch worktree")?;
                     let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     // Compute worktree path for template expansion in approval prompt
                     let worktree_path = compute_worktree_path(&repo, &branch, &config)?;
@@ -1359,7 +1359,7 @@ fn main() {
                 // - post-switch: runs on ALL switches (shows "@ path" when shell won't be there)
                 // - post-start: runs only when creating a NEW worktree
                 if !skip_hooks {
-                    let repo = Repository::current();
+                    let repo = Repository::current()?;
                     let repo_root = repo.worktree_base().context("Failed to switch worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
@@ -1451,7 +1451,7 @@ fn main() {
                 // TODO(pre-remove-context): The approval context uses current worktree (cwd + current_branch),
                 // but hooks execute in each target worktree. When removing another worktree, the approval
                 // preview shows the wrong branch/path. Consider building approval context per target worktree.
-                let repo = Repository::current();
+                let repo = Repository::current().context("Failed to remove worktree")?;
                 let verify = if verify {
                     // Create context for template expansion in approval prompt
                     let worktree_path =
@@ -1720,7 +1720,9 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
     }
 
     // Use Repository::current() which honors the -C flag
-    let repo = worktrunk::git::Repository::current();
+    let Ok(repo) = worktrunk::git::Repository::current() else {
+        return;
+    };
 
     // Check if we're actually in a git repo
     if repo.current_worktree().git_dir().is_err() {

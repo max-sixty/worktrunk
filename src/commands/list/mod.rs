@@ -150,7 +150,7 @@ pub fn handle_list(
 ) -> anyhow::Result<()> {
     use collect::TaskKind;
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Build skip set based on flags
     // Without --full: skip expensive operations (BranchDiff, CiStatus, WorkingTreeConflicts)

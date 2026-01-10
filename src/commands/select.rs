@@ -453,7 +453,9 @@ impl WorktreeSkimItem {
     /// Common diff rendering pattern: check stat, show stat + full diff if non-empty
     fn render_diff_preview(&self, args: &[&str], no_changes_msg: &str, width: usize) -> String {
         let mut output = String::new();
-        let repo = Repository::current();
+        let Ok(repo) = Repository::current() else {
+            return no_changes_msg.to_string();
+        };
 
         // Check stat output first
         let mut stat_args = args.to_vec();
@@ -515,7 +517,9 @@ impl WorktreeSkimItem {
         use worktrunk::styling::INFO_SYMBOL;
 
         let branch = self.item.branch_name();
-        let repo = Repository::current();
+        let Ok(repo) = Repository::current() else {
+            return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
+        };
         let Ok(default_branch) = repo.default_branch() else {
             return cformat!("{INFO_SYMBOL} <bold>{branch}</> has no commits ahead of main\n");
         };
@@ -606,9 +610,14 @@ impl WorktreeSkimItem {
         let show_timestamps = width >= TIMESTAMP_WIDTH_THRESHOLD;
         // Calculate how many log lines fit in preview (height minus header)
         let log_limit = height.saturating_sub(HEADER_LINES).max(1);
-        let repo = Repository::current();
         let head = self.item.head();
         let branch = self.item.branch_name();
+        let Ok(repo) = Repository::current() else {
+            output.push_str(&cformat!(
+                "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
+            ));
+            return output;
+        };
         let Ok(default_branch) = repo.default_branch() else {
             output.push_str(&cformat!(
                 "{INFO_SYMBOL} <bold>{branch}</> has no commits\n"
@@ -851,7 +860,7 @@ pub fn handle_select() -> anyhow::Result<()> {
         anyhow::bail!("wt select requires an interactive terminal");
     }
 
-    let repo = Repository::current();
+    let repo = Repository::current()?;
 
     // Initialize preview mode state file (auto-cleanup on drop)
     let state = PreviewState::new();

@@ -268,8 +268,8 @@ fn complete_hook_commands() -> Vec<CompletionCandidate> {
 
     // Load project config and add project hook names
     // Pass write_hints=false to avoid side effects during completion
-    let repo = Repository::current();
-    if let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
+    if let Ok(repo) = Repository::current()
+        && let Ok(Some(project_config)) = ProjectConfig::load(&repo, false)
         && let Some(config) = project_config.hooks.get(hook_type)
     {
         add_named_commands(&mut candidates, config);
@@ -319,7 +319,7 @@ fn complete_branches(
         return Vec::new();
     }
 
-    let branches = match Repository::current().branches_for_completion() {
+    let branches = match Repository::current().and_then(|repo| repo.branches_for_completion()) {
         Ok(b) => b,
         Err(_) => return Vec::new(),
     };

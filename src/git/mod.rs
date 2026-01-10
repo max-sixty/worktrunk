@@ -373,7 +373,7 @@ impl Worktree {
 
 /// Helper function to read rebase branch information
 fn read_rebase_branch(worktree_path: &PathBuf) -> Option<String> {
-    let repo = Repository::current();
+    let repo = Repository::current().ok()?;
     let git_dir = repo.worktree_at(worktree_path).git_dir().ok()?;
 
     // Check both rebase-merge and rebase-apply

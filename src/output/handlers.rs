@@ -228,7 +228,9 @@ fn print_switch_message_if_changed(
     }
 
     // Use main_path for discovery - the worktree we came from may have been removed
-    let repo = Repository::at(main_path);
+    let Ok(repo) = Repository::at(main_path) else {
+        return Ok(());
+    };
     let Ok(Some(dest_branch)) = repo.worktree_at(main_path).branch() else {
         return Ok(());
     };
@@ -387,8 +389,7 @@ pub fn handle_switch_output(
 
             // Show worktree-path config hint on first --create in this repo,
             // unless user already has a custom worktree-path config
-            if *created_branch {
-                let repo = worktrunk::git::Repository::current();
+            if *created_branch && let Ok(repo) = worktrunk::git::Repository::current() {
                 let has_custom_config = WorktrunkConfig::load()
                     .map(|c| c.has_custom_worktree_path())
                     .unwrap_or(false);
@@ -501,7 +502,7 @@ fn handle_branch_only_output(
         return Ok(());
     }
 
-    let repo = worktrunk::git::Repository::current();
+    let repo = worktrunk::git::Repository::current()?;
 
     // Get default branch for integration check and reason display
     // Falls back to HEAD if default branch can't be determined
@@ -545,7 +546,7 @@ fn spawn_post_switch_after_remove(
     };
     // Use main_path for discovery since we're called after the original worktree
     // is removed (cwd may no longer exist).
-    let repo = Repository::at(main_path);
+    let repo = Repository::at(main_path)?;
     let dest_branch = repo.worktree_at(main_path).branch()?;
     let repo_root = repo.worktree_base()?;
     let ctx = CommandContext::new(
@@ -583,7 +584,7 @@ fn handle_removed_worktree_output(
 
     // Use main_path for discovery - the worktree being removed might be cwd,
     // and git operations after removal need a valid working directory.
-    let repo = worktrunk::git::Repository::at(main_path);
+    let repo = worktrunk::git::Repository::at(main_path)?;
 
     // Execute pre-remove hooks in the worktree being removed
     // Non-zero exit aborts removal (FailFast strategy)
