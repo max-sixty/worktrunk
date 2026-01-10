@@ -19,7 +19,7 @@
 
 use crossbeam_channel::Sender;
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use worktrunk::git::{LineDiff, Repository, Worktree};
 
@@ -450,6 +450,7 @@ impl Task for AheadBehindTask {
         let (ahead, behind) = repo
             .ahead_behind(base, &ctx.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::AheadBehind {
             item_idx: ctx.item_idx,
             counts: AheadBehind { ahead, behind },
@@ -504,11 +505,12 @@ impl Task for HasFileChangesTask {
                 has_file_changes: true,
             });
         };
-        let base = ctx.require_target(Self::KIND)?;
+        let target = ctx.require_target(Self::KIND)?;
         let repo = ctx.repo();
         let has_file_changes = repo
-            .has_added_changes(branch, base)
+            .has_added_changes(branch, target)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::HasFileChanges {
             item_idx: ctx.item_idx,
             has_file_changes,
@@ -571,6 +573,7 @@ impl Task for IsAncestorTask {
         let is_ancestor = repo
             .is_ancestor(&ctx.commit_sha, base)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::IsAncestor {
             item_idx: ctx.item_idx,
             is_ancestor,
@@ -590,6 +593,7 @@ impl Task for BranchDiffTask {
         let diff = repo
             .branch_diff_stats(base, &ctx.commit_sha)
             .map_err(|e| ctx.error(Self::KIND, e))?;
+
         Ok(TaskResult::BranchDiff {
             item_idx: ctx.item_idx,
             branch_diff: BranchDiffTotals { diff },
@@ -817,7 +821,6 @@ impl Task for CiStatusTask {
         let repo_path = repo
             .worktree_root()
             .ok()
-            .map(Path::to_path_buf)
             .unwrap_or_else(|| ctx.repo_path.clone());
 
         let pr_status = ctx.branch.as_deref().and_then(|branch| {

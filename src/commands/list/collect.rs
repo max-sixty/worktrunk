@@ -253,8 +253,10 @@ impl TaskResult {
 }
 
 impl TaskKind {
-    /// Whether this task requires network I/O (slow).
-    fn is_network(self) -> bool {
+    /// Whether this task requires network access.
+    ///
+    /// Network tasks are sorted to run last to avoid blocking local tasks.
+    pub fn is_network(self) -> bool {
         matches!(self, TaskKind::CiStatus | TaskKind::UrlStatus)
     }
 }
@@ -1083,11 +1085,10 @@ pub fn collect(
             ));
         }
 
-        // Sort: local git ops first, network ops (CI, URL) last.
+        // Sort work items: network tasks last to avoid blocking local operations
         all_work_items.sort_by_key(|item| item.kind.is_network());
 
-        // Phase 2: Execute all work items in Rayon's thread pool
-        // Set thread-local timeout for each worker (used by shell_exec::run)
+        // Phase 2: Execute all work items in parallel
         all_work_items.into_par_iter().for_each(|item| {
             worktrunk::shell_exec::set_command_timeout(command_timeout);
             let result = item.execute();
@@ -1460,10 +1461,10 @@ pub fn populate_item(
             &tx,
         );
 
-        // Sort: local git ops first, network ops last
+        // Sort: network tasks last
         work_items.sort_by_key(|item| item.kind.is_network());
 
-        // Execute all work items in Rayon's thread pool
+        // Execute all tasks in parallel
         work_items.into_par_iter().for_each(|item| {
             let result = item.execute();
             let _ = tx.send(result);

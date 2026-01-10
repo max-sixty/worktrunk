@@ -84,6 +84,74 @@ fn test_doc_sanitize_filter() {
 }
 
 // =============================================================================
+// Sanitize DB Filter (docs/content/hook.md: Filters table)
+// "Transform to database-safe identifier ([a-z0-9_], max 63 chars)"
+// =============================================================================
+
+#[test]
+fn test_doc_sanitize_db_filter() {
+    let mut vars = HashMap::new();
+
+    // From docs: {{ branch | sanitize_db }} transforms to database-safe identifier
+    // Output includes a 3-character hash suffix for uniqueness
+    vars.insert("branch", "feature/auth-oauth2");
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("feature_auth_oauth2_"),
+        "sanitize_db should replace non-alphanumeric with _ and lowercase, got: {result}"
+    );
+
+    // Leading digits get underscore prefix
+    vars.insert("branch", "123-bug-fix");
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("_123_bug_fix_"),
+        "sanitize_db should prefix leading digits with _, got: {result}"
+    );
+
+    // Uppercase conversion
+    vars.insert("branch", "UPPERCASE.Branch");
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("uppercase_branch_"),
+        "sanitize_db should convert to lowercase, got: {result}"
+    );
+
+    // Consecutive underscores collapsed
+    vars.insert("branch", "a--b//c");
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert!(
+        result.starts_with("a_b_c_"),
+        "sanitize_db should collapse consecutive underscores, got: {result}"
+    );
+
+    // Different inputs that would otherwise collide get different suffixes
+    vars.insert("branch", "a-b");
+    let result1 = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    vars.insert("branch", "a_b");
+    let result2 = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert_ne!(
+        result1, result2,
+        "a-b and a_b should produce different outputs"
+    );
+}
+
+#[test]
+fn test_doc_sanitize_db_truncation() {
+    let mut vars = HashMap::new();
+
+    // Truncates to 63 characters (PostgreSQL limit)
+    let long_branch = "a".repeat(100);
+    vars.insert("branch", long_branch.as_str());
+    let result = expand_template("{{ branch | sanitize_db }}", &vars, false).unwrap();
+    assert_eq!(
+        result.len(),
+        63,
+        "sanitize_db should truncate to 63 characters"
+    );
+}
+
+// =============================================================================
 // Hash Port Filter (docs/content/hook.md: Filters table)
 // "Hash to port 10000-19999"
 // =============================================================================

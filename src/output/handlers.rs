@@ -548,7 +548,7 @@ fn spawn_post_switch_after_remove(
     let ctx = CommandContext::new(
         &dest_repo,
         &config,
-        dest_branch,
+        dest_branch.as_deref(),
         main_path,
         &repo_root,
         false, // force=false for CommandContext

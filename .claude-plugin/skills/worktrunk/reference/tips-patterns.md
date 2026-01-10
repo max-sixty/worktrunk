@@ -14,7 +14,7 @@ wsc feature -- 'Fix GH #322'          # Runs `claude 'Fix GH #322'`
 
 ## Eliminate cold starts
 
-Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files listed in `.worktreeinclude` (caches, dependencies) between worktrees:
+Use [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) in a `post-create` hook to copy gitignored files (caches, dependencies, `.env`) between worktrees:
 
 ```toml
 [post-create]
@@ -22,16 +22,16 @@ copy = "wt step copy-ignored"
 install = "npm ci"
 ```
 
-`.worktreeinclude` uses gitignore syntax:
+All gitignored files are copied by default. To copy only specific patterns, create a `.worktreeinclude` file using gitignore syntax:
 
 ```gitignore
-# .worktreeinclude
-.cache/
+# .worktreeinclude — optional, limits what gets copied
+.env
 node_modules/
 target/
 ```
 
-See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for common patterns and language-specific notes.
+See [`wt step copy-ignored`](https://worktrunk.dev/step/#wt-step-copy-ignored) for details and language-specific notes.
 
 ## Dev server per worktree
 
@@ -78,7 +78,7 @@ db = """
 docker run -d --rm \
   --name {{ repo }}-{{ branch | sanitize }}-postgres \
   -p {{ ('db-' ~ branch) | hash_port }}:5432 \
-  -e POSTGRES_DB={{ repo }} \
+  -e POSTGRES_DB={{ branch | sanitize_db }} \
   -e POSTGRES_PASSWORD=dev \
   postgres:16
 """
@@ -90,13 +90,15 @@ db-stop = "docker stop {{ repo }}-{{ branch | sanitize }}-postgres 2>/dev/null |
 The `('db-' ~ branch)` concatenation hashes differently than plain `branch`, so database and dev server ports don't collide.
 Jinja2's operator precedence has pipe `|` with higher precedence than concatenation `~`, meaning expressions need parentheses to filter concatenated values.
 
+The `sanitize_db` filter produces database-safe identifiers (lowercase, underscores, no leading digits, with a short hash suffix to avoid collisions and SQL reserved words).
+
 Generate `.env.local` with the correct `DATABASE_URL` using a `post-create` hook:
 
 ```toml
 [post-create]
 env = """
 cat > .env.local << EOF
-DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ repo }}
+DATABASE_URL=postgres://postgres:dev@localhost:{{ ('db-' ~ branch) | hash_port }}/{{ branch | sanitize_db }}
 DEV_PORT={{ branch | hash_port }}
 EOF
 """
