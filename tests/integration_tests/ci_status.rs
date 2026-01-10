@@ -573,4 +573,3 @@ fn test_list_full_with_gitlab_remote(mut repo: TestRepo) {
         assert_cmd_snapshot!(cmd);
     });
 }
-
