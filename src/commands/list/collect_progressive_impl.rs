@@ -645,12 +645,31 @@ impl Task for WorkingTreeConflictsTask {
         let base = ctx.require_default_branch(Self::KIND)?;
         let repo = ctx.repo();
 
-        // Quick check if working tree is dirty via git status
-        let status_output = repo
-            .run_command(&["status", "--porcelain"])
-            .map_err(|e| ctx.error(Self::KIND, e))?;
+        // Refresh the index and check dirty state. On some systems (especially macOS),
+        // git's index cache may not immediately reflect file modifications made within
+        // the same timestamp granularity. Retry logic handles "racy git" timing issues.
+        let is_dirty = {
+            let mut attempts = 0;
+            loop {
+                // Refresh index to pick up mtime changes
+                let _ = repo.run_command(&["update-index", "--refresh"]);
 
-        let is_dirty = !status_output.trim().is_empty();
+                let status_output = repo
+                    .run_command(&["status", "--porcelain"])
+                    .map_err(|e| ctx.error(Self::KIND, e))?;
+
+                let dirty = !status_output.trim().is_empty();
+
+                // If dirty or we've tried enough times, use this result
+                if dirty || attempts >= 3 {
+                    break dirty;
+                }
+
+                // Wait briefly before retry (filesystem timestamp granularity issue)
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                attempts += 1;
+            }
+        };
 
         if !is_dirty {
             // Clean working tree - return None to signal "use commit-based check"
