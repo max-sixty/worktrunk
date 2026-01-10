@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use dashmap::DashMap;
 use once_cell::sync::{Lazy, OnceCell};
 
 use anyhow::{Context, bail};
@@ -78,13 +79,13 @@ struct RepoCache {
     /// Project config (loaded from .config/wt.toml in main worktree)
     project_config: OnceCell<Option<ProjectConfig>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha
-    merge_base: RwLock<HashMap<(String, String), String>>,
+    merge_base: DashMap<(String, String), String>,
 
     // ========== Per-worktree values (keyed by path) ==========
     /// Worktree root paths: worktree_path -> canonicalized root
-    worktree_roots: RwLock<HashMap<PathBuf, PathBuf>>,
+    worktree_roots: DashMap<PathBuf, PathBuf>,
     /// Current branch per worktree: worktree_path -> branch name (None = detached HEAD)
-    current_branches: RwLock<HashMap<PathBuf, Option<String>>>,
+    current_branches: DashMap<PathBuf, Option<String>>,
 }
 
 /// Result of resolving a worktree name.
@@ -305,33 +306,24 @@ impl Repository {
     ///
     /// Result is cached in the global shared cache (keyed by worktree path).
     pub fn current_branch(&self) -> anyhow::Result<Option<String>> {
-        let worktree_key = self.path.clone();
         let cache = get_cache(self.compute_git_common_dir()?);
 
-        // Check cache first
-        if let Ok(branches) = cache.current_branches.read()
-            && let Some(cached) = branches.get(&worktree_key)
-        {
-            return Ok(cached.clone());
-        }
-
-        // Cache miss - compute value
-        let stdout = self.run_command(&["branch", "--show-current"]).ok();
-        let result = stdout.and_then(|s| {
-            let branch = s.trim();
-            if branch.is_empty() {
-                None // Detached HEAD
-            } else {
-                Some(branch.to_string())
-            }
-        });
-
-        // Store in cache
-        if let Ok(mut branches) = cache.current_branches.write() {
-            branches.insert(worktree_key, result.clone());
-        }
-
-        Ok(result)
+        Ok(cache
+            .current_branches
+            .entry(self.path.clone())
+            .or_insert_with(|| {
+                self.run_command(&["branch", "--show-current"])
+                    .ok()
+                    .and_then(|s| {
+                        let branch = s.trim();
+                        if branch.is_empty() {
+                            None // Detached HEAD
+                        } else {
+                            Some(branch.to_string())
+                        }
+                    })
+            })
+            .clone())
     }
 
     /// Get the current branch name, or error if in detached HEAD state.
@@ -806,29 +798,19 @@ impl Repository {
     /// current working tree. This could be the main worktree or a linked worktree.
     /// Result is cached in the global shared cache (keyed by worktree path).
     pub fn worktree_root(&self) -> anyhow::Result<PathBuf> {
-        let worktree_key = self.path.clone();
         let cache = get_cache(self.compute_git_common_dir()?);
 
-        // Check cache first
-        if let Ok(roots) = cache.worktree_roots.read()
-            && let Some(cached) = roots.get(&worktree_key)
-        {
-            return Ok(cached.clone());
-        }
-
-        // Cache miss - compute value
-        let stdout = self.run_command(&["rev-parse", "--show-toplevel"]).ok();
-        let result = stdout
-            .map(|s| PathBuf::from(s.trim()))
-            .and_then(|p| canonicalize(&p).ok())
-            .unwrap_or_else(|| worktree_key.clone());
-
-        // Store in cache
-        if let Ok(mut roots) = cache.worktree_roots.write() {
-            roots.insert(worktree_key, result.clone());
-        }
-
-        Ok(result)
+        Ok(cache
+            .worktree_roots
+            .entry(self.path.clone())
+            .or_insert_with(|| {
+                self.run_command(&["rev-parse", "--show-toplevel"])
+                    .ok()
+                    .map(|s| PathBuf::from(s.trim()))
+                    .and_then(|p| canonicalize(&p).ok())
+                    .unwrap_or_else(|| self.path.clone())
+            })
+            .clone())
     }
 
     /// Check if this is a linked worktree (vs the main worktree).
@@ -1582,25 +1564,15 @@ impl Repository {
 
         let cache = get_cache(self.compute_git_common_dir()?);
 
-        // Check cache first
-        if let Ok(mb_cache) = cache.merge_base.read()
-            && let Some(cached) = mb_cache.get(&key)
-        {
-            return Ok(cached.clone());
-        }
-
-        // Cache miss - compute value
-        let result = self
-            .run_command(&["merge-base", commit1, commit2])
-            .map(|output| output.trim().to_owned())
-            .unwrap_or_default();
-
-        // Store in cache
-        if let Ok(mut mb_cache) = cache.merge_base.write() {
-            mb_cache.insert(key, result.clone());
-        }
-
-        Ok(result)
+        Ok(cache
+            .merge_base
+            .entry(key)
+            .or_insert_with(|| {
+                self.run_command(&["merge-base", commit1, commit2])
+                    .map(|output| output.trim().to_owned())
+                    .unwrap_or_default()
+            })
+            .clone())
     }
 
     /// Check if merging head into base would result in conflicts.
