@@ -163,8 +163,7 @@ pub struct Repository {
 /// A view into a specific worktree within a repository.
 ///
 /// This type borrows a [`Repository`] and holds a path to a specific worktree.
-/// All worktree-specific operations (like `current_branch`, `is_dirty`) are
-/// on this type. For repo-wide operations, use [`repo()`](Self::repo).
+/// All worktree-specific operations (like `branch`, `is_dirty`) are on this type.
 ///
 /// # Examples
 ///
@@ -175,14 +174,11 @@ pub struct Repository {
 /// let wt = repo.current_worktree();
 ///
 /// // Worktree-specific operations
-/// wt.is_dirty()?;
-/// wt.branch()?;
-///
-/// // Repo-wide operations via .repo()
-/// wt.repo().default_branch()?;
+/// let _ = wt.is_dirty();
+/// let _ = wt.branch();
 ///
 /// // View at a different worktree
-/// let other = repo.worktree_at("/path/to/other/worktree");
+/// let _other = repo.worktree_at("/path/to/other/worktree");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug)]
@@ -205,16 +201,6 @@ fn path_to_logging_context(path: &Path) -> String {
 }
 
 impl<'a> WorktreeView<'a> {
-    /// Get the path to this worktree.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Get the underlying repository.
-    pub fn repo(&self) -> &'a Repository {
-        self.repo
-    }
-
     /// Run a git command in this worktree and return stdout.
     pub fn run_command(&self, args: &[&str]) -> anyhow::Result<String> {
         use crate::shell_exec::run;
