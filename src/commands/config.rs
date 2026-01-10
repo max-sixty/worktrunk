@@ -191,17 +191,47 @@ fn is_plugin_installed() -> bool {
     content.contains("\"worktrunk@worktrunk\"")
 }
 
+/// Get the git version string (e.g., "2.47.1")
+fn get_git_version() -> Option<String> {
+    use std::process::Command;
+    use worktrunk::shell_exec::run;
+
+    let mut cmd = Command::new("git");
+    cmd.args(["--version"]);
+
+    let output = run(&mut cmd, None).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    // Parse "git version 2.47.1" -> "2.47.1"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .strip_prefix("git version ")
+        .map(|s| s.to_string())
+}
+
 /// Render OTHER section (version, Claude plugin, hyperlinks)
 fn render_runtime_info(out: &mut String) -> anyhow::Result<()> {
     let cmd = crate::binary_name();
     let version = version_str();
 
-    // Version as suffix to heading
+    writeln!(out, "{}", format_heading("OTHER", None))?;
+
+    // Version info
     writeln!(
         out,
         "{}",
-        format_heading("OTHER", Some(&cformat!("{cmd} {version}")))
+        info_message(cformat!("{cmd}: <bold>{version}</>"))
     )?;
+    if let Some(git_version) = get_git_version() {
+        writeln!(
+            out,
+            "{}",
+            info_message(cformat!("git: <bold>{git_version}</>"))
+        )?;
+    }
 
     // Claude Code plugin status
     let plugin_installed = is_plugin_installed();
@@ -1753,5 +1783,18 @@ mod tests {
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.ends_with("worktrunk/config.toml"));
+    }
+
+    // ==================== get_git_version tests ====================
+
+    #[test]
+    fn test_get_git_version_returns_version() {
+        // In a normal environment with git installed, should return a version
+        let version = get_git_version();
+        assert!(version.is_some());
+        let version = version.unwrap();
+        // Version should look like a semver (e.g., "2.47.1")
+        assert!(version.chars().next().unwrap().is_ascii_digit());
+        assert!(version.contains('.'));
     }
 }
