@@ -514,10 +514,13 @@ pub fn build_commit_prompt(config: &CommitGenerationConfig) -> anyhow::Result<St
     let prepared = prepare_diff(diff_output, diff_stat);
 
     // Get current branch
-    let current_branch = repo.current_branch()?.unwrap_or_else(|| "HEAD".to_string());
+    let current_branch = repo
+        .current_worktree()
+        .branch()?
+        .unwrap_or_else(|| "HEAD".to_string());
 
     // Get repo name from directory
-    let repo_root = repo.worktree_root()?;
+    let repo_root = repo.current_worktree().root()?;
     let repo_name = repo_root
         .file_name()
         .and_then(|n| n.to_str())

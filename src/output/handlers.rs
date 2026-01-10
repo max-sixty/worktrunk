@@ -227,8 +227,9 @@ fn print_switch_message_if_changed(
         return Ok(());
     }
 
+    // Use main_path for discovery - the worktree we came from may have been removed
     let repo = Repository::at(main_path);
-    let Ok(Some(dest_branch)) = repo.current_branch() else {
+    let Ok(Some(dest_branch)) = repo.worktree_at(main_path).branch() else {
         return Ok(());
     };
 
@@ -542,11 +543,13 @@ fn spawn_post_switch_after_remove(
     let Ok(config) = WorktrunkConfig::load() else {
         return Ok(());
     };
-    let dest_repo = Repository::at(main_path);
-    let dest_branch = dest_repo.current_branch()?;
-    let repo_root = dest_repo.worktree_base()?;
+    // Use main_path for discovery since we're called after the original worktree
+    // is removed (cwd may no longer exist).
+    let repo = Repository::at(main_path);
+    let dest_branch = repo.worktree_at(main_path).branch()?;
+    let repo_root = repo.worktree_base()?;
     let ctx = CommandContext::new(
-        &dest_repo,
+        &repo,
         &config,
         dest_branch.as_deref(),
         main_path,
@@ -578,15 +581,16 @@ fn handle_removed_worktree_output(
         super::flush()?; // Force flush to ensure shell processes the cd
     }
 
-    let repo = worktrunk::git::Repository::current();
+    // Use main_path for discovery - the worktree being removed might be cwd,
+    // and git operations after removal need a valid working directory.
+    let repo = worktrunk::git::Repository::at(main_path);
 
     // Execute pre-remove hooks in the worktree being removed
     // Non-zero exit aborts removal (FailFast strategy)
     // For detached HEAD, {{ branch }} expands to "HEAD" in templates
     if verify && let Ok(config) = WorktrunkConfig::load() {
-        let target_repo = Repository::at(worktree_path);
         let ctx = CommandContext::new(
-            &target_repo,
+            &repo,
             &config,
             branch_name,
             worktree_path,
@@ -623,8 +627,9 @@ fn handle_removed_worktree_output(
             super::print(progress_message(
                 "Removing worktree (detached HEAD, no branch to delete)...",
             ))?;
-            let target_repo = worktrunk::git::Repository::at(worktree_path);
-            let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
+            let _ = repo
+                .worktree_at(worktree_path)
+                .run_command(&["fsmonitor--daemon", "stop"]);
             if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
                 return Err(GitError::WorktreeRemovalFailed {
                     branch: path_dir_name(worktree_path).to_string(),
@@ -753,8 +758,9 @@ fn handle_removed_worktree_output(
 
         // Stop fsmonitor daemon first (best effort - ignore errors)
         // This prevents zombie daemons from accumulating when using builtin fsmonitor
-        let target_repo = worktrunk::git::Repository::at(worktree_path);
-        let _ = target_repo.run_command(&["fsmonitor--daemon", "stop"]);
+        let _ = repo
+            .worktree_at(worktree_path)
+            .run_command(&["fsmonitor--daemon", "stop"]);
 
         // Track whether branch was actually deleted (will be computed based on deletion attempt)
         if let Err(err) = repo.remove_worktree(worktree_path, force_worktree) {
@@ -771,14 +777,9 @@ fn handle_removed_worktree_output(
         let branch_was_integrated = pre_computed_integration.is_some();
 
         let (outcome, effective_target, show_unmerged_hint) = if !deletion_mode.should_keep() {
-            let deletion_repo = worktrunk::git::Repository::at(main_path);
             let check_target = target_branch.unwrap_or("HEAD");
-            let result = delete_branch_if_safe(
-                &deletion_repo,
-                branch_name,
-                check_target,
-                deletion_mode.is_force(),
-            );
+            let result =
+                delete_branch_if_safe(&repo, branch_name, check_target, deletion_mode.is_force());
             let (deletion, needs_hint) = handle_branch_deletion_result(result, branch_name, true)?;
             // Only use effective_target for display if we had a real target (not "HEAD" fallback)
             let display_target = target_branch.map(|_| deletion.effective_target);

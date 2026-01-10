@@ -95,6 +95,8 @@ pub struct TaskContext {
 
 impl TaskContext {
     fn repo(&self) -> Repository {
+        // Background tasks need Repository discovered from their specific worktree path,
+        // not from base_path(). Each task operates on a potentially different worktree.
         Repository::at(&self.repo_path)
     }
 
@@ -818,14 +820,9 @@ impl Task for CiStatusTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = ctx.repo();
-        let repo_path = repo
-            .worktree_root()
-            .ok()
-            .unwrap_or_else(|| ctx.repo_path.clone());
-
         let pr_status = ctx.branch.as_deref().and_then(|branch| {
             let has_upstream = repo.upstream_branch(branch).ok().flatten().is_some();
-            PrStatus::detect(branch, &ctx.commit_sha, &repo_path, has_upstream)
+            PrStatus::detect(&repo, branch, &ctx.commit_sha, has_upstream)
         });
 
         Ok(TaskResult::CiStatus {

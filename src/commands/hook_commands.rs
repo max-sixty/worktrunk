@@ -268,7 +268,11 @@ pub fn add_approvals(show_all: bool) -> anyhow::Result<()> {
     let config = WorktrunkConfig::load().context("Failed to load config")?;
 
     // Load project config (error if missing - this command requires it)
-    let config_path = repo.worktree_root()?.join(".config").join("wt.toml");
+    let config_path = repo
+        .current_worktree()
+        .root()?
+        .join(".config")
+        .join("wt.toml");
     let project_config = repo
         .load_project_config()?
         .ok_or(GitError::ProjectConfigNotFound { config_path })?;
@@ -498,7 +502,7 @@ fn render_project_hooks(
     filter: Option<HookType>,
     ctx: Option<&CommandContext>,
 ) -> anyhow::Result<()> {
-    let repo_root = repo.worktree_root()?;
+    let repo_root = repo.current_worktree().root()?;
     let config_path = repo_root.join(".config").join("wt.toml");
 
     writeln!(

@@ -34,15 +34,10 @@ fn detect_platform_from_url(url: &str) -> Option<CiPlatform> {
 /// Get the CI platform for a repository.
 ///
 /// If `platform_override` is provided (from project config `[ci] platform`),
-/// uses that value directly. Otherwise, detects platform from the origin
+/// uses that value directly. Otherwise, detects platform from the primary
 /// remote URL.
-///
-/// # Arguments
-///
-/// * `repo_root` - Repository root path
-/// * `platform_override` - Optional platform from `[ci] platform` in project config
 pub fn get_platform_for_repo(
-    repo_root: &str,
+    repo: &Repository,
     platform_override: Option<&str>,
 ) -> Option<CiPlatform> {
     // Config override takes precedence
@@ -58,22 +53,16 @@ pub fn get_platform_for_repo(
     }
 
     // Fall back to URL detection
-    let url = get_remote_url_for_repo(repo_root)?;
+    let url = repo.primary_remote_url()?;
     detect_platform_from_url(&url)
 }
 
-/// Get the origin remote URL for a repository.
-fn get_remote_url_for_repo(repo_root: &str) -> Option<String> {
-    let repo = Repository::at(repo_root);
-    repo.remote_url("origin")
-}
-
-/// Get the GitLab hostname for a repository by parsing its origin remote URL.
+/// Get the GitLab hostname for a repository by parsing its primary remote URL.
 ///
 /// Returns the hostname if the remote URL contains "gitlab", None otherwise.
 /// Used to check glab auth status against a specific host.
-pub fn get_gitlab_host_for_repo(repo_root: &str) -> Option<String> {
-    let url = get_remote_url_for_repo(repo_root)?;
+pub fn get_gitlab_host_for_repo(repo: &Repository) -> Option<String> {
+    let url = repo.primary_remote_url()?;
     // Only return host if this looks like a GitLab URL
     if detect_platform_from_url(&url) == Some(CiPlatform::GitLab) {
         parse_remote_host(&url)
@@ -672,20 +661,20 @@ const MAX_PRS_TO_FETCH: u8 = 20;
 ///
 /// Used for client-side filtering of PRs by source repository.
 /// See [`parse_remote_owner`] for details on why this is necessary.
-fn get_origin_owner(repo_root: &str) -> Option<String> {
-    let url = get_remote_url_for_repo(repo_root)?;
+fn get_origin_owner(repo: &Repository) -> Option<String> {
+    let url = repo.primary_remote_url()?;
     parse_remote_owner(&url)
 }
 
-/// Get the owner and repo name from the origin remote.
+/// Get the owner and repo name from the primary remote.
 ///
 /// Used for GitHub API calls that require `repos/{owner}/{repo}/...` paths.
-fn get_owner_repo(repo_root: &str) -> Option<(String, String)> {
-    let url = get_remote_url_for_repo(repo_root)?;
+fn get_owner_repo(repo: &Repository) -> Option<(String, String)> {
+    let url = repo.primary_remote_url()?;
     parse_owner_repo(&url)
 }
 
-/// Get the GitLab project ID for the current repository.
+/// Get the GitLab project ID for a repository.
 ///
 /// Used for client-side filtering of MRs by source project.
 /// This is the GitLab equivalent of [`get_origin_owner`] for GitHub.
@@ -698,11 +687,13 @@ fn get_owner_repo(repo_root: &str) -> Option<(String, String)> {
 /// the repo is actually GitLab-hosted. If glab is installed but the repo
 /// is GitHub, this adds an unnecessary CLI call. A future optimization
 /// could check the remote URL first and skip for non-GitLab remotes.
-fn get_gitlab_project_id(repo_root: &str) -> Option<u64> {
+fn get_gitlab_project_id(repo: &Repository) -> Option<u64> {
+    let repo_root = repo.current_worktree().root().ok()?;
+
     // Use glab repo view to get the project info as JSON
     let mut cmd = Command::new("glab");
     cmd.args(["repo", "view", "--output", "json"]);
-    cmd.current_dir(repo_root);
+    cmd.current_dir(&repo_root);
     // Disable color/pager to avoid ANSI noise in JSON output
     configure_non_interactive(&mut cmd);
     cmd.env("PAGER", "cat");
@@ -930,22 +921,21 @@ impl CachedCiStatus {
     }
 
     /// Get the cache directory path: `.git/wt-cache/ci-status/`
-    fn cache_dir(repo_root: &Path) -> Option<PathBuf> {
-        let repo = Repository::at(repo_root);
+    fn cache_dir(repo: &Repository) -> Option<PathBuf> {
         let git_common_dir = repo.git_common_dir().ok()?;
         Some(git_common_dir.join("wt-cache").join("ci-status"))
     }
 
     /// Get the cache file path for a branch.
-    fn cache_file(branch: &str, repo_root: &Path) -> Option<PathBuf> {
-        let dir = Self::cache_dir(repo_root)?;
+    fn cache_file(repo: &Repository, branch: &str) -> Option<PathBuf> {
+        let dir = Self::cache_dir(repo)?;
         let safe_branch = sanitize_for_filename(branch);
         Some(dir.join(format!("{safe_branch}.json")))
     }
 
     /// Read cached CI status from file.
-    fn read(branch: &str, repo_root: &Path) -> Option<Self> {
-        let path = Self::cache_file(branch, repo_root)?;
+    fn read(repo: &Repository, branch: &str) -> Option<Self> {
+        let path = Self::cache_file(repo, branch)?;
         let json = fs::read_to_string(&path).ok()?;
         serde_json::from_str(&json).ok()
     }
@@ -954,8 +944,8 @@ impl CachedCiStatus {
     ///
     /// Uses atomic write (write to temp file, then rename) to avoid corruption
     /// and minimize lock contention on Windows.
-    fn write(&self, branch: &str, repo_root: &Path) {
-        let Some(path) = Self::cache_file(branch, repo_root) else {
+    fn write(&self, repo: &Repository, branch: &str) {
+        let Some(path) = Self::cache_file(repo, branch) else {
             log::debug!("Failed to get cache path for {}", branch);
             return;
         };
@@ -989,12 +979,7 @@ impl CachedCiStatus {
 
     /// List all cached CI statuses as (branch_name, cached_status) pairs.
     pub(crate) fn list_all(repo: &Repository) -> Vec<(String, Self)> {
-        let repo_root = match repo.worktree_root() {
-            Ok(path) => path,
-            Err(_) => return Vec::new(),
-        };
-
-        let Some(cache_dir) = Self::cache_dir(&repo_root) else {
+        let Some(cache_dir) = Self::cache_dir(repo) else {
             return Vec::new();
         };
 
@@ -1023,12 +1008,7 @@ impl CachedCiStatus {
 
     /// Clear all cached CI statuses, returns count cleared.
     pub(crate) fn clear_all(repo: &Repository) -> usize {
-        let repo_root = match repo.worktree_root() {
-            Ok(path) => path,
-            Err(_) => return 0,
-        };
-
-        let Some(cache_dir) = Self::cache_dir(&repo_root) else {
+        let Some(cache_dir) = Self::cache_dir(repo) else {
             return 0;
         };
 
@@ -1144,25 +1124,26 @@ impl PrStatus {
     /// repos are properly detected.
     ///
     /// # Arguments
-    /// * `repo_path` - Repository root path from `Repository::worktree_root()`
     /// * `has_upstream` - Whether the branch has upstream tracking configured.
     ///   PR/MR detection always runs. Workflow/pipeline fallback only runs if true.
     pub fn detect(
+        repo: &Repository,
         branch: &str,
         local_head: &str,
-        repo_path: &std::path::Path,
         has_upstream: bool,
     ) -> Option<Self> {
+        let repo_path = repo.current_worktree().root().ok()?;
+
         // Check cache first to avoid hitting API rate limits
         let now_secs = get_now();
 
-        if let Some(cached) = CachedCiStatus::read(branch, repo_path) {
-            if cached.is_valid(local_head, now_secs, repo_path) {
+        if let Some(cached) = CachedCiStatus::read(repo, branch) {
+            if cached.is_valid(local_head, now_secs, &repo_path) {
                 log::debug!(
                     "Using cached CI status for {} (age={}s, ttl={}s, status={:?})",
                     branch,
                     now_secs - cached.checked_at,
-                    CachedCiStatus::ttl_for_repo(repo_path),
+                    CachedCiStatus::ttl_for_repo(&repo_path),
                     cached.status.as_ref().map(|s| &s.ci_status)
                 );
                 return cached.status;
@@ -1171,16 +1152,13 @@ impl PrStatus {
                 "Cache expired for {} (age={}s, ttl={}s, head_match={})",
                 branch,
                 now_secs - cached.checked_at,
-                CachedCiStatus::ttl_for_repo(repo_path),
+                CachedCiStatus::ttl_for_repo(&repo_path),
                 cached.head == local_head
             );
         }
 
         // Cache miss or expired - fetch fresh status
-        // We run gh/glab commands from the repo directory to let them auto-detect the correct repo
-        // (including upstream repos for forks)
-        let repo_root = repo_path.to_string_lossy();
-        let status = Self::detect_uncached(branch, local_head, &repo_root, has_upstream);
+        let status = Self::detect_uncached(repo, branch, local_head, has_upstream);
 
         // Cache the result (including None - means no CI found for this branch)
         let cached = CachedCiStatus {
@@ -1188,7 +1166,7 @@ impl PrStatus {
             checked_at: now_secs,
             head: local_head.to_string(),
         };
-        cached.write(branch, repo_path);
+        cached.write(repo, branch);
 
         status
     }
@@ -1200,65 +1178,61 @@ impl PrStatus {
     /// to trying both platforms.
     /// PR/MR detection always runs. Workflow/pipeline fallback only runs if `has_upstream`.
     fn detect_uncached(
+        repo: &Repository,
         branch: &str,
         local_head: &str,
-        repo_root: &str,
         has_upstream: bool,
     ) -> Option<Self> {
         use worktrunk::config::ProjectConfig;
 
         // Load project config for platform override
-        let repo = Repository::at(repo_root);
-        let project_config = ProjectConfig::load(&repo, false).ok().flatten();
+        let project_config = ProjectConfig::load(repo, false).ok().flatten();
         let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
 
         // Determine platform (config override or URL detection)
-        let platform = get_platform_for_repo(repo_root, platform_override);
+        let platform = get_platform_for_repo(repo, platform_override);
 
         match platform {
             Some(CiPlatform::GitHub) => {
-                Self::detect_github_ci(branch, local_head, repo_root, has_upstream)
+                Self::detect_github_ci(repo, branch, local_head, has_upstream)
             }
             Some(CiPlatform::GitLab) => {
-                Self::detect_gitlab_ci(branch, local_head, repo_root, has_upstream)
+                Self::detect_gitlab_ci(repo, branch, local_head, has_upstream)
             }
             None => {
                 // Unknown platform (e.g., GitHub Enterprise, self-hosted GitLab with custom domain)
                 // Fall back to trying both platforms
-                log::debug!(
-                    "Could not determine CI platform for {}, trying both",
-                    repo_root
-                );
-                Self::detect_github_ci(branch, local_head, repo_root, has_upstream)
-                    .or_else(|| Self::detect_gitlab_ci(branch, local_head, repo_root, has_upstream))
+                log::debug!("Could not determine CI platform, trying both");
+                Self::detect_github_ci(repo, branch, local_head, has_upstream)
+                    .or_else(|| Self::detect_gitlab_ci(repo, branch, local_head, has_upstream))
             }
         }
     }
 
     /// Detect GitHub CI status (PR first, then workflow if has_upstream)
     fn detect_github_ci(
+        repo: &Repository,
         branch: &str,
         local_head: &str,
-        repo_root: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        if let Some(status) = Self::detect_github(branch, local_head, repo_root) {
+        if let Some(status) = Self::detect_github(repo, branch, local_head) {
             return Some(status);
         }
         if has_upstream {
-            return Self::detect_github_commit_checks(local_head, repo_root);
+            return Self::detect_github_commit_checks(repo, local_head);
         }
         None
     }
 
     /// Detect GitLab CI status (MR first, then pipeline if has_upstream)
     fn detect_gitlab_ci(
+        repo: &Repository,
         branch: &str,
         local_head: &str,
-        repo_root: &str,
         has_upstream: bool,
     ) -> Option<Self> {
-        if let Some(status) = Self::detect_gitlab(branch, local_head, repo_root) {
+        if let Some(status) = Self::detect_gitlab(repo, branch, local_head) {
             return Some(status);
         }
         if has_upstream {
@@ -1284,8 +1258,11 @@ impl PrStatus {
     /// - Fork workflows (PRs from your fork to upstream)
     /// - Organization repos (PRs from org branches)
     /// - Multiple users with same branch name
-    fn detect_github(branch: &str, local_head: &str, repo_root: &str) -> Option<Self> {
+    fn detect_github(repo: &Repository, branch: &str, local_head: &str) -> Option<Self> {
         use std::process::Stdio;
+
+        let repo_root = repo.current_worktree().root().ok()?;
+
         // Check if gh is available and authenticated
         let mut auth_cmd = Command::new("gh");
         auth_cmd.args(["auth", "status"]);
@@ -1303,9 +1280,9 @@ impl PrStatus {
         }
 
         // Get origin owner for filtering (see parse_remote_owner docs for why)
-        let origin_owner = get_origin_owner(repo_root);
+        let origin_owner = get_origin_owner(repo);
         if origin_owner.is_none() {
-            log::debug!("Could not determine origin owner for {}", repo_root);
+            log::debug!("Could not determine origin owner for {}", branch);
         }
 
         // Use `gh pr list --head` instead of `gh pr view` to handle numeric branch names correctly.
@@ -1329,7 +1306,7 @@ impl PrStatus {
         ]);
 
         configure_non_interactive(&mut cmd);
-        cmd.current_dir(repo_root);
+        cmd.current_dir(&repo_root);
 
         let output = match run(&mut cmd, None) {
             Ok(output) => output,
@@ -1374,7 +1351,7 @@ impl PrStatus {
             // This is less accurate but better than nothing
             log::debug!(
                 "No origin owner for {}, using first open PR for branch {}",
-                repo_root,
+                repo_root.display(),
                 branch
             );
             pr_list.first()
@@ -1412,15 +1389,17 @@ impl PrStatus {
     /// 1. Get the current project ID via `glab repo view`
     /// 2. Fetch all open MRs with matching branch name (up to 20)
     /// 3. Filter client-side by comparing `source_project_id` to our project ID
-    fn detect_gitlab(branch: &str, local_head: &str, repo_root: &str) -> Option<Self> {
+    fn detect_gitlab(repo: &Repository, branch: &str, local_head: &str) -> Option<Self> {
         if !tool_available("glab", &["--version"]) {
             return None;
         }
 
+        let repo_root = repo.current_worktree().root().ok()?;
+
         // Get current project ID for filtering
-        let project_id = get_gitlab_project_id(repo_root);
+        let project_id = get_gitlab_project_id(repo);
         if project_id.is_none() {
-            log::debug!("Could not determine GitLab project ID for {}", repo_root);
+            log::debug!("Could not determine GitLab project ID");
         }
 
         // Fetch MRs with matching source branch.
@@ -1436,7 +1415,7 @@ impl PrStatus {
             "--output",
             "json",
         ]);
-        cmd.current_dir(repo_root);
+        cmd.current_dir(&repo_root);
 
         let output = match run(&mut cmd, None) {
             Ok(output) => output,
@@ -1481,7 +1460,7 @@ impl PrStatus {
             // If we can't determine project ID, fall back to first MR
             log::debug!(
                 "No project ID for {}, using first MR for branch {}",
-                repo_root,
+                repo_root.display(),
                 branch
             );
             mr_list.first()
@@ -1515,25 +1494,26 @@ impl PrStatus {
     /// This queries all check runs for the commit SHA, giving us the same data
     /// that `statusCheckRollup` provides for PRs. This correctly aggregates
     /// status across multiple workflows (e.g., `ci` and `publish-docs`).
-    fn detect_github_commit_checks(local_head: &str, repo_root: &str) -> Option<Self> {
+    fn detect_github_commit_checks(repo: &Repository, local_head: &str) -> Option<Self> {
         // Note: We don't log auth failures here since detect_github already logged them
         if !tool_available("gh", &["auth", "status"]) {
             return None;
         }
 
-        let (owner, repo) = get_owner_repo(repo_root)?;
+        let repo_root = repo.current_worktree().root().ok()?;
+        let (owner, repo_name) = get_owner_repo(repo)?;
 
         // Use GitHub's check-runs API to get all checks for this commit
         let mut cmd = Command::new("gh");
         cmd.args([
             "api",
-            &format!("repos/{owner}/{repo}/commits/{local_head}/check-runs"),
+            &format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs"),
             "--jq",
             ".check_runs | map({status, conclusion})",
         ]);
 
         configure_non_interactive(&mut cmd);
-        cmd.current_dir(repo_root);
+        cmd.current_dir(&repo_root);
 
         let output = match run(&mut cmd, None) {
             Ok(output) => output,

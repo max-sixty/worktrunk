@@ -41,7 +41,7 @@ pub use error::{
     exit_code,
 };
 pub use parse::{parse_porcelain_z, parse_untracked_files};
-pub use repository::{Repository, ResolvedWorktree, set_base_path};
+pub use repository::{Repository, ResolvedWorktree, WorktreeView, set_base_path};
 pub use url::{GitRemoteUrl, parse_owner_repo, parse_remote_host, parse_remote_owner};
 /// Why branch content is considered integrated into the target branch.
 ///
@@ -373,9 +373,8 @@ impl Worktree {
 
 /// Helper function to read rebase branch information
 fn read_rebase_branch(worktree_path: &PathBuf) -> Option<String> {
-    // Create a Repository instance to get the correct git directory
-    let repo = Repository::at(worktree_path);
-    let git_dir = repo.git_dir().ok()?;
+    let repo = Repository::current();
+    let git_dir = repo.worktree_at(worktree_path).git_dir().ok()?;
 
     // Check both rebase-merge and rebase-apply
     for rebase_dir in ["rebase-merge", "rebase-apply"] {

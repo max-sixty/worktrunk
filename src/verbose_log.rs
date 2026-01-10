@@ -73,8 +73,7 @@ pub fn log_file_path() -> Option<PathBuf> {
 /// a repository parameter.
 fn try_create_log_file() -> Option<(PathBuf, File)> {
     // Find the git repo from current directory
-    let cwd = std::env::current_dir().ok()?;
-    let repo = worktrunk::git::Repository::at(cwd);
+    let repo = worktrunk::git::Repository::current();
 
     // Get the wt-logs directory (creates it if needed)
     let log_dir = repo.wt_logs_dir().ok()?;

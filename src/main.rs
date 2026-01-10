@@ -1458,8 +1458,10 @@ fn main() {
                         std::env::current_dir().context("Failed to get current directory")?;
                     let repo_root = repo.worktree_base().context("Failed to remove worktree")?;
                     // Keep as Option so detached HEAD maps to None -> "HEAD" via branch_or_head()
-                    let current_branch =
-                        repo.current_branch().context("Failed to remove worktree")?;
+                    let current_branch = repo
+                        .current_worktree()
+                        .branch()
+                        .context("Failed to remove worktree")?;
                     let ctx = CommandContext::new(
                         &repo,
                         &config,
@@ -1494,7 +1496,7 @@ fn main() {
                     use worktrunk::git::ResolvedWorktree;
                     // When removing multiple worktrees, we need to handle the current worktree last
                     // to avoid deleting the directory we're currently in
-                    let current_worktree = repo.worktree_root().ok();
+                    let current_worktree = repo.current_worktree().root().ok();
 
                     // Partition branches into current worktree, others, and branch-only.
                     // Track all errors (resolution + removal) so we can report them and continue.
@@ -1721,7 +1723,7 @@ fn write_vv_diagnostic(verbose: u8, command_line: &str, error_msg: Option<&str>)
     let repo = worktrunk::git::Repository::current();
 
     // Check if we're actually in a git repo
-    if repo.git_dir().is_err() {
+    if repo.current_worktree().git_dir().is_err() {
         return;
     }
 

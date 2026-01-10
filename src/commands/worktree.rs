@@ -457,7 +457,7 @@ pub fn handle_switch(
 
     // Get the actual current branch BEFORE switching.
     // This is what we'll record as "previous" in history for `wt switch -` support.
-    let actual_current_branch = repo.current_branch().ok().flatten();
+    let actual_current_branch = repo.current_worktree().branch().ok().flatten();
 
     // Resolve special branch names ("@" for current, "-" for previous)
     let resolved_branch = repo
@@ -689,8 +689,7 @@ pub fn handle_switch(
     // This happens when we don't use --create and the branch exists on a remote
     let from_remote = if !create {
         // Query the new worktree for its upstream tracking branch
-        let worktree_repo = Repository::at(&worktree_path);
-        worktree_repo.upstream_branch(&resolved_branch)?
+        repo.upstream_branch(&resolved_branch)?
     } else {
         None
     };

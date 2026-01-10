@@ -64,7 +64,11 @@ fn test_get_default_branch_no_remote(repo: TestRepo) {
     // The inferred branch should match the current branch
     let inferred_branch = result.unwrap();
     let repo_instance = Repository::at(repo.root_path());
-    let current_branch = repo_instance.current_branch().unwrap().unwrap();
+    let current_branch = repo_instance
+        .worktree_at(repo.root_path())
+        .branch()
+        .unwrap()
+        .unwrap();
     assert_eq!(inferred_branch, current_branch);
 }
 

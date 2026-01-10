@@ -56,7 +56,7 @@ fn comment_out_config(content: &str) -> String {
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current();
-        let config_path = repo.worktree_root()?.join(".config/wt.toml");
+        let config_path = repo.current_worktree().root()?.join(".config/wt.toml");
         create_config_file(
             config_path,
             PROJECT_CONFIG_EXAMPLE,
@@ -285,10 +285,7 @@ fn render_diagnostics(out: &mut String) -> anyhow::Result<()> {
     let repo = Repository::current();
     let project_config = ProjectConfig::load(&repo, true).ok().flatten();
     let platform_override = project_config.as_ref().and_then(|c| c.ci_platform());
-    let platform = repo
-        .worktree_root()
-        .ok()
-        .and_then(|root| get_platform_for_repo(root.to_str()?, platform_override));
+    let platform = get_platform_for_repo(&repo, platform_override);
 
     match platform {
         Some(CiPlatform::GitHub) => {
@@ -425,7 +422,7 @@ fn warn_unknown_keys(out: &mut String, unknown_keys: &[String]) -> anyhow::Resul
 fn render_project_config(out: &mut String) -> anyhow::Result<()> {
     // Try to get current repository root
     let repo = Repository::current();
-    let repo_root = match repo.worktree_root() {
+    let repo_root = match repo.current_worktree().root() {
         Ok(root) => root,
         Err(_) => {
             writeln!(
@@ -1002,8 +999,6 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
                 None => repo.require_current_branch("get ci-status for current branch")?,
             };
 
-            let repo_root = repo.worktree_root()?;
-
             // Get the HEAD commit for this branch
             let head = repo
                 .run_command(&["rev-parse", &branch_name])
@@ -1025,7 +1020,7 @@ pub fn handle_state_get(key: &str, refresh: bool, branch: Option<String>) -> any
             }
 
             let has_upstream = repo.upstream_branch(&branch_name).ok().flatten().is_some();
-            let ci_status = PrStatus::detect(&branch_name, &head, &repo_root, has_upstream)
+            let ci_status = PrStatus::detect(&repo, &branch_name, &head, has_upstream)
                 .map_or(super::list::ci_status::CiStatus::NoCI, |s| s.ci_status);
             let status_str: &'static str = ci_status.into();
             crate::output::stdout(status_str)?;

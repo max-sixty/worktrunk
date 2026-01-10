@@ -56,7 +56,8 @@ impl CommandEnv {
         let worktree_path = std::env::current_dir().context("Failed to get current directory")?;
         // Propagate git errors (broken repo, missing git) but allow None for detached HEAD
         let branch = repo
-            .current_branch()
+            .current_worktree()
+            .branch()
             .context("Failed to determine current branch")?;
         let config = WorktrunkConfig::load().context("Failed to load config")?;
         let repo_root = repo

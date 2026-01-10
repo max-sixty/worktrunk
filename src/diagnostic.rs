@@ -258,7 +258,7 @@ fn get_config_show_output(repo: &Repository) -> Option<String> {
     }
 
     // Project config
-    if let Ok(root) = repo.worktree_root() {
+    if let Ok(root) = repo.current_worktree().root() {
         let project_config_path = root.join(".config/wt.toml");
         output.push_str(&format!(
             "\n{}",
