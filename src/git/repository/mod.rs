@@ -32,6 +32,28 @@ use super::{
 /// of OnceCell) have their own trade-offs.
 static REPO_CACHE: Lazy<RwLock<HashMap<PathBuf, Arc<RepoCache>>>> = Lazy::new(Default::default);
 
+/// Get the shared cache for a repository, creating it if needed.
+///
+/// Returns an Arc to the cache, allowing the caller to release the HashMap
+/// lock before accessing cached values. This prevents deadlocks when cached
+/// methods call each other.
+fn get_cache(key: PathBuf) -> Arc<RepoCache> {
+    // Try read-only first
+    {
+        let caches = REPO_CACHE.read().unwrap();
+        if let Some(cache) = caches.get(&key) {
+            return Arc::clone(cache);
+        }
+    }
+
+    // Cache miss - need write lock to insert
+    let mut caches = REPO_CACHE.write().unwrap();
+    let cache = caches
+        .entry(key)
+        .or_insert_with(|| Arc::new(RepoCache::default()));
+    Arc::clone(cache)
+}
+
 /// Cached data for a single repository.
 ///
 /// Contains:
@@ -167,30 +189,6 @@ impl Repository {
             .cloned()
     }
 
-    /// Get the shared cache for this repository, creating it if needed.
-    ///
-    /// Returns an Arc to the cache, allowing the caller to release the HashMap
-    /// lock before accessing cached values. This prevents deadlocks when cached
-    /// methods call each other.
-    fn get_cache(&self) -> anyhow::Result<Arc<RepoCache>> {
-        let key = self.compute_git_common_dir()?;
-
-        // Try read-only first
-        {
-            let caches = REPO_CACHE.read().unwrap();
-            if let Some(cache) = caches.get(&key) {
-                return Ok(Arc::clone(cache));
-            }
-        }
-
-        // Cache miss - need write lock to insert
-        let mut caches = REPO_CACHE.write().unwrap();
-        let cache = caches
-            .entry(key)
-            .or_insert_with(|| Arc::new(RepoCache::default()));
-        Ok(Arc::clone(cache))
-    }
-
     /// Get the primary remote name for this repository.
     ///
     /// Returns a consistent value across all worktrees (not branch-specific).
@@ -204,7 +202,7 @@ impl Repository {
     ///
     /// [1]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-checkoutdefaultRemote
     pub fn primary_remote(&self) -> anyhow::Result<String> {
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
         Ok(cache
             .primary_remote
             .get_or_init(|| {
@@ -308,7 +306,7 @@ impl Repository {
     /// Result is cached in the global shared cache (keyed by worktree path).
     pub fn current_branch(&self) -> anyhow::Result<Option<String>> {
         let worktree_key = self.path.clone();
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
 
         // Check cache first
         if let Ok(branches) = cache.current_branches.read()
@@ -549,7 +547,7 @@ impl Repository {
     /// Detection results are cached to `worktrunk.default-branch` for future calls.
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn default_branch(&self) -> anyhow::Result<String> {
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
         cache
             .default_branch
             .get_or_try_init(|| {
@@ -715,7 +713,7 @@ impl Repository {
     /// This is the path that should be used when constructing worktree paths.
     /// Result is cached in the global shared cache (same for all worktrees in a repo).
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
         cache
             .worktree_base
             .get_or_try_init(|| {
@@ -766,7 +764,7 @@ impl Repository {
     /// worktrees at templated paths, including the default branch.
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn is_bare(&self) -> anyhow::Result<bool> {
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
         cache
             .is_bare
             .get_or_try_init(|| {
@@ -809,7 +807,7 @@ impl Repository {
     /// Result is cached in the global shared cache (keyed by worktree path).
     pub fn worktree_root(&self) -> anyhow::Result<PathBuf> {
         let worktree_key = self.path.clone();
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
 
         // Check cache first
         if let Ok(roots) = cache.worktree_roots.read()
@@ -1582,7 +1580,7 @@ impl Repository {
             (commit2.to_string(), commit1.to_string())
         };
 
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
 
         // Check cache first
         if let Ok(mb_cache) = cache.merge_base.read()
@@ -1866,7 +1864,7 @@ impl Repository {
     ///
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn project_identifier(&self) -> anyhow::Result<String> {
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
         cache
             .project_identifier
             .get_or_try_init(|| {
@@ -1915,7 +1913,7 @@ impl Repository {
     /// Result is cached in the global shared cache (same config for all worktrees).
     /// Returns `None` if not in a worktree or if no config file exists.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
-        let cache = self.get_cache()?;
+        let cache = get_cache(self.compute_git_common_dir()?);
         cache
             .project_config
             .get_or_try_init(|| {
