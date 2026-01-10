@@ -11,6 +11,11 @@ use crate::display::format_relative_time_short;
 use worktrunk::config::{ProjectConfig, WorktrunkConfig};
 use worktrunk::git::{BranchCategory, HookType, Repository};
 
+/// Deprecated args that should never appear in completions.
+/// These are hidden from help AND completions, unlike other hidden args
+/// that appear when completing `--`.
+const DEPRECATED_ARGS: &[&str] = &["--no-background"];
+
 /// Handle shell-initiated completion requests via `COMPLETE=$SHELL wt`
 pub fn maybe_handle_env_completion() -> bool {
     let Some(shell_name) = std::env::var_os("COMPLETE") else {
@@ -103,6 +108,15 @@ pub fn maybe_handle_env_completion() -> bool {
     } else {
         completions
     };
+
+    // Filter out deprecated args - they should never appear in completions
+    let completions: Vec<_> = completions
+        .into_iter()
+        .filter(|c| {
+            let value = c.get_value().to_string_lossy();
+            !DEPRECATED_ARGS.contains(&value.as_ref())
+        })
+        .collect();
 
     // Write completions in the appropriate format for the shell
     let shell_name = shell_name.to_string_lossy();
