@@ -139,7 +139,7 @@ fn base_path() -> &'static PathBuf {
 /// ```no_run
 /// use worktrunk::git::Repository;
 ///
-/// let repo = Repository::current()?;
+/// let repo = Repository::current();
 /// let wt = repo.current_worktree();
 ///
 /// // Repo-wide operations
@@ -170,7 +170,7 @@ pub struct Repository {
 /// ```no_run
 /// use worktrunk::git::Repository;
 ///
-/// let repo = Repository::current()?;
+/// let repo = Repository::current();
 /// let wt = repo.current_worktree();
 ///
 /// // Worktree-specific operations
