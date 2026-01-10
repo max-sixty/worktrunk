@@ -1077,7 +1077,11 @@ impl Repository {
             "refs/heads/",
         ]) {
             Ok(output) => output,
-            Err(_) => return std::collections::HashMap::new(), // git < 2.36 or other error
+            Err(e) => {
+                // Fails on git < 2.36 (no %(ahead-behind:) support), invalid base ref, etc.
+                log::debug!("batch_ahead_behind({base}): git for-each-ref failed: {e}");
+                return std::collections::HashMap::new();
+            }
         };
 
         output

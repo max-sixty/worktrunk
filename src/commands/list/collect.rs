@@ -380,7 +380,7 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
             items[idx].is_ancestor = Some(false);
         }
         TaskKind::BranchDiff => {
-            items[idx].branch_diff = Some(BranchDiffTotals::default());
+            // Leave as None — UI shows `…` for skipped/failed tasks
         }
         TaskKind::WorkingTreeDiff => {
             if let ItemKind::Worktree(data) = &mut items[idx].kind {
