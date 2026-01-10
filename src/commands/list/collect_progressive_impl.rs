@@ -580,8 +580,10 @@ impl Task for WorkingTreeDiffTask {
 
     fn compute(ctx: TaskContext) -> Result<TaskResult, TaskError> {
         let repo = ctx.repo();
+        // Use --no-optional-locks to avoid index lock contention with WorkingTreeConflictsTask's
+        // `git stash create` which needs the index lock.
         let status_output = repo
-            .run_command(&["status", "--porcelain"])
+            .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         let (working_tree_status, is_dirty, has_conflicts) =
@@ -645,9 +647,10 @@ impl Task for WorkingTreeConflictsTask {
         let base = ctx.require_default_branch(Self::KIND)?;
         let repo = ctx.repo();
 
-        // Quick check if working tree is dirty via git status
+        // Use --no-optional-locks to avoid index lock contention with WorkingTreeDiffTask.
+        // Both tasks run in parallel, and `git stash create` below needs the index lock.
         let status_output = repo
-            .run_command(&["status", "--porcelain"])
+            .run_command(&["--no-optional-locks", "status", "--porcelain"])
             .map_err(|e| ctx.error(Self::KIND, e))?;
 
         let is_dirty = !status_output.trim().is_empty();
