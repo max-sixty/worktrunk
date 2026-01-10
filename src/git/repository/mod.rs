@@ -129,7 +129,7 @@ impl Repository {
     /// Uses the following strategy:
     /// 1. Use git's [`checkout.defaultRemote`][1] config if set and has a URL
     /// 2. Otherwise, get the first remote with a configured URL
-    /// 3. Fall back to "origin" if no remotes exist
+    /// 3. Return error if no remotes exist
     ///
     /// Result is cached for the lifetime of this Repository instance.
     ///
@@ -161,7 +161,9 @@ impl Repository {
                         .map(|(name, _)| name)
                 });
 
-                Ok(first_remote.unwrap_or("origin").to_string())
+                first_remote
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow::anyhow!("No remotes configured"))
             })
             .map(String::as_str)
     }
@@ -195,8 +197,10 @@ impl Repository {
             return Ok(true);
         }
 
-        // Try remote branch
-        let remote = self.primary_remote()?;
+        // Try remote branch (if remotes exist)
+        let Ok(remote) = self.primary_remote() else {
+            return Ok(false);
+        };
         Ok(self
             .run_command(&[
                 "rev-parse",
@@ -1396,42 +1400,46 @@ impl Repository {
         let local_branch_names: HashSet<String> =
             local_branches.iter().map(|(n, _)| n.clone()).collect();
 
-        // Get remote branches with timestamps
-        let remote = self.primary_remote().unwrap_or("origin");
-        let remote_ref_path = format!("refs/remotes/{}/", remote);
-        let remote_prefix = format!("{}/", remote);
+        // Get remote branches with timestamps (if remotes exist)
+        let remote_branches: Vec<(String, String, i64)> = if let Ok(remote) = self.primary_remote()
+        {
+            let remote_ref_path = format!("refs/remotes/{}/", remote);
+            let remote_prefix = format!("{}/", remote);
 
-        let remote_output = self.run_command(&[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
-            &remote_ref_path,
-        ])?;
+            let remote_output = self.run_command(&[
+                "for-each-ref",
+                "--sort=-committerdate",
+                "--format=%(refname:lstrip=2)\t%(committerdate:unix)",
+                &remote_ref_path,
+            ])?;
 
-        let remote_head = format!("{}/HEAD", remote);
-        let remote_branches: Vec<(String, String, i64)> = remote_output
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() == 2 {
-                    let full_name = parts[0];
-                    // Skip <remote>/HEAD
-                    if full_name == remote_head {
-                        return None;
+            let remote_head = format!("{}/HEAD", remote);
+            remote_output
+                .lines()
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.split('\t').collect();
+                    if parts.len() == 2 {
+                        let full_name = parts[0];
+                        // Skip <remote>/HEAD
+                        if full_name == remote_head {
+                            return None;
+                        }
+                        // Strip remote prefix to get local name
+                        let local_name = full_name.strip_prefix(&remote_prefix)?;
+                        // Skip if local branch exists (user should use local)
+                        if local_branch_names.contains(local_name) {
+                            return None;
+                        }
+                        let timestamp = parts[1].parse().unwrap_or(0);
+                        Some((local_name.to_string(), remote.to_string(), timestamp))
+                    } else {
+                        None
                     }
-                    // Strip remote prefix to get local name
-                    let local_name = full_name.strip_prefix(&remote_prefix)?;
-                    // Skip if local branch exists (user should use local)
-                    if local_branch_names.contains(local_name) {
-                        return None;
-                    }
-                    let timestamp = parts[1].parse().unwrap_or(0);
-                    Some((local_name.to_string(), remote.to_string(), timestamp))
-                } else {
-                    None
-                }
-            })
-            .collect();
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Build result: worktrees first, then local, then remote
         let mut result = Vec::new();
@@ -1741,9 +1749,9 @@ impl Repository {
             .project_identifier
             .get_or_try_init(|| {
                 // Try to get the remote URL first
-                let remote = self.primary_remote()?;
-
-                if let Some(url) = self.remote_url(remote) {
+                if let Ok(remote) = self.primary_remote()
+                    && let Some(url) = self.remote_url(remote)
+                {
                     if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
                         return Ok(parsed.project_identifier());
                     }
