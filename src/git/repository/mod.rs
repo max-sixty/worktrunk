@@ -550,27 +550,25 @@ impl Repository {
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn default_branch(&self) -> anyhow::Result<String> {
         let cache = self.get_cache()?;
-        Ok(cache
+        cache
             .default_branch
-            .get_or_init(|| {
+            .get_or_try_init(|| {
                 // Fast path: check worktrunk's persistent cache (git config)
                 if let Ok(branch) =
                     self.run_command(&["config", "--get", "worktrunk.default-branch"])
                 {
                     let branch = branch.trim();
                     if !branch.is_empty() {
-                        return branch.to_string();
+                        return Ok(branch.to_string());
                     }
                 }
 
                 // Detect and persist to git config for future processes
-                let branch = self
-                    .detect_default_branch()
-                    .unwrap_or_else(|_| "main".into());
+                let branch = self.detect_default_branch()?;
                 let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
-                branch
+                Ok(branch)
             })
-            .clone())
+            .cloned()
     }
 
     /// Detect the default branch without using worktrunk's cache.
@@ -718,22 +716,29 @@ impl Repository {
     /// Result is cached in the global shared cache (same for all worktrees in a repo).
     pub fn worktree_base(&self) -> anyhow::Result<PathBuf> {
         let cache = self.get_cache()?;
-        Ok(cache
+        cache
             .worktree_base
-            .get_or_init(|| {
-                let git_common_dir = canonicalize(self.git_common_dir().unwrap())
-                    .expect("Failed to canonicalize path");
+            .get_or_try_init(|| {
+                let git_common_dir =
+                    canonicalize(self.git_common_dir()?).context("Failed to canonicalize path")?;
 
-                if self.is_bare().unwrap_or(false) {
-                    git_common_dir
+                if self.is_bare()? {
+                    Ok(git_common_dir)
                 } else {
                     git_common_dir
                         .parent()
-                        .expect("Git directory has no parent")
-                        .to_path_buf()
+                        .ok_or_else(|| {
+                            anyhow::Error::from(GitError::Other {
+                                message: format!(
+                                    "Git directory has no parent: {}",
+                                    git_common_dir.display()
+                                ),
+                            })
+                        })
+                        .map(Path::to_path_buf)
                 }
             })
-            .clone())
+            .cloned()
     }
 
     /// Find the "home" path - where to cd when leaving a worktree.
@@ -762,11 +767,13 @@ impl Repository {
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn is_bare(&self) -> anyhow::Result<bool> {
         let cache = self.get_cache()?;
-        Ok(*cache.is_bare.get_or_init(|| {
-            self.run_command(&["config", "--bool", "core.bare"])
-                .map(|output| output.trim() == "true")
-                .unwrap_or(false)
-        }))
+        cache
+            .is_bare
+            .get_or_try_init(|| {
+                let output = self.run_command(&["config", "--bool", "core.bare"])?;
+                Ok(output.trim() == "true")
+            })
+            .copied()
     }
 
     /// Check if the working tree has uncommitted changes.
@@ -1860,15 +1867,15 @@ impl Repository {
     /// Result is cached in the shared repo cache (shared across all worktrees).
     pub fn project_identifier(&self) -> anyhow::Result<String> {
         let cache = self.get_cache()?;
-        Ok(cache
+        cache
             .project_identifier
-            .get_or_init(|| {
+            .get_or_try_init(|| {
                 // Try to get the remote URL first
-                let remote = self.primary_remote().unwrap_or_else(|_| "origin".into());
+                let remote = self.primary_remote()?;
 
                 if let Some(url) = self.remote_url(&remote) {
                     if let Some(parsed) = GitRemoteUrl::parse(url.trim()) {
-                        return parsed.project_identifier();
+                        return Ok(parsed.project_identifier());
                     }
                     // Fallback for URLs that don't fit host/owner/repo model (e.g., with ports)
                     let url = url.strip_suffix(".git").unwrap_or(url.as_str());
@@ -1877,25 +1884,30 @@ impl Repository {
                         let ssh_part = ssh_part.strip_prefix("git@").unwrap_or(ssh_part);
                         if let Some(colon_pos) = ssh_part.find(':') {
                             let (host, rest) = ssh_part.split_at(colon_pos);
-                            return format!("{}{}", host, rest.replacen(':', "/", 1));
+                            return Ok(format!("{}{}", host, rest.replacen(':', "/", 1)));
                         }
-                        return ssh_part.to_string();
+                        return Ok(ssh_part.to_string());
                     }
-                    return url.to_string();
+                    return Ok(url.to_string());
                 }
 
-                // Fall back to repository name (use worktree base for consistency)
-                self.worktree_base()
-                    .ok()
-                    .and_then(|repo_root| {
-                        repo_root
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .map(String::from)
-                    })
-                    .unwrap_or_else(|| "unknown".into())
+                // Fall back to repository name (use worktree base for consistency across all worktrees)
+                let repo_root = self.worktree_base()?;
+                let repo_name = repo_root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| {
+                        anyhow::Error::from(GitError::Other {
+                            message: format!(
+                                "Repository directory has no valid name: {}",
+                                repo_root.display()
+                            ),
+                        })
+                    })?;
+
+                Ok(repo_name.to_string())
             })
-            .clone())
+            .cloned()
     }
 
     /// Load the project configuration (.config/wt.toml) if it exists.
@@ -1904,16 +1916,17 @@ impl Repository {
     /// Returns `None` if not in a worktree or if no config file exists.
     pub fn load_project_config(&self) -> anyhow::Result<Option<ProjectConfig>> {
         let cache = self.get_cache()?;
-        Ok(cache
+        cache
             .project_config
-            .get_or_init(|| {
-                // Not in a worktree? No project config
-                if self.worktree_root().is_err() {
-                    return None;
+            .get_or_try_init(|| {
+                match self.worktree_root() {
+                    Ok(_) => {
+                        ProjectConfig::load(self, true).context("Failed to load project config")
+                    }
+                    Err(_) => Ok(None), // Not in a worktree, no project config
                 }
-                ProjectConfig::load(self, true).ok().flatten()
             })
-            .clone())
+            .cloned()
     }
 
     /// Get a short display name for this repository, used in logging context.
