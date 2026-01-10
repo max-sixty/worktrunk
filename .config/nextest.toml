@@ -13,6 +13,11 @@
 
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }
+status-level = "fail"
+success-output = "never"
+
+[profile.default.junit]
+path = "junit.xml"
 
 # The ci_status tests spawn many parallel threads and processes (~30 threads, ~34
 # child processes each). Mark them as "heavy" so nextest limits how many run
