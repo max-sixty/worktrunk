@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.0
+
+### Improved
+
+- **Nix flake for packaging**: New `flake.nix` for Nix users with crane for efficient Rust builds. ([#502](https://github.com/max-sixty/worktrunk/pull/502), thanks @marktoda; thanks @Kabilan108 for requesting)
+- **`sanitize_db` template filter**: New filter that transforms strings into database-safe identifiers with a 3-character hash suffix for collision/keyword safety. ([#498](https://github.com/max-sixty/worktrunk/pull/498), thanks @hugobarauna for requesting)
+- **`wt select` performance**: 500ms timeout for git commands improves TUI responsiveness on large repos with many branches. (thanks @KidkArolis for reporting [#461](https://github.com/max-sixty/worktrunk/issues/461))
+- **`wt select` stale branch handling**: Branches 50+ commits behind the default branch now skip expensive operations, showing `...` in the diff column. Improves performance on repos with many stale branches.
+- **Global merge-base cache**: Cached merge-base results improve `wt list` performance by avoiding redundant git calls.
+- **`wt config show` git version**: Now displays the git version alongside the worktrunk version.
+- **`wt step copy-ignored` default**: Now copies all gitignored files by default. Use `.worktreeinclude` to limit what gets copied (previously required `.worktreeinclude` to specify what to copy).
+- **Trace log analysis**: New `analyze-trace` binary for analyzing `[wt-trace]` performance logs.
+
+### Fixed
+
+- **Statusline truncation**: No longer truncates when terminal width is unknown, fixing Claude Code statusline display.
+- **Shell completions**: Deprecated args like `--no-background` no longer appear in tab completions.
+- **`wt remove` progress ordering**: Progress message now appears after pre-remove hooks, not before.
+- **`wt list` index lock**: Uses `--no-optional-locks` for git status to avoid lock contention with parallel tasks.
+
 ## 0.10.0
 
 ### Improved

@@ -33,6 +33,7 @@ trade-offs.
 - `primary_remote()` — git config, doesn't change
 - `default_branch()` — from git config or detection, doesn't change
 - `merge_base()` — keyed by (commit1, commit2) pair
+- `ahead_behind` — keyed by (base_ref, branch_name), populated by `batch_ahead_behind()`
 
 **Not cached (intentionally):**
 - `is_dirty()` — changes as we stage/commit

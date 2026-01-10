@@ -8,14 +8,16 @@ use crate::common::progressive_output::{ProgressiveCaptureOptions, capture_progr
 use crate::common::{TestRepo, repo};
 use rstest::rstest;
 
+/// Tests progressive rendering with multiple worktrees.
+/// Verifies: headers appear immediately, dots decrease over time, all worktrees visible.
+/// (Consolidates previous tests: rendering_basic, dots_decrease, many_worktrees)
 #[rstest]
-fn test_list_progressive_rendering_basic(mut repo: TestRepo) {
-    // Create a few worktrees to have data to render
-    repo.add_worktree("feature-a");
-    repo.add_worktree("feature-b");
-    repo.add_worktree("bugfix");
+fn test_list_progressive_rendering(mut repo: TestRepo) {
+    // Create many worktrees to ensure rendering takes time
+    for i in 1..=10 {
+        repo.add_worktree(&format!("branch-{:02}", i));
+    }
 
-    // Capture progressive output using byte-based strategy (deterministic)
     let output = capture_progressive_output(
         &repo,
         "list",
@@ -26,8 +28,8 @@ fn test_list_progressive_rendering_basic(mut repo: TestRepo) {
     // Basic assertions
     assert_eq!(output.exit_code, 0);
     assert!(
-        output.stages.len() > 1,
-        "Should capture multiple stages, got {}",
+        output.stages.len() >= 3,
+        "Should capture at least 3 stages with many worktrees, got {}",
         output.stages.len()
     );
 
@@ -35,45 +37,31 @@ fn test_list_progressive_rendering_basic(mut repo: TestRepo) {
     output.verify_progressive_filling().unwrap();
 
     // Verify table header appears in initial output
+    let initial = output.initial().visible_text();
     assert!(
-        output.initial().visible_text().contains("Branch"),
+        initial.contains("Branch"),
         "Table header should appear immediately"
     );
     assert!(
-        output.initial().visible_text().contains("Status"),
+        initial.contains("Status"),
         "Status column header should appear immediately"
     );
 
     // Verify final output has all worktrees
-    let final_text = output.final_output();
-    assert!(final_text.contains("feature-a"));
-    assert!(final_text.contains("feature-b"));
-    assert!(final_text.contains("bugfix"));
-
-    // Final output should have fewer dots than initial (verified by verify_progressive_filling)
-    // No need for additional assertions - verify_progressive_filling already confirms progressive behavior
-}
-
-#[rstest]
-fn test_list_progressive_dots_decrease(mut repo: TestRepo) {
-    // Create multiple worktrees to ensure progressive rendering is observable
-    for i in 1..=5 {
-        repo.add_worktree(&format!("branch-{}", i));
+    let final_output = output.final_output();
+    for i in 1..=10 {
+        assert!(
+            final_output.contains(&format!("branch-{:02}", i)),
+            "Final output should contain branch-{:02}",
+            i
+        );
     }
-
-    let output = capture_progressive_output(
-        &repo,
-        "list",
-        &["--full"],
-        ProgressiveCaptureOptions::with_byte_interval(600),
-    );
-
-    // Use canonical verification method
-    output.verify_progressive_filling().unwrap();
 }
 
+/// Tests progressive output capture API: timestamps and snapshot_at.
+/// (Consolidates previous tests: timing, snapshot_at)
 #[rstest]
-fn test_list_progressive_timing(mut repo: TestRepo) {
+fn test_list_progressive_api(mut repo: TestRepo) {
     repo.add_worktree("feature");
 
     let output = capture_progressive_output(
@@ -97,80 +85,22 @@ fn test_list_progressive_timing(mut repo: TestRepo) {
         "Command should complete in under 5 seconds, took {:?}",
         output.total_duration
     );
-}
 
-#[rstest]
-fn test_list_progressive_snapshot_at(mut repo: TestRepo) {
-    repo.add_worktree("feature");
-
-    let output = capture_progressive_output(
-        &repo,
-        "list",
-        &[],
-        ProgressiveCaptureOptions::with_byte_interval(600),
-    );
-
-    // Get snapshot at approximately 100ms
+    // Test snapshot_at API
     let snapshot = output.snapshot_at(std::time::Duration::from_millis(100));
-
-    // Should have some content
     assert!(
         !snapshot.visible_text().is_empty(),
         "Snapshot should have content"
     );
-
-    // Should be somewhere in the middle of rendering
     assert!(
         snapshot.timestamp < output.total_duration,
         "Snapshot should be before end"
     );
 }
 
-#[rstest]
-fn test_list_progressive_many_worktrees(mut repo: TestRepo) {
-    // Create many worktrees to ensure rendering takes time
-    for i in 1..=10 {
-        repo.add_worktree(&format!("branch-{:02}", i));
-    }
-
-    let output = capture_progressive_output(
-        &repo,
-        "list",
-        &["--full", "--branches"],
-        ProgressiveCaptureOptions::with_byte_interval(600),
-    );
-
-    // With many worktrees, we should see clear progression
-    assert!(
-        output.stages.len() >= 3,
-        "Should capture at least 3 stages with many worktrees, got {}",
-        output.stages.len()
-    );
-
-    // Verify the initial stage has table structure but incomplete data
-    let initial = output.initial().visible_text();
-    assert!(
-        initial.contains("Branch"),
-        "Initial output should have table header"
-    );
-
-    // Verify final output has all worktrees
-    let final_output = output.final_output();
-    for i in 1..=10 {
-        assert!(
-            final_output.contains(&format!("branch-{:02}", i)),
-            "Final output should contain branch-{:02}",
-            i
-        );
-    }
-
-    // Verify progressive filling happened
-    output.verify_progressive_filling().unwrap();
-}
-
+/// Tests progressive rendering with no worktrees (fast path).
 #[rstest]
 fn test_list_progressive_fast_command(repo: TestRepo) {
-    // Run list without any worktrees (fast)
     let output = capture_progressive_output(
         &repo,
         "list",

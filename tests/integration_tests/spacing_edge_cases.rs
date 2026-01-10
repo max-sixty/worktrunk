@@ -122,7 +122,8 @@ fn test_column_alignment_extreme_diff_sizes(mut repo: TestRepo) {
     std::fs::write(tiny_path.join("file.txt"), "x").unwrap();
 
     let huge_path = repo.worktrees.get("huge").unwrap();
-    for i in 0..9999 {
+    // 200 files is enough to test alignment with 3-digit diff counts
+    for i in 0..200 {
         std::fs::write(huge_path.join(format!("file{}.txt", i)), "content").unwrap();
     }
 

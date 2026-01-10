@@ -2197,24 +2197,6 @@ fn test_list_full_working_tree_conflicts(mut repo: TestRepo) {
     // Now add uncommitted changes to feature that would conflict with main
     std::fs::write(feature.join("shared.txt"), "feature's uncommitted version").unwrap();
 
-    // Wait for git to detect the file change (handles "racy git" timing issues where
-    // file modification within the same timestamp granularity may not be detected)
-    crate::common::wait_for("git to detect dirty working tree", || {
-        // Refresh index to pick up mtime changes
-        let _ = repo
-            .git_command()
-            .args(["update-index", "--refresh"])
-            .current_dir(&feature)
-            .output();
-        // Check if git sees the change
-        repo.git_command()
-            .args(["status", "--porcelain"])
-            .current_dir(&feature)
-            .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false)
-    });
-
     // Without --full: no conflict symbol (only checks commit-level)
     assert_cmd_snapshot!(
         "working_tree_conflicts_without_full",

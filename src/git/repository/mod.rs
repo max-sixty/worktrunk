@@ -80,6 +80,9 @@ struct RepoCache {
     project_config: OnceCell<Option<ProjectConfig>>,
     /// Merge-base cache: (commit1, commit2) -> merge_base_sha
     merge_base: DashMap<(String, String), String>,
+    /// Batch ahead/behind cache: (base_ref, branch_name) -> (ahead, behind)
+    /// Populated by batch_ahead_behind(), used by get_cached_ahead_behind()
+    ahead_behind: DashMap<(String, String), (usize, usize)>,
 
     // ========== Per-worktree values (keyed by path) ==========
     /// Worktree root paths: worktree_path -> canonicalized root
@@ -1295,6 +1298,9 @@ impl Repository {
     /// Uses `git for-each-ref --format='%(ahead-behind:BASE)'` (git 2.36+) to get
     /// all counts in a single command. Returns a map from branch name to (ahead, behind).
     ///
+    /// Results are cached so subsequent lookups via `get_cached_ahead_behind()` avoid
+    /// running individual git commands (though cache access still has minor overhead).
+    ///
     /// On git < 2.36 or if the command fails, returns an empty map.
     pub fn batch_ahead_behind(
         &self,
@@ -1314,7 +1320,10 @@ impl Repository {
             }
         };
 
-        output
+        // Get cache keyed by git_common_dir
+        let cache = Some(get_cache(self.git_common_dir().to_path_buf()));
+
+        let results: std::collections::HashMap<String, (usize, usize)> = output
             .lines()
             .filter_map(|line| {
                 // Format: "branch-name ahead behind"
@@ -1322,9 +1331,29 @@ impl Repository {
                 let behind: usize = parts.next()?.parse().ok()?;
                 let ahead: usize = parts.next()?.parse().ok()?;
                 let branch = parts.next()?.to_string();
+                // Cache each result for later lookup
+                if let Some(ref cache) = cache {
+                    cache
+                        .ahead_behind
+                        .insert((base.to_string(), branch.clone()), (ahead, behind));
+                }
                 Some((branch, (ahead, behind)))
             })
-            .collect()
+            .collect();
+
+        results
+    }
+
+    /// Get cached ahead/behind counts for a branch.
+    ///
+    /// Returns cached results from a prior `batch_ahead_behind()` call, or None
+    /// if the branch wasn't in the batch or batch wasn't run.
+    pub fn get_cached_ahead_behind(&self, base: &str, branch: &str) -> Option<(usize, usize)> {
+        let cache = get_cache(self.git_common_dir().to_path_buf());
+        cache
+            .ahead_behind
+            .get(&(base.to_string(), branch.to_string()))
+            .map(|r| *r)
     }
 
     /// List all local branches with their HEAD commit SHA.
