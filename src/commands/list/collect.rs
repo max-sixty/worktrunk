@@ -968,11 +968,14 @@ pub fn collect(
         // 50 is low enough to catch truly stale branches while keeping info for
         // recently-diverged ones. The "behind" count is the primary expense driver -
         // git must traverse all those commits to find the merge-base.
-        const SKIP_EXPENSIVE_THRESHOLD: usize = 50;
+        let threshold: usize = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50);
         let ahead_behind = repo.batch_ahead_behind(&default_branch);
         if !ahead_behind.is_empty() {
             options.branch_ahead_behind = ahead_behind;
-            options.skip_expensive_threshold = Some(SKIP_EXPENSIVE_THRESHOLD);
+            options.skip_expensive_threshold = Some(threshold);
         }
     }
 

@@ -178,6 +178,9 @@ pub fn handle_list(
     // Render table in collect() for all table modes (progressive + buffered)
     let render_table = matches!(format, crate::OutputFormat::Table);
 
+    // For testing: allow enabling skip_expensive_for_stale via env var
+    let skip_expensive_for_stale = std::env::var("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD").is_ok();
+
     let list_data = collect::collect(
         &repo,
         show_branches,
@@ -186,8 +189,8 @@ pub fn handle_list(
         show_progress,
         render_table,
         config,
-        None,  // No timeout for wt list
-        false, // Don't skip expensive tasks — show full data
+        None, // No timeout for wt list
+        skip_expensive_for_stale,
     )?;
 
     let Some(ListData { items, .. }) = list_data else {
