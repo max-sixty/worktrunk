@@ -249,20 +249,6 @@ impl<'a> WorktreeView<'a> {
         Ok(stdout)
     }
 
-    /// Run a git command and return whether it succeeded (exit code 0).
-    pub fn run_command_check(&self, args: &[&str]) -> anyhow::Result<bool> {
-        use crate::shell_exec::run;
-
-        let mut cmd = Command::new("git");
-        cmd.args(args);
-        cmd.current_dir(&self.path);
-
-        let output = run(&mut cmd, Some(&path_to_logging_context(&self.path)))
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
-
-        Ok(output.status.success())
-    }
-
     // =========================================================================
     // Worktree-specific methods
     // =========================================================================
