@@ -2400,3 +2400,23 @@ fn test_list_skips_expensive_for_stale_branches(mut repo: TestRepo) {
         cmd
     });
 }
+
+/// Tests skip_expensive_for_stale with branch-only entries (no worktree).
+/// This exercises a different code path than the worktree test above.
+#[rstest]
+fn test_list_skips_expensive_for_stale_branches_only(repo: TestRepo) {
+    // Create a branch without a worktree
+    repo.create_branch("stale-branch");
+
+    // Advance main by 2 commits (stale-branch will be 2 behind)
+    repo.commit("Second commit on main");
+    repo.commit("Third commit on main");
+
+    // With threshold=1, stale-branch (2 behind) should skip expensive tasks
+    assert_cmd_snapshot!({
+        let mut cmd = list_snapshots::command(&repo, repo.root_path());
+        cmd.args(["--branches", "--full"]);
+        cmd.env("WORKTRUNK_TEST_SKIP_EXPENSIVE_THRESHOLD", "1");
+        cmd
+    });
+}
