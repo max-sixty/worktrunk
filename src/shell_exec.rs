@@ -2,18 +2,11 @@
 //!
 //! Provides a unified interface for executing shell commands across platforms:
 //! - Unix: Uses `sh -c` (resolved via PATH)
-//! - Windows: Prefers Git Bash if available, falls back to PowerShell
+//! - Windows: Uses Git Bash (requires Git for Windows)
 //!
-//! This enables hooks and commands to use the same bash syntax on all platforms,
-//! as long as Git for Windows is installed (which is nearly universal among
-//! Windows developers).
-//!
-//! ## Windows Limitations
-//!
-//! When Git Bash is not available, PowerShell is used as a fallback with limitations:
-//! - Hooks using bash syntax won't work
-//! - No support for POSIX redirections like `{ cmd; } 1>&2`
-//! - Different string escaping rules for JSON piping
+//! This enables hooks and commands to use the same bash syntax on all platforms.
+//! On Windows, Git for Windows must be installed — this is nearly universal among
+//! Windows developers since git itself is required.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -59,8 +52,7 @@ pub struct ShellConfig {
 impl ShellConfig {
     /// Get the shell configuration for the current platform
     ///
-    /// On Unix, this always returns sh.
-    /// On Windows, this prefers Git Bash if available, then falls back to PowerShell.
+    /// On Unix, returns sh. On Windows, returns Git Bash (panics if not installed).
     pub fn get() -> &'static ShellConfig {
         SHELL_CONFIG.get_or_init(detect_shell)
     }
@@ -86,20 +78,6 @@ impl ShellConfig {
     pub fn is_posix(&self) -> bool {
         self.is_posix
     }
-
-    /// Check if running on Windows without Git Bash (using PowerShell fallback)
-    ///
-    /// Returns true when hooks using bash syntax won't work properly.
-    /// Used to show warnings to users about limited functionality.
-    #[cfg(windows)]
-    pub fn is_windows_without_git_bash(&self) -> bool {
-        !self.is_posix
-    }
-
-    #[cfg(not(windows))]
-    pub fn is_windows_without_git_bash(&self) -> bool {
-        false
-    }
 }
 
 /// Detect the best available shell for the current platform
@@ -120,11 +98,9 @@ fn detect_shell() -> ShellConfig {
     }
 }
 
-/// Detect the best available shell on Windows
+/// Detect Git Bash on Windows
 ///
-/// Priority order:
-/// 1. Git Bash (if Git for Windows is installed)
-/// 2. PowerShell (fallback, with warnings about syntax differences)
+/// Panics if Git for Windows is not installed, since hooks require bash syntax.
 #[cfg(windows)]
 fn detect_windows_shell() -> ShellConfig {
     if let Some(bash_path) = find_git_bash() {
@@ -136,13 +112,10 @@ fn detect_windows_shell() -> ShellConfig {
         };
     }
 
-    // Fall back to PowerShell
-    ShellConfig {
-        executable: PathBuf::from("powershell.exe"),
-        args: vec!["-NoProfile".to_string(), "-Command".to_string()],
-        is_posix: false,
-        name: "PowerShell".to_string(),
-    }
+    panic!(
+        "Git for Windows is required but not found.\n\
+         Install from https://git-scm.com/download/win"
+    );
 }
 
 /// Find Git Bash executable on Windows
@@ -469,7 +442,7 @@ fn forward_signal_with_escalation(pgid: i32, sig: i32) {
 ///
 /// Uses the platform's preferred shell via `ShellConfig`:
 /// - Unix: `/bin/sh -c`
-/// - Windows: Git Bash if available, PowerShell fallback
+/// - Windows: Git Bash (requires Git for Windows)
 ///
 /// ## Signal Handling (Unix)
 ///
@@ -687,47 +660,19 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn test_windows_shell_detection() {
+    fn test_windows_uses_git_bash() {
         let config = ShellConfig::get();
-        // On Windows CI, Git is installed, so we should have Git Bash
-        // If this fails on a system without Git, PowerShell fallback should work
+        assert_eq!(config.name, "Git Bash");
+        assert!(config.is_posix, "Git Bash should support POSIX syntax");
         assert!(
-            config.name == "Git Bash" || config.name == "PowerShell",
-            "Expected 'Git Bash' or 'PowerShell', got '{}'",
-            config.name
+            config.args.contains(&"-c".to_string()),
+            "Git Bash should use -c flag"
         );
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_windows_git_bash_has_posix_syntax() {
-        let config = ShellConfig::get();
-        if config.name == "Git Bash" {
-            assert!(config.is_posix, "Git Bash should support POSIX syntax");
-            assert!(
-                config.args.contains(&"-c".to_string()),
-                "Git Bash should use -c flag"
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_windows_powershell_fallback_not_posix() {
-        let config = ShellConfig::get();
-        if config.name == "PowerShell" {
-            assert!(!config.is_posix, "PowerShell should not be marked as POSIX");
-            assert!(
-                config.args.contains(&"-Command".to_string()),
-                "PowerShell should use -Command flag"
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(windows)]
     fn test_windows_echo_command() {
-        // Test that echo works regardless of which shell we detected
         let config = ShellConfig::get();
         let output = config
             .command("echo test_output")
@@ -735,16 +680,7 @@ mod tests {
             .expect("Failed to execute echo");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "echo should succeed. Shell: {} ({:?}), exit: {:?}, stdout: '{}', stderr: '{}'",
-            config.name,
-            config.executable,
-            output.status.code(),
-            stdout.trim(),
-            stderr.trim()
-        );
+        assert!(output.status.success());
         assert!(
             stdout.contains("test_output"),
             "stdout should contain 'test_output', got: '{}'",
@@ -754,32 +690,21 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn test_windows_posix_redirection_with_git_bash() {
+    fn test_windows_posix_redirection() {
         let config = ShellConfig::get();
-        if config.is_posix() {
-            // Test POSIX-style redirection: stdout redirected to stderr
-            let output = config
-                .command("echo redirected 1>&2")
-                .output()
-                .expect("Failed to execute redirection test");
+        // Test POSIX-style redirection: stdout redirected to stderr
+        let output = config
+            .command("echo redirected 1>&2")
+            .output()
+            .expect("Failed to execute redirection test");
 
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                output.status.success(),
-                "redirection command should succeed. Shell: {} ({:?}), exit: {:?}, stdout: '{}', stderr: '{}'",
-                config.name,
-                config.executable,
-                output.status.code(),
-                stdout.trim(),
-                stderr.trim()
-            );
-            assert!(
-                stderr.contains("redirected"),
-                "stderr should contain 'redirected' (stdout redirected to stderr), got: '{}'",
-                stderr.trim()
-            );
-        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success());
+        assert!(
+            stderr.contains("redirected"),
+            "stderr should contain 'redirected' (stdout redirected to stderr), got: '{}'",
+            stderr.trim()
+        );
     }
 
     #[test]
@@ -804,13 +729,6 @@ mod tests {
         let config = ShellConfig::get();
         // is_posix method should match the field
         assert_eq!(config.is_posix(), config.is_posix);
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn test_unix_is_not_windows_without_git_bash() {
-        let config = ShellConfig::get();
-        assert!(!config.is_windows_without_git_bash());
     }
 
     // ========================================================================
