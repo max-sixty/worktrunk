@@ -11,7 +11,8 @@
 //!    generate `WorkItem` instances for each task, registering expected results upfront.
 //!
 //! 2. **Parallel execution**: All work items are collected into a `Vec` and processed
-//!    via `into_par_iter()`. Rayon schedules optimally across its thread pool (~8 threads).
+//!    via `into_par_iter()`. Rayon schedules across its thread pool (size set at startup,
+//!    defaulting to 2x CPU cores unless `RAYON_NUM_THREADS` is set).
 //!
 //! 3. **Result delivery**: Each `WorkItem::execute()` returns a result; the caller sends it.
 //!

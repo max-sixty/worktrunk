@@ -21,10 +21,10 @@
 //!
 //! | Command | Purpose |
 //! |---------|---------|
-//! | `git worktree list` | Enumerate worktrees |
+//! | `git worktree list --porcelain` | Enumerate worktrees |
 //! | `git config worktrunk.default-branch` | Cached default branch |
 //! | `git show -s --format='%H %ct' SHA1 SHA2 ...` | **Batched** timestamps for sorting |
-//! | `git rev-parse --is-bare-repository` | Layout decision (show Path column?) |
+//! | `git config --bool core.bare` | Bare repo check for expected-path logic |
 //! | `git for-each-ref refs/heads` | Only with `--branches` flag |
 //! | `git for-each-ref refs/remotes` | Only with `--remotes` flag |
 //!
@@ -57,14 +57,16 @@
 //!
 //! Progressive and buffered modes use the same collection and rendering code.
 //! The only difference is whether intermediate updates are shown during collection:
-//! - Progressive: shows progress bars with updates, then finalizes in place (TTY) or redraws (non-TTY)
+//! - Progressive: renders a skeleton table and updates rows/footer as data arrives (TTY),
+//!   or renders once at the end (non-TTY)
 //! - Buffered: collects silently, then renders the final table
 //!
 //! Both modes render the final table in `collect()`, ensuring a single canonical rendering path.
 //!
 //! **Flat parallelism**: All tasks (for all worktrees and branches) are collected into a single
-//! work queue and processed via Rayon's thread pool. This avoids nested parallelism and ensures
-//! optimal CPU utilization (~8 threads) regardless of worktree count.
+//! work queue and processed via Rayon's thread pool. This avoids nested parallelism and keeps
+//! utilization high regardless of worktree count (pool size is set at startup; default is 2x CPU
+//! cores unless `RAYON_NUM_THREADS` is set).
 //!
 //! **Task ordering**: Work items are sorted so local git operations run first, network tasks
 //! (CI status, URL health checks) run last. This ensures the table fills in quickly with local
@@ -429,7 +431,7 @@ fn apply_default(items: &mut [ListItem], status_contexts: &mut [StatusContext], 
 /// This is the shared logic between progressive and buffered collection modes.
 /// The `on_result` callback is called after each result is processed with the
 /// item index and a reference to the updated item, allowing progressive mode
-/// to update progress bars while buffered mode does nothing.
+/// to update the live table while buffered mode does nothing.
 ///
 /// Uses a 30-second deadline to prevent infinite hangs if git commands stall.
 /// When timeout occurs, returns `DrainOutcome::TimedOut` with diagnostic info.
@@ -1013,7 +1015,8 @@ pub fn collect(
 
     // Collect all work items upfront, then execute in a single Rayon pool.
     // This avoids nested parallelism (Rayon par_iter → thread::scope per worktree)
-    // which could create 100+ threads. Instead, we have one pool with ~8 threads.
+    // which could create 100+ threads. Instead, we have one pool with the configured
+    // thread count (default 2x CPU cores unless overridden by RAYON_NUM_THREADS).
     let sorted_worktrees_clone = sorted_worktrees.clone();
     let tx_worker = tx.clone();
     let expected_results_clone = expected_results.clone();
@@ -1294,8 +1297,8 @@ pub fn collect(
 
     // Table rendering complete (when render_table=true):
     // - Progressive + TTY: rows morphed in place, footer became summary
-    // - Progressive + Non-TTY: cleared progress bars, rendered final table
-    // - Buffered: rendered final table (no progress bars)
+    // - Progressive + Non-TTY: rendered final table (no intermediate output)
+    // - Buffered: rendered final table
     // JSON mode (render_table=false): no rendering, data returned for serialization
 
     Ok(Some(super::model::ListData {

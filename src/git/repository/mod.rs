@@ -5,13 +5,13 @@
 //!
 //! # Module organization
 //!
-//! - `mod.rs` - Core types, construction, and default branch detection
+//! - `mod.rs` - Core types and construction
 //! - `working_tree.rs` - WorkingTree struct and worktree-specific operations
 //! - `branches.rs` - Branch listing, existence checks, completions
 //! - `worktrees.rs` - Worktree management (list, resolve, remove)
 //! - `remotes.rs` - Remote and URL operations
 //! - `diff.rs` - Diff, history, and commit operations
-//! - `config.rs` - Git config, hints, and markers
+//! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
 
 use std::path::{Path, PathBuf};
@@ -63,11 +63,9 @@ pub(super) struct RepoCache {
     // ========== Repo-wide values (same for all worktrees) ==========
     /// Whether this is a bare repository
     pub(super) is_bare: OnceCell<bool>,
-    /// Default branch (main, master, etc.). None if configured branch doesn't exist
-    /// or detection failed.
+    /// Default branch (main, master, etc.)
     pub(super) default_branch: OnceCell<Option<String>>,
-    /// Effective integration target (local default branch or upstream if ahead).
-    /// None if default branch cannot be determined.
+    /// Effective integration target (local default branch or upstream if ahead)
     pub(super) integration_target: OnceCell<Option<String>>,
     /// Primary remote name (None if no remotes configured)
     pub(super) primary_remote: OnceCell<Option<String>>,
@@ -146,7 +144,7 @@ fn base_path() -> &'static PathBuf {
 /// let repo = Repository::current()?;
 /// let wt = repo.current_worktree();
 ///
-/// // Repo-wide operations (default_branch returns Option)
+/// // Repo-wide operations
 /// if let Some(default) = repo.default_branch() {
 ///     println!("Default branch: {}", default);
 /// }
@@ -272,197 +270,6 @@ impl Repository {
             }
             .into()
         })
-    }
-
-    // =========================================================================
-    // Default branch detection
-    // TODO: This section (lines ~800-900 in original) is being edited elsewhere.
-    // Consider moving to a separate module once the edits are complete.
-    // =========================================================================
-
-    /// Get the default branch name for the repository.
-    ///
-    /// **Performance note:** This method may trigger a network call on first invocation
-    /// if the remote HEAD is not cached locally. The result is then cached in git's
-    /// config for subsequent calls. To minimize latency:
-    /// - Defer calling this until after fast, local checks (see e497f0f for example)
-    /// - Consider passing the result as a parameter if needed multiple times
-    /// - For optional operations, provide a fallback (e.g., `.unwrap_or("main")`)
-    ///
-    /// Uses a hybrid approach:
-    /// 1. Check worktrunk cache (`git config worktrunk.default-branch`) — single command
-    /// 2. Detect primary remote, try its cache (e.g., `origin/HEAD`)
-    /// 3. Query remote (`git ls-remote`) — may take 100ms-2s
-    /// 4. Infer from local branches if no remote
-    ///
-    /// Detection results are cached to `worktrunk.default-branch` for future calls.
-    /// Result is cached in the shared repo cache (shared across all worktrees).
-    pub fn default_branch(&self) -> Option<String> {
-        self.cache
-            .default_branch
-            .get_or_init(|| {
-                // Fast path: check worktrunk's persistent cache (git config)
-                let configured = self
-                    .run_command(&["config", "--get", "worktrunk.default-branch"])
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
-
-                // If configured, validate it exists locally
-                if let Some(ref branch) = configured {
-                    if self.local_branch_exists(branch).unwrap_or(false) {
-                        return Some(branch.clone());
-                    }
-                    // Configured branch doesn't exist - return None (don't fall back)
-                    log::debug!(
-                        "Configured default branch '{}' doesn't exist locally",
-                        branch
-                    );
-                    return None;
-                }
-
-                // Not configured - detect and persist to git config
-                if let Ok(branch) = self.detect_default_branch() {
-                    let _ = self.run_command(&["config", "worktrunk.default-branch", &branch]);
-                    return Some(branch);
-                }
-
-                None
-            })
-            .clone()
-    }
-
-    /// Check if user configured an invalid default branch.
-    ///
-    /// Returns `Some(branch_name)` if user set `worktrunk.default-branch` to a branch
-    /// that doesn't exist locally. Returns `None` if:
-    /// - No branch is configured (detection will be used)
-    /// - Configured branch exists locally
-    ///
-    /// Used to show warnings when the configured branch is invalid.
-    pub fn invalid_default_branch_config(&self) -> Option<String> {
-        let configured = self
-            .run_command(&["config", "--get", "worktrunk.default-branch"])
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())?;
-
-        if self.local_branch_exists(&configured).unwrap_or(false) {
-            None
-        } else {
-            Some(configured)
-        }
-    }
-
-    /// Detect the default branch without using worktrunk's cache.
-    ///
-    /// Called by `default_branch()` to populate the cache.
-    pub fn detect_default_branch(&self) -> anyhow::Result<String> {
-        // Try to get from the primary remote
-        if let Ok(remote) = self.primary_remote() {
-            // Try git's cache for this remote (e.g., origin/HEAD)
-            if let Ok(branch) = self.get_local_default_branch(&remote) {
-                return Ok(branch);
-            }
-
-            // Query remote (no caching to git's remote HEAD - we only manage worktrunk's cache)
-            if let Ok(branch) = self.query_remote_default_branch(&remote) {
-                return Ok(branch);
-            }
-        }
-
-        // Fallback: No remote or remote query failed, try to infer locally
-        // TODO: Show message to user when using inference fallback:
-        //   "No remote configured. Using inferred default branch: {branch}"
-        //   "To set explicitly, run: wt config state default-branch set <branch>"
-        // Problem: git.rs is in lib crate, output module is in binary.
-        // Options: (1) Return info about whether fallback was used, let callers show message
-        //          (2) Add messages in specific commands (merge.rs, worktree.rs)
-        //          (3) Move output abstraction to lib crate
-        self.infer_default_branch_locally()
-    }
-
-    /// Resolve a target branch from an optional override
-    ///
-    /// If target is Some, expands special symbols ("@", "-", "^") via `resolve_worktree_name`.
-    /// Otherwise, queries the default branch.
-    /// This is a common pattern used throughout commands that accept an optional --target flag.
-    pub fn resolve_target_branch(&self, target: Option<&str>) -> anyhow::Result<String> {
-        match target {
-            Some(b) => self.resolve_worktree_name(b),
-            None => self.default_branch().ok_or_else(|| {
-                GitError::Other {
-                    message: "Cannot determine default branch. Specify target explicitly or run 'wt config state default-branch set <branch>'.".into(),
-                }
-                .into()
-            }),
-        }
-    }
-
-    /// Infer the default branch locally (without remote).
-    ///
-    /// Uses local heuristics when no remote is available:
-    /// 1. If only one local branch exists, use it
-    /// 2. Check symbolic-ref HEAD (authoritative for bare repos, works before first commit)
-    /// 3. Check user's git config init.defaultBranch (if branch exists)
-    /// 4. Look for common branch names (main, master, develop, trunk)
-    /// 5. Fail if none of the above work
-    fn infer_default_branch_locally(&self) -> anyhow::Result<String> {
-        // 1. If there's only one local branch, use it
-        let branches = self.local_branches()?;
-        if branches.len() == 1 {
-            return Ok(branches[0].clone());
-        }
-
-        // 2. Check symbolic-ref HEAD - authoritative for bare repos and empty repos
-        // - Bare repo directory: HEAD always points to the default branch
-        // - Empty repos: No branches exist yet, but HEAD tells us the intended default
-        // - Linked worktrees: HEAD points to CURRENT branch, so skip this heuristic
-        // - Normal repos: HEAD points to CURRENT branch, so skip this heuristic
-        let is_bare = self.is_bare().unwrap_or(false);
-        let in_linked_worktree = self.current_worktree().is_linked().unwrap_or(false);
-        if ((is_bare && !in_linked_worktree) || branches.is_empty())
-            && let Ok(head_ref) = self.run_command(&["symbolic-ref", "HEAD"])
-            && let Some(branch) = head_ref.trim().strip_prefix("refs/heads/")
-        {
-            return Ok(branch.to_string());
-        }
-
-        // 3. Check git config init.defaultBranch (if branch exists)
-        if let Ok(default) = self.run_command(&["config", "--get", "init.defaultBranch"]) {
-            let branch = default.trim().to_string();
-            if !branch.is_empty() && branches.contains(&branch) {
-                return Ok(branch);
-            }
-        }
-
-        // 4. Look for common branch names
-        for name in ["main", "master", "develop", "trunk"] {
-            if branches.contains(&name.to_string()) {
-                return Ok(name.to_string());
-            }
-        }
-
-        // 5. Give up — can't infer
-        Err(GitError::Other {
-            message:
-                "Could not infer default branch. Please specify target branch explicitly or set up a remote."
-                    .into(),
-        }
-        .into())
-    }
-
-    // Private helpers for default_branch detection
-
-    fn get_local_default_branch(&self, remote: &str) -> anyhow::Result<String> {
-        let stdout =
-            self.run_command(&["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])?;
-        DefaultBranchName::from_local(remote, &stdout).map(DefaultBranchName::into_string)
-    }
-
-    pub(super) fn query_remote_default_branch(&self, remote: &str) -> anyhow::Result<String> {
-        let stdout = self.run_command(&["ls-remote", "--symref", remote, "HEAD"])?;
-        DefaultBranchName::from_remote(&stdout).map(DefaultBranchName::into_string)
     }
 
     // =========================================================================

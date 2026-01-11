@@ -154,9 +154,7 @@ impl CommitOptions<'_> {
 
         // Show skip message
         if self.no_verify && any_hooks_exist {
-            crate::output::print(info_message(cformat!(
-                "Skipping pre-commit hooks (<bright-black>--no-verify</>)"
-            )))?;
+            crate::output::print(info_message("Skipping pre-commit hooks (--no-verify)"))?;
         }
 
         if !self.no_verify {

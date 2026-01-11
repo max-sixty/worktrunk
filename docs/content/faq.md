@@ -125,9 +125,9 @@ We're considering better solutions — a better name, anyone?
 | Hooks | ✅ | ❌ (bash syntax) |
 | `wt select` | ❌ | ❌ |
 
-**Git Bash** (recommended) comes with [Git for Windows](https://gitforwindows.org/). Worktrunk auto-detects it when installed.
+**Git for Windows** is required — it provides Git Bash, which Worktrunk uses for hook execution. [Download here](https://gitforwindows.org/).
 
-**PowerShell** works for basic operations, but hooks fail in pure PowerShell because they use bash syntax. With Git for Windows installed, Worktrunk auto-detects Git Bash for hook execution even when PowerShell is the interactive shell.
+**PowerShell** works as the interactive shell for core commands, shell integration, and tab completion. Hooks use bash syntax and run via Git Bash, so Git for Windows must be installed even when PowerShell is the interactive shell.
 
 **`wt select`** uses [skim](https://github.com/skim-rs/skim), which only supports Unix. Use `wt list` and `wt switch <branch>` instead.
 

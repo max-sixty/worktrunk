@@ -3,10 +3,9 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use worktrunk::path::format_path_for_display;
 use worktrunk::shell::{self, Shell};
-use worktrunk::shell_exec::ShellConfig;
 use worktrunk::styling::{
     INFO_SYMBOL, PROMPT_SYMBOL, SUCCESS_SYMBOL, format_bash_with_gutter, format_with_gutter,
-    hint_message, warning_message,
+    warning_message,
 };
 
 use crate::output;
@@ -190,22 +189,6 @@ pub fn handle_configure_shell(
     // Only flag if we positively detect it's missing (Some(false)).
     // If detection fails (None), stay silent - we can't be sure.
     let zsh_needs_compinit = should_check_compinit && shell::detect_zsh_compinit() == Some(false);
-
-    // On Windows without Git Bash, show advisory about PowerShell limitations
-    let powershell_was_configured = result
-        .configured
-        .iter()
-        .any(|r| r.shell == Shell::PowerShell && !matches!(r.action, ConfigAction::AlreadyExists));
-
-    if powershell_was_configured && ShellConfig::get().is_windows_without_git_bash() {
-        let _ = crate::output::blank();
-        let _ = crate::output::print(warning_message(
-            "PowerShell mode: hooks using bash syntax won't work",
-        ));
-        let _ = crate::output::print(hint_message(
-            "Install Git for Windows for full hook support",
-        ));
-    }
 
     Ok(ScanResult {
         configured: result.configured,
