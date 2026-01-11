@@ -28,25 +28,26 @@ if ! git pull --ff-only; then
 fi
 
 # Copy demo assets
-if [[ ! -d "$DEMOS_DIR" ]] || [[ -z "$(ls -A "$DEMOS_DIR")" ]]; then
-    echo "No demo assets found. Build them first:"
-    echo "  ./docs/demos/build docs"
-    exit 1
+if [[ -d "$DEMOS_DIR/docs" ]] && [[ -n "$(ls -A "$DEMOS_DIR/docs" 2>/dev/null)" ]]; then
+    rsync -av --delete "$DEMOS_DIR/docs/" "$ASSETS_REPO/demos/docs/"
 fi
 
-rsync -av --delete "$DEMOS_DIR/" "$ASSETS_REPO/demos/"
+# Copy social card assets
+if [[ -d "$DEMOS_DIR/social" ]] && [[ -n "$(ls -A "$DEMOS_DIR/social" 2>/dev/null)" ]]; then
+    rsync -av --delete "$DEMOS_DIR/social/" "$ASSETS_REPO/social/"
+fi
 
 # Check for changes
-if git diff --quiet demos/; then
+if git diff --quiet; then
     echo "No changes to publish"
     exit 0
 fi
 
 # Commit and push
-git diff --stat demos/
-git add demos/
-git commit -m "Update demo assets"
+git diff --stat
+git add -A
+git commit -m "Update assets"
 git push
 
 echo ""
-echo "Published: https://github.com/max-sixty/worktrunk-assets/tree/main/demos"
+echo "Published: https://github.com/max-sixty/worktrunk-assets"

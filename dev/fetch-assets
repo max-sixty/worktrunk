@@ -6,11 +6,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ASSETS_DIR="$REPO_ROOT/docs/static/assets"
 
-echo "Fetching demo assets..."
+echo "Fetching assets..."
 rm -rf "$ASSETS_DIR"
 mkdir -p "$ASSETS_DIR"
 
-curl -fsSL "https://github.com/max-sixty/worktrunk-assets/archive/refs/heads/main.tar.gz" \
-    | tar -xz --strip-components=2 -C "$ASSETS_DIR" "worktrunk-assets-main/demos"
+# Download and extract the full assets archive
+TMPFILE=$(mktemp)
+curl -fsSL "https://github.com/max-sixty/worktrunk-assets/archive/refs/heads/main.tar.gz" -o "$TMPFILE"
 
+# Extract demos
+tar -xzf "$TMPFILE" --strip-components=2 -C "$ASSETS_DIR" "worktrunk-assets-main/demos" 2>/dev/null || true
+
+# Extract social cards
+tar -xzf "$TMPFILE" --strip-components=1 -C "$ASSETS_DIR" "worktrunk-assets-main/social" 2>/dev/null || true
+
+rm "$TMPFILE"
 echo "Done. Assets in $ASSETS_DIR/"

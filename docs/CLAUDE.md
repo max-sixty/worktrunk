@@ -290,6 +290,23 @@ Deploy runs `fetch-assets` before building.
 
 For detailed demo development guidelines (timing, debugging, environment setup), see `docs/demos/CLAUDE.md`.
 
+## Social card workflow
+
+Social cards (Open Graph/Twitter preview images) follow the same assets pattern as demos.
+
+**Source files:** `docs/static/social-card.svg` and `github-social-card.svg`
+
+**To regenerate** (after changing tagline, logo, or layout):
+
+```bash
+./dev/build-social-cards   # SVG → PNG (downloads fonts if needed)
+./dev/publish-assets       # Publish to assets repo
+```
+
+The build script automatically downloads Inter and Plus Jakarta Sans fonts from GitHub if not installed locally. Requires `rsvg-convert` (from librsvg).
+
+**Referenced in:** `docs/templates/base.html` (og:image, twitter:image meta tags)
+
 ### Light/dark theme variants
 
 In markdown, use `<picture>` with media queries:

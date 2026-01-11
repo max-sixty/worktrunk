@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <radialGradient id="logoGlow" cx="30%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#d4a54a" stop-opacity="0.30"/>
+      <stop offset="35%" stop-color="#d4a54a" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#d4a54a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="#faf9f7"/>
+  <rect width="1280" height="640" fill="url(#logoGlow)"/>
+
+  <!-- Logo -->
+  <image x="160" y="150" width="340" height="340" href="logo@2x.png"/>
+
+  <!-- Title -->
+  <text x="610" y="280"
+        font-family="Plus Jakarta Sans"
+        font-size="88" font-weight="700" fill="#1a1817"
+        letter-spacing="-0.02em">worktrunk</text>
+
+  <!-- Tagline -->
+  <text x="610" y="395"
+        font-family="Inter"
+        font-size="28" font-weight="400" fill="#78716c"
+        letter-spacing="0.01em">Git worktree management</text>
+  <text x="610" y="437"
+        font-family="Inter"
+        font-size="28" font-weight="400" fill="#78716c"
+        letter-spacing="0.01em">for parallel AI agent workflows</text>
+</svg>
