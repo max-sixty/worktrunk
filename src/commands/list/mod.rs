@@ -14,8 +14,9 @@
 //!    - Uses ref cache, very fast
 //!
 //! 2. **Default branch lookup** (~1-5ms)
-//!    - Reads cached value from `.git/refs/remotes/origin/HEAD`
-//!    - Falls back to `git remote show origin` if not cached (~100-300ms network)
+//!    - Reads cached value from `git config worktrunk.default-branch`
+//!    - Falls back to git's remote HEAD ref (e.g., `origin/HEAD`) if available
+//!    - If still unknown, queries `git ls-remote --symref <remote> HEAD` (~100ms-2s network)
 //!    - Clear cache with `wt config state default-branch clear` to force re-detection
 //!
 //! 3. **Sort worktrees** (<1ms)
@@ -91,9 +92,10 @@
 //!
 //! ## Worktrunk's Only Cache: Default Branch
 //!
-//! Worktrunk caches only the default branch name (main/master) using `git remote set-head`.
-//! This is a git-native cache stored in `.git/refs/remotes/origin/HEAD`. All other data is
-//! fetched fresh on each `wt list` invocation.
+//! Worktrunk caches only the default branch name (main/master) in
+//! `git config worktrunk.default-branch`. The remote HEAD ref (e.g., `origin/HEAD`)
+//! is git's cache; worktrunk reads it but does not set it. All other data is fetched
+//! fresh on each `wt list` invocation.
 //!
 //! Clear cache with: `wt config state default-branch clear`
 //!

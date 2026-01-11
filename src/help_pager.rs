@@ -17,8 +17,9 @@
 //!
 //! # Cross-Platform Support
 //!
-//! On Windows, the pager uses Git Bash (if available) to support standard pager
-//! commands like `less`. If Git Bash is not available, falls back to direct output.
+//! On Windows, Git Bash (if available) enables standard pagers like `less`.
+//! Without Git Bash, we only use a pager if the configured command works under
+//! the PowerShell fallback; otherwise we print directly.
 
 use std::io::{IsTerminal, Write};
 use std::process::Stdio;
@@ -63,9 +64,9 @@ fn detect_help_pager() -> Option<String> {
 
 /// Show help text through a pager with TTY access for interactive scrolling.
 ///
-/// Only uses pager when stdout is a terminal. Falls back to direct output if:
+/// Only uses pager when stdout or stderr is a terminal. Falls back to direct output if:
 /// - No pager configured (prints to stderr)
-/// - stdout is not a TTY (prints to stderr)
+/// - Neither stdout nor stderr is a TTY (prints to stderr)
 /// - Pager spawn fails (prints to stderr)
 ///
 /// Note: All fallbacks output to stderr for consistency with pager behavior
